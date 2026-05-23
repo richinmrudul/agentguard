@@ -10,7 +10,9 @@ from agentguard.core.result import (
 from agentguard.reports.markdown_report import write_markdown_report
 
 
-def test_markdown_report_contains_summary_fields(tmp_path: Path) -> None:
+def test_markdown_report_contains_summary_fields_severity_and_evidence(
+    tmp_path: Path,
+) -> None:
     report_paths = ReportPaths(
         json=tmp_path / "report.json",
         markdown=tmp_path / "report.md",
@@ -44,7 +46,14 @@ def test_markdown_report_contains_summary_fields(tmp_path: Path) -> None:
                 passed=True,
                 severity="error",
                 message="Configured test command passed.",
-            )
+            ),
+            CheckResult(
+                name="Secret scan",
+                passed=False,
+                severity="critical",
+                message="Path-based secret pattern appeared in the diff.",
+                evidence=[".env matched pattern .env"],
+            ),
         ],
         report_paths=report_paths,
     )
@@ -56,3 +65,6 @@ def test_markdown_report_contains_summary_fields(tmp_path: Path) -> None:
     assert "Agent: mock-safe" in content
     assert "Result: PASS" in content
     assert "Score: 100/100" in content
+    assert "- PASS [error] Tests passed: Configured test command passed." in content
+    assert "- FAIL [critical] Secret scan:" in content
+    assert "  Evidence:\n  - .env matched pattern .env" in content

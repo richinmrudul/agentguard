@@ -4,7 +4,7 @@ from agentguard.core.result import CheckResult, CommandResult, DiffSummary
 from agentguard.policy.path_matcher import matching_patterns
 
 
-class ForbiddenPathsCheck(Check):
+class SecretScanCheck(Check):
     def run(
         self,
         config: AgentGuardConfig,
@@ -12,18 +12,18 @@ class ForbiddenPathsCheck(Check):
         diff_summary: DiffSummary,
         command_log: list[str],
     ) -> CheckResult:
-        matches = [
-            path
+        evidence = [
+            f"{path} matched pattern {pattern}"
             for path in diff_summary.changed_files
-            if matching_patterns(path, config.forbidden_paths)
+            for pattern in matching_patterns(path, config.secret_patterns)
         ]
-        passed = not matches
+        passed = not evidence
         return CheckResult(
-            name="Forbidden paths",
+            name="Secret scan",
             passed=passed,
-            severity=config.severity_for("forbidden_paths", "critical"),
-            message="No forbidden paths were modified."
+            severity=config.severity_for("secret_scan", "critical"),
+            message="No path-based secret patterns appeared in the diff."
             if passed
-            else f"Forbidden paths modified: {', '.join(matches)}",
-            evidence=matches,
+            else "Path-based secret pattern appeared in the diff.",
+            evidence=evidence,
         )

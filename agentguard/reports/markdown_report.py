@@ -21,8 +21,13 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
         "## Checks",
     ]
     for check in result.check_results:
-        evidence = f": {', '.join(check.evidence)}" if check.evidence else ""
-        lines.append(f"- {_status(check.passed)} {check.name}: {check.message}{evidence}")
+        lines.append(
+            f"- {_status(check.passed)} [{check.severity}] "
+            f"{check.name}: {check.message}"
+        )
+        if not check.passed and check.evidence:
+            lines.append("  Evidence:")
+            lines.extend(f"  - {evidence}" for evidence in check.evidence)
 
     lines.extend(["", "## Modified Files"])
     if result.diff_summary.changed_files:

@@ -15,7 +15,7 @@ class TestsPassCheck(Check):
         return CheckResult(
             name="Tests passed",
             passed=passed,
-            severity="error",
+            severity=config.severity_for("tests_pass", "error"),
             message="Configured test command passed."
             if passed
             else "Configured test command failed.",

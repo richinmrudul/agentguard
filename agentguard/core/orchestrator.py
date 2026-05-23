@@ -2,7 +2,9 @@ from pathlib import Path
 
 from agentguard.agents.mock_agent import get_agent
 from agentguard.checks.base import Check
+from agentguard.checks.diff_size import DiffSizeCheck
 from agentguard.checks.forbidden_paths import ForbiddenPathsCheck
+from agentguard.checks.secret_scan import SecretScanCheck
 from agentguard.checks.scope_adherence import ScopeAdherenceCheck
 from agentguard.checks.test_tampering import TestTamperingCheck
 from agentguard.checks.tests_pass import TestsPassCheck
@@ -25,6 +27,8 @@ def default_checks() -> list[Check]:
         TestTamperingCheck(),
         UnsafeCommandsCheck(),
         ScopeAdherenceCheck(),
+        DiffSizeCheck(),
+        SecretScanCheck(),
     ]
 
 

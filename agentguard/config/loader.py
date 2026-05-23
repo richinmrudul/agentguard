@@ -1,9 +1,14 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
-from agentguard.config.schema import AgentGuardConfig, ExpectedModifiedFiles
+from agentguard.config.schema import (
+    VALID_SEVERITIES,
+    AgentGuardConfig,
+    DiffLimits,
+    ExpectedModifiedFiles,
+)
 
 
 def _string_list(data: dict[str, Any], key: str) -> list[str]:
@@ -11,6 +16,56 @@ def _string_list(data: dict[str, Any], key: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ValueError(f"Config field '{key}' must be a list of strings.")
     return value
+
+
+def _optional_int(mapping: dict[str, Any], key: str, field_name: str) -> Optional[int]:
+    if key not in mapping:
+        return None
+    value = mapping[key]
+    if isinstance(value, bool):
+        raise ValueError(f"Config field '{field_name}.{key}' must be an integer.")
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"Config field '{field_name}.{key}' must be an integer.") from error
+    if number < 0:
+        raise ValueError(f"Config field '{field_name}.{key}' must be non-negative.")
+    return number
+
+
+def _load_policy(data: dict[str, Any]) -> dict[str, str]:
+    policy = data.get("policy", {})
+    if not isinstance(policy, dict):
+        raise ValueError("Config field 'policy' must be a mapping.")
+
+    severities: dict[str, str] = {}
+    for check_key, check_config in policy.items():
+        if not isinstance(check_key, str):
+            raise ValueError("Config field 'policy' keys must be strings.")
+        if not isinstance(check_config, dict):
+            raise ValueError(f"Config field 'policy.{check_key}' must be a mapping.")
+        severity = check_config.get("severity")
+        if severity is None:
+            continue
+        if severity not in VALID_SEVERITIES:
+            valid = ", ".join(sorted(VALID_SEVERITIES))
+            raise ValueError(
+                f"Invalid severity '{severity}' for policy.{check_key}.severity. "
+                f"Valid severities: {valid}."
+            )
+        severities[check_key] = severity
+    return severities
+
+
+def _load_diff_limits(data: dict[str, Any]) -> DiffLimits:
+    limits = data.get("diff_limits", {})
+    if not isinstance(limits, dict):
+        raise ValueError("Config field 'diff_limits' must be a mapping.")
+    return DiffLimits(
+        max_files_changed=_optional_int(limits, "max_files_changed", "diff_limits"),
+        max_lines_added=_optional_int(limits, "max_lines_added", "diff_limits"),
+        max_lines_deleted=_optional_int(limits, "max_lines_deleted", "diff_limits"),
+    )
 
 
 def load_config(config_path: Path) -> AgentGuardConfig:
@@ -52,5 +107,8 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         test_paths=_string_list(data, "test_paths"),
         expected_modified_files=expected_modified_files,
         unsafe_commands=_string_list(data, "unsafe_commands"),
+        policy=_load_policy(data),
+        diff_limits=_load_diff_limits(data),
+        secret_patterns=_string_list(data, "secret_patterns"),
         config_path=path.resolve(),
     )

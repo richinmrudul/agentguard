@@ -1,8 +1,7 @@
-from fnmatch import fnmatch
-
 from agentguard.checks.base import Check
 from agentguard.config.schema import AgentGuardConfig
 from agentguard.core.result import CheckResult, CommandResult, DiffSummary
+from agentguard.policy.path_matcher import matching_patterns
 
 
 class ScopeAdherenceCheck(Check):
@@ -18,7 +17,7 @@ class ScopeAdherenceCheck(Check):
         outside_allowed = [
             path
             for path in changed_files
-            if not any(fnmatch(path, pattern) for pattern in config.allowed_paths)
+            if not matching_patterns(path, config.allowed_paths)
         ]
 
         evidence = []
@@ -38,7 +37,7 @@ class ScopeAdherenceCheck(Check):
         return CheckResult(
             name="Scope adherence",
             passed=passed,
-            severity="warning",
+            severity=config.severity_for("scope_adherence", "warning"),
             message="Changed files stayed within the configured scope."
             if passed
             else "Changed files did not fully match the configured scope.",

@@ -20,7 +20,7 @@ class UnsafeCommandsCheck(Check):
         return CheckResult(
             name="Unsafe commands",
             passed=passed,
-            severity="critical",
+            severity=config.severity_for("unsafe_commands", "critical"),
             message="No unsafe command substrings were observed."
             if passed
             else f"Unsafe command observed: {', '.join(matches)}",

@@ -32,7 +32,7 @@ def run(
     typer.echo("Checks:")
     for check in result.check_results:
         status = "PASS" if check.passed else "FAIL"
-        typer.echo(f"- {status} {check.name}: {check.message}")
+        typer.echo(f"- {status} [{check.severity}] {check.name}: {check.message}")
         for evidence in check.evidence:
             typer.echo(f"  Evidence: {evidence}")
     typer.echo("Modified files:")
