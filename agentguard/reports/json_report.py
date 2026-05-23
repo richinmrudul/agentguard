@@ -1,0 +1,25 @@
+import json
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+from agentguard.core.result import BenchmarkResult
+
+
+def _json_default(value: Any) -> str:
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def write_json_report(result: BenchmarkResult, reports_dir: Path) -> Path:
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    report_path = reports_dir / "report.json"
+    data = asdict(result)
+    data["evidence"] = [
+        evidence for check in result.check_results for evidence in check.evidence
+    ]
+    with report_path.open("w", encoding="utf-8") as file:
+        json.dump(data, file, default=_json_default, indent=2)
+        file.write("\n")
+    return report_path

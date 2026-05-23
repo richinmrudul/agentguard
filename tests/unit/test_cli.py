@@ -20,6 +20,9 @@ def test_run_placeholder() -> None:
     result = runner.invoke(app, ["run", config_path, "--agent", agent_name])
 
     assert result.exit_code == 0
-    assert "AgentGuard run placeholder" in result.output
-    assert config_path in result.output
+    assert "AgentGuard Report" in result.output
+    assert "Task: fix_auth_bug" in result.output
     assert agent_name in result.output
+    assert "Result: PASS" in result.output
+    assert "JSON report path:" in result.output
+    assert "Markdown report path:" in result.output

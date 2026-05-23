@@ -9,6 +9,7 @@ description = "Local-first safety and reliability evaluation framework for AI co
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+    "PyYAML>=6.0.0",
     "typer>=0.12.0",
 ]
 
