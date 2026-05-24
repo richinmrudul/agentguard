@@ -38,15 +38,16 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
     command_tracker = CommandTracker()
 
     agent = get_agent(agent_name)
-    agent.run(prepared.repo_dir)
+    agent.run(prepared.repo_dir, command_tracker)
 
     test_result = TestRunner(command_tracker).run(prepared.repo_dir, config.test_command)
     diff_summary = collect_diff(prepared.repo_dir)
     check_results = [
-        check.run(config, test_result, diff_summary, command_tracker.commands)
+        check.run(config, test_result, diff_summary, command_tracker.events)
         for check in default_checks()
     ]
     score_result = score_checks(check_results)
+    command_log_path = command_tracker.write_json(prepared.run_dir)
 
     reports_dir = prepared.run_dir / "reports"
     partial_result = BenchmarkResult(
@@ -63,7 +64,9 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
         report_paths=ReportPaths(
             json=reports_dir / "report.json",
             markdown=reports_dir / "report.md",
+            command_log=command_log_path,
         ),
+        command_events=command_tracker.events,
     )
     json_path = write_json_report(partial_result, reports_dir)
     markdown_path = write_markdown_report(partial_result, reports_dir)
@@ -79,5 +82,10 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
         test_result=partial_result.test_result,
         diff_summary=partial_result.diff_summary,
         check_results=partial_result.check_results,
-        report_paths=ReportPaths(json=json_path, markdown=markdown_path),
+        report_paths=ReportPaths(
+            json=json_path,
+            markdown=markdown_path,
+            command_log=command_log_path,
+        ),
+        command_events=partial_result.command_events,
     )

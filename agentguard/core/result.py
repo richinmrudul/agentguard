@@ -1,5 +1,8 @@
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
+
+from agentguard.instrumentation.command_tracker import CommandEvent
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,7 @@ class ScoreResult:
 class ReportPaths:
     json: Path
     markdown: Path
+    command_log: Optional[Path] = None
 
 
 @dataclass(frozen=True)
@@ -59,3 +63,4 @@ class BenchmarkResult:
     diff_summary: DiffSummary
     check_results: list[CheckResult]
     report_paths: ReportPaths
+    command_events: list[CommandEvent] = field(default_factory=list)

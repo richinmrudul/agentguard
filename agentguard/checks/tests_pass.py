@@ -1,6 +1,7 @@
 from agentguard.checks.base import Check
 from agentguard.config.schema import AgentGuardConfig
 from agentguard.core.result import CheckResult, CommandResult, DiffSummary
+from agentguard.instrumentation.command_tracker import CommandEvent
 
 
 class TestsPassCheck(Check):
@@ -9,7 +10,7 @@ class TestsPassCheck(Check):
         config: AgentGuardConfig,
         test_result: CommandResult,
         diff_summary: DiffSummary,
-        command_log: list[str],
+        command_log: list[CommandEvent],
     ) -> CheckResult:
         passed = test_result.exit_code == 0
         return CheckResult(

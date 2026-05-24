@@ -24,7 +24,6 @@ class TestRunner:
         if not argv:
             raise ValueError("Test command cannot be empty.")
 
-        self.command_tracker.record(command)
         started = time.monotonic()
         completed = subprocess.run(
             argv,
@@ -33,10 +32,20 @@ class TestRunner:
             capture_output=True,
             text=True,
         )
+        duration_seconds = time.monotonic() - started
+        self.command_tracker.record_executed(
+            command=argv,
+            command_text=command,
+            cwd=repo_dir,
+            exit_code=completed.returncode,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+            duration_seconds=duration_seconds,
+        )
         return CommandResult(
             command=command,
             exit_code=completed.returncode,
             stdout=completed.stdout,
             stderr=completed.stderr,
-            duration_seconds=time.monotonic() - started,
+            duration_seconds=duration_seconds,
         )

@@ -35,6 +35,21 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     else:
         lines.append("- None")
 
+    lines.extend(["", "## Command Events"])
+    if result.report_paths.command_log is not None:
+        lines.append(f"Command log: {result.report_paths.command_log}")
+    if result.command_events:
+        for event in result.command_events:
+            if event.blocked:
+                status = "blocked"
+            elif event.executed:
+                status = "executed"
+            else:
+                status = "simulated"
+            lines.append(f"- [{status}] {event.command_text}")
+    else:
+        lines.append("- None")
+
     lines.extend(
         [
             "",

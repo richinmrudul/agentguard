@@ -41,6 +41,8 @@ def run(
             typer.echo(f"- {path}")
     else:
         typer.echo("- None")
+    if result.report_paths.command_log is not None:
+        typer.echo(f"Command log path: {result.report_paths.command_log}")
     typer.echo(f"JSON report path: {result.report_paths.json}")
     typer.echo(f"Markdown report path: {result.report_paths.markdown}")
 

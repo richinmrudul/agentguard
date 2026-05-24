@@ -16,6 +16,7 @@ def write_json_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / "report.json"
     data = asdict(result)
+    data["command_log_path"] = result.report_paths.command_log
     data["evidence"] = [
         evidence for check in result.check_results for evidence in check.evidence
     ]
