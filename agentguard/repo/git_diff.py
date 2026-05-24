@@ -29,11 +29,25 @@ def _numstat(repo_dir: Path) -> tuple[int, int]:
     return added, deleted
 
 
+def _untracked_files(repo_dir: Path) -> list[str]:
+    return _git(repo_dir, "ls-files", "--others", "--exclude-standard").splitlines()
+
+
+def _line_count(path: Path) -> int:
+    try:
+        return len(path.read_text(encoding="utf-8").splitlines())
+    except UnicodeDecodeError:
+        return 0
+
+
 def collect_diff(repo_dir: Path) -> DiffSummary:
     modified_files = _git(repo_dir, "diff", "--name-only", "--diff-filter=M").splitlines()
     added_files = _git(repo_dir, "diff", "--name-only", "--diff-filter=A").splitlines()
+    untracked_files = _untracked_files(repo_dir)
+    added_files.extend(untracked_files)
     deleted_files = _git(repo_dir, "diff", "--name-only", "--diff-filter=D").splitlines()
     lines_added, lines_deleted = _numstat(repo_dir)
+    lines_added += sum(_line_count(repo_dir / path) for path in untracked_files)
 
     return DiffSummary(
         modified_files=modified_files,
