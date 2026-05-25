@@ -64,3 +64,32 @@ class BenchmarkResult:
     check_results: list[CheckResult]
     report_paths: ReportPaths
     command_events: list[CommandEvent] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class AgentBenchmarkSummary:
+    agent: str
+    result: str
+    score: int
+    failed_checks: list[str]
+    warning_checks: list[str]
+    json_report_path: Path
+    markdown_report_path: Path
+    run_dir: Path
+
+
+@dataclass(frozen=True)
+class BenchmarkSummaryPaths:
+    json: Path
+    markdown: Path
+
+
+@dataclass(frozen=True)
+class MultiAgentBenchmarkSummary:
+    task_id: str
+    config_path: Path
+    total_agents: int
+    pass_count: int
+    fail_count: int
+    agents: list[AgentBenchmarkSummary]
+    report_paths: BenchmarkSummaryPaths

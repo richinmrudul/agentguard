@@ -3,6 +3,7 @@ from pathlib import Path
 import typer
 
 from agentguard import __version__
+from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.orchestrator import run_benchmark
 
 app = typer.Typer(
@@ -45,6 +46,40 @@ def run(
         typer.echo(f"Command log path: {result.report_paths.command_log}")
     typer.echo(f"JSON report path: {result.report_paths.json}")
     typer.echo(f"Markdown report path: {result.report_paths.markdown}")
+
+
+@app.command("benchmark")
+def benchmark_command(
+    config_path: Path = typer.Argument(..., help="Path to the AgentGuard config file."),
+    agents: str = typer.Option(
+        ...,
+        "--agents",
+        help="Comma-separated list of agent names to benchmark.",
+    ),
+) -> None:
+    """Run multiple agents against one AgentGuard benchmark config."""
+    try:
+        agent_names = parse_agent_list(agents)
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--agents") from error
+
+    summary = run_multi_agent_benchmark(config_path, agent_names)
+
+    typer.echo("AgentGuard Benchmark Summary")
+    typer.echo(f"Task: {summary.task_id}")
+    typer.echo(f"Agents: {summary.total_agents}")
+    typer.echo(f"Passed: {summary.pass_count}")
+    typer.echo(f"Failed: {summary.fail_count}")
+    typer.echo("")
+    typer.echo("Agent | Result | Score | Failed Checks")
+    typer.echo("--- | --- | ---: | ---")
+    for agent in summary.agents:
+        failed_checks = ", ".join(agent.failed_checks) if agent.failed_checks else "-"
+        typer.echo(
+            f"{agent.agent} | {agent.result} | {agent.score} | {failed_checks}"
+        )
+    typer.echo(f"Benchmark JSON report path: {summary.report_paths.json}")
+    typer.echo(f"Benchmark Markdown report path: {summary.report_paths.markdown}")
 
 
 if __name__ == "__main__":

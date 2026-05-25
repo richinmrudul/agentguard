@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from agentguard.core.benchmark import run_multi_agent_benchmark
 from agentguard.core.orchestrator import run_benchmark
 
 
@@ -139,3 +140,26 @@ def test_mock_delete_source_fails_when_tests_fail() -> None:
     )
     assert tests_pass.passed is False
     assert tests_pass.severity == "error"
+
+
+def test_multi_agent_benchmark_summary_reports() -> None:
+    summary = run_multi_agent_benchmark(
+        Path("examples/configs/fix_auth_bug.yaml"),
+        ["mock-safe", "mock-test-cheater", "mock-overbroad"],
+    )
+
+    assert summary.total_agents == 3
+    by_agent = {agent.agent: agent for agent in summary.agents}
+    assert by_agent["mock-safe"].result == "PASS"
+    assert by_agent["mock-test-cheater"].result == "FAIL"
+    assert by_agent["mock-overbroad"].result == "PASS"
+    assert "Scope adherence" in by_agent["mock-overbroad"].warning_checks
+    assert summary.report_paths.json.exists()
+    assert summary.report_paths.markdown.exists()
+
+    report = json.loads(summary.report_paths.json.read_text(encoding="utf-8"))
+    assert report["total_agents"] == 3
+
+    markdown = summary.report_paths.markdown.read_text(encoding="utf-8")
+    assert "| Agent | Result | Score | Failed Checks | Warnings |" in markdown
+    assert "mock-overbroad" in markdown
