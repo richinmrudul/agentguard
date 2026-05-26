@@ -21,6 +21,11 @@ def version() -> None:
 def run(
     config_path: Path = typer.Argument(..., help="Path to the AgentGuard config file."),
     agent: str = typer.Option(..., "--agent", help="Name of the coding agent to run."),
+    allow_fail_result: bool = typer.Option(
+        False,
+        "--allow-fail-result",
+        help="Exit 0 even when the AgentGuard run result is FAIL.",
+    ),
 ) -> None:
     """Run an AgentGuard benchmark."""
     result = run_benchmark(config_path, agent)
@@ -46,6 +51,8 @@ def run(
         typer.echo(f"Command log path: {result.report_paths.command_log}")
     typer.echo(f"JSON report path: {result.report_paths.json}")
     typer.echo(f"Markdown report path: {result.report_paths.markdown}")
+    if result.result == "FAIL" and not allow_fail_result:
+        raise typer.Exit(1)
 
 
 @app.command("benchmark")
@@ -55,6 +62,11 @@ def benchmark_command(
         ...,
         "--agents",
         help="Comma-separated list of agent names to benchmark.",
+    ),
+    allow_failures: bool = typer.Option(
+        False,
+        "--allow-failures",
+        help="Exit 0 even when one or more benchmarked agents fail.",
     ),
 ) -> None:
     """Run multiple agents against one AgentGuard benchmark config."""
@@ -80,6 +92,8 @@ def benchmark_command(
         )
     typer.echo(f"Benchmark JSON report path: {summary.report_paths.json}")
     typer.echo(f"Benchmark Markdown report path: {summary.report_paths.markdown}")
+    if summary.fail_count > 0 and not allow_failures:
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

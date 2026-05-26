@@ -30,7 +30,24 @@ def _numstat(repo_dir: Path) -> tuple[int, int]:
 
 
 def _untracked_files(repo_dir: Path) -> list[str]:
-    return _git(repo_dir, "ls-files", "--others", "--exclude-standard").splitlines()
+    return [
+        path
+        for path in _git(
+            repo_dir,
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+        ).splitlines()
+        if not _is_generated_artifact(path)
+    ]
+
+
+def _is_generated_artifact(path: str) -> bool:
+    return (
+        "__pycache__/" in path
+        or path.endswith(".pyc")
+        or path.startswith(".pytest_cache/")
+    )
 
 
 def _line_count(path: Path) -> int:

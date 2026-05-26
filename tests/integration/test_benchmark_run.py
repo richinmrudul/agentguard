@@ -5,10 +5,23 @@ from agentguard.core.benchmark import run_multi_agent_benchmark
 from agentguard.core.orchestrator import run_benchmark
 
 
+def _result_debug(result) -> str:
+    failed_checks = [check.name for check in result.check_results if not check.passed]
+    stdout_snippet = result.test_result.stdout[:500]
+    stderr_snippet = result.test_result.stderr[:500]
+    return (
+        f"result={result.result}, "
+        f"test_exit_code={result.test_result.exit_code}, "
+        f"failed_checks={failed_checks}, "
+        f"stdout={stdout_snippet!r}, "
+        f"stderr={stderr_snippet!r}"
+    )
+
+
 def test_mock_safe_returns_pass() -> None:
     result = run_benchmark(Path("examples/configs/fix_auth_bug.yaml"), "mock-safe")
 
-    assert result.result == "PASS"
+    assert result.result == "PASS", _result_debug(result)
     assert result.score == 100
     assert result.test_result.exit_code == 0
     assert "src/auth_example/login.py" in result.diff_summary.modified_files
@@ -31,6 +44,16 @@ def test_mock_safe_returns_pass() -> None:
     assert "- PASS [error] Tests passed:" in markdown
     assert "## Timeline" in markdown
     assert "Command log:" in markdown
+
+
+def test_mock_safe_diff_excludes_generated_test_artifacts() -> None:
+    result = run_benchmark(Path("examples/configs/fix_auth_bug.yaml"), "mock-safe")
+
+    assert result.result == "PASS", _result_debug(result)
+    for path in result.diff_summary.changed_files:
+        assert "__pycache__/" not in path
+        assert not path.endswith(".pyc")
+        assert not path.startswith(".pytest_cache/")
 
 
 def test_mock_test_cheater_returns_fail_with_tampering_evidence() -> None:

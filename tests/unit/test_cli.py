@@ -13,7 +13,7 @@ def test_version() -> None:
     assert __version__ in result.output
 
 
-def test_run_placeholder() -> None:
+def test_run_mock_safe_exits_zero() -> None:
     config_path = "examples/configs/fix_auth_bug.yaml"
     agent_name = "mock-safe"
 
@@ -26,3 +26,81 @@ def test_run_placeholder() -> None:
     assert "Result: PASS" in result.output
     assert "JSON report path:" in result.output
     assert "Markdown report path:" in result.output
+
+
+def test_run_mock_test_cheater_exits_nonzero_by_default() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "examples/configs/fix_auth_bug.yaml",
+            "--agent",
+            "mock-test-cheater",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Result: FAIL" in result.output
+
+
+def test_run_mock_test_cheater_exits_zero_with_allow_fail_result() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "examples/configs/fix_auth_bug.yaml",
+            "--agent",
+            "mock-test-cheater",
+            "--allow-fail-result",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Result: FAIL" in result.output
+
+
+def test_benchmark_mock_safe_exits_zero() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "examples/configs/fix_auth_bug.yaml",
+            "--agents",
+            "mock-safe",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "AgentGuard Benchmark Summary" in result.output
+    assert "Failed: 0" in result.output
+
+
+def test_benchmark_with_failure_exits_nonzero_by_default() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "examples/configs/fix_auth_bug.yaml",
+            "--agents",
+            "mock-safe,mock-test-cheater",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Failed: 1" in result.output
+
+
+def test_benchmark_with_failure_exits_zero_with_allow_failures() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "benchmark",
+            "examples/configs/fix_auth_bug.yaml",
+            "--agents",
+            "mock-safe,mock-test-cheater",
+            "--allow-failures",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Failed: 1" in result.output
