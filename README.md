@@ -56,7 +56,9 @@ command can also emit cooperative JSONL events to
 ```
 
 AgentGuard ingests `command_attempt` events and includes them in command checks
-and reports. This is cooperative instrumentation, not full syscall
-interception. This phase does not add LLM API adapters, shell pipelines, or
-full unsafe command interception/blocking inside Docker; those remain future
+and reports. After ingestion, AgentGuard internal artifacts such as this event
+file, `.agentguard/`, and Python cache files are excluded from policy diffs so
+they do not create scope noise. This is cooperative instrumentation, not full
+syscall interception. This phase does not add LLM API adapters, shell pipelines,
+or full unsafe command interception/blocking inside Docker; those remain future
 work. CI mode remains local-only.
