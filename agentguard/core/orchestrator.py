@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from agentguard.agents.base import Agent
+from agentguard.agents.custom_command_agent import CustomCommandAgent
 from agentguard.agents.mock_agent import get_agent
 from agentguard.checks.base import Check
 from agentguard.checks.diff_size import DiffSizeCheck
@@ -66,8 +68,24 @@ def _test_runner(config, command_tracker: CommandTracker):
     return TestRunner(command_tracker)
 
 
+def _agent_for_config(config, agent_name: str) -> Agent:
+    if agent_name == CustomCommandAgent.name:
+        return CustomCommandAgent(config)
+    return get_agent(agent_name)
+
+
+def _validate_agent_config(config, agent_name: str) -> None:
+    if agent_name != CustomCommandAgent.name:
+        return
+    if not config.agent_command:
+        raise ValueError("Agent 'custom-command' requires config field 'agent_command'.")
+    if config.sandbox.type != "docker":
+        raise ValueError("Agent 'custom-command' currently requires docker sandbox.")
+
+
 def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
     config = load_config(config_path)
+    _validate_agent_config(config, agent_name)
     timeline = TimelineRecorder()
     timeline.add(
         "run_started",
@@ -83,7 +101,7 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
     command_tracker = CommandTracker()
     command_event_index = 0
 
-    agent = get_agent(agent_name)
+    agent = _agent_for_config(config, agent_name)
     timeline.add("agent_started", f"Agent {agent_name} started", {"agent": agent_name})
     agent.run(prepared.repo_dir, command_tracker)
     timeline.add(

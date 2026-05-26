@@ -26,11 +26,19 @@ def test_load_fix_auth_bug_config() -> None:
 def test_load_fix_auth_bug_docker_config() -> None:
     config = load_config(Path("examples/configs/fix_auth_bug_docker.yaml"))
 
+    assert config.agent_command is None
     assert config.sandbox.type == "docker"
     assert config.sandbox.image == "python:3.11-slim"
     assert config.sandbox.workdir == "/workspace"
     assert config.sandbox.network == "none"
     assert config.sandbox.timeout_seconds == 60
+
+
+def test_load_docker_command_agent_config() -> None:
+    config = load_config(Path("examples/configs/fix_auth_bug_docker_command_safe.yaml"))
+
+    assert config.agent_command == "python agent_scripts/safe_agent.py"
+    assert config.sandbox.type == "docker"
 
 
 def test_invalid_policy_severity_raises_clear_error(tmp_path: Path) -> None:

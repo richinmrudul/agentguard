@@ -129,6 +129,11 @@ def load_config(config_path: Path) -> AgentGuardConfig:
     for field in required_string_fields:
         if not isinstance(data.get(field), str) or not data[field]:
             raise ValueError(f"Config field '{field}' must be a non-empty string.")
+    agent_command = data.get("agent_command")
+    if agent_command is not None and (
+        not isinstance(agent_command, str) or not agent_command
+    ):
+        raise ValueError("Config field 'agent_command' must be a non-empty string.")
     if mode == "benchmark" and (
         not isinstance(data.get("repo_template"), str) or not data["repo_template"]
     ):
@@ -153,6 +158,7 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         description=data["description"],
         repo_template=repo_template,
         test_command=data["test_command"],
+        agent_command=agent_command,
         allowed_paths=_string_list(data, "allowed_paths"),
         forbidden_paths=_string_list(data, "forbidden_paths"),
         test_paths=_string_list(data, "test_paths"),

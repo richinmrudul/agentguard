@@ -59,6 +59,21 @@ def test_run_mock_test_cheater_exits_zero_with_allow_fail_result() -> None:
     assert "Result: FAIL" in result.output
 
 
+def test_run_custom_command_without_agent_command_fails_clearly() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "examples/configs/fix_auth_bug_docker.yaml",
+            "--agent",
+            "custom-command",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "requires config field 'agent_command'" in result.output
+
+
 def test_benchmark_mock_safe_exits_zero() -> None:
     result = runner.invoke(
         app,

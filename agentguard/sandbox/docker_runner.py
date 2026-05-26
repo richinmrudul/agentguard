@@ -45,12 +45,66 @@ class DockerTestRunner:
         command_tracker: CommandTracker,
         sandbox: SandboxConfig,
     ) -> None:
+        self.sandbox = sandbox
+        self.command_runner = DockerCommandRunner(command_tracker, sandbox)
+
+    def _docker_command(self, repo_dir: Path, inner_command: list[str]) -> list[str]:
+        return self.command_runner.build_command(repo_dir, inner_command)
+
+    def _run_inner_command(
+        self,
+        repo_dir: Path,
+        inner_command: list[str],
+        command_text: str,
+    ) -> CommandResult:
+        return self.command_runner.run_argv(repo_dir, inner_command, command_text)
+
+    def run(self, repo_dir: Path, command: str) -> CommandResult:
+        test_argv = _docker_test_argv(command)
+        if not test_argv:
+            raise ValueError("Test command cannot be empty.")
+
+        install_result = self._run_inner_command(
+            repo_dir=repo_dir,
+            inner_command=INSTALL_COMMAND,
+            command_text="docker: python -m pip install --no-build-isolation -e .",
+        )
+        if install_result.exit_code != 0:
+            return CommandResult(
+                command=command,
+                exit_code=install_result.exit_code,
+                stdout=install_result.stdout,
+                stderr=install_result.stderr,
+                duration_seconds=install_result.duration_seconds,
+            )
+
+        test_result = self._run_inner_command(
+            repo_dir=repo_dir,
+            inner_command=test_argv,
+            command_text=f"docker: {command}",
+        )
+        return CommandResult(
+            command=command,
+            exit_code=test_result.exit_code,
+            stdout=test_result.stdout,
+            stderr=test_result.stderr,
+            duration_seconds=install_result.duration_seconds
+            + test_result.duration_seconds,
+        )
+
+
+class DockerCommandRunner:
+    def __init__(
+        self,
+        command_tracker: CommandTracker,
+        sandbox: SandboxConfig,
+    ) -> None:
         self.command_tracker = command_tracker
         self.sandbox = sandbox
 
-    def _docker_command(self, repo_dir: Path, inner_command: list[str]) -> list[str]:
+    def build_command(self, repo_dir: Path, inner_command: list[str]) -> list[str]:
         if self.sandbox.type != "docker":
-            raise ValueError("DockerTestRunner requires sandbox.type='docker'.")
+            raise ValueError("DockerCommandRunner requires sandbox.type='docker'.")
         if not self.sandbox.image:
             raise ValueError("Docker sandbox requires an image.")
         return [
@@ -69,13 +123,13 @@ class DockerTestRunner:
             *inner_command,
         ]
 
-    def _run_inner_command(
+    def run_argv(
         self,
         repo_dir: Path,
         inner_command: list[str],
         command_text: str,
     ) -> CommandResult:
-        docker_command = self._docker_command(repo_dir, inner_command)
+        docker_command = self.build_command(repo_dir, inner_command)
         started = time.monotonic()
         try:
             completed = subprocess.run(
@@ -121,37 +175,4 @@ class DockerTestRunner:
             stdout=stdout,
             stderr=stderr,
             duration_seconds=duration_seconds,
-        )
-
-    def run(self, repo_dir: Path, command: str) -> CommandResult:
-        test_argv = _docker_test_argv(command)
-        if not test_argv:
-            raise ValueError("Test command cannot be empty.")
-
-        install_result = self._run_inner_command(
-            repo_dir=repo_dir,
-            inner_command=INSTALL_COMMAND,
-            command_text="docker: python -m pip install --no-build-isolation -e .",
-        )
-        if install_result.exit_code != 0:
-            return CommandResult(
-                command=command,
-                exit_code=install_result.exit_code,
-                stdout=install_result.stdout,
-                stderr=install_result.stderr,
-                duration_seconds=install_result.duration_seconds,
-            )
-
-        test_result = self._run_inner_command(
-            repo_dir=repo_dir,
-            inner_command=test_argv,
-            command_text=f"docker: {command}",
-        )
-        return CommandResult(
-            command=command,
-            exit_code=test_result.exit_code,
-            stdout=test_result.stdout,
-            stderr=test_result.stderr,
-            duration_seconds=install_result.duration_seconds
-            + test_result.duration_seconds,
         )

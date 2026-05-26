@@ -1,12 +1,18 @@
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from agentguard.agents.custom_command_agent import CustomCommandAgent
 from agentguard.config.loader import load_config
 from agentguard.config.schema import SandboxConfig
 from agentguard.instrumentation.command_tracker import CommandTracker
-from agentguard.sandbox.docker_runner import DockerTestRunner, _docker_test_argv
+from agentguard.sandbox.docker_runner import (
+    DockerCommandRunner,
+    DockerTestRunner,
+    _docker_test_argv,
+)
 
 
 def test_docker_command_includes_expected_container_options(tmp_path: Path) -> None:
@@ -52,6 +58,33 @@ def test_docker_command_sets_pythonpath_for_custom_workdir(tmp_path: Path) -> No
     assert f"{repo_dir.resolve()}:/app" in command
     assert command[command.index("-w") + 1] == "/app"
     assert command[command.index("-e") + 1] == "PYTHONPATH=/app/src"
+
+
+def test_docker_command_runner_records_readable_agent_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    def fake_run(command, **kwargs):
+        return SimpleNamespace(returncode=0, stdout="agent ok", stderr="")
+
+    monkeypatch.setattr("agentguard.sandbox.docker_runner.subprocess.run", fake_run)
+    tracker = CommandTracker()
+    runner = DockerCommandRunner(
+        tracker,
+        SandboxConfig(type="docker", image="python:3.11-slim"),
+    )
+
+    result = runner.run_argv(
+        repo_dir=repo_dir,
+        inner_command=["python", "agent_scripts/safe_agent.py"],
+        command_text="docker agent: python agent_scripts/safe_agent.py",
+    )
+
+    assert result.exit_code == 0
+    assert tracker.commands == ["docker agent: python agent_scripts/safe_agent.py"]
 
 
 def test_docker_runner_records_install_and_test_commands(
@@ -134,6 +167,44 @@ def test_docker_runner_surfaces_missing_docker(
         tracker.events[0].command_text
         == "docker: python -m pip install --no-build-isolation -e ."
     )
+
+
+def test_custom_command_agent_requires_agent_command(tmp_path: Path) -> None:
+    config = load_config(Path("examples/configs/fix_auth_bug_docker.yaml"))
+    agent = CustomCommandAgent(config)
+
+    with pytest.raises(ValueError, match="requires config field 'agent_command'"):
+        agent.run(tmp_path, CommandTracker())
+
+
+def test_custom_command_agent_runs_in_docker_with_readable_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = replace(
+        load_config(Path("examples/configs/fix_auth_bug_docker.yaml")),
+        agent_command="python agent_scripts/safe_agent.py",
+    )
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="agent ok", stderr="")
+
+    monkeypatch.setattr("agentguard.sandbox.docker_runner.subprocess.run", fake_run)
+    tracker = CommandTracker()
+
+    CustomCommandAgent(config).run(repo_dir, tracker)
+
+    assert calls[0][:3] == ["docker", "run", "--rm"]
+    assert f"{repo_dir.resolve()}:/workspace" in calls[0]
+    assert calls[0][calls[0].index("-w") + 1] == "/workspace"
+    assert calls[0][calls[0].index("-e") + 1] == "PYTHONPATH=/workspace/src"
+    assert calls[0][calls[0].index("--network") + 1] == "none"
+    assert calls[0][-2:] == ["python", "agent_scripts/safe_agent.py"]
+    assert tracker.commands == ["docker agent: python agent_scripts/safe_agent.py"]
 
 
 def test_sandbox_defaults_to_local(tmp_path: Path) -> None:

@@ -32,7 +32,11 @@ def run(
     ),
 ) -> None:
     """Run an AgentGuard benchmark."""
-    result = run_benchmark(config_path, agent)
+    try:
+        result = run_benchmark(config_path, agent)
+    except ValueError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
 
     typer.echo("AgentGuard Report")
     typer.echo(f"Task: {result.task_id}")

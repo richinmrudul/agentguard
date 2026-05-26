@@ -25,18 +25,29 @@ sandbox:
   timeout_seconds: 60
 ```
 
-Phase 4A only sandboxes benchmark test execution. The configured mock agent
-still modifies the copied benchmark repository on the host, then AgentGuard
-mounts that repo into the Docker container, runs
-`python -m pip install --no-build-isolation -e .`, and runs the configured
+AgentGuard mounts the copied benchmark repository into the Docker container,
+runs `python -m pip install --no-build-isolation -e .`, and runs the configured
 `test_command` inside the container. Diff collection and policy checks still
 happen on the host.
 
-Run the Docker example with:
+Run tests in Docker with a host-side mock agent:
 
 ```bash
 agentguard run examples/configs/fix_auth_bug_docker.yaml --agent mock-safe
 ```
 
-Future sandbox phases will move script/custom agent execution into Docker. CI
-mode remains local-only in Phase 4A.
+Phase 4B also supports a Docker-only custom command agent. Add an
+`agent_command` and run with `--agent custom-command`:
+
+```yaml
+agent_command: python agent_scripts/safe_agent.py
+```
+
+```bash
+agentguard run examples/configs/fix_auth_bug_docker_command_safe.yaml --agent custom-command
+```
+
+The custom command runs inside the same Docker sandbox before tests run. This
+phase does not add LLM API adapters, shell pipelines, or full unsafe command
+interception/blocking inside Docker; those remain future work. CI mode remains
+local-only.
