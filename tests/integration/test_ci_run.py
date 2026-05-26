@@ -31,6 +31,7 @@ def _init_repo(tmp_path: Path) -> Path:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
     _git(repo_dir, "init")
+    _git(repo_dir, "branch", "-M", "main")
     _write(repo_dir / "src" / "app.py", "VALUE = 1\n")
     _write(repo_dir / "tests" / "test_app.py", "def test_app():\n    assert True\n")
     _git(repo_dir, "add", ".")
@@ -131,6 +132,10 @@ def test_ci_passes_for_allowed_existing_diff(tmp_path: Path) -> None:
         "reports_written",
         "ci_completed",
     }.issubset(timeline_types)
+    diff_event = next(
+        event for event in report["timeline"] if event["event_type"] == "diff_collected"
+    )
+    assert diff_event["metadata"]["diff_mode"] == "working_tree"
 
 
 def test_ci_fails_for_forbidden_secret_path(tmp_path: Path) -> None:
@@ -175,6 +180,43 @@ def test_ci_test_tampering_warning_does_not_fail(tmp_path: Path) -> None:
     assert "tests/test_app.py" in tampering.evidence
 
 
+def test_ci_ref_diff_uses_committed_base_head_not_working_tree(tmp_path: Path) -> None:
+    repo_dir = _init_repo(tmp_path)
+    _git(repo_dir, "checkout", "-b", "feature")
+    _write(repo_dir / "src" / "app.py", "VALUE = 2\n")
+    _git(repo_dir, "add", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Feature change",
+    )
+    _write(repo_dir / ".env", "TOKEN=uncommitted\n")
+
+    result = run_ci(
+        _config(tmp_path, task_id="ci_refs"),
+        repo_dir=repo_dir,
+        ci_root=tmp_path / "ci",
+        base_ref="main",
+        head_ref="HEAD",
+    )
+
+    assert result.result == "PASS"
+    assert result.diff_summary.modified_files == ["src/app.py"]
+    assert result.diff_summary.added_files == []
+    assert ".env" not in result.diff_summary.changed_files
+    diff_event = next(
+        event for event in result.timeline if event.event_type == "diff_collected"
+    )
+    assert diff_event.metadata["diff_mode"] == "refs"
+    assert diff_event.metadata["base_ref"] == "main"
+    assert diff_event.metadata["head_ref"] == "HEAD"
+
+
 def test_ci_cli_exits_nonzero_on_fail_and_zero_when_allowed(
     tmp_path: Path,
     monkeypatch,
@@ -195,3 +237,20 @@ def test_ci_cli_exits_nonzero_on_fail_and_zero_when_allowed(
     assert "Result: FAIL" in failed.output
     assert allowed.exit_code == 0
     assert "Result: FAIL" in allowed.output
+
+
+def test_ci_cli_requires_base_and_head_together(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_dir = _init_repo(tmp_path)
+    config_path = _config(tmp_path, task_id="ci_cli_refs")
+    monkeypatch.chdir(repo_dir)
+
+    missing_head = runner.invoke(app, ["ci", "--config", str(config_path), "--base", "main"])
+    missing_base = runner.invoke(app, ["ci", "--config", str(config_path), "--head", "HEAD"])
+
+    assert missing_head.exit_code != 0
+    assert "--base and --head must be provided together." in missing_head.output
+    assert missing_base.exit_code != 0
+    assert "--base and --head must be provided together." in missing_base.output

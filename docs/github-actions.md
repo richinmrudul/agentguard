@@ -1,29 +1,30 @@
 # Running AgentGuard in GitHub Actions
 
-AgentGuard CI mode evaluates the current repository's existing git diff. It does not
-run an agent. A typical run executes the configured test command, applies deterministic
-policy checks, scores the result, and writes JSON/Markdown reports.
+AgentGuard CI mode evaluates the current repository's existing git diff or a
+PR-style base/head git diff. It does not run an agent. A typical run executes the
+configured test command, applies deterministic policy checks, scores the result, and
+writes JSON/Markdown reports.
 
 ```bash
 agentguard ci --config agentguard.yaml
 ```
 
-## Current Limitation
+For pull request-style evaluation in CI, pass the base and head refs:
 
-In Phase 3B, CI mode checks the current working tree diff. It does not yet compare a
-pull request base and head commit. In a normal GitHub Actions checkout, the working
-tree may be clean, so AgentGuard may see no meaningful changed files unless the
-workflow creates or preserves a diff before running `agentguard ci`.
+```bash
+agentguard ci --config agentguard.yaml --base origin/main --head HEAD
+```
 
-True PR base/head comparison, such as `agentguard ci --base origin/main --head HEAD`,
-is planned for Phase 3C.
+## Diff Modes
 
-## Recommended Usage Today
+- Working-tree mode: `agentguard ci --config agentguard.yaml` evaluates staged,
+  unstaged, and untracked local changes.
+- Ref mode: `agentguard ci --config agentguard.yaml --base origin/main --head HEAD`
+  evaluates committed changes between the merge base of `origin/main` and `HEAD`.
 
-- Local pre-merge validation before pushing changes.
-- CI smoke validation that verifies AgentGuard can run in the repository.
-- Workflows that intentionally create or preserve a working tree diff before running
-  AgentGuard.
+In GitHub Actions, use `actions/checkout` with `fetch-depth: 0` for ref mode.
+AgentGuard needs access to the base ref and enough git history to compute the
+base/head diff.
 
 ## Exit Codes
 
@@ -119,6 +120,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -128,5 +131,5 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Run AgentGuard CI
-        run: agentguard ci --config agentguard.yaml
+        run: agentguard ci --config agentguard.yaml --base origin/main --head HEAD
 ```

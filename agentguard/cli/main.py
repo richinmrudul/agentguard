@@ -1,5 +1,7 @@
 from pathlib import Path
+from typing import Optional
 
+import click
 import typer
 
 from agentguard import __version__
@@ -63,6 +65,16 @@ def ci_command(
         "--config",
         help="Path to the AgentGuard CI config file.",
     ),
+    base_ref: Optional[str] = typer.Option(
+        None,
+        "--base",
+        help="Base git ref for PR-style diff mode.",
+    ),
+    head_ref: Optional[str] = typer.Option(
+        None,
+        "--head",
+        help="Head git ref for PR-style diff mode.",
+    ),
     allow_fail_result: bool = typer.Option(
         False,
         "--allow-fail-result",
@@ -70,7 +82,10 @@ def ci_command(
     ),
 ) -> None:
     """Evaluate existing git diff in the current repository."""
-    result = run_ci(config_path)
+    if (base_ref is None) != (head_ref is None):
+        raise click.ClickException("--base and --head must be provided together.")
+
+    result = run_ci(config_path, base_ref=base_ref, head_ref=head_ref)
 
     typer.echo("AgentGuard CI Report")
     typer.echo(f"Task: {result.task_id}")

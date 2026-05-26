@@ -11,7 +11,7 @@ from agentguard.core.result import CiResult, ReportPaths
 from agentguard.core.timeline import TimelineRecorder
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
-from agentguard.repo.git_diff import collect_diff
+from agentguard.repo.git_diff import collect_diff, collect_diff_between_refs
 from agentguard.scoring.scorer import score_checks
 
 
@@ -141,6 +141,8 @@ def run_ci(
     config_path: Path,
     repo_dir: Optional[Path] = None,
     ci_root: Path = Path(".agentguard/ci"),
+    base_ref: Optional[str] = None,
+    head_ref: Optional[str] = None,
 ) -> CiResult:
     config = load_config(config_path)
     timeline = TimelineRecorder()
@@ -176,7 +178,23 @@ def run_ci(
         {"test_exit_code": test_result.exit_code},
     )
 
-    diff_summary = collect_diff(detected_repo_dir)
+    if base_ref is not None and head_ref is not None:
+        diff_mode = "refs"
+        diff_summary = collect_diff_between_refs(
+            detected_repo_dir,
+            base_ref,
+            head_ref,
+        )
+        diff_metadata = {
+            "diff_mode": diff_mode,
+            "base_ref": base_ref,
+            "head_ref": head_ref,
+        }
+    else:
+        diff_mode = "working_tree"
+        diff_summary = collect_diff(detected_repo_dir)
+        diff_metadata = {"diff_mode": diff_mode}
+
     timeline.add(
         "diff_collected",
         (
@@ -186,6 +204,7 @@ def run_ci(
             f"{len(diff_summary.deleted_files)} deleted"
         ),
         {
+            **diff_metadata,
             "modified_files": diff_summary.modified_files,
             "added_files": diff_summary.added_files,
             "deleted_files": diff_summary.deleted_files,
