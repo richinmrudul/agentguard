@@ -21,4 +21,4 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Run AgentGuard CI
-        run: agentguard ci --config agentguard.yaml --base origin/main --head HEAD
+        run: agentguard ci --config agentguard.yaml --base origin/main --head HEAD --github-summary

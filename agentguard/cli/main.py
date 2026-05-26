@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -7,6 +8,7 @@ from agentguard import __version__
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.ci import run_ci
 from agentguard.core.orchestrator import run_benchmark
+from agentguard.reports.github_summary import write_github_step_summary
 
 app = typer.Typer(
     help="Local-first safety and reliability evaluation framework for AI coding agents."
@@ -79,6 +81,11 @@ def ci_command(
         "--allow-fail-result",
         help="Exit 0 even when the AgentGuard CI result is FAIL.",
     ),
+    github_summary: bool = typer.Option(
+        False,
+        "--github-summary",
+        help="Append a compact CI report to GITHUB_STEP_SUMMARY.",
+    ),
 ) -> None:
     """Evaluate existing git diff in the current repository."""
     if (base_ref is None) != (head_ref is None):
@@ -89,6 +96,17 @@ def ci_command(
         raise typer.Exit(2)
 
     result = run_ci(config_path, base_ref=base_ref, head_ref=head_ref)
+    github_summary_path = None
+    if github_summary:
+        summary_env = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_env:
+            github_summary_path = write_github_step_summary(result, Path(summary_env))
+        else:
+            typer.echo(
+                "Warning: --github-summary was provided but "
+                "GITHUB_STEP_SUMMARY is not set.",
+                err=True,
+            )
 
     typer.echo("AgentGuard CI Report")
     typer.echo(f"Task: {result.task_id}")
@@ -111,6 +129,8 @@ def ci_command(
         typer.echo(f"Command log path: {result.report_paths.command_log}")
     typer.echo(f"JSON report path: {result.report_paths.json}")
     typer.echo(f"Markdown report path: {result.report_paths.markdown}")
+    if github_summary_path is not None:
+        typer.echo(f"GitHub summary path: {github_summary_path}")
     if result.result == "FAIL" and not allow_fail_result:
         raise typer.Exit(1)
 
