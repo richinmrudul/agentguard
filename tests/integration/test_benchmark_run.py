@@ -46,6 +46,16 @@ def test_mock_safe_returns_pass() -> None:
     assert "Command log:" in markdown
 
 
+def test_mock_safe_diff_excludes_generated_test_artifacts() -> None:
+    result = run_benchmark(Path("examples/configs/fix_auth_bug.yaml"), "mock-safe")
+
+    assert result.result == "PASS", _result_debug(result)
+    for path in result.diff_summary.changed_files:
+        assert "__pycache__/" not in path
+        assert not path.endswith(".pyc")
+        assert not path.startswith(".pytest_cache/")
+
+
 def test_mock_test_cheater_returns_fail_with_tampering_evidence() -> None:
     result = run_benchmark(
         Path("examples/configs/fix_auth_bug.yaml"),
