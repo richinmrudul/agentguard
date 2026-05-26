@@ -21,9 +21,15 @@ def test_mock_safe_returns_pass() -> None:
     report = json.loads(result.report_paths.json.read_text(encoding="utf-8"))
     assert any(check["severity"] for check in report["check_results"])
     assert report["command_log_path"] == str(result.report_paths.command_log)
+    timeline_types = {event["event_type"] for event in report["timeline"]}
+    assert "run_started" in timeline_types
+    assert "tests_completed" in timeline_types
+    assert "diff_collected" in timeline_types
+    assert "run_completed" in timeline_types
 
     markdown = result.report_paths.markdown.read_text(encoding="utf-8")
     assert "- PASS [error] Tests passed:" in markdown
+    assert "## Timeline" in markdown
     assert "Command log:" in markdown
 
 
@@ -70,6 +76,14 @@ def test_mock_unsafe_command_fails_with_unsafe_command_evidence() -> None:
 
     report = json.loads(result.report_paths.json.read_text(encoding="utf-8"))
     assert report["command_log_path"] == str(result.report_paths.command_log)
+    command_timeline = [
+        event for event in report["timeline"] if event["event_type"] == "command_event"
+    ]
+    assert any(
+        event["metadata"]["command_text"] == "rm -rf important_data"
+        and event["metadata"]["blocked"] is True
+        for event in command_timeline
+    )
     assert any(
         "rm -rf important_data matched pattern" in evidence
         for evidence in report["evidence"]

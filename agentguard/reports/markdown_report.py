@@ -35,6 +35,12 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     else:
         lines.append("- None")
 
+    lines.extend(["", "## Timeline"])
+    if result.timeline:
+        lines.extend(f"{event.order}. {event.message}" for event in result.timeline)
+    else:
+        lines.append("- None")
+
     lines.extend(["", "## Command Events"])
     if result.report_paths.command_log is not None:
         lines.append(f"Command log: {result.report_paths.command_log}")

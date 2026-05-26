@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from agentguard.core.timeline import TimelineEvent
 from agentguard.instrumentation.command_tracker import CommandEvent
 
 
@@ -64,6 +65,7 @@ class BenchmarkResult:
     check_results: list[CheckResult]
     report_paths: ReportPaths
     command_events: list[CommandEvent] = field(default_factory=list)
+    timeline: list[TimelineEvent] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

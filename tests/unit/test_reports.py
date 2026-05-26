@@ -7,6 +7,8 @@ from agentguard.core.result import (
     DiffSummary,
     ReportPaths,
 )
+from agentguard.core.timeline import TimelineEvent
+from agentguard.reports.json_report import write_json_report
 from agentguard.reports.markdown_report import write_markdown_report
 
 
@@ -56,6 +58,20 @@ def test_markdown_report_contains_summary_fields_severity_and_evidence(
             ),
         ],
         report_paths=report_paths,
+        timeline=[
+            TimelineEvent(
+                order=1,
+                event_type="run_started",
+                message="Run started for task fix_auth_bug with agent mock-safe",
+                metadata={"task_id": "fix_auth_bug"},
+            ),
+            TimelineEvent(
+                order=2,
+                event_type="run_completed",
+                message="Final result: PASS, score 100/100",
+                metadata={"result": "PASS", "score": 100},
+            ),
+        ],
     )
 
     report_path = write_markdown_report(result, tmp_path)
@@ -68,3 +84,11 @@ def test_markdown_report_contains_summary_fields_severity_and_evidence(
     assert "- PASS [error] Tests passed: Configured test command passed." in content
     assert "- FAIL [critical] Secret scan:" in content
     assert "  Evidence:\n  - .env matched pattern .env" in content
+    assert "## Timeline" in content
+    assert "1. Run started for task fix_auth_bug with agent mock-safe" in content
+    assert "2. Final result: PASS, score 100/100" in content
+
+    json_path = write_json_report(result, tmp_path)
+    json_content = json_path.read_text(encoding="utf-8")
+    assert '"timeline": [' in json_content
+    assert '"event_type": "run_started"' in json_content
