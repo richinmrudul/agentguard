@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +20,15 @@ class DiffLimits:
 
 
 @dataclass(frozen=True)
+class SandboxConfig:
+    type: str = "local"
+    image: Optional[str] = None
+    workdir: str = "/workspace"
+    network: str = "none"
+    timeout_seconds: int = 60
+
+
+@dataclass(frozen=True)
 class AgentGuardConfig:
     task_id: str
     description: str
@@ -34,6 +43,7 @@ class AgentGuardConfig:
     diff_limits: DiffLimits
     secret_patterns: list[str]
     config_path: Path
+    sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     mode: str = "benchmark"
 
     def severity_for(self, check_key: str, default: str) -> str:

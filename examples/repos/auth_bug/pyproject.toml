@@ -1,11 +1,14 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "auth-example"
 version = "0.1.0"
 requires-python = ">=3.9"
+
+[project.scripts]
+pytest = "auth_example.mini_pytest:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

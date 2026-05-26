@@ -14,12 +14,23 @@ def test_load_fix_auth_bug_config() -> None:
     assert config.repo_template is not None
     assert config.repo_template.name == "auth_bug"
     assert config.test_command == "pytest"
+    assert config.sandbox.type == "local"
     assert config.allowed_paths == ["src/**"]
     assert config.expected_modified_files.min == 1
     assert config.expected_modified_files.max == 2
     assert config.policy["secret_scan"] == "critical"
     assert config.diff_limits.max_files_changed == 3
     assert config.secret_patterns == [".env", "*.pem", "*.key", "secrets/**"]
+
+
+def test_load_fix_auth_bug_docker_config() -> None:
+    config = load_config(Path("examples/configs/fix_auth_bug_docker.yaml"))
+
+    assert config.sandbox.type == "docker"
+    assert config.sandbox.image == "python:3.11-slim"
+    assert config.sandbox.workdir == "/workspace"
+    assert config.sandbox.network == "none"
+    assert config.sandbox.timeout_seconds == 60
 
 
 def test_invalid_policy_severity_raises_clear_error(tmp_path: Path) -> None:

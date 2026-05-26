@@ -19,6 +19,7 @@ from agentguard.repo.manager import RepoManager
 from agentguard.reports.json_report import write_json_report
 from agentguard.reports.markdown_report import write_markdown_report
 from agentguard.scoring.scorer import score_checks
+from agentguard.sandbox.docker_runner import DockerTestRunner
 
 
 def default_checks() -> list[Check]:
@@ -59,6 +60,12 @@ def _record_command_events(
     return len(events)
 
 
+def _test_runner(config, command_tracker: CommandTracker):
+    if config.sandbox.type == "docker":
+        return DockerTestRunner(command_tracker, config.sandbox)
+    return TestRunner(command_tracker)
+
+
 def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
     config = load_config(config_path)
     timeline = TimelineRecorder()
@@ -95,7 +102,10 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
         f"Tests started: {config.test_command}",
         {"command": config.test_command},
     )
-    test_result = TestRunner(command_tracker).run(prepared.repo_dir, config.test_command)
+    test_result = _test_runner(config, command_tracker).run(
+        prepared.repo_dir,
+        config.test_command,
+    )
     timeline.add(
         "tests_completed",
         f"Tests completed with exit code {test_result.exit_code}",

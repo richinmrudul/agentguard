@@ -8,6 +8,7 @@ from agentguard.config.schema import (
     AgentGuardConfig,
     DiffLimits,
     ExpectedModifiedFiles,
+    SandboxConfig,
 )
 
 
@@ -68,6 +69,46 @@ def _load_diff_limits(data: dict[str, Any]) -> DiffLimits:
     )
 
 
+def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
+    sandbox = data.get("sandbox", {})
+    if sandbox is None:
+        sandbox = {}
+    if not isinstance(sandbox, dict):
+        raise ValueError("Config field 'sandbox' must be a mapping.")
+
+    sandbox_type = sandbox.get("type", "local")
+    if sandbox_type not in {"local", "docker"}:
+        raise ValueError("Config field 'sandbox.type' must be either 'local' or 'docker'.")
+
+    image = sandbox.get("image")
+    if image is not None and (not isinstance(image, str) or not image):
+        raise ValueError("Config field 'sandbox.image' must be a non-empty string.")
+    if sandbox_type == "docker" and image is None:
+        raise ValueError("Config field 'sandbox.image' is required for docker sandbox.")
+
+    workdir = sandbox.get("workdir", "/workspace")
+    if not isinstance(workdir, str) or not workdir:
+        raise ValueError("Config field 'sandbox.workdir' must be a non-empty string.")
+
+    network = sandbox.get("network", "none")
+    if not isinstance(network, str) or not network:
+        raise ValueError("Config field 'sandbox.network' must be a non-empty string.")
+
+    timeout_seconds = _optional_int(sandbox, "timeout_seconds", "sandbox")
+    if timeout_seconds is None:
+        timeout_seconds = 60
+    if timeout_seconds == 0:
+        raise ValueError("Config field 'sandbox.timeout_seconds' must be positive.")
+
+    return SandboxConfig(
+        type=sandbox_type,
+        image=image,
+        workdir=workdir,
+        network=network,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def load_config(config_path: Path) -> AgentGuardConfig:
     path = config_path.expanduser()
     with path.open("r", encoding="utf-8") as file:
@@ -120,6 +161,7 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         policy=_load_policy(data),
         diff_limits=_load_diff_limits(data),
         secret_patterns=_string_list(data, "secret_patterns"),
+        sandbox=_load_sandbox(data),
         config_path=path.resolve(),
         mode=mode,
     )
