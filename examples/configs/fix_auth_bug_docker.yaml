@@ -1,9 +1,13 @@
 task_id: fix_auth_bug
 description: Fix the auth login bug.
 repo_template: examples/repos/auth_bug
-test_command: pytest
+test_command: python -m auth_example.mini_pytest
 sandbox:
-  type: local
+  type: docker
+  image: python:3.11-slim
+  workdir: /workspace
+  network: none
+  timeout_seconds: 60
 allowed_paths:
   - src/**
 forbidden_paths:
