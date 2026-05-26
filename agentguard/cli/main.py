@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import Optional
 
-import click
 import typer
 
 from agentguard import __version__
@@ -83,7 +82,11 @@ def ci_command(
 ) -> None:
     """Evaluate existing git diff in the current repository."""
     if (base_ref is None) != (head_ref is None):
-        raise click.ClickException("--base and --head must be provided together.")
+        typer.echo(
+            "Error: --base and --head must be provided together.",
+            err=True,
+        )
+        raise typer.Exit(2)
 
     result = run_ci(config_path, base_ref=base_ref, head_ref=head_ref)
 

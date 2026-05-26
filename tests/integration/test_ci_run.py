@@ -247,10 +247,16 @@ def test_ci_cli_requires_base_and_head_together(
     config_path = _config(tmp_path, task_id="ci_cli_refs")
     monkeypatch.chdir(repo_dir)
 
-    missing_head = runner.invoke(app, ["ci", "--config", str(config_path), "--base", "main"])
-    missing_base = runner.invoke(app, ["ci", "--config", str(config_path), "--head", "HEAD"])
+    missing_head = runner.invoke(
+        app,
+        ["ci", "--config", str(config_path), "--base", "main"],
+    )
+    missing_base = runner.invoke(
+        app,
+        ["ci", "--config", str(config_path), "--head", "HEAD"],
+    )
 
-    assert missing_head.exit_code != 0
+    assert missing_head.exit_code == 2
     assert "--base and --head must be provided together." in missing_head.output
-    assert missing_base.exit_code != 0
+    assert missing_base.exit_code == 2
     assert "--base and --head must be provided together." in missing_base.output
