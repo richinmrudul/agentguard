@@ -14,6 +14,10 @@ from agentguard.checks.unsafe_commands import UnsafeCommandsCheck
 from agentguard.config.loader import load_config
 from agentguard.core.result import BenchmarkResult, ReportPaths
 from agentguard.core.timeline import TimelineRecorder
+from agentguard.instrumentation.agent_event_reader import (
+    DEFAULT_AGENT_EVENT_FILE,
+    read_agent_events,
+)
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
 from agentguard.repo.git_diff import collect_diff
@@ -108,6 +112,16 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
         "agent_completed",
         f"Agent {agent_name} completed",
         {"agent": agent_name},
+    )
+    ingested_events = read_agent_events(prepared.repo_dir)
+    command_tracker.extend(ingested_events)
+    timeline.add(
+        "ingested_agent_events",
+        f"Ingested {len(ingested_events)} agent event(s)",
+        {
+            "event_count": len(ingested_events),
+            "event_file": str(prepared.repo_dir / DEFAULT_AGENT_EVENT_FILE),
+        },
     )
     command_event_index = _record_command_events(
         timeline,
