@@ -1,3 +1,4 @@
+import os
 import shlex
 import subprocess
 import sys
@@ -24,6 +25,16 @@ class TestRunner:
         if not argv:
             raise ValueError("Test command cannot be empty.")
 
+        env = os.environ.copy()
+        src_path = repo_dir / "src"
+        if src_path.exists():
+            existing_pythonpath = env.get("PYTHONPATH")
+            env["PYTHONPATH"] = (
+                str(src_path)
+                if not existing_pythonpath
+                else f"{src_path}{os.pathsep}{existing_pythonpath}"
+            )
+
         started = time.monotonic()
         completed = subprocess.run(
             argv,
@@ -31,6 +42,7 @@ class TestRunner:
             check=False,
             capture_output=True,
             text=True,
+            env=env,
         )
         duration_seconds = time.monotonic() - started
         self.command_tracker.record_executed(
