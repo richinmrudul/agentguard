@@ -39,6 +39,9 @@ class CommandTracker:
     def commands(self) -> list[str]:
         return [event.command_text for event in self._events]
 
+    def extend(self, events: list[CommandEvent]) -> None:
+        self._events.extend(events)
+
     def record_executed(
         self,
         command: list[str],

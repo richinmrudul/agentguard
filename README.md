@@ -48,6 +48,15 @@ agentguard run examples/configs/fix_auth_bug_docker_command_safe.yaml --agent cu
 ```
 
 The custom command runs inside the same Docker sandbox before tests run. This
-phase does not add LLM API adapters, shell pipelines, or full unsafe command
-interception/blocking inside Docker; those remain future work. CI mode remains
-local-only.
+command can also emit cooperative JSONL events to
+`.agentguard_agent_events.jsonl` in the repo root:
+
+```json
+{"type":"command_attempt","command":["rm","-rf","important_data"],"command_text":"rm -rf important_data","blocked":true,"reason":"Mock unsafe command attempt"}
+```
+
+AgentGuard ingests `command_attempt` events and includes them in command checks
+and reports. This is cooperative instrumentation, not full syscall
+interception. This phase does not add LLM API adapters, shell pipelines, or
+full unsafe command interception/blocking inside Docker; those remain future
+work. CI mode remains local-only.
