@@ -2,6 +2,7 @@ import subprocess
 from pathlib import Path
 
 from agentguard.core.result import DiffSummary
+from agentguard.repo.internal_artifacts import is_internal_artifact
 
 
 def _git(repo_dir: Path, *args: str) -> str:
@@ -26,6 +27,8 @@ def _numstat_for_diff(repo_dir: Path, *diff_args: str) -> tuple[int, int]:
         parts = line.split("\t")
         if len(parts) < 3:
             continue
+        if is_internal_artifact(parts[-1]):
+            continue
         if parts[0].isdigit():
             added += int(parts[0])
         if parts[1].isdigit():
@@ -46,6 +49,8 @@ def _classify_name_status(
             continue
         status = parts[0]
         path = parts[-1]
+        if is_internal_artifact(path):
+            continue
         status_type = status[0]
         if status_type == "A":
             added_files.append(path)
@@ -68,16 +73,8 @@ def _untracked_files(repo_dir: Path) -> list[str]:
             "--others",
             "--exclude-standard",
         ).splitlines()
-        if not _is_generated_artifact(path)
+        if not is_internal_artifact(path)
     ]
-
-
-def _is_generated_artifact(path: str) -> bool:
-    return (
-        "__pycache__/" in path
-        or path.endswith(".pyc")
-        or path.startswith(".pytest_cache/")
-    )
 
 
 def _line_count(path: Path) -> int:
@@ -88,29 +85,41 @@ def _line_count(path: Path) -> int:
 
 
 def collect_diff(repo_dir: Path) -> DiffSummary:
-    modified_files = _git(
-        repo_dir,
-        "diff",
-        "HEAD",
-        "--name-only",
-        "--diff-filter=M",
-    ).splitlines()
-    added_files = _git(
-        repo_dir,
-        "diff",
-        "HEAD",
-        "--name-only",
-        "--diff-filter=A",
-    ).splitlines()
+    modified_files = [
+        path
+        for path in _git(
+            repo_dir,
+            "diff",
+            "HEAD",
+            "--name-only",
+            "--diff-filter=M",
+        ).splitlines()
+        if not is_internal_artifact(path)
+    ]
+    added_files = [
+        path
+        for path in _git(
+            repo_dir,
+            "diff",
+            "HEAD",
+            "--name-only",
+            "--diff-filter=A",
+        ).splitlines()
+        if not is_internal_artifact(path)
+    ]
     untracked_files = _untracked_files(repo_dir)
     added_files.extend(path for path in untracked_files if path not in added_files)
-    deleted_files = _git(
-        repo_dir,
-        "diff",
-        "HEAD",
-        "--name-only",
-        "--diff-filter=D",
-    ).splitlines()
+    deleted_files = [
+        path
+        for path in _git(
+            repo_dir,
+            "diff",
+            "HEAD",
+            "--name-only",
+            "--diff-filter=D",
+        ).splitlines()
+        if not is_internal_artifact(path)
+    ]
     lines_added, lines_deleted = _numstat(repo_dir)
     lines_added += sum(_line_count(repo_dir / path) for path in untracked_files)
 
@@ -120,7 +129,20 @@ def collect_diff(repo_dir: Path) -> DiffSummary:
         deleted_files=deleted_files,
         lines_added=lines_added,
         lines_deleted=lines_deleted,
-        unified_diff=_git(repo_dir, "diff", "HEAD"),
+        unified_diff=_git(
+            repo_dir,
+            "diff",
+            "HEAD",
+            "--",
+            ".",
+            ":!.agentguard_agent_events.jsonl",
+            ":!.agentguard/**",
+            ":!.pytest_cache/**",
+            ":!**/__pycache__/**",
+            ":!**/*.pyc",
+            ":!.ruff_cache/**",
+            ":!.DS_Store",
+        ),
     )
 
 

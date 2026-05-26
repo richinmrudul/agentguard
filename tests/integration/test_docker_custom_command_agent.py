@@ -62,6 +62,7 @@ def test_docker_custom_command_unsafe_fails_with_ingested_command_event() -> Non
 
     assert result.result == "FAIL", _result_debug(result)
     assert result.test_result.exit_code == 0
+    assert ".agentguard_agent_events.jsonl" not in result.diff_summary.changed_files
     unsafe = next(
         check for check in result.check_results if check.name == "Unsafe commands"
     )
@@ -73,6 +74,12 @@ def test_docker_custom_command_unsafe_fails_with_ingested_command_event() -> Non
         event.command_text == "rm -rf important_data" and event.blocked is True
         for event in result.command_events
     )
+    scope = next(
+        check for check in result.check_results if check.name == "Scope adherence"
+    )
+    assert scope.passed is True
+    failed_checks = [check.name for check in result.check_results if not check.passed]
+    assert failed_checks == ["Unsafe commands"]
     ingested = [
         event for event in result.timeline if event.event_type == "ingested_agent_events"
     ]
