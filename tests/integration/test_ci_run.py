@@ -239,6 +239,60 @@ def test_ci_cli_exits_nonzero_on_fail_and_zero_when_allowed(
     assert "Result: FAIL" in allowed.output
 
 
+def test_ci_cli_writes_github_step_summary(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_dir = _init_repo(tmp_path)
+    _write(repo_dir / ".env", "TOKEN=secret\n")
+    config_path = _config(tmp_path, task_id="ci_summary")
+    summary_path = tmp_path / "github" / "summary.md"
+    monkeypatch.chdir(repo_dir)
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
+
+    result = runner.invoke(
+        app,
+        [
+            "ci",
+            "--config",
+            str(config_path),
+            "--github-summary",
+            "--allow-fail-result",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"GitHub summary path: {summary_path}" in result.output
+    assert summary_path.exists()
+    summary = summary_path.read_text(encoding="utf-8")
+    assert "## AgentGuard CI Report" in summary
+    assert "- Result: **FAIL**" in summary
+    assert "- [critical] Forbidden paths:" in summary
+
+
+def test_ci_cli_warns_when_github_summary_env_is_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_dir = _init_repo(tmp_path)
+    _write(repo_dir / "src" / "app.py", "VALUE = 2\n")
+    config_path = _config(tmp_path, task_id="ci_missing_summary")
+    monkeypatch.chdir(repo_dir)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    result = runner.invoke(
+        app,
+        ["ci", "--config", str(config_path), "--github-summary"],
+    )
+
+    assert result.exit_code == 0
+    assert (
+        "Warning: --github-summary was provided but GITHUB_STEP_SUMMARY is not set."
+        in result.output
+    )
+    assert "AgentGuard CI Report" in result.output
+
+
 def test_ci_cli_requires_base_and_head_together(
     tmp_path: Path,
     monkeypatch,

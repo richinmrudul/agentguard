@@ -12,7 +12,7 @@ agentguard ci --config agentguard.yaml
 For pull request-style evaluation in CI, pass the base and head refs:
 
 ```bash
-agentguard ci --config agentguard.yaml --base origin/main --head HEAD
+agentguard ci --config agentguard.yaml --base origin/main --head HEAD --github-summary
 ```
 
 ## Diff Modes
@@ -49,6 +49,11 @@ Each CI run writes reports under:
 
 The JSON and Markdown reports include the task, result, score, config path, repository
 directory, test result, diff summary, check results, command log path, and timeline.
+
+When `--github-summary` is provided, AgentGuard appends a compact Markdown summary to
+the file path in `GITHUB_STEP_SUMMARY`. GitHub renders that content on the Actions run
+summary page. The summary includes result, score, failed and warning checks, changed
+file counts, and report paths; it does not include full command stdout or stderr.
 
 ## Example Config
 
@@ -131,5 +136,5 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Run AgentGuard CI
-        run: agentguard ci --config agentguard.yaml --base origin/main --head HEAD
+        run: agentguard ci --config agentguard.yaml --base origin/main --head HEAD --github-summary
 ```
