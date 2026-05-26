@@ -43,6 +43,7 @@ class AgentGuardConfig:
     diff_limits: DiffLimits
     secret_patterns: list[str]
     config_path: Path
+    agent_command: Optional[str] = None
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     mode: str = "benchmark"
 
