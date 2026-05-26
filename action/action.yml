@@ -1,0 +1,36 @@
+name: AgentGuard
+description: Run AgentGuard CI policy checks against a repository diff.
+
+inputs:
+  config:
+    description: Path to AgentGuard config file.
+    required: false
+    default: agentguard.yaml
+  base:
+    description: Base git ref for PR-style diff comparison.
+    required: false
+    default: ""
+  head:
+    description: Head git ref for PR-style diff comparison.
+    required: false
+    default: HEAD
+  github-summary:
+    description: Whether to write a GitHub Actions step summary.
+    required: false
+    default: "true"
+  allow-fail-result:
+    description: Whether to exit 0 even if AgentGuard policy result is FAIL.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: bash "$GITHUB_ACTION_PATH/entrypoint.sh"
+      env:
+        AGENTGUARD_CONFIG: ${{ inputs.config }}
+        AGENTGUARD_BASE: ${{ inputs.base }}
+        AGENTGUARD_HEAD: ${{ inputs.head }}
+        AGENTGUARD_GITHUB_SUMMARY: ${{ inputs.github-summary }}
+        AGENTGUARD_ALLOW_FAIL_RESULT: ${{ inputs.allow-fail-result }}

@@ -18,3 +18,7 @@ agents.
 See [docs/github-actions.md](docs/github-actions.md) for a workflow example and
 CI-mode guidance, including `fetch-depth: 0` for base/head PR diffs and
 `--github-summary` for Actions run summaries.
+
+AgentGuard also includes a reusable composite GitHub Action. See
+[docs/action.md](docs/action.md) for inputs, installation assumptions, and an
+action-based workflow example.
