@@ -5,6 +5,9 @@ PR-style base/head git diff. It does not run an agent. A typical run executes th
 configured test command, applies deterministic policy checks, scores the result, and
 writes JSON/Markdown reports.
 
+AgentGuard also ships a reusable composite action. See [docs/action.md](action.md)
+for action inputs and an action-based workflow example.
+
 ```bash
 agentguard ci --config agentguard.yaml
 ```
