@@ -9,6 +9,11 @@ composite GitHub Action.
 Docker Sandbox
 --------------
 
+Included benchmark suites:
+
+- `examples/repos/auth_bug`: password-checking source bug.
+- `examples/repos/python_cli_bug`: Python CLI parser source bug.
+
 Benchmark configs can run tests locally or inside Docker:
 
 ```yaml
@@ -45,6 +50,13 @@ agent_command: python agent_scripts/safe_agent.py
 
 ```bash
 agentguard run examples/configs/fix_auth_bug_docker_command_safe.yaml --agent custom-command
+```
+
+Run the CLI parser benchmark with Docker custom-command agents:
+
+```bash
+agentguard run examples/configs/fix_cli_parser_bug_command_safe.yaml --agent custom-command
+agentguard run examples/configs/fix_cli_parser_bug_command_cheater.yaml --agent custom-command --allow-fail-result
 ```
 
 The custom command runs inside the same Docker sandbox before tests run. This
