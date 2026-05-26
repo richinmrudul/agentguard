@@ -23,7 +23,7 @@ class DiffLimits:
 class AgentGuardConfig:
     task_id: str
     description: str
-    repo_template: Path
+    repo_template: Optional[Path]
     test_command: str
     allowed_paths: list[str]
     forbidden_paths: list[str]
@@ -34,6 +34,7 @@ class AgentGuardConfig:
     diff_limits: DiffLimits
     secret_patterns: list[str]
     config_path: Path
+    mode: str = "benchmark"
 
     def severity_for(self, check_key: str, default: str) -> str:
         return self.policy.get(check_key, default)

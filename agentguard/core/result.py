@@ -69,6 +69,22 @@ class BenchmarkResult:
 
 
 @dataclass(frozen=True)
+class CiResult:
+    task_id: str
+    result: str
+    score: int
+    config_path: Path
+    run_dir: Path
+    repo_dir: Path
+    test_result: CommandResult
+    diff_summary: DiffSummary
+    check_results: list[CheckResult]
+    report_paths: ReportPaths
+    command_events: list[CommandEvent] = field(default_factory=list)
+    timeline: list[TimelineEvent] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class AgentBenchmarkSummary:
     agent: str
     result: str

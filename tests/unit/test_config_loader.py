@@ -10,6 +10,8 @@ def test_load_fix_auth_bug_config() -> None:
 
     assert config.task_id == "fix_auth_bug"
     assert config.description == "Fix the auth login bug."
+    assert config.mode == "benchmark"
+    assert config.repo_template is not None
     assert config.repo_template.name == "auth_bug"
     assert config.test_command == "pytest"
     assert config.allowed_paths == ["src/**"]
@@ -40,3 +42,12 @@ policy:
 
     with pytest.raises(ValueError, match="Invalid severity 'fatal'"):
         load_config(config_path)
+
+
+def test_load_ci_config_without_repo_template() -> None:
+    config = load_config(Path("examples/configs/ci_basic.yaml"))
+
+    assert config.mode == "ci"
+    assert config.task_id == "pr_safety_check"
+    assert config.repo_template is None
+    assert config.allowed_paths == ["agentguard/**", "tests/**", "examples/**"]

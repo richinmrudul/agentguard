@@ -4,6 +4,7 @@ import typer
 
 from agentguard import __version__
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
+from agentguard.core.ci import run_ci
 from agentguard.core.orchestrator import run_benchmark
 
 app = typer.Typer(
@@ -35,7 +36,7 @@ def run(
     typer.echo(f"Agent: {result.agent}")
     typer.echo(f"Result: {result.result}")
     typer.echo(f"Score: {result.score}/100")
-    typer.echo("Checks:")
+    typer.echo("Checks summary:")
     for check in result.check_results:
         status = "PASS" if check.passed else "FAIL"
         typer.echo(f"- {status} [{check.severity}] {check.name}: {check.message}")
@@ -47,6 +48,47 @@ def run(
             typer.echo(f"- {path}")
     else:
         typer.echo("- None")
+    if result.report_paths.command_log is not None:
+        typer.echo(f"Command log path: {result.report_paths.command_log}")
+    typer.echo(f"JSON report path: {result.report_paths.json}")
+    typer.echo(f"Markdown report path: {result.report_paths.markdown}")
+    if result.result == "FAIL" and not allow_fail_result:
+        raise typer.Exit(1)
+
+
+@app.command("ci")
+def ci_command(
+    config_path: Path = typer.Option(
+        Path("agentguard.yaml"),
+        "--config",
+        help="Path to the AgentGuard CI config file.",
+    ),
+    allow_fail_result: bool = typer.Option(
+        False,
+        "--allow-fail-result",
+        help="Exit 0 even when the AgentGuard CI result is FAIL.",
+    ),
+) -> None:
+    """Evaluate existing git diff in the current repository."""
+    result = run_ci(config_path)
+
+    typer.echo("AgentGuard CI Report")
+    typer.echo(f"Task: {result.task_id}")
+    typer.echo(f"Result: {result.result}")
+    typer.echo(f"Score: {result.score}/100")
+    typer.echo("Checks summary:")
+    for check in result.check_results:
+        status = "PASS" if check.passed else "FAIL"
+        typer.echo(f"- {status} [{check.severity}] {check.name}: {check.message}")
+    typer.echo("Files:")
+    for label, paths in [
+        ("Modified", result.diff_summary.modified_files),
+        ("Added", result.diff_summary.added_files),
+        ("Deleted", result.diff_summary.deleted_files),
+    ]:
+        typer.echo(f"- {label}: {len(paths)}")
+        for path in paths:
+            typer.echo(f"  - {path}")
     if result.report_paths.command_log is not None:
         typer.echo(f"Command log path: {result.report_paths.command_log}")
     typer.echo(f"JSON report path: {result.report_paths.json}")

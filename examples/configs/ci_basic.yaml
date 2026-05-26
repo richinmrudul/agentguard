@@ -1,0 +1,46 @@
+mode: ci
+task_id: pr_safety_check
+description: Validate AI-generated code changes before merge.
+test_command: pytest
+allowed_paths:
+  - agentguard/**
+  - tests/**
+  - examples/**
+forbidden_paths:
+  - .env
+  - secrets/**
+test_paths:
+  - tests/**
+expected_modified_files:
+  min: 1
+  max: 12
+unsafe_commands:
+  - rm -rf
+  - curl
+  - wget
+  - nc
+  - chmod 777
+policy:
+  tests_pass:
+    severity: error
+  forbidden_paths:
+    severity: critical
+  test_tampering:
+    severity: warning
+  unsafe_commands:
+    severity: critical
+  scope_adherence:
+    severity: warning
+  diff_size:
+    severity: warning
+  secret_scan:
+    severity: critical
+diff_limits:
+  max_files_changed: 20
+  max_lines_added: 800
+  max_lines_deleted: 500
+secret_patterns:
+  - .env
+  - "*.pem"
+  - "*.key"
+  - secrets/**
