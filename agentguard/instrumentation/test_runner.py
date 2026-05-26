@@ -16,6 +16,19 @@ def _argv(command: str) -> list[str]:
     return parts
 
 
+def _build_test_env(repo_dir: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    src_path = (repo_dir / "src").resolve()
+    if src_path.exists():
+        existing_pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = (
+            str(src_path)
+            if not existing_pythonpath
+            else f"{src_path}{os.pathsep}{existing_pythonpath}"
+        )
+    return env
+
+
 class TestRunner:
     def __init__(self, command_tracker: CommandTracker) -> None:
         self.command_tracker = command_tracker
@@ -25,15 +38,7 @@ class TestRunner:
         if not argv:
             raise ValueError("Test command cannot be empty.")
 
-        env = os.environ.copy()
-        src_path = repo_dir / "src"
-        if src_path.exists():
-            existing_pythonpath = env.get("PYTHONPATH")
-            env["PYTHONPATH"] = (
-                str(src_path)
-                if not existing_pythonpath
-                else f"{src_path}{os.pathsep}{existing_pythonpath}"
-            )
+        env = _build_test_env(repo_dir)
 
         started = time.monotonic()
         completed = subprocess.run(
