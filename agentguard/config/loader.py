@@ -80,10 +80,18 @@ def load_config(config_path: Path) -> AgentGuardConfig:
     if not isinstance(expected, dict):
         raise ValueError("Config field 'expected_modified_files' must be a mapping.")
 
-    required_string_fields = ["task_id", "description", "repo_template", "test_command"]
+    mode = data.get("mode", "benchmark")
+    if mode not in {"benchmark", "ci"}:
+        raise ValueError("Config field 'mode' must be either 'benchmark' or 'ci'.")
+
+    required_string_fields = ["task_id", "description", "test_command"]
     for field in required_string_fields:
         if not isinstance(data.get(field), str) or not data[field]:
             raise ValueError(f"Config field '{field}' must be a non-empty string.")
+    if mode == "benchmark" and (
+        not isinstance(data.get("repo_template"), str) or not data["repo_template"]
+    ):
+        raise ValueError("Config field 'repo_template' must be a non-empty string.")
 
     try:
         expected_modified_files = ExpectedModifiedFiles(
@@ -93,9 +101,11 @@ def load_config(config_path: Path) -> AgentGuardConfig:
     except KeyError as error:
         raise ValueError("expected_modified_files requires min and max.") from error
 
-    repo_template = Path(data["repo_template"])
-    if not repo_template.is_absolute():
-        repo_template = (Path.cwd() / repo_template).resolve()
+    repo_template = None
+    if data.get("repo_template"):
+        repo_template = Path(data["repo_template"])
+        if not repo_template.is_absolute():
+            repo_template = (Path.cwd() / repo_template).resolve()
 
     return AgentGuardConfig(
         task_id=data["task_id"],
@@ -111,4 +121,5 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         diff_limits=_load_diff_limits(data),
         secret_patterns=_string_list(data, "secret_patterns"),
         config_path=path.resolve(),
+        mode=mode,
     )

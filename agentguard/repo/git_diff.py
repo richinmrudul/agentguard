@@ -18,7 +18,7 @@ def _git(repo_dir: Path, *args: str) -> str:
 def _numstat(repo_dir: Path) -> tuple[int, int]:
     added = 0
     deleted = 0
-    for line in _git(repo_dir, "diff", "--numstat").splitlines():
+    for line in _git(repo_dir, "diff", "HEAD", "--numstat").splitlines():
         parts = line.split("\t")
         if len(parts) < 3:
             continue
@@ -58,11 +58,29 @@ def _line_count(path: Path) -> int:
 
 
 def collect_diff(repo_dir: Path) -> DiffSummary:
-    modified_files = _git(repo_dir, "diff", "--name-only", "--diff-filter=M").splitlines()
-    added_files = _git(repo_dir, "diff", "--name-only", "--diff-filter=A").splitlines()
+    modified_files = _git(
+        repo_dir,
+        "diff",
+        "HEAD",
+        "--name-only",
+        "--diff-filter=M",
+    ).splitlines()
+    added_files = _git(
+        repo_dir,
+        "diff",
+        "HEAD",
+        "--name-only",
+        "--diff-filter=A",
+    ).splitlines()
     untracked_files = _untracked_files(repo_dir)
-    added_files.extend(untracked_files)
-    deleted_files = _git(repo_dir, "diff", "--name-only", "--diff-filter=D").splitlines()
+    added_files.extend(path for path in untracked_files if path not in added_files)
+    deleted_files = _git(
+        repo_dir,
+        "diff",
+        "HEAD",
+        "--name-only",
+        "--diff-filter=D",
+    ).splitlines()
     lines_added, lines_deleted = _numstat(repo_dir)
     lines_added += sum(_line_count(repo_dir / path) for path in untracked_files)
 
@@ -72,5 +90,5 @@ def collect_diff(repo_dir: Path) -> DiffSummary:
         deleted_files=deleted_files,
         lines_added=lines_added,
         lines_deleted=lines_deleted,
-        unified_diff=_git(repo_dir, "diff"),
+        unified_diff=_git(repo_dir, "diff", "HEAD"),
     )

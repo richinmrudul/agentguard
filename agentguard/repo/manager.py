@@ -24,6 +24,9 @@ class RepoManager:
         run_dir = self.runs_root / run_id
         repo_dir = run_dir / "repo"
 
+        if config.repo_template is None:
+            raise ValueError("Benchmark mode requires repo_template.")
+
         run_dir.mkdir(parents=True, exist_ok=False)
         shutil.copytree(config.repo_template, repo_dir)
         self._git(repo_dir, "init")
