@@ -55,6 +55,17 @@ class ReportPaths:
 
 
 @dataclass(frozen=True)
+class SandboxMetadata:
+    type: str
+    timeout_seconds: int
+    max_output_bytes: int
+    network: Optional[str] = None
+    memory: Optional[str] = None
+    cpus: Optional[float] = None
+    read_only: Optional[bool] = None
+
+
+@dataclass(frozen=True)
 class BenchmarkResult:
     task_id: str
     agent: str
@@ -67,6 +78,7 @@ class BenchmarkResult:
     diff_summary: DiffSummary
     check_results: list[CheckResult]
     report_paths: ReportPaths
+    sandbox: Optional[SandboxMetadata] = None
     command_events: list[CommandEvent] = field(default_factory=list)
     timeline: list[TimelineEvent] = field(default_factory=list)
 

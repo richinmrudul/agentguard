@@ -18,6 +18,29 @@ def _event_flags(event) -> str:
     return f" ({', '.join(flags)})" if flags else ""
 
 
+def _sandbox_lines(result: BenchmarkResult) -> list[str]:
+    if result.sandbox is None:
+        return []
+    sandbox = result.sandbox
+    lines = [
+        "",
+        "## Sandbox",
+        f"- Type: {sandbox.type}",
+        f"- Timeout: {sandbox.timeout_seconds}s",
+        f"- Max output: {sandbox.max_output_bytes} bytes",
+    ]
+    if sandbox.type == "docker":
+        lines.extend(
+            [
+                f"- Network: {sandbox.network}",
+                f"- Memory: {sandbox.memory or 'unlimited'}",
+                f"- CPUs: {sandbox.cpus if sandbox.cpus is not None else 'unlimited'}",
+                f"- Read-only root: {sandbox.read_only}",
+            ]
+        )
+    return lines
+
+
 def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / "report.md"
@@ -39,6 +62,8 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
         if not check.passed and check.evidence:
             lines.append("  Evidence:")
             lines.extend(f"  - {evidence}" for evidence in check.evidence)
+
+    lines.extend(_sandbox_lines(result))
 
     lines.extend(["", "## Modified Files"])
     if result.diff_summary.changed_files:

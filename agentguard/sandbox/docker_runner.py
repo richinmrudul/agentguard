@@ -128,7 +128,7 @@ class DockerCommandRunner:
             raise ValueError("DockerCommandRunner requires sandbox.type='docker'.")
         if not self.sandbox.image:
             raise ValueError("Docker sandbox requires an image.")
-        return [
+        command = [
             "docker",
             "run",
             "--rm",
@@ -140,9 +140,15 @@ class DockerCommandRunner:
             f"PYTHONPATH={self.sandbox.workdir}/src",
             "--network",
             self.sandbox.network,
-            self.sandbox.image,
-            *inner_command,
         ]
+        if self.sandbox.memory is not None:
+            command.extend(["--memory", self.sandbox.memory])
+        if self.sandbox.cpus is not None:
+            command.extend(["--cpus", str(self.sandbox.cpus)])
+        if self.sandbox.read_only:
+            command.extend(["--read-only", "--tmpfs", "/tmp"])
+        command.extend([self.sandbox.image, *inner_command])
+        return command
 
     def run_argv(
         self,

@@ -25,6 +25,9 @@ class SandboxConfig:
     image: Optional[str] = None
     workdir: str = "/workspace"
     network: str = "none"
+    memory: Optional[str] = None
+    cpus: Optional[float] = None
+    read_only: bool = False
     timeout_seconds: int = 60
 
 
