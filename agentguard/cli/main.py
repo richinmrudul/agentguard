@@ -202,7 +202,27 @@ def suite_command(
     typer.echo(f"Runs: {result.total_runs}")
     typer.echo(f"Passed: {result.passed}")
     typer.echo(f"Failed: {result.failed}")
+    typer.echo(f"Pass rate: {result.pass_rate}%")
     typer.echo(f"Average score: {result.average_score}")
+    typer.echo("")
+    typer.echo(
+        f"Best run: {result.best_run.task_id} / {result.best_run.agent} / "
+        f"{result.best_run.result} / {result.best_run.score}"
+    )
+    typer.echo(
+        f"Worst run: {result.worst_run.task_id} / {result.worst_run.agent} / "
+        f"{result.worst_run.result} / {result.worst_run.score}"
+    )
+    typer.echo("")
+    typer.echo("Most common failed checks:")
+    if result.failed_check_counts:
+        for name, count in sorted(
+            result.failed_check_counts.items(),
+            key=lambda item: -item[1],
+        ):
+            typer.echo(f"- {name}: {count}")
+    else:
+        typer.echo("- None")
     typer.echo("")
     typer.echo("Task | Agent | Result | Score | Failed Checks")
     typer.echo("--- | --- | --- | ---: | ---")

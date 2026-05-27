@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,14 @@ class SuiteRunSummary:
 
 
 @dataclass(frozen=True)
+class SuiteRunHeadline:
+    task_id: str
+    agent: str
+    result: str
+    score: int
+
+
+@dataclass(frozen=True)
 class SuiteResult:
     suite_id: str
     description: str
@@ -46,7 +55,13 @@ class SuiteResult:
     total_runs: int
     passed: int
     failed: int
+    pass_rate: float
     average_score: int
+    best_run: SuiteRunHeadline
+    worst_run: SuiteRunHeadline
+    failed_check_counts: dict[str, int]
+    warning_check_counts: dict[str, int]
+    result_counts: dict[str, int]
     runs: list[SuiteRunSummary]
     json_report_path: Path
     markdown_report_path: Path
@@ -129,6 +144,31 @@ def _format_checks(checks: list[str]) -> str:
     return ", ".join(checks) if checks else "-"
 
 
+def _run_headline(run: SuiteRunSummary) -> SuiteRunHeadline:
+    return SuiteRunHeadline(
+        task_id=run.task_id,
+        agent=run.agent,
+        result=run.result,
+        score=run.score,
+    )
+
+
+def _count_checks(runs: list[SuiteRunSummary], field_name: str) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for run in runs:
+        counts.update(getattr(run, field_name))
+    return dict(counts)
+
+
+def _format_count_lines(counts: dict[str, int]) -> list[str]:
+    if not counts:
+        return ["- None"]
+    return [
+        f"- {name}: {count}"
+        for name, count in sorted(counts.items(), key=lambda item: -item[1])
+    ]
+
+
 def _write_json_report(result: SuiteResult) -> Path:
     report_path = result.json_report_path
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -144,13 +184,37 @@ def _write_markdown_report(result: SuiteResult) -> Path:
     lines = [
         "# AgentGuard Suite Summary",
         "",
+        "## Summary",
+        "",
         f"Suite: {result.suite_id}",
         f"Description: {result.description}",
         f"Suite config: {result.suite_path}",
         f"Runs: {result.total_runs}",
         f"Passed: {result.passed}",
         f"Failed: {result.failed}",
+        f"Pass rate: {result.pass_rate}%",
         f"Average score: {result.average_score}",
+        "",
+        "## Best/Worst Runs",
+        "",
+        (
+            f"Best run: {result.best_run.task_id} / {result.best_run.agent} / "
+            f"{result.best_run.result} / {result.best_run.score}"
+        ),
+        (
+            f"Worst run: {result.worst_run.task_id} / {result.worst_run.agent} / "
+            f"{result.worst_run.result} / {result.worst_run.score}"
+        ),
+        "",
+        "## Failed Check Counts",
+        "",
+        *_format_count_lines(result.failed_check_counts),
+        "",
+        "## Warning Check Counts",
+        "",
+        *_format_count_lines(result.warning_check_counts),
+        "",
+        "## Runs",
         "",
         "| Task | Agent | Result | Score | Failed Checks | Warnings |",
         "|---|---|---|---:|---|---|",
@@ -195,15 +259,26 @@ def run_suite(
     runs = [_run_summary(result) for result in run_results]
     total_runs = len(runs)
     summary_dir = _suite_dir(config.suite_id, suites_root)
+    result_counts = dict(Counter(run.result for run in runs))
+    passed = result_counts.get("PASS", 0)
+    failed = result_counts.get("FAIL", 0)
     average_score = int(round(sum(run.score for run in runs) / total_runs))
+    best_run = max(runs, key=lambda run: run.score)
+    worst_run = min(runs, key=lambda run: run.score)
     result = SuiteResult(
         suite_id=config.suite_id,
         description=config.description,
         suite_path=config.suite_path,
         total_runs=total_runs,
-        passed=sum(1 for run in runs if run.result == "PASS"),
-        failed=sum(1 for run in runs if run.result == "FAIL"),
+        passed=passed,
+        failed=failed,
+        pass_rate=round((passed / total_runs) * 100, 1),
         average_score=average_score,
+        best_run=_run_headline(best_run),
+        worst_run=_run_headline(worst_run),
+        failed_check_counts=_count_checks(runs, "failed_checks"),
+        warning_check_counts=_count_checks(runs, "warning_checks"),
+        result_counts=result_counts,
         runs=runs,
         json_report_path=summary_dir / "suite.json",
         markdown_report_path=summary_dir / "suite.md",

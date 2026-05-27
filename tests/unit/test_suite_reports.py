@@ -1,7 +1,12 @@
 import json
 from pathlib import Path
 
-from agentguard.core.suite import SuiteResult, SuiteRunSummary, write_suite_reports
+from agentguard.core.suite import (
+    SuiteResult,
+    SuiteRunHeadline,
+    SuiteRunSummary,
+    write_suite_reports,
+)
 
 
 def test_write_suite_reports_include_summary_and_paths(tmp_path: Path) -> None:
@@ -12,7 +17,23 @@ def test_write_suite_reports_include_summary_and_paths(tmp_path: Path) -> None:
         total_runs=2,
         passed=1,
         failed=1,
+        pass_rate=50.0,
         average_score=80,
+        best_run=SuiteRunHeadline(
+            task_id="fix_auth_bug",
+            agent="mock-safe",
+            result="PASS",
+            score=100,
+        ),
+        worst_run=SuiteRunHeadline(
+            task_id="fix_cli_parser_bug",
+            agent="mock-test-cheater",
+            result="FAIL",
+            score=60,
+        ),
+        failed_check_counts={"Test tampering": 1, "Scope adherence": 1},
+        warning_check_counts={"Scope adherence": 1},
+        result_counts={"PASS": 1, "FAIL": 1},
         runs=[
             SuiteRunSummary(
                 task_id="fix_auth_bug",
@@ -50,10 +71,38 @@ def test_write_suite_reports_include_summary_and_paths(tmp_path: Path) -> None:
     assert data["suite_id"] == "core"
     assert data["passed"] == 1
     assert data["failed"] == 1
+    assert data["pass_rate"] == 50.0
+    assert data["best_run"] == {
+        "task_id": "fix_auth_bug",
+        "agent": "mock-safe",
+        "result": "PASS",
+        "score": 100,
+    }
+    assert data["worst_run"] == {
+        "task_id": "fix_cli_parser_bug",
+        "agent": "mock-test-cheater",
+        "result": "FAIL",
+        "score": 60,
+    }
+    assert data["failed_check_counts"] == {
+        "Test tampering": 1,
+        "Scope adherence": 1,
+    }
     assert "# AgentGuard Suite Summary" in markdown
+    assert "## Summary" in markdown
     assert "Suite: core" in markdown
     assert "Passed: 1" in markdown
     assert "Failed: 1" in markdown
+    assert "Pass rate: 50.0%" in markdown
+    assert "Best run: fix_auth_bug / mock-safe / PASS / 100" in markdown
+    assert (
+        "Worst run: fix_cli_parser_bug / mock-test-cheater / FAIL / 60"
+        in markdown
+    )
+    assert "## Failed Check Counts" in markdown
+    assert "- Test tampering: 1" in markdown
+    assert "## Warning Check Counts" in markdown
+    assert "- Scope adherence: 1" in markdown
     assert "fix_auth_bug" in markdown
     assert "fix_cli_parser_bug" in markdown
     assert "runs/safe/reports/report.json" in markdown
