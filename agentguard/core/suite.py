@@ -3,10 +3,11 @@ from collections import Counter
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
+from agentguard.core.baseline import BaselineComparison, compare_suite_to_baseline
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.result import BenchmarkResult
 
@@ -65,6 +66,7 @@ class SuiteResult:
     runs: list[SuiteRunSummary]
     json_report_path: Path
     markdown_report_path: Path
+    baseline_comparison: Optional[BaselineComparison] = None
 
 
 def _json_default(value: Any) -> str:
@@ -172,8 +174,11 @@ def _format_count_lines(counts: dict[str, int]) -> list[str]:
 def _write_json_report(result: SuiteResult) -> Path:
     report_path = result.json_report_path
     report_path.parent.mkdir(parents=True, exist_ok=True)
+    data = asdict(result)
+    if result.baseline_comparison is None:
+        data.pop("baseline_comparison", None)
     with report_path.open("w", encoding="utf-8") as file:
-        json.dump(asdict(result), file, default=_json_default, indent=2)
+        json.dump(data, file, default=_json_default, indent=2)
         file.write("\n")
     return report_path
 
@@ -226,6 +231,33 @@ def _write_markdown_report(result: SuiteResult) -> Path:
             f"{_format_checks(run.warning_checks)} |"
         )
 
+    if result.baseline_comparison is not None:
+        comparison = result.baseline_comparison
+        lines.extend(
+            [
+                "",
+                "## Baseline Comparison",
+                "",
+                f"Baseline: {comparison.baseline_path}",
+                f"Regressions: {'yes' if comparison.has_regressions else 'no'}",
+                f"Unchanged runs: {comparison.unchanged_count}",
+                "",
+                "### Regressions",
+                "",
+            ]
+        )
+        lines.extend(
+            f"- {message}" for message in comparison.regressions
+        )
+        if not comparison.regressions:
+            lines.append("- None")
+        lines.extend(["", "### Improvements", ""])
+        lines.extend(
+            f"- {message}" for message in comparison.improvements
+        )
+        if not comparison.improvements:
+            lines.append("- None")
+
     lines.extend(["", "## Individual Reports"])
     for run in result.runs:
         lines.append(f"- {run.task_id} / {run.agent}:")
@@ -250,6 +282,7 @@ def write_suite_reports(result: SuiteResult) -> SuiteResult:
 def run_suite(
     path: Path,
     suites_root: Path = Path(".agentguard/suites"),
+    compare_baseline_path: Optional[Path] = None,
 ) -> SuiteResult:
     config = load_suite_config(path)
     run_results = [
@@ -283,4 +316,12 @@ def run_suite(
         json_report_path=summary_dir / "suite.json",
         markdown_report_path=summary_dir / "suite.md",
     )
+    if compare_baseline_path is not None:
+        result = replace(
+            result,
+            baseline_comparison=compare_suite_to_baseline(
+                result,
+                compare_baseline_path,
+            ),
+        )
     return write_suite_reports(result)

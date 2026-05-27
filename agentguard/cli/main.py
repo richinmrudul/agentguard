@@ -5,6 +5,7 @@ from typing import Optional
 import typer
 
 from agentguard import __version__
+from agentguard.core.baseline import write_suite_baseline
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.ci import run_ci
 from agentguard.core.orchestrator import run_benchmark
@@ -189,10 +190,25 @@ def suite_command(
         "--allow-failures",
         help="Exit 0 even when one or more suite runs fail.",
     ),
+    save_baseline: Optional[Path] = typer.Option(
+        None,
+        "--save-baseline",
+        help="Write a stable suite baseline JSON file after the run.",
+    ),
+    compare_baseline: Optional[Path] = typer.Option(
+        None,
+        "--compare-baseline",
+        help="Compare this suite run against an existing baseline JSON file.",
+    ),
+    allow_regressions: bool = typer.Option(
+        False,
+        "--allow-regressions",
+        help="Exit 0 even when baseline comparison finds regressions.",
+    ),
 ) -> None:
     """Run multiple AgentGuard benchmark configs as one suite."""
     try:
-        result = run_suite(suite_path)
+        result = run_suite(suite_path, compare_baseline_path=compare_baseline)
     except ValueError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
@@ -232,8 +248,36 @@ def suite_command(
             f"{run.task_id} | {run.agent} | {run.result} | "
             f"{run.score} | {failed_checks}"
         )
+    if result.baseline_comparison is not None:
+        comparison = result.baseline_comparison
+        typer.echo("")
+        typer.echo("Baseline comparison")
+        typer.echo(f"Baseline: {comparison.baseline_path}")
+        typer.echo(f"Regressions: {'yes' if comparison.has_regressions else 'no'}")
+        if comparison.regressions:
+            typer.echo("Regression details:")
+            for message in comparison.regressions:
+                typer.echo(f"- {message}")
+        else:
+            typer.echo("Regression details: none")
+        if comparison.improvements:
+            typer.echo("Improvements:")
+            for message in comparison.improvements:
+                typer.echo(f"- {message}")
+        else:
+            typer.echo("Improvements: none")
+        typer.echo(f"Unchanged runs: {comparison.unchanged_count}")
     typer.echo(f"Suite JSON report path: {result.json_report_path}")
     typer.echo(f"Suite Markdown report path: {result.markdown_report_path}")
+    if save_baseline is not None:
+        baseline_path = write_suite_baseline(result, save_baseline)
+        typer.echo(f"Baseline saved: {baseline_path}")
+    if (
+        result.baseline_comparison is not None
+        and result.baseline_comparison.has_regressions
+        and not allow_regressions
+    ):
+        raise typer.Exit(1)
     if result.failed > 0 and not allow_failures:
         raise typer.Exit(1)
 
