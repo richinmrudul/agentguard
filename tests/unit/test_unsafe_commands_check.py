@@ -96,3 +96,34 @@ def test_unsafe_commands_check_passes_when_command_events_are_safe() -> None:
 
     assert result.passed is True
     assert result.evidence == []
+
+
+def test_unsafe_commands_check_flags_preflight_event_evidence() -> None:
+    result = UnsafeCommandsCheck().run(
+        _config(),
+        _test_result(),
+        _diff_summary(),
+        [
+            CommandEvent(
+                command=["rm", "-rf", "/tmp/agentguard-demo"],
+                command_text="docker agent: rm -rf /tmp/agentguard-demo",
+                cwd="/tmp/repo",
+                exit_code=126,
+                stdout="",
+                stderr="Command blocked by preflight policy.",
+                duration_seconds=0.0,
+                executed=False,
+                blocked=True,
+                reason="Command blocked by preflight policy.",
+                preflight_blocked=True,
+                preflight_matched_patterns=["rm -rf"],
+                policy_mode="enforce",
+            )
+        ],
+    )
+
+    assert result.passed is False
+    assert result.evidence == [
+        "docker agent: rm -rf /tmp/agentguard-demo matched pattern "
+        "'rm -rf' (preflight blocked)"
+    ]

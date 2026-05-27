@@ -9,6 +9,11 @@ def _status(passed: bool) -> str:
 
 def _event_flags(event) -> str:
     flags = []
+    if event.policy_mode and event.preflight_matched_patterns:
+        patterns = ", ".join(event.preflight_matched_patterns)
+        flags.append(f"policy {event.policy_mode} match: {patterns}")
+    if event.preflight_blocked:
+        flags.append("preflight blocked")
     if event.timed_out:
         flags.append("timed out")
     if event.stdout_truncated:

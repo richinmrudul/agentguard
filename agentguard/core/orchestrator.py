@@ -12,7 +12,12 @@ from agentguard.checks.test_tampering import TestTamperingCheck
 from agentguard.checks.tests_pass import TestsPassCheck
 from agentguard.checks.unsafe_commands import UnsafeCommandsCheck
 from agentguard.config.loader import load_config
-from agentguard.core.result import BenchmarkResult, ReportPaths, SandboxMetadata
+from agentguard.core.result import (
+    BenchmarkResult,
+    CommandResult,
+    ReportPaths,
+    SandboxMetadata,
+)
 from agentguard.core.timeline import TimelineRecorder
 from agentguard.instrumentation.agent_event_reader import (
     DEFAULT_AGENT_EVENT_FILE,
@@ -64,6 +69,9 @@ def _record_command_events(
                 "timed_out": event.timed_out,
                 "stdout_truncated": event.stdout_truncated,
                 "stderr_truncated": event.stderr_truncated,
+                "preflight_blocked": event.preflight_blocked,
+                "preflight_matched_patterns": event.preflight_matched_patterns,
+                "policy_mode": event.policy_mode,
             },
         )
     return len(events)
@@ -100,6 +108,13 @@ def _sandbox_metadata(config) -> SandboxMetadata:
         timeout_seconds=config.command_timeout_seconds,
         max_output_bytes=config.max_output_bytes,
     )
+
+
+def _preflight_blocked_event(command_tracker: CommandTracker):
+    for event in command_tracker.events:
+        if event.preflight_blocked:
+            return event
+    return None
 
 
 def _agent_for_config(config, agent_name: str) -> Agent:
@@ -143,6 +158,11 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
         f"Agent {agent_name} completed",
         {"agent": agent_name},
     )
+    command_event_index = _record_command_events(
+        timeline,
+        command_tracker,
+        command_event_index,
+    )
     ingested_events = read_agent_events(prepared.repo_dir)
     command_tracker.extend(ingested_events)
     timeline.add(
@@ -159,25 +179,40 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
         command_event_index,
     )
 
-    timeline.add(
-        "tests_started",
-        f"Tests started: {config.test_command}",
-        {"command": config.test_command},
-    )
-    test_result = _test_runner(config, command_tracker).run(
-        prepared.repo_dir,
-        config.test_command,
-    )
-    timeline.add(
-        "tests_completed",
-        f"Tests completed with exit code {test_result.exit_code}",
-        {"test_exit_code": test_result.exit_code},
-    )
-    command_event_index = _record_command_events(
-        timeline,
-        command_tracker,
-        command_event_index,
-    )
+    preflight_blocked = _preflight_blocked_event(command_tracker)
+    if preflight_blocked is not None:
+        test_result = CommandResult(
+            command=config.test_command,
+            exit_code=126,
+            stdout="",
+            stderr=preflight_blocked.stderr,
+            duration_seconds=0.0,
+        )
+        timeline.add(
+            "tests_skipped",
+            "Tests skipped because command preflight policy blocked the agent.",
+            {"test_exit_code": test_result.exit_code},
+        )
+    else:
+        timeline.add(
+            "tests_started",
+            f"Tests started: {config.test_command}",
+            {"command": config.test_command},
+        )
+        test_result = _test_runner(config, command_tracker).run(
+            prepared.repo_dir,
+            config.test_command,
+        )
+        timeline.add(
+            "tests_completed",
+            f"Tests completed with exit code {test_result.exit_code}",
+            {"test_exit_code": test_result.exit_code},
+        )
+        command_event_index = _record_command_events(
+            timeline,
+            command_tracker,
+            command_event_index,
+        )
     diff_summary = collect_diff(prepared.repo_dir)
     timeline.add(
         "diff_collected",

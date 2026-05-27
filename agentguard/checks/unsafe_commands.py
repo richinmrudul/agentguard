@@ -14,8 +14,15 @@ class UnsafeCommandsCheck(Check):
     ) -> CheckResult:
         evidence = []
         for event in command_log:
+            for unsafe in event.preflight_matched_patterns:
+                status = "preflight blocked" if event.preflight_blocked else "audit"
+                evidence.append(
+                    f"{event.command_text} matched pattern '{unsafe}' ({status})"
+                )
             for unsafe in config.unsafe_commands:
                 if unsafe in event.command_text:
+                    if unsafe in event.preflight_matched_patterns:
+                        continue
                     if event.blocked:
                         status = "blocked"
                     elif event.executed:

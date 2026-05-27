@@ -32,6 +32,11 @@ class SandboxConfig:
 
 
 @dataclass(frozen=True)
+class CommandPolicyConfig:
+    mode: str = "audit"
+
+
+@dataclass(frozen=True)
 class AgentGuardConfig:
     task_id: str
     description: str
@@ -49,6 +54,7 @@ class AgentGuardConfig:
     agent_command: Optional[str] = None
     command_timeout_seconds: int = 60
     max_output_bytes: int = 200000
+    command_policy: CommandPolicyConfig = field(default_factory=CommandPolicyConfig)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     mode: str = "benchmark"
 
