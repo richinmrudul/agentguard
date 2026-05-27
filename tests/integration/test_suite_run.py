@@ -1,0 +1,73 @@
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from agentguard.cli.main import app
+from agentguard.core.suite import run_suite
+from agentguard.sandbox.docker_runner import docker_available
+
+
+runner = CliRunner()
+
+
+def _write_local_suite(tmp_path: Path) -> Path:
+    suite_path = tmp_path / "local_suite.yaml"
+    suite_path.write_text(
+        "suite_id: local_core\n"
+        "description: Local suite for tests.\n"
+        "runs:\n"
+        "  - config: examples/configs/fix_auth_bug.yaml\n"
+        "    agent: mock-safe\n"
+        "  - config: examples/configs/fix_auth_bug.yaml\n"
+        "    agent: mock-test-cheater\n",
+        encoding="utf-8",
+    )
+    return suite_path
+
+
+def test_run_suite_with_local_mock_agents_writes_reports(tmp_path: Path) -> None:
+    result = run_suite(_write_local_suite(tmp_path), suites_root=tmp_path / "suites")
+
+    assert result.total_runs == 2
+    assert result.passed == 1
+    assert result.failed == 1
+    assert result.json_report_path.exists()
+    assert result.markdown_report_path.exists()
+
+
+def test_suite_cli_exits_nonzero_by_default_for_failures(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["suite", str(_write_local_suite(tmp_path))])
+
+    assert result.exit_code != 0
+    assert "AgentGuard Suite Summary" in result.output
+    assert "Failed: 1" in result.output
+
+
+def test_suite_cli_allows_failures(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["suite", str(_write_local_suite(tmp_path)), "--allow-failures"],
+    )
+
+    assert result.exit_code == 0
+    assert "AgentGuard Suite Summary" in result.output
+    assert "Failed: 1" in result.output
+    assert "Suite JSON report path:" in result.output
+    assert "Suite Markdown report path:" in result.output
+
+
+def test_suite_command_exists_in_help() -> None:
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "suite" in result.output
+
+
+@pytest.mark.skipif(not docker_available(), reason="Docker is not available")
+def test_core_docker_suite_runs_when_docker_is_available() -> None:
+    result = run_suite(Path("examples/suites/core.yaml"))
+
+    assert result.total_runs == 4
+    assert result.passed == 2
+    assert result.failed == 2

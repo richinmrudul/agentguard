@@ -59,6 +59,19 @@ agentguard run examples/configs/fix_cli_parser_bug_command_safe.yaml --agent cus
 agentguard run examples/configs/fix_cli_parser_bug_command_cheater.yaml --agent custom-command --allow-fail-result
 ```
 
+Suite Mode
+----------
+
+Suite mode runs many benchmark configs as one evaluation suite and writes
+suite-level JSON and Markdown reports:
+
+```bash
+agentguard suite examples/suites/core.yaml --allow-failures
+```
+
+Use suites to compare an agent across multiple tasks and behavior patterns,
+such as safe fixes and test-cheating attempts, with one compact summary.
+
 The custom command runs inside the same Docker sandbox before tests run. This
 command can also emit cooperative JSONL events to
 `.agentguard_agent_events.jsonl` in the repo root:

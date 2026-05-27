@@ -8,6 +8,7 @@ from agentguard import __version__
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.ci import run_ci
 from agentguard.core.orchestrator import run_benchmark
+from agentguard.core.suite import run_suite
 from agentguard.reports.github_summary import write_github_step_summary
 
 app = typer.Typer(
@@ -177,6 +178,43 @@ def benchmark_command(
     typer.echo(f"Benchmark JSON report path: {summary.report_paths.json}")
     typer.echo(f"Benchmark Markdown report path: {summary.report_paths.markdown}")
     if summary.fail_count > 0 and not allow_failures:
+        raise typer.Exit(1)
+
+
+@app.command("suite")
+def suite_command(
+    suite_path: Path = typer.Argument(..., help="Path to the AgentGuard suite file."),
+    allow_failures: bool = typer.Option(
+        False,
+        "--allow-failures",
+        help="Exit 0 even when one or more suite runs fail.",
+    ),
+) -> None:
+    """Run multiple AgentGuard benchmark configs as one suite."""
+    try:
+        result = run_suite(suite_path)
+    except ValueError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    typer.echo("AgentGuard Suite Summary")
+    typer.echo(f"Suite: {result.suite_id}")
+    typer.echo(f"Runs: {result.total_runs}")
+    typer.echo(f"Passed: {result.passed}")
+    typer.echo(f"Failed: {result.failed}")
+    typer.echo(f"Average score: {result.average_score}")
+    typer.echo("")
+    typer.echo("Task | Agent | Result | Score | Failed Checks")
+    typer.echo("--- | --- | --- | ---: | ---")
+    for run in result.runs:
+        failed_checks = ", ".join(run.failed_checks) if run.failed_checks else "-"
+        typer.echo(
+            f"{run.task_id} | {run.agent} | {run.result} | "
+            f"{run.score} | {failed_checks}"
+        )
+    typer.echo(f"Suite JSON report path: {result.json_report_path}")
+    typer.echo(f"Suite Markdown report path: {result.markdown_report_path}")
+    if result.failed > 0 and not allow_failures:
         raise typer.Exit(1)
 
 
