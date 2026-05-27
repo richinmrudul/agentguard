@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from agentguard.core.result import (
@@ -6,6 +7,7 @@ from agentguard.core.result import (
     CommandResult,
     DiffSummary,
     ReportPaths,
+    SandboxMetadata,
 )
 from agentguard.core.timeline import TimelineEvent
 from agentguard.reports.json_report import write_json_report
@@ -72,6 +74,15 @@ def test_markdown_report_contains_summary_fields_severity_and_evidence(
                 metadata={"result": "PASS", "score": 100},
             ),
         ],
+        sandbox=SandboxMetadata(
+            type="docker",
+            network="none",
+            memory="512m",
+            cpus=1.0,
+            read_only=False,
+            timeout_seconds=60,
+            max_output_bytes=200000,
+        ),
     )
 
     report_path = write_markdown_report(result, tmp_path)
@@ -87,8 +98,23 @@ def test_markdown_report_contains_summary_fields_severity_and_evidence(
     assert "## Timeline" in content
     assert "1. Run started for task fix_auth_bug with agent mock-safe" in content
     assert "2. Final result: PASS, score 100/100" in content
+    assert "## Sandbox" in content
+    assert "- Type: docker" in content
+    assert "- Network: none" in content
+    assert "- Memory: 512m" in content
+    assert "- CPUs: 1.0" in content
 
     json_path = write_json_report(result, tmp_path)
-    json_content = json_path.read_text(encoding="utf-8")
+    report = json.loads(json_path.read_text(encoding="utf-8"))
+    json_content = json.dumps(report)
     assert '"timeline": [' in json_content
     assert '"event_type": "run_started"' in json_content
+    assert report["sandbox"] == {
+        "type": "docker",
+        "timeout_seconds": 60,
+        "max_output_bytes": 200000,
+        "network": "none",
+        "memory": "512m",
+        "cpus": 1.0,
+        "read_only": False,
+    }

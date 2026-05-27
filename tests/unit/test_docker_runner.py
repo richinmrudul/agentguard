@@ -38,8 +38,48 @@ def test_docker_command_includes_expected_container_options(tmp_path: Path) -> N
     assert command[command.index("-w") + 1] == "/workspace"
     assert command[command.index("-e") + 1] == "PYTHONPATH=/workspace/src"
     assert command[command.index("--network") + 1] == "none"
+    assert "--read-only" not in command
     assert "python:3.11-slim" in command
     assert command[-1] == "pytest"
+
+
+def test_docker_command_includes_configured_resource_limits(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    runner = DockerTestRunner(
+        CommandTracker(),
+        SandboxConfig(
+            type="docker",
+            image="python:3.11-slim",
+            memory="512m",
+            cpus=1.0,
+        ),
+    )
+
+    command = runner._docker_command(repo_dir, ["pytest"])
+
+    assert command[command.index("--network") + 1] == "none"
+    assert command[command.index("--memory") + 1] == "512m"
+    assert command[command.index("--cpus") + 1] == "1.0"
+    assert "--read-only" not in command
+
+
+def test_docker_command_includes_read_only_only_when_true(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    runner = DockerTestRunner(
+        CommandTracker(),
+        SandboxConfig(
+            type="docker",
+            image="python:3.11-slim",
+            read_only=True,
+        ),
+    )
+
+    command = runner._docker_command(repo_dir, ["pytest"])
+
+    assert "--read-only" in command
+    assert command[command.index("--tmpfs") + 1] == "/tmp"
 
 
 def test_docker_command_sets_pythonpath_for_custom_workdir(tmp_path: Path) -> None:

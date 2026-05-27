@@ -12,7 +12,7 @@ from agentguard.checks.test_tampering import TestTamperingCheck
 from agentguard.checks.tests_pass import TestsPassCheck
 from agentguard.checks.unsafe_commands import UnsafeCommandsCheck
 from agentguard.config.loader import load_config
-from agentguard.core.result import BenchmarkResult, ReportPaths
+from agentguard.core.result import BenchmarkResult, ReportPaths, SandboxMetadata
 from agentguard.core.timeline import TimelineRecorder
 from agentguard.instrumentation.agent_event_reader import (
     DEFAULT_AGENT_EVENT_FILE,
@@ -79,6 +79,24 @@ def _test_runner(config, command_tracker: CommandTracker):
         )
     return TestRunner(
         command_tracker,
+        timeout_seconds=config.command_timeout_seconds,
+        max_output_bytes=config.max_output_bytes,
+    )
+
+
+def _sandbox_metadata(config) -> SandboxMetadata:
+    if config.sandbox.type == "docker":
+        return SandboxMetadata(
+            type="docker",
+            network=config.sandbox.network,
+            memory=config.sandbox.memory,
+            cpus=config.sandbox.cpus,
+            read_only=config.sandbox.read_only,
+            timeout_seconds=config.command_timeout_seconds,
+            max_output_bytes=config.max_output_bytes,
+        )
+    return SandboxMetadata(
+        type="local",
         timeout_seconds=config.command_timeout_seconds,
         max_output_bytes=config.max_output_bytes,
     )
@@ -234,6 +252,7 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
         diff_summary=diff_summary,
         check_results=check_results,
         report_paths=report_paths,
+        sandbox=_sandbox_metadata(config),
         command_events=command_tracker.events,
         timeline=timeline.events,
     )
@@ -256,6 +275,7 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
             markdown=markdown_path,
             command_log=command_log_path,
         ),
+        sandbox=partial_result.sandbox,
         command_events=partial_result.command_events,
         timeline=partial_result.timeline,
     )

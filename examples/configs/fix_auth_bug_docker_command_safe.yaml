@@ -7,7 +7,11 @@ sandbox:
   type: docker
   image: python:3.11-slim
   workdir: /workspace
-  network: none
+  docker:
+    network: none
+    memory: 512m
+    cpus: 1.0
+    read_only: false
   timeout_seconds: 60
 allowed_paths:
   - src/**

@@ -12,6 +12,9 @@ from agentguard.config.schema import (
 )
 
 
+VALID_DOCKER_NETWORKS = {"none", "bridge"}
+
+
 def _string_list(data: dict[str, Any], key: str) -> list[str]:
     value = data.get(key, [])
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
@@ -48,6 +51,42 @@ def _positive_int_with_default(
     if value == 0:
         qualified = key if field_name == "config" else f"{field_name}.{key}"
         raise ValueError(f"Config field '{qualified}' must be positive.")
+    return value
+
+
+def _optional_positive_float(
+    mapping: dict[str, Any],
+    key: str,
+    field_name: str,
+) -> Optional[float]:
+    if key not in mapping:
+        return None
+    value = mapping[key]
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"Config field '{field_name}.{key}' must be positive.")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"Config field '{field_name}.{key}' must be positive.") from error
+    if number <= 0:
+        raise ValueError(f"Config field '{field_name}.{key}' must be positive.")
+    return number
+
+
+def _optional_non_empty_string(
+    mapping: dict[str, Any],
+    key: str,
+    field_name: str,
+) -> Optional[str]:
+    if key not in mapping:
+        return None
+    value = mapping[key]
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"Config field '{field_name}.{key}' must be a non-empty string.")
     return value
 
 
@@ -92,6 +131,11 @@ def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
         sandbox = {}
     if not isinstance(sandbox, dict):
         raise ValueError("Config field 'sandbox' must be a mapping.")
+    docker_policy = sandbox.get("docker", {})
+    if docker_policy is None:
+        docker_policy = {}
+    if not isinstance(docker_policy, dict):
+        raise ValueError("Config field 'sandbox.docker' must be a mapping.")
 
     sandbox_type = sandbox.get("type", "local")
     if sandbox_type not in {"local", "docker"}:
@@ -107,9 +151,18 @@ def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
     if not isinstance(workdir, str) or not workdir:
         raise ValueError("Config field 'sandbox.workdir' must be a non-empty string.")
 
-    network = sandbox.get("network", "none")
-    if not isinstance(network, str) or not network:
-        raise ValueError("Config field 'sandbox.network' must be a non-empty string.")
+    network = docker_policy.get("network", sandbox.get("network", "none"))
+    if network not in VALID_DOCKER_NETWORKS:
+        valid = ", ".join(sorted(VALID_DOCKER_NETWORKS))
+        raise ValueError(
+            f"Config field 'sandbox.docker.network' must be one of: {valid}."
+        )
+
+    memory = _optional_non_empty_string(docker_policy, "memory", "sandbox.docker")
+    cpus = _optional_positive_float(docker_policy, "cpus", "sandbox.docker")
+    read_only = docker_policy.get("read_only", sandbox.get("read_only", False))
+    if not isinstance(read_only, bool):
+        raise ValueError("Config field 'sandbox.docker.read_only' must be a boolean.")
 
     timeout_seconds = _positive_int_with_default(
         sandbox,
@@ -123,6 +176,9 @@ def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
         image=image,
         workdir=workdir,
         network=network,
+        memory=memory,
+        cpus=cpus,
+        read_only=read_only,
         timeout_seconds=timeout_seconds,
     )
 

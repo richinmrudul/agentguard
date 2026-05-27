@@ -41,6 +41,58 @@ def test_load_docker_command_agent_config() -> None:
 
     assert config.agent_command == "python agent_scripts/safe_agent.py"
     assert config.sandbox.type == "docker"
+    assert config.sandbox.network == "none"
+    assert config.sandbox.memory == "512m"
+    assert config.sandbox.cpus == 1.0
+    assert config.sandbox.read_only is False
+
+
+def test_config_rejects_invalid_docker_network(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 1
+  max: 2
+sandbox:
+  type: docker
+  image: python:3.11-slim
+  docker:
+    network: host
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="sandbox.docker.network"):
+        load_config(config_path)
+
+
+def test_config_rejects_non_positive_docker_cpus(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 1
+  max: 2
+sandbox:
+  type: docker
+  image: python:3.11-slim
+  docker:
+    cpus: 0
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="sandbox.docker.cpus"):
+        load_config(config_path)
 
 
 def test_invalid_policy_severity_raises_clear_error(tmp_path: Path) -> None:
