@@ -7,6 +7,17 @@ def _status(passed: bool) -> str:
     return "PASS" if passed else "FAIL"
 
 
+def _event_flags(event) -> str:
+    flags = []
+    if event.timed_out:
+        flags.append("timed out")
+    if event.stdout_truncated:
+        flags.append("stdout truncated")
+    if event.stderr_truncated:
+        flags.append("stderr truncated")
+    return f" ({', '.join(flags)})" if flags else ""
+
+
 def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / "report.md"
@@ -52,7 +63,7 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
                 status = "executed"
             else:
                 status = "simulated"
-            lines.append(f"- [{status}] {event.command_text}")
+            lines.append(f"- [{status}] {event.command_text}{_event_flags(event)}")
     else:
         lines.append("- None")
 

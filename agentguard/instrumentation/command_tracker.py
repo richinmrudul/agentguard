@@ -16,6 +16,9 @@ class CommandEvent:
     executed: bool
     blocked: bool
     reason: Optional[str]
+    timed_out: bool = False
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
 
 
 @dataclass
@@ -51,6 +54,9 @@ class CommandTracker:
         stdout: str,
         stderr: str,
         duration_seconds: float,
+        timed_out: bool = False,
+        stdout_truncated: bool = False,
+        stderr_truncated: bool = False,
     ) -> CommandEvent:
         event = CommandEvent(
             command=command,
@@ -63,6 +69,9 @@ class CommandTracker:
             executed=True,
             blocked=False,
             reason=None,
+            timed_out=timed_out,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
         )
         self._events.append(event)
         return event

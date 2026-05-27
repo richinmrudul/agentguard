@@ -2,10 +2,12 @@ import shlex
 import subprocess
 import time
 from pathlib import Path
+from typing import Optional
 
 from agentguard.config.schema import SandboxConfig
 from agentguard.core.result import CommandResult
 from agentguard.instrumentation.command_tracker import CommandTracker
+from agentguard.instrumentation.output_limits import limit_output
 
 
 INSTALL_COMMAND = [
@@ -44,9 +46,16 @@ class DockerTestRunner:
         self,
         command_tracker: CommandTracker,
         sandbox: SandboxConfig,
+        timeout_seconds: Optional[int] = None,
+        max_output_bytes: int = 200000,
     ) -> None:
         self.sandbox = sandbox
-        self.command_runner = DockerCommandRunner(command_tracker, sandbox)
+        self.command_runner = DockerCommandRunner(
+            command_tracker,
+            sandbox,
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+        )
 
     def _docker_command(self, repo_dir: Path, inner_command: list[str]) -> list[str]:
         return self.command_runner.build_command(repo_dir, inner_command)
@@ -76,6 +85,9 @@ class DockerTestRunner:
                 stdout=install_result.stdout,
                 stderr=install_result.stderr,
                 duration_seconds=install_result.duration_seconds,
+                timed_out=install_result.timed_out,
+                stdout_truncated=install_result.stdout_truncated,
+                stderr_truncated=install_result.stderr_truncated,
             )
 
         test_result = self._run_inner_command(
@@ -90,6 +102,9 @@ class DockerTestRunner:
             stderr=test_result.stderr,
             duration_seconds=install_result.duration_seconds
             + test_result.duration_seconds,
+            timed_out=test_result.timed_out,
+            stdout_truncated=test_result.stdout_truncated,
+            stderr_truncated=test_result.stderr_truncated,
         )
 
 
@@ -98,9 +113,15 @@ class DockerCommandRunner:
         self,
         command_tracker: CommandTracker,
         sandbox: SandboxConfig,
+        timeout_seconds: Optional[int] = None,
+        max_output_bytes: int = 200000,
     ) -> None:
         self.command_tracker = command_tracker
         self.sandbox = sandbox
+        self.timeout_seconds = (
+            sandbox.timeout_seconds if timeout_seconds is None else timeout_seconds
+        )
+        self.max_output_bytes = max_output_bytes
 
     def build_command(self, repo_dir: Path, inner_command: list[str]) -> list[str]:
         if self.sandbox.type != "docker":
@@ -131,13 +152,14 @@ class DockerCommandRunner:
     ) -> CommandResult:
         docker_command = self.build_command(repo_dir, inner_command)
         started = time.monotonic()
+        timed_out = False
         try:
             completed = subprocess.run(
                 docker_command,
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=self.sandbox.timeout_seconds,
+                timeout=self.timeout_seconds,
             )
             exit_code = completed.returncode
             stdout = completed.stdout
@@ -147,6 +169,7 @@ class DockerCommandRunner:
             stdout = ""
             stderr = "Docker is not installed or is not available on PATH."
         except subprocess.TimeoutExpired as error:
+            timed_out = True
             exit_code = 124
             stdout = error.stdout or ""
             stderr = error.stderr or ""
@@ -156,23 +179,31 @@ class DockerCommandRunner:
                 stderr = stderr.decode(errors="replace")
             stderr = (
                 f"{stderr}\nDocker command timed out after "
-                f"{self.sandbox.timeout_seconds} seconds."
+                f"{self.timeout_seconds} seconds."
             ).strip()
         duration_seconds = time.monotonic() - started
+        limited_stdout = limit_output(stdout, self.max_output_bytes)
+        limited_stderr = limit_output(stderr, self.max_output_bytes)
 
         self.command_tracker.record_executed(
             command=docker_command,
             command_text=command_text,
             cwd=repo_dir,
             exit_code=exit_code,
-            stdout=stdout,
-            stderr=stderr,
+            stdout=limited_stdout.text,
+            stderr=limited_stderr.text,
             duration_seconds=duration_seconds,
+            timed_out=timed_out,
+            stdout_truncated=limited_stdout.truncated,
+            stderr_truncated=limited_stderr.truncated,
         )
         return CommandResult(
             command=command_text,
             exit_code=exit_code,
-            stdout=stdout,
-            stderr=stderr,
+            stdout=limited_stdout.text,
+            stderr=limited_stderr.text,
             duration_seconds=duration_seconds,
+            timed_out=timed_out,
+            stdout_truncated=limited_stdout.truncated,
+            stderr_truncated=limited_stderr.truncated,
         )

@@ -65,6 +65,17 @@ def _status(passed: bool) -> str:
     return "PASS" if passed else "FAIL"
 
 
+def _event_flags(event) -> str:
+    flags = []
+    if event.timed_out:
+        flags.append("timed out")
+    if event.stdout_truncated:
+        flags.append("stdout truncated")
+    if event.stderr_truncated:
+        flags.append("stderr truncated")
+    return f" ({', '.join(flags)})" if flags else ""
+
+
 def _write_markdown_report(result: CiResult) -> Path:
     report_path = result.report_paths.markdown
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,7 +131,7 @@ def _write_markdown_report(result: CiResult) -> Path:
     if result.command_events:
         for event in result.command_events:
             status = "executed" if event.executed else "blocked"
-            lines.append(f"- [{status}] {event.command_text}")
+            lines.append(f"- [{status}] {event.command_text}{_event_flags(event)}")
     else:
         lines.append("- None")
 
@@ -168,7 +179,11 @@ def run_ci(
         f"Tests started: {config.test_command}",
         {"command": config.test_command},
     )
-    test_result = TestRunner(command_tracker).run(
+    test_result = TestRunner(
+        command_tracker,
+        timeout_seconds=config.command_timeout_seconds,
+        max_output_bytes=config.max_output_bytes,
+    ).run(
         detected_repo_dir,
         config.test_command,
     )

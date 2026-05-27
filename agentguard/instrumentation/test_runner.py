@@ -7,6 +7,7 @@ from pathlib import Path
 
 from agentguard.core.result import CommandResult
 from agentguard.instrumentation.command_tracker import CommandTracker
+from agentguard.instrumentation.output_limits import limit_output
 
 
 def _argv(command: str) -> list[str]:
@@ -30,8 +31,15 @@ def _build_test_env(repo_dir: Path) -> dict[str, str]:
 
 
 class TestRunner:
-    def __init__(self, command_tracker: CommandTracker) -> None:
+    def __init__(
+        self,
+        command_tracker: CommandTracker,
+        timeout_seconds: int = 60,
+        max_output_bytes: int = 200000,
+    ) -> None:
         self.command_tracker = command_tracker
+        self.timeout_seconds = timeout_seconds
+        self.max_output_bytes = max_output_bytes
 
     def run(self, repo_dir: Path, command: str) -> CommandResult:
         argv = _argv(command)
@@ -41,28 +49,55 @@ class TestRunner:
         env = _build_test_env(repo_dir)
 
         started = time.monotonic()
-        completed = subprocess.run(
-            argv,
-            cwd=repo_dir,
-            check=False,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        timed_out = False
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=repo_dir,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=self.timeout_seconds,
+            )
+            exit_code = completed.returncode
+            stdout = completed.stdout
+            stderr = completed.stderr
+        except subprocess.TimeoutExpired as error:
+            timed_out = True
+            exit_code = 124
+            stdout = error.stdout or ""
+            stderr = error.stderr or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode(errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
+            stderr = (
+                f"{stderr}\nCommand timed out after "
+                f"{self.timeout_seconds} seconds."
+            ).strip()
         duration_seconds = time.monotonic() - started
+        limited_stdout = limit_output(stdout, self.max_output_bytes)
+        limited_stderr = limit_output(stderr, self.max_output_bytes)
         self.command_tracker.record_executed(
             command=argv,
             command_text=command,
             cwd=repo_dir,
-            exit_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            exit_code=exit_code,
+            stdout=limited_stdout.text,
+            stderr=limited_stderr.text,
             duration_seconds=duration_seconds,
+            timed_out=timed_out,
+            stdout_truncated=limited_stdout.truncated,
+            stderr_truncated=limited_stderr.truncated,
         )
         return CommandResult(
             command=command,
-            exit_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            exit_code=exit_code,
+            stdout=limited_stdout.text,
+            stderr=limited_stderr.text,
             duration_seconds=duration_seconds,
+            timed_out=timed_out,
+            stdout_truncated=limited_stdout.truncated,
+            stderr_truncated=limited_stderr.truncated,
         )

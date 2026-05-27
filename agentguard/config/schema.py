@@ -44,6 +44,8 @@ class AgentGuardConfig:
     secret_patterns: list[str]
     config_path: Path
     agent_command: Optional[str] = None
+    command_timeout_seconds: int = 60
+    max_output_bytes: int = 200000
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     mode: str = "benchmark"
 
