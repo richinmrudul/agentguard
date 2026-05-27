@@ -21,6 +21,8 @@ def test_load_fix_auth_bug_config() -> None:
     assert config.policy["secret_scan"] == "critical"
     assert config.diff_limits.max_files_changed == 3
     assert config.secret_patterns == [".env", "*.pem", "*.key", "secrets/**"]
+    assert config.command_timeout_seconds == 60
+    assert config.max_output_bytes == 200000
 
 
 def test_load_fix_auth_bug_docker_config() -> None:
@@ -70,3 +72,66 @@ def test_load_ci_config_without_repo_template() -> None:
     assert config.task_id == "pr_safety_check"
     assert config.repo_template is None
     assert config.allowed_paths == ["agentguard/**", "tests/**", "examples/**"]
+
+
+def test_config_accepts_command_limit_defaults_for_null_values(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+command_timeout_seconds:
+max_output_bytes:
+expected_modified_files:
+  min: 1
+  max: 2
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.command_timeout_seconds == 60
+    assert config.max_output_bytes == 200000
+
+
+def test_config_rejects_non_positive_command_timeout(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+command_timeout_seconds: 0
+expected_modified_files:
+  min: 1
+  max: 2
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="command_timeout_seconds"):
+        load_config(config_path)
+
+
+def test_config_rejects_non_positive_max_output_bytes(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+max_output_bytes: 0
+expected_modified_files:
+  min: 1
+  max: 2
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="max_output_bytes"):
+        load_config(config_path)

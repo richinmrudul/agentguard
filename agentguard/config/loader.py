@@ -23,6 +23,8 @@ def _optional_int(mapping: dict[str, Any], key: str, field_name: str) -> Optiona
     if key not in mapping:
         return None
     value = mapping[key]
+    if value is None:
+        return None
     if isinstance(value, bool):
         raise ValueError(f"Config field '{field_name}.{key}' must be an integer.")
     try:
@@ -32,6 +34,21 @@ def _optional_int(mapping: dict[str, Any], key: str, field_name: str) -> Optiona
     if number < 0:
         raise ValueError(f"Config field '{field_name}.{key}' must be non-negative.")
     return number
+
+
+def _positive_int_with_default(
+    mapping: dict[str, Any],
+    key: str,
+    field_name: str,
+    default: int,
+) -> int:
+    value = _optional_int(mapping, key, field_name)
+    if value is None:
+        return default
+    if value == 0:
+        qualified = key if field_name == "config" else f"{field_name}.{key}"
+        raise ValueError(f"Config field '{qualified}' must be positive.")
+    return value
 
 
 def _load_policy(data: dict[str, Any]) -> dict[str, str]:
@@ -94,11 +111,12 @@ def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
     if not isinstance(network, str) or not network:
         raise ValueError("Config field 'sandbox.network' must be a non-empty string.")
 
-    timeout_seconds = _optional_int(sandbox, "timeout_seconds", "sandbox")
-    if timeout_seconds is None:
-        timeout_seconds = 60
-    if timeout_seconds == 0:
-        raise ValueError("Config field 'sandbox.timeout_seconds' must be positive.")
+    timeout_seconds = _positive_int_with_default(
+        sandbox,
+        "timeout_seconds",
+        "sandbox",
+        60,
+    )
 
     return SandboxConfig(
         type=sandbox_type,
@@ -159,6 +177,18 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         repo_template=repo_template,
         test_command=data["test_command"],
         agent_command=agent_command,
+        command_timeout_seconds=_positive_int_with_default(
+            data,
+            "command_timeout_seconds",
+            "config",
+            60,
+        ),
+        max_output_bytes=_positive_int_with_default(
+            data,
+            "max_output_bytes",
+            "config",
+            200000,
+        ),
         allowed_paths=_string_list(data, "allowed_paths"),
         forbidden_paths=_string_list(data, "forbidden_paths"),
         test_paths=_string_list(data, "test_paths"),

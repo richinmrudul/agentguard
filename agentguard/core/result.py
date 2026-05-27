@@ -13,6 +13,9 @@ class CommandResult:
     stdout: str
     stderr: str
     duration_seconds: float
+    timed_out: bool = False
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
 
 
 @dataclass(frozen=True)

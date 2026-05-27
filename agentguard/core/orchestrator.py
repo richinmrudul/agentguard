@@ -61,6 +61,9 @@ def _record_command_events(
                 "executed": event.executed,
                 "blocked": event.blocked,
                 "exit_code": event.exit_code,
+                "timed_out": event.timed_out,
+                "stdout_truncated": event.stdout_truncated,
+                "stderr_truncated": event.stderr_truncated,
             },
         )
     return len(events)
@@ -68,8 +71,17 @@ def _record_command_events(
 
 def _test_runner(config, command_tracker: CommandTracker):
     if config.sandbox.type == "docker":
-        return DockerTestRunner(command_tracker, config.sandbox)
-    return TestRunner(command_tracker)
+        return DockerTestRunner(
+            command_tracker,
+            config.sandbox,
+            timeout_seconds=config.command_timeout_seconds,
+            max_output_bytes=config.max_output_bytes,
+        )
+    return TestRunner(
+        command_tracker,
+        timeout_seconds=config.command_timeout_seconds,
+        max_output_bytes=config.max_output_bytes,
+    )
 
 
 def _agent_for_config(config, agent_name: str) -> Agent:

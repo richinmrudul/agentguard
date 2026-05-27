@@ -1,5 +1,6 @@
 from dataclasses import replace
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -124,6 +125,90 @@ def test_docker_runner_records_install_and_test_commands(
         "docker: python -m pip install --no-build-isolation -e .",
         "docker: pytest",
     ]
+    assert calls[0][1]["timeout"] == 60
+
+
+def test_docker_command_runner_uses_configured_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("agentguard.sandbox.docker_runner.subprocess.run", fake_run)
+    runner = DockerCommandRunner(
+        CommandTracker(),
+        SandboxConfig(type="docker", image="python:3.11-slim"),
+        timeout_seconds=7,
+    )
+
+    result = runner.run_argv(repo_dir, ["python", "-m", "tests"], "docker: tests")
+
+    assert result.exit_code == 0
+    assert calls[0][1]["timeout"] == 7
+
+
+def test_docker_command_runner_records_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    def fake_run(command, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=command,
+            timeout=kwargs["timeout"],
+            output=b"partial stdout",
+            stderr=b"partial stderr",
+        )
+
+    monkeypatch.setattr("agentguard.sandbox.docker_runner.subprocess.run", fake_run)
+    tracker = CommandTracker()
+    runner = DockerCommandRunner(
+        tracker,
+        SandboxConfig(type="docker", image="python:3.11-slim"),
+        timeout_seconds=3,
+    )
+
+    result = runner.run_argv(repo_dir, ["python", "-m", "tests"], "docker: tests")
+
+    assert result.exit_code == 124
+    assert result.timed_out is True
+    assert "Docker command timed out after 3 seconds" in result.stderr
+    assert tracker.events[0].timed_out is True
+
+
+def test_docker_command_runner_truncates_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    def fake_run(command, **kwargs):
+        return SimpleNamespace(returncode=0, stdout="start" + ("x" * 200) + "end", stderr="")
+
+    monkeypatch.setattr("agentguard.sandbox.docker_runner.subprocess.run", fake_run)
+    tracker = CommandTracker()
+    runner = DockerCommandRunner(
+        tracker,
+        SandboxConfig(type="docker", image="python:3.11-slim"),
+        max_output_bytes=80,
+    )
+
+    result = runner.run_argv(repo_dir, ["python", "-m", "tests"], "docker: tests")
+
+    assert result.stdout_truncated is True
+    assert len(result.stdout.encode("utf-8")) <= 80
+    assert result.stdout.startswith("[agentguard] Output truncated")
+    assert "end" in result.stdout
+    assert tracker.events[0].stdout_truncated is True
 
 
 def test_docker_test_argv_normalizes_pytest_command() -> None:

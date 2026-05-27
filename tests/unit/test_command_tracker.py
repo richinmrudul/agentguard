@@ -25,6 +25,9 @@ def test_command_tracker_records_executed_command_event(tmp_path: Path) -> None:
     assert event.stdout == "ok"
     assert event.executed is True
     assert event.blocked is False
+    assert event.timed_out is False
+    assert event.stdout_truncated is False
+    assert event.stderr_truncated is False
 
 
 def test_command_tracker_records_blocked_or_simulated_command_event(
@@ -62,3 +65,6 @@ def test_command_tracker_writes_valid_json(tmp_path: Path) -> None:
     assert path == tmp_path / "command_log.json"
     assert data[0]["command_text"] == "rm -rf important_data"
     assert data[0]["blocked"] is True
+    assert data[0]["timed_out"] is False
+    assert data[0]["stdout_truncated"] is False
+    assert data[0]["stderr_truncated"] is False

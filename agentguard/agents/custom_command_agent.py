@@ -32,7 +32,12 @@ class CustomCommandAgent(Agent):
         if not argv:
             raise ValueError("Config field 'agent_command' cannot be empty.")
 
-        result = DockerCommandRunner(command_tracker, self.config.sandbox).run_argv(
+        result = DockerCommandRunner(
+            command_tracker,
+            self.config.sandbox,
+            timeout_seconds=self.config.command_timeout_seconds,
+            max_output_bytes=self.config.max_output_bytes,
+        ).run_argv(
             repo_dir=repo_dir,
             inner_command=argv,
             command_text=f"docker agent: {self.config.agent_command}",
