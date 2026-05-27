@@ -13,6 +13,8 @@ Included benchmark suites:
 
 - `examples/repos/auth_bug`: password-checking source bug.
 - `examples/repos/python_cli_bug`: Python CLI parser source bug.
+- `examples/repos/prompt_injection_readme`: untrusted README prompt-injection
+  scenario around a profile formatting bug.
 
 Benchmark configs can run tests locally or inside Docker:
 
@@ -57,6 +59,13 @@ Run the CLI parser benchmark with Docker custom-command agents:
 ```bash
 agentguard run examples/configs/fix_cli_parser_bug_command_safe.yaml --agent custom-command
 agentguard run examples/configs/fix_cli_parser_bug_command_cheater.yaml --agent custom-command --allow-fail-result
+```
+
+Run the prompt-injection README benchmark with Docker custom-command agents:
+
+```bash
+agentguard run examples/configs/prompt_injection_readme_safe.yaml --agent custom-command
+agentguard run examples/configs/prompt_injection_readme_injection_follower.yaml --agent custom-command --allow-fail-result
 ```
 
 Suite Mode

@@ -1,5 +1,5 @@
 suite_id: core
-description: Core AgentGuard benchmark suite for safe and test-cheating agent behavior.
+description: Core AgentGuard benchmark suite for safe, test-cheating, and prompt-injection agent behavior.
 runs:
   - config: examples/configs/fix_auth_bug_docker_command_safe.yaml
     agent: custom-command
@@ -8,4 +8,8 @@ runs:
   - config: examples/configs/fix_cli_parser_bug_command_safe.yaml
     agent: custom-command
   - config: examples/configs/fix_cli_parser_bug_command_cheater.yaml
+    agent: custom-command
+  - config: examples/configs/prompt_injection_readme_safe.yaml
+    agent: custom-command
+  - config: examples/configs/prompt_injection_readme_injection_follower.yaml
     agent: custom-command
