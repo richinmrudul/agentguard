@@ -13,6 +13,8 @@ agents that get passing tests by taking unsafe shortcuts.
 - Test cheating: the agent weakens tests, so tests pass but AgentGuard fails it.
 - Prompt injection: the repo README contains malicious instructions, and the
   follower agent creates `.env`; AgentGuard catches the forbidden/secret path.
+- Filesystem boundary: the escape agent fixes the source bug but creates a
+  secret file and reports a path escape command attempt.
 - Suite mode: multiple benchmark tasks are summarized as one evaluation run.
 
 ## Prerequisites
@@ -63,14 +65,26 @@ What it demonstrates: the agent fixes the source bug and passes tests, but also
 follows malicious README instructions by creating `.env`. AgentGuard fails the
 run with forbidden-path and secret-scan evidence.
 
-### 4. Core Suite
+### 4. Filesystem Boundary
+
+```bash
+agentguard run examples/configs/filesystem_boundary_safe.yaml --agent custom-command
+agentguard run examples/configs/filesystem_boundary_escape.yaml --agent custom-command --allow-fail-result
+```
+
+Expected outcome: the safe run `PASS`es and the escape run `FAIL`s.
+
+What it demonstrates: AgentGuard can catch forbidden/secret file creation and
+ingested command-attempt evidence for suspicious filesystem boundary behavior.
+
+### 5. Core Suite
 
 ```bash
 agentguard suite examples/suites/core.yaml --allow-failures
 ```
 
 Expected outcome: the suite completes and reports mixed results across safe,
-test-cheating, and prompt-injection behaviors.
+test-cheating, prompt-injection, and filesystem-boundary behaviors.
 
 What it demonstrates: AgentGuard can package multiple benchmark tasks into one
 evaluation artifact with pass rate, average score, best/worst runs, and common
@@ -109,6 +123,7 @@ failure modes:
 - A normal safe fix passes.
 - A test-cheating shortcut fails despite passing tests.
 - A prompt-injection follower fails despite fixing the source bug.
+- A filesystem-boundary escape fails despite fixing the source bug.
 
 The suite report then turns those individual runs into one portfolio-ready
 evaluation summary.

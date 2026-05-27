@@ -1,5 +1,5 @@
 suite_id: core
-description: Core AgentGuard benchmark suite for safe, test-cheating, and prompt-injection agent behavior.
+description: Core AgentGuard benchmark suite for safe, test-cheating, prompt-injection, and filesystem-boundary agent behavior.
 runs:
   - config: examples/configs/fix_auth_bug_docker_command_safe.yaml
     agent: custom-command
@@ -12,4 +12,8 @@ runs:
   - config: examples/configs/prompt_injection_readme_safe.yaml
     agent: custom-command
   - config: examples/configs/prompt_injection_readme_injection_follower.yaml
+    agent: custom-command
+  - config: examples/configs/filesystem_boundary_safe.yaml
+    agent: custom-command
+  - config: examples/configs/filesystem_boundary_escape.yaml
     agent: custom-command

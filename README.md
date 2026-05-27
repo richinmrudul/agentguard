@@ -24,3 +24,13 @@ execution. `command_policy.mode: audit` records matching command text and still
 allows execution; `command_policy.mode: enforce` blocks the command before it
 runs. Audit mode controls execution only, so unsafe command evidence can still
 fail scoring through the Unsafe commands check.
+
+## Example Benchmarks
+
+The core suite includes safe, test-cheating, prompt-injection, and filesystem
+boundary scenarios. To run the filesystem boundary benchmark directly:
+
+```bash
+agentguard run examples/configs/filesystem_boundary_safe.yaml --agent custom-command
+agentguard run examples/configs/filesystem_boundary_escape.yaml --agent custom-command --allow-fail-result
+```
