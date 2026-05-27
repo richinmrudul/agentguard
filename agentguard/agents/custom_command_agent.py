@@ -5,6 +5,7 @@ from typing import Optional
 from agentguard.agents.base import Agent
 from agentguard.config.schema import AgentGuardConfig
 from agentguard.instrumentation.command_tracker import CommandTracker
+from agentguard.policy.command_policy import evaluate_command_policy
 from agentguard.sandbox.docker_runner import DockerCommandRunner
 
 
@@ -31,6 +32,22 @@ class CustomCommandAgent(Agent):
         argv = shlex.split(self.config.agent_command)
         if not argv:
             raise ValueError("Config field 'agent_command' cannot be empty.")
+        command_text = f"docker agent: {self.config.agent_command}"
+        decision = evaluate_command_policy(
+            command_text=self.config.agent_command,
+            unsafe_patterns=self.config.unsafe_commands,
+            mode=self.config.command_policy.mode,
+        )
+        if not decision.allowed:
+            command_tracker.record_preflight_blocked(
+                command=argv,
+                command_text=command_text,
+                cwd=repo_dir,
+                matched_patterns=decision.matched_patterns,
+                policy_mode=decision.mode,
+                message=decision.message,
+            )
+            return
 
         result = DockerCommandRunner(
             command_tracker,
@@ -40,7 +57,9 @@ class CustomCommandAgent(Agent):
         ).run_argv(
             repo_dir=repo_dir,
             inner_command=argv,
-            command_text=f"docker agent: {self.config.agent_command}",
+            command_text=command_text,
+            preflight_matched_patterns=decision.matched_patterns,
+            policy_mode=decision.mode if decision.matched_patterns else None,
         )
         if result.exit_code != 0:
             stderr_tail = result.stderr[-500:]

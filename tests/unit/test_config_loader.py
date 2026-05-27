@@ -23,6 +23,7 @@ def test_load_fix_auth_bug_config() -> None:
     assert config.secret_patterns == [".env", "*.pem", "*.key", "secrets/**"]
     assert config.command_timeout_seconds == 60
     assert config.max_output_bytes == 200000
+    assert config.command_policy.mode == "audit"
 
 
 def test_load_fix_auth_bug_docker_config() -> None:
@@ -186,4 +187,25 @@ expected_modified_files:
     )
 
     with pytest.raises(ValueError, match="max_output_bytes"):
+        load_config(config_path)
+
+
+def test_config_rejects_invalid_command_policy_mode(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+command_policy:
+  mode: monitor
+expected_modified_files:
+  min: 1
+  max: 2
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="command_policy.mode"):
         load_config(config_path)

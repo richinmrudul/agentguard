@@ -155,6 +155,8 @@ class DockerCommandRunner:
         repo_dir: Path,
         inner_command: list[str],
         command_text: str,
+        preflight_matched_patterns: Optional[list[str]] = None,
+        policy_mode: Optional[str] = None,
     ) -> CommandResult:
         docker_command = self.build_command(repo_dir, inner_command)
         started = time.monotonic()
@@ -202,6 +204,8 @@ class DockerCommandRunner:
             timed_out=timed_out,
             stdout_truncated=limited_stdout.truncated,
             stderr_truncated=limited_stderr.truncated,
+            preflight_matched_patterns=preflight_matched_patterns,
+            policy_mode=policy_mode,
         )
         return CommandResult(
             command=command_text,

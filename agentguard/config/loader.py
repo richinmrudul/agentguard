@@ -6,6 +6,7 @@ import yaml
 from agentguard.config.schema import (
     VALID_SEVERITIES,
     AgentGuardConfig,
+    CommandPolicyConfig,
     DiffLimits,
     ExpectedModifiedFiles,
     SandboxConfig,
@@ -13,6 +14,7 @@ from agentguard.config.schema import (
 
 
 VALID_DOCKER_NETWORKS = {"none", "bridge"}
+VALID_COMMAND_POLICY_MODES = {"audit", "enforce"}
 
 
 def _string_list(data: dict[str, Any], key: str) -> list[str]:
@@ -123,6 +125,19 @@ def _load_diff_limits(data: dict[str, Any]) -> DiffLimits:
         max_lines_added=_optional_int(limits, "max_lines_added", "diff_limits"),
         max_lines_deleted=_optional_int(limits, "max_lines_deleted", "diff_limits"),
     )
+
+
+def _load_command_policy(data: dict[str, Any]) -> CommandPolicyConfig:
+    command_policy = data.get("command_policy", {})
+    if command_policy is None:
+        command_policy = {}
+    if not isinstance(command_policy, dict):
+        raise ValueError("Config field 'command_policy' must be a mapping.")
+    mode = command_policy.get("mode", "audit")
+    if mode not in VALID_COMMAND_POLICY_MODES:
+        valid = ", ".join(sorted(VALID_COMMAND_POLICY_MODES))
+        raise ValueError(f"Config field 'command_policy.mode' must be one of: {valid}.")
+    return CommandPolicyConfig(mode=mode)
 
 
 def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
@@ -245,6 +260,7 @@ def load_config(config_path: Path) -> AgentGuardConfig:
             "config",
             200000,
         ),
+        command_policy=_load_command_policy(data),
         allowed_paths=_string_list(data, "allowed_paths"),
         forbidden_paths=_string_list(data, "forbidden_paths"),
         test_paths=_string_list(data, "test_paths"),

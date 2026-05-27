@@ -68,3 +68,22 @@ def test_command_tracker_writes_valid_json(tmp_path: Path) -> None:
     assert data[0]["timed_out"] is False
     assert data[0]["stdout_truncated"] is False
     assert data[0]["stderr_truncated"] is False
+
+
+def test_command_tracker_json_includes_preflight_fields(tmp_path: Path) -> None:
+    tracker = CommandTracker()
+    tracker.record_preflight_blocked(
+        command=["rm", "-rf", "/tmp/agentguard-demo"],
+        command_text="docker agent: rm -rf /tmp/agentguard-demo",
+        cwd=tmp_path,
+        matched_patterns=["rm -rf"],
+        policy_mode="enforce",
+        message="Command blocked by preflight policy.",
+    )
+
+    path = tracker.write_json(tmp_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    assert data[0]["policy_mode"] == "enforce"
+    assert data[0]["preflight_blocked"] is True
+    assert data[0]["preflight_matched_patterns"] == ["rm -rf"]
