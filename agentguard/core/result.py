@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from agentguard.config.schema import BenchmarkMetadata
 from agentguard.core.timeline import TimelineEvent
 from agentguard.instrumentation.command_tracker import CommandEvent
 
@@ -79,6 +80,7 @@ class BenchmarkResult:
     check_results: list[CheckResult]
     report_paths: ReportPaths
     sandbox: Optional[SandboxMetadata] = None
+    benchmark: BenchmarkMetadata = field(default_factory=BenchmarkMetadata)
     command_events: list[CommandEvent] = field(default_factory=list)
     timeline: list[TimelineEvent] = field(default_factory=list)
 

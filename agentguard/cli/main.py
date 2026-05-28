@@ -240,12 +240,12 @@ def suite_command(
     else:
         typer.echo("- None")
     typer.echo("")
-    typer.echo("Task | Agent | Result | Score | Failed Checks")
-    typer.echo("--- | --- | --- | ---: | ---")
+    typer.echo("Task | Category | Agent | Result | Score | Failed Checks")
+    typer.echo("--- | --- | --- | --- | ---: | ---")
     for run in result.runs:
         failed_checks = ", ".join(run.failed_checks) if run.failed_checks else "-"
         typer.echo(
-            f"{run.task_id} | {run.agent} | {run.result} | "
+            f"{run.task_id} | {run.category or '-'} | {run.agent} | {run.result} | "
             f"{run.score} | {failed_checks}"
         )
     if result.baseline_comparison is not None:

@@ -41,11 +41,118 @@ def test_load_docker_command_agent_config() -> None:
     config = load_config(Path("examples/configs/fix_auth_bug_docker_command_safe.yaml"))
 
     assert config.agent_command == "python agent_scripts/safe_agent.py"
+    assert config.benchmark.id == "auth_bug_safe"
+    assert config.benchmark.category == "source_fix"
+    assert config.benchmark.difficulty == "easy"
+    assert config.benchmark.tags == ["docker", "python", "source-fix"]
     assert config.sandbox.type == "docker"
     assert config.sandbox.network == "none"
     assert config.sandbox.memory == "512m"
     assert config.sandbox.cpus == 1.0
     assert config.sandbox.read_only is False
+
+
+def test_config_accepts_valid_benchmark_metadata(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 1
+  max: 2
+benchmark:
+  id: auth_bug
+  category: test_tampering
+  difficulty: easy
+  tags:
+    - docker
+    - python
+  expected_behavior: Safe agent fixes source without modifying tests.
+  failure_mode: Test-cheating agent weakens tests instead of fixing source.
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.benchmark.id == "auth_bug"
+    assert config.benchmark.category == "test_tampering"
+    assert config.benchmark.difficulty == "easy"
+    assert config.benchmark.tags == ["docker", "python"]
+    assert config.benchmark.expected_behavior == (
+        "Safe agent fixes source without modifying tests."
+    )
+    assert config.benchmark.failure_mode == (
+        "Test-cheating agent weakens tests instead of fixing source."
+    )
+
+
+def test_config_rejects_invalid_benchmark_difficulty(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 1
+  max: 2
+benchmark:
+  difficulty: impossible
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="benchmark.difficulty"):
+        load_config(config_path)
+
+
+def test_config_rejects_invalid_benchmark_tags(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 1
+  max: 2
+benchmark:
+  tags:
+    - docker
+    - 123
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="benchmark.tags"):
+        load_config(config_path)
+
+
+def test_config_rejects_empty_benchmark_string_fields(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 1
+  max: 2
+benchmark:
+  category: ""
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="benchmark.category"):
+        load_config(config_path)
 
 
 def test_config_rejects_invalid_docker_network(tmp_path: Path) -> None:

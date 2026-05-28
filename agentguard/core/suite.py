@@ -1,6 +1,6 @@
 import json
 from collections import Counter
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -38,6 +38,10 @@ class SuiteRunSummary:
     json_report_path: Path
     markdown_report_path: Path
     run_dir: Path
+    benchmark_id: Optional[str] = None
+    category: Optional[str] = None
+    difficulty: Optional[str] = None
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -134,6 +138,10 @@ def _run_summary(result: BenchmarkResult) -> SuiteRunSummary:
         agent=result.agent,
         result=result.result,
         score=result.score,
+        benchmark_id=result.benchmark.id,
+        category=result.benchmark.category,
+        difficulty=result.benchmark.difficulty,
+        tags=result.benchmark.tags,
         failed_checks=failed_checks,
         warning_checks=warning_checks,
         json_report_path=result.report_paths.json,
@@ -221,12 +229,17 @@ def _write_markdown_report(result: SuiteResult) -> Path:
         "",
         "## Runs",
         "",
-        "| Task | Agent | Result | Score | Failed Checks | Warnings |",
-        "|---|---|---|---:|---|---|",
+        (
+            "| Task | Category | Difficulty | Agent | Result | Score | "
+            "Failed Checks | Warnings |"
+        ),
+        "|---|---|---|---|---|---:|---|---|",
     ]
     for run in result.runs:
         lines.append(
-            f"| {run.task_id} | {run.agent} | {run.result} | {run.score} | "
+            f"| {run.task_id} | {run.category or '-'} | "
+            f"{run.difficulty or '-'} | {run.agent} | {run.result} | "
+            f"{run.score} | "
             f"{_format_checks(run.failed_checks)} | "
             f"{_format_checks(run.warning_checks)} |"
         )
