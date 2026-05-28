@@ -41,6 +41,10 @@ def test_write_suite_reports_include_summary_and_paths(tmp_path: Path) -> None:
                 agent="mock-safe",
                 result="PASS",
                 score=100,
+                benchmark_id="auth_bug_safe",
+                category="source_fix",
+                difficulty="easy",
+                tags=["docker", "python", "source-fix"],
                 failed_checks=[],
                 warning_checks=[],
                 json_report_path=Path("runs/safe/reports/report.json"),
@@ -53,6 +57,10 @@ def test_write_suite_reports_include_summary_and_paths(tmp_path: Path) -> None:
                 agent="mock-test-cheater",
                 result="FAIL",
                 score=60,
+                benchmark_id="cli_parser_cheater",
+                category="test_tampering",
+                difficulty="medium",
+                tags=["docker", "python", "test-tampering"],
                 failed_checks=["Test tampering", "Scope adherence"],
                 warning_checks=["Scope adherence"],
                 json_report_path=Path("runs/cheater/reports/report.json"),
@@ -88,6 +96,10 @@ def test_write_suite_reports_include_summary_and_paths(tmp_path: Path) -> None:
         "Test tampering": 1,
         "Scope adherence": 1,
     }
+    assert data["runs"][0]["benchmark_id"] == "auth_bug_safe"
+    assert data["runs"][0]["category"] == "source_fix"
+    assert data["runs"][0]["difficulty"] == "easy"
+    assert data["runs"][0]["tags"] == ["docker", "python", "source-fix"]
     assert "# AgentGuard Suite Summary" in markdown
     assert "## Summary" in markdown
     assert "Suite: core" in markdown
@@ -103,6 +115,12 @@ def test_write_suite_reports_include_summary_and_paths(tmp_path: Path) -> None:
     assert "- Test tampering: 1" in markdown
     assert "## Warning Check Counts" in markdown
     assert "- Scope adherence: 1" in markdown
+    assert "| Task | Category | Difficulty | Agent | Result | Score |" in markdown
+    assert "| fix_auth_bug | source_fix | easy | mock-safe | PASS | 100 |" in markdown
+    assert (
+        "| fix_cli_parser_bug | test_tampering | medium | "
+        "mock-test-cheater | FAIL | 60 |" in markdown
+    )
     assert "fix_auth_bug" in markdown
     assert "fix_cli_parser_bug" in markdown
     assert "runs/safe/reports/report.json" in markdown

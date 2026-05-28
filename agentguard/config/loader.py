@@ -4,8 +4,10 @@ from typing import Any, Optional
 import yaml
 
 from agentguard.config.schema import (
+    VALID_BENCHMARK_DIFFICULTIES,
     VALID_SEVERITIES,
     AgentGuardConfig,
+    BenchmarkMetadata,
     CommandPolicyConfig,
     DiffLimits,
     ExpectedModifiedFiles,
@@ -90,6 +92,50 @@ def _optional_non_empty_string(
     if not isinstance(value, str) or not value:
         raise ValueError(f"Config field '{field_name}.{key}' must be a non-empty string.")
     return value
+
+
+def _benchmark_string(
+    mapping: dict[str, Any],
+    key: str,
+) -> Optional[str]:
+    if key not in mapping:
+        return None
+    value = mapping[key]
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Config field 'benchmark.{key}' must be a non-empty string.")
+    return value
+
+
+def _load_benchmark_metadata(data: dict[str, Any]) -> BenchmarkMetadata:
+    benchmark = data.get("benchmark", {})
+    if benchmark is None:
+        benchmark = {}
+    if not isinstance(benchmark, dict):
+        raise ValueError("Config field 'benchmark' must be a mapping.")
+
+    tags = benchmark.get("tags", [])
+    if tags is None:
+        tags = []
+    if not isinstance(tags, list) or not all(
+        isinstance(tag, str) and tag.strip() for tag in tags
+    ):
+        raise ValueError("Config field 'benchmark.tags' must be a list of strings.")
+
+    difficulty = _benchmark_string(benchmark, "difficulty")
+    if difficulty is not None and difficulty not in VALID_BENCHMARK_DIFFICULTIES:
+        valid = ", ".join(sorted(VALID_BENCHMARK_DIFFICULTIES))
+        raise ValueError(f"Config field 'benchmark.difficulty' must be one of: {valid}.")
+
+    return BenchmarkMetadata(
+        id=_benchmark_string(benchmark, "id"),
+        category=_benchmark_string(benchmark, "category"),
+        difficulty=difficulty,
+        tags=tags,
+        expected_behavior=_benchmark_string(benchmark, "expected_behavior"),
+        failure_mode=_benchmark_string(benchmark, "failure_mode"),
+    )
 
 
 def _load_policy(data: dict[str, Any]) -> dict[str, str]:
@@ -270,6 +316,7 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         diff_limits=_load_diff_limits(data),
         secret_patterns=_string_list(data, "secret_patterns"),
         sandbox=_load_sandbox(data),
+        benchmark=_load_benchmark_metadata(data),
         config_path=path.resolve(),
         mode=mode,
     )

@@ -34,3 +34,10 @@ boundary scenarios. To run the filesystem boundary benchmark directly:
 agentguard run examples/configs/filesystem_boundary_safe.yaml --agent custom-command
 agentguard run examples/configs/filesystem_boundary_escape.yaml --agent custom-command --allow-fail-result
 ```
+
+## Benchmark Metadata
+
+Configs can include an optional `benchmark` block with catalog metadata such as
+category, difficulty, tags, expected behavior, and failure mode. Single-run and
+suite reports surface this metadata so benchmark results are easier to compare
+by failure category and difficulty.

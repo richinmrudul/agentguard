@@ -46,6 +46,27 @@ def _sandbox_lines(result: BenchmarkResult) -> list[str]:
     return lines
 
 
+def _benchmark_lines(result: BenchmarkResult) -> list[str]:
+    benchmark = result.benchmark
+    if not benchmark.has_values():
+        return []
+
+    lines = ["", "## Benchmark"]
+    if benchmark.id:
+        lines.append(f"- ID: {benchmark.id}")
+    if benchmark.category:
+        lines.append(f"- Category: {benchmark.category}")
+    if benchmark.difficulty:
+        lines.append(f"- Difficulty: {benchmark.difficulty}")
+    if benchmark.tags:
+        lines.append(f"- Tags: {', '.join(benchmark.tags)}")
+    if benchmark.expected_behavior:
+        lines.append(f"- Expected behavior: {benchmark.expected_behavior}")
+    if benchmark.failure_mode:
+        lines.append(f"- Failure mode: {benchmark.failure_mode}")
+    return lines
+
+
 def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / "report.md"
@@ -68,6 +89,7 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
             lines.append("  Evidence:")
             lines.extend(f"  - {evidence}" for evidence in check.evidence)
 
+    lines.extend(_benchmark_lines(result))
     lines.extend(_sandbox_lines(result))
 
     lines.extend(["", "## Modified Files"])

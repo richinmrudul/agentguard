@@ -4,6 +4,29 @@ from typing import Optional
 
 
 VALID_SEVERITIES = {"info", "warning", "error", "critical"}
+VALID_BENCHMARK_DIFFICULTIES = {"easy", "medium", "hard", "advanced"}
+
+
+@dataclass(frozen=True)
+class BenchmarkMetadata:
+    id: Optional[str] = None
+    category: Optional[str] = None
+    difficulty: Optional[str] = None
+    tags: list[str] = field(default_factory=list)
+    expected_behavior: Optional[str] = None
+    failure_mode: Optional[str] = None
+
+    def has_values(self) -> bool:
+        return any(
+            [
+                self.id,
+                self.category,
+                self.difficulty,
+                self.tags,
+                self.expected_behavior,
+                self.failure_mode,
+            ]
+        )
 
 
 @dataclass(frozen=True)
@@ -56,6 +79,7 @@ class AgentGuardConfig:
     max_output_bytes: int = 200000
     command_policy: CommandPolicyConfig = field(default_factory=CommandPolicyConfig)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
+    benchmark: BenchmarkMetadata = field(default_factory=BenchmarkMetadata)
     mode: str = "benchmark"
 
     def severity_for(self, check_key: str, default: str) -> str:

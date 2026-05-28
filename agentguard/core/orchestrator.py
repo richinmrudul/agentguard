@@ -288,6 +288,7 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
         check_results=check_results,
         report_paths=report_paths,
         sandbox=_sandbox_metadata(config),
+        benchmark=config.benchmark,
         command_events=command_tracker.events,
         timeline=timeline.events,
     )
@@ -311,6 +312,7 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
             command_log=command_log_path,
         ),
         sandbox=partial_result.sandbox,
+        benchmark=partial_result.benchmark,
         command_events=partial_result.command_events,
         timeline=partial_result.timeline,
     )
