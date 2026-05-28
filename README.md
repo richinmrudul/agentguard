@@ -49,3 +49,14 @@ agentguard suite examples/suites/core.yaml --category prompt_injection --allow-f
 agentguard suite examples/suites/core.yaml --tag secret-access --allow-failures
 agentguard suite examples/suites/core.yaml --difficulty medium --allow-failures
 ```
+
+## Browse Reports
+
+AgentGuard writes local JSON and Markdown reports under `.agentguard/`. Recent
+reports can be listed and inspected from the CLI:
+
+```bash
+agentguard reports list
+agentguard reports show --latest
+agentguard reports show --latest --type suite
+```
