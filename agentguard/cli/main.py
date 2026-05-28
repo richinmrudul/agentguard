@@ -14,17 +14,99 @@ from agentguard.core.suite import (
     run_suite,
     suite_filters_from_values,
 )
+from agentguard.reports.browser import (
+    discover_reports,
+    format_report_summary,
+    format_reports_table,
+    latest_report,
+    load_report,
+    validate_report_type,
+)
 from agentguard.reports.github_summary import write_github_step_summary
 
 app = typer.Typer(
     help="Local-first safety and reliability evaluation framework for AI coding agents."
 )
+reports_app = typer.Typer(help="List and inspect local AgentGuard reports.")
+app.add_typer(reports_app, name="reports")
 
 
 @app.command()
 def version() -> None:
     """Print the AgentGuard version."""
     typer.echo(__version__)
+
+
+@reports_app.command("list")
+def reports_list(
+    report_type: Optional[str] = typer.Option(
+        None,
+        "--type",
+        help="Report type to list: run, suite, or ci.",
+    ),
+    limit: int = typer.Option(
+        10,
+        "--limit",
+        help="Maximum number of reports to show.",
+    ),
+) -> None:
+    """List recent local AgentGuard reports."""
+    if limit <= 0:
+        raise typer.BadParameter("limit must be positive.", param_hint="--limit")
+    try:
+        validated_type = validate_report_type(report_type)
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--type") from error
+
+    reports = discover_reports(report_type=validated_type)[:limit]
+    typer.echo(format_reports_table(reports))
+
+
+@reports_app.command("show")
+def reports_show(
+    path: Optional[Path] = typer.Argument(
+        None,
+        help="Path to a report JSON file.",
+    ),
+    latest: bool = typer.Option(
+        False,
+        "--latest",
+        help="Show the latest report.",
+    ),
+    report_type: Optional[str] = typer.Option(
+        None,
+        "--type",
+        help="Report type for --latest: run, suite, or ci.",
+    ),
+) -> None:
+    """Show a concise local AgentGuard report summary."""
+    try:
+        validated_type = validate_report_type(report_type)
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--type") from error
+
+    if path is not None and latest:
+        typer.echo("Error: provide a report path or --latest, not both.", err=True)
+        raise typer.Exit(2)
+    if path is None and not latest:
+        typer.echo("Error: provide a report path or use --latest.", err=True)
+        raise typer.Exit(2)
+
+    try:
+        report = (
+            latest_report(report_type=validated_type)
+            if latest
+            else load_report(path if path is not None else Path())
+        )
+    except (OSError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    if report is None:
+        typer.echo("No reports found.", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(format_report_summary(report))
 
 
 @app.command()
