@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 import yaml
 
+from agentguard.config.loader import load_config
 from agentguard.core.baseline import BaselineComparison, compare_suite_to_baseline
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.result import BenchmarkResult
@@ -24,6 +25,16 @@ class SuiteConfig:
     description: str
     suite_path: Path
     runs: list[SuiteRunConfig]
+
+
+@dataclass(frozen=True)
+class SuiteFilters:
+    category: Optional[str] = None
+    difficulty: Optional[str] = None
+    tags: list[str] = field(default_factory=list)
+
+    def has_filters(self) -> bool:
+        return bool(self.category or self.difficulty or self.tags)
 
 
 @dataclass(frozen=True)
@@ -70,6 +81,7 @@ class SuiteResult:
     runs: list[SuiteRunSummary]
     json_report_path: Path
     markdown_report_path: Path
+    filters: SuiteFilters = field(default_factory=SuiteFilters)
     baseline_comparison: Optional[BaselineComparison] = None
 
 
@@ -89,6 +101,36 @@ def _required_string(data: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"Suite field '{key}' must be a non-empty string.")
     return value
+
+
+def normalize_filter_tags(raw_tags: Optional[list[str]]) -> list[str]:
+    if raw_tags is None:
+        return []
+    tags: list[str] = []
+    for raw_tag in raw_tags:
+        for tag in raw_tag.split(","):
+            normalized = tag.strip()
+            if normalized:
+                tags.append(normalized)
+    return tags
+
+
+def suite_filters_from_values(
+    category: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+) -> SuiteFilters:
+    normalized_category = category.strip() if category is not None else None
+    normalized_difficulty = difficulty.strip() if difficulty is not None else None
+    if normalized_category == "":
+        raise ValueError("Suite filter 'category' must be a non-empty string.")
+    if normalized_difficulty == "":
+        raise ValueError("Suite filter 'difficulty' must be a non-empty string.")
+    return SuiteFilters(
+        category=normalized_category,
+        difficulty=normalized_difficulty,
+        tags=normalize_filter_tags(tags),
+    )
 
 
 def load_suite_config(path: Path) -> SuiteConfig:
@@ -125,6 +167,32 @@ def load_suite_config(path: Path) -> SuiteConfig:
     )
 
 
+def _matches_filters(run: SuiteRunConfig, filters: SuiteFilters) -> bool:
+    if not filters.has_filters():
+        return True
+
+    metadata = load_config(run.config_path).benchmark
+    if filters.category is not None and metadata.category != filters.category:
+        return False
+    if filters.difficulty is not None and metadata.difficulty != filters.difficulty:
+        return False
+    if filters.tags and not set(filters.tags).issubset(set(metadata.tags)):
+        return False
+    return True
+
+
+def filter_suite_runs(
+    runs: list[SuiteRunConfig],
+    filters: SuiteFilters,
+) -> list[SuiteRunConfig]:
+    if not filters.has_filters():
+        return runs
+    matched = [run for run in runs if _matches_filters(run, filters)]
+    if not matched:
+        raise ValueError("suite filters matched no runs.")
+    return matched
+
+
 def _run_summary(result: BenchmarkResult) -> SuiteRunSummary:
     failed_checks = [check.name for check in result.check_results if not check.passed]
     warning_checks = [
@@ -152,6 +220,17 @@ def _run_summary(result: BenchmarkResult) -> SuiteRunSummary:
 
 def _format_checks(checks: list[str]) -> str:
     return ", ".join(checks) if checks else "-"
+
+
+def format_suite_filters(filters: SuiteFilters) -> str:
+    parts = []
+    if filters.category is not None:
+        parts.append(f"category={filters.category}")
+    if filters.difficulty is not None:
+        parts.append(f"difficulty={filters.difficulty}")
+    if filters.tags:
+        parts.append(f"tags={','.join(filters.tags)}")
+    return ", ".join(parts)
 
 
 def _run_headline(run: SuiteRunSummary) -> SuiteRunHeadline:
@@ -185,6 +264,8 @@ def _write_json_report(result: SuiteResult) -> Path:
     data = asdict(result)
     if result.baseline_comparison is None:
         data.pop("baseline_comparison", None)
+    if not result.filters.has_filters():
+        data.pop("filters", None)
     with report_path.open("w", encoding="utf-8") as file:
         json.dump(data, file, default=_json_default, indent=2)
         file.write("\n")
@@ -207,6 +288,10 @@ def _write_markdown_report(result: SuiteResult) -> Path:
         f"Failed: {result.failed}",
         f"Pass rate: {result.pass_rate}%",
         f"Average score: {result.average_score}",
+    ]
+    if result.filters.has_filters():
+        lines.append(f"Filters: {format_suite_filters(result.filters)}")
+    lines.extend([
         "",
         "## Best/Worst Runs",
         "",
@@ -234,7 +319,7 @@ def _write_markdown_report(result: SuiteResult) -> Path:
             "Failed Checks | Warnings |"
         ),
         "|---|---|---|---|---|---:|---|---|",
-    ]
+    ])
     for run in result.runs:
         lines.append(
             f"| {run.task_id} | {run.category or '-'} | "
@@ -296,11 +381,14 @@ def run_suite(
     path: Path,
     suites_root: Path = Path(".agentguard/suites"),
     compare_baseline_path: Optional[Path] = None,
+    filters: Optional[SuiteFilters] = None,
 ) -> SuiteResult:
     config = load_suite_config(path)
+    active_filters = filters or SuiteFilters()
+    suite_runs = filter_suite_runs(config.runs, active_filters)
     run_results = [
         run_benchmark(run.config_path, run.agent)
-        for run in config.runs
+        for run in suite_runs
     ]
     runs = [_run_summary(result) for result in run_results]
     total_runs = len(runs)
@@ -328,6 +416,7 @@ def run_suite(
         runs=runs,
         json_report_path=summary_dir / "suite.json",
         markdown_report_path=summary_dir / "suite.md",
+        filters=active_filters,
     )
     if compare_baseline_path is not None:
         result = replace(

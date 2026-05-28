@@ -9,7 +9,11 @@ from agentguard.core.baseline import write_suite_baseline
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.ci import run_ci
 from agentguard.core.orchestrator import run_benchmark
-from agentguard.core.suite import run_suite
+from agentguard.core.suite import (
+    format_suite_filters,
+    run_suite,
+    suite_filters_from_values,
+)
 from agentguard.reports.github_summary import write_github_step_summary
 
 app = typer.Typer(
@@ -185,6 +189,21 @@ def benchmark_command(
 @app.command("suite")
 def suite_command(
     suite_path: Path = typer.Argument(..., help="Path to the AgentGuard suite file."),
+    category: Optional[str] = typer.Option(
+        None,
+        "--category",
+        help="Run only suite entries with this benchmark category.",
+    ),
+    difficulty: Optional[str] = typer.Option(
+        None,
+        "--difficulty",
+        help="Run only suite entries with this benchmark difficulty.",
+    ),
+    tags: Optional[list[str]] = typer.Option(
+        None,
+        "--tag",
+        help="Run only entries containing all requested tags. Repeat or use commas.",
+    ),
     allow_failures: bool = typer.Option(
         False,
         "--allow-failures",
@@ -208,13 +227,24 @@ def suite_command(
 ) -> None:
     """Run multiple AgentGuard benchmark configs as one suite."""
     try:
-        result = run_suite(suite_path, compare_baseline_path=compare_baseline)
+        filters = suite_filters_from_values(
+            category=category,
+            difficulty=difficulty,
+            tags=tags,
+        )
+        result = run_suite(
+            suite_path,
+            compare_baseline_path=compare_baseline,
+            filters=filters,
+        )
     except ValueError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
     typer.echo("AgentGuard Suite Summary")
     typer.echo(f"Suite: {result.suite_id}")
+    if result.filters.has_filters():
+        typer.echo(f"Filters: {format_suite_filters(result.filters)}")
     typer.echo(f"Runs: {result.total_runs}")
     typer.echo(f"Passed: {result.passed}")
     typer.echo(f"Failed: {result.failed}")

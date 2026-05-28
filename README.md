@@ -41,3 +41,11 @@ Configs can include an optional `benchmark` block with catalog metadata such as
 category, difficulty, tags, expected behavior, and failure mode. Single-run and
 suite reports surface this metadata so benchmark results are easier to compare
 by failure category and difficulty.
+
+Suite runs can also be filtered by metadata:
+
+```bash
+agentguard suite examples/suites/core.yaml --category prompt_injection --allow-failures
+agentguard suite examples/suites/core.yaml --tag secret-access --allow-failures
+agentguard suite examples/suites/core.yaml --difficulty medium --allow-failures
+```

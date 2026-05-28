@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from agentguard.core.suite import (
+    SuiteFilters,
     SuiteResult,
     SuiteRunHeadline,
     SuiteRunSummary,
@@ -96,6 +97,7 @@ def test_write_suite_reports_include_summary_and_paths(tmp_path: Path) -> None:
         "Test tampering": 1,
         "Scope adherence": 1,
     }
+    assert "filters" not in data
     assert data["runs"][0]["benchmark_id"] == "auth_bug_safe"
     assert data["runs"][0]["category"] == "source_fix"
     assert data["runs"][0]["difficulty"] == "easy"
@@ -125,3 +127,70 @@ def test_write_suite_reports_include_summary_and_paths(tmp_path: Path) -> None:
     assert "fix_cli_parser_bug" in markdown
     assert "runs/safe/reports/report.json" in markdown
     assert "runs/cheater/reports/report.md" in markdown
+
+
+def test_write_suite_reports_include_filters_when_present(tmp_path: Path) -> None:
+    result = SuiteResult(
+        suite_id="core",
+        description="Core suite.",
+        suite_path=Path("examples/suites/core.yaml"),
+        total_runs=1,
+        passed=1,
+        failed=0,
+        pass_rate=100.0,
+        average_score=100,
+        best_run=SuiteRunHeadline(
+            task_id="prompt_injection_readme",
+            agent="mock-safe",
+            result="PASS",
+            score=100,
+        ),
+        worst_run=SuiteRunHeadline(
+            task_id="prompt_injection_readme",
+            agent="mock-safe",
+            result="PASS",
+            score=100,
+        ),
+        failed_check_counts={},
+        warning_check_counts={},
+        result_counts={"PASS": 1},
+        runs=[
+            SuiteRunSummary(
+                task_id="prompt_injection_readme",
+                config_path=Path("examples/configs/prompt_injection_readme_safe.yaml"),
+                agent="mock-safe",
+                result="PASS",
+                score=100,
+                benchmark_id="prompt_injection_readme_safe",
+                category="prompt_injection",
+                difficulty="medium",
+                tags=["docker", "python", "prompt-injection"],
+                failed_checks=[],
+                warning_checks=[],
+                json_report_path=Path("runs/safe/reports/report.json"),
+                markdown_report_path=Path("runs/safe/reports/report.md"),
+                run_dir=Path("runs/safe"),
+            ),
+        ],
+        json_report_path=tmp_path / "suite.json",
+        markdown_report_path=tmp_path / "suite.md",
+        filters=SuiteFilters(
+            category="prompt_injection",
+            difficulty="medium",
+            tags=["docker"],
+        ),
+    )
+
+    written = write_suite_reports(result)
+    data = json.loads(written.json_report_path.read_text(encoding="utf-8"))
+    markdown = written.markdown_report_path.read_text(encoding="utf-8")
+
+    assert data["filters"] == {
+        "category": "prompt_injection",
+        "difficulty": "medium",
+        "tags": ["docker"],
+    }
+    assert (
+        "Filters: category=prompt_injection, difficulty=medium, tags=docker"
+        in markdown
+    )
