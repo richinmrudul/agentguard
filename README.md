@@ -1,5 +1,8 @@
 AgentGuard
 
+See [docs/architecture.md](docs/architecture.md) for a technical overview of
+AgentGuard's system design, trust model, and evaluation flow.
+
 ## Quick Demo
 
 Run the 90-second demo workflow:
