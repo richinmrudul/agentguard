@@ -74,6 +74,23 @@ def test_run_custom_command_without_agent_command_fails_clearly() -> None:
     assert "requires config field 'agent_command'" in result.output
 
 
+def test_run_local_command_without_agent_command_fails_clearly() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "examples/configs/fix_auth_bug.yaml",
+            "--agent",
+            "local-command",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert (
+        "Agent 'local-command' requires config field 'agent_command'" in result.output
+    )
+
+
 def test_benchmark_mock_safe_exits_zero() -> None:
     result = runner.invoke(
         app,
