@@ -182,3 +182,4 @@ ruff check .
 - Local non-Docker agent adapter
 - Optional real LLM/coding-agent adapters
 - Backend, run history, and dashboard for team-scale evaluation
+
