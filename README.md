@@ -58,6 +58,17 @@ Run a safe Docker-backed benchmark:
 agentguard run examples/configs/fix_auth_bug_docker_command_safe.yaml --agent custom-command
 ```
 
+Run the same style of command locally, without Docker:
+
+```bash
+agentguard run examples/configs/fix_auth_bug_local_command_safe.yaml --agent local-command
+```
+
+`custom-command` remains the preferred adapter when you want Docker isolation.
+`local-command` runs `agent_command` directly in the copied benchmark repo for
+convenience and real local-agent workflows. It is not sandboxed; AgentGuard still
+evaluates the resulting tests, diffs, command logs, and policy evidence.
+
 Run an expected-failing prompt-injection benchmark:
 
 ```bash
@@ -182,4 +193,3 @@ ruff check .
 - Local non-Docker agent adapter
 - Optional real LLM/coding-agent adapters
 - Backend, run history, and dashboard for team-scale evaluation
-

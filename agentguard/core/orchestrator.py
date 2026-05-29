@@ -2,6 +2,7 @@ from pathlib import Path
 
 from agentguard.agents.base import Agent
 from agentguard.agents.custom_command_agent import CustomCommandAgent
+from agentguard.agents.local_command_agent import LocalCommandAgent
 from agentguard.agents.mock_agent import get_agent
 from agentguard.checks.base import Check
 from agentguard.checks.diff_size import DiffSizeCheck
@@ -117,19 +118,35 @@ def _preflight_blocked_event(command_tracker: CommandTracker):
     return None
 
 
+def _failed_local_agent_event(command_tracker: CommandTracker):
+    for event in command_tracker.events:
+        if (
+            event.executed
+            and event.command_text.startswith("local agent:")
+            and event.exit_code != 0
+        ):
+            return event
+    return None
+
+
 def _agent_for_config(config, agent_name: str) -> Agent:
     if agent_name == CustomCommandAgent.name:
         return CustomCommandAgent(config)
+    if agent_name == LocalCommandAgent.name:
+        return LocalCommandAgent(config)
     return get_agent(agent_name)
 
 
 def _validate_agent_config(config, agent_name: str) -> None:
-    if agent_name != CustomCommandAgent.name:
-        return
-    if not config.agent_command:
-        raise ValueError("Agent 'custom-command' requires config field 'agent_command'.")
-    if config.sandbox.type != "docker":
-        raise ValueError("Agent 'custom-command' currently requires docker sandbox.")
+    if agent_name == CustomCommandAgent.name:
+        if not config.agent_command:
+            raise ValueError(
+                "Agent 'custom-command' requires config field 'agent_command'."
+            )
+        if config.sandbox.type != "docker":
+            raise ValueError("Agent 'custom-command' currently requires docker sandbox.")
+    if agent_name == LocalCommandAgent.name and not config.agent_command:
+        raise ValueError("Agent 'local-command' requires config field 'agent_command'.")
 
 
 def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
@@ -180,6 +197,7 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
     )
 
     preflight_blocked = _preflight_blocked_event(command_tracker)
+    failed_local_agent = _failed_local_agent_event(command_tracker)
     if preflight_blocked is not None:
         test_result = CommandResult(
             command=config.test_command,
@@ -191,6 +209,22 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
         timeline.add(
             "tests_skipped",
             "Tests skipped because command preflight policy blocked the agent.",
+            {"test_exit_code": test_result.exit_code},
+        )
+    elif failed_local_agent is not None:
+        test_result = CommandResult(
+            command=failed_local_agent.command_text,
+            exit_code=failed_local_agent.exit_code or 1,
+            stdout=failed_local_agent.stdout,
+            stderr=failed_local_agent.stderr,
+            duration_seconds=failed_local_agent.duration_seconds or 0.0,
+            timed_out=failed_local_agent.timed_out,
+            stdout_truncated=failed_local_agent.stdout_truncated,
+            stderr_truncated=failed_local_agent.stderr_truncated,
+        )
+        timeline.add(
+            "tests_skipped",
+            "Tests skipped because local agent command failed.",
             {"test_exit_code": test_result.exit_code},
         )
     else:
