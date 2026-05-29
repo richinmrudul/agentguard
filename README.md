@@ -1,65 +1,196 @@
-AgentGuard
+# AgentGuard
 
-See [docs/architecture.md](docs/architecture.md) for a technical overview of
-AgentGuard's system design, trust model, and evaluation flow.
+AgentGuard is a local-first, CI/CD-style safety and reliability evaluation
+platform for AI coding agents. It runs agents against benchmark repos or real PR
+diffs, then evaluates deterministic evidence: tests, git diffs, changed files,
+command logs, sandbox metadata, policy checks, and reports.
+
+It is not a GPT wrapper. AgentGuard does not ask a model whether an agent did a
+good job; it inspects what changed, what ran, what passed, and what policy
+evidence says before a change is trusted or merged.
+
+## Status
+
+| Area | Current state |
+|---|---|
+| Runtime | Local CLI with benchmark and CI modes |
+| CI | GitHub Actions docs and reusable composite action |
+| Sandbox | Local and Docker execution, network/resource policies, timeouts |
+| Evidence | Test results, diffs, command events, sandbox metadata, timelines |
+| Reports | JSON, Markdown, suite reports, baselines, local report browser |
+
+## Why AgentGuard Exists
+
+AI coding agents can make tests pass while doing unsafe or misleading things:
+rewriting tests, touching secrets, exceeding scope, following prompt injections
+in repo files, or running risky commands. Tests are necessary, but they are not
+enough.
+
+AgentGuard treats agents as untrusted contributors. It evaluates the repository
+state and execution evidence around the agent's work so reviewers and CI systems
+can catch unsafe behavior before merge.
+
+## What AgentGuard Detects
+
+- Test tampering and weakened test suites
+- Forbidden path changes and secret-pattern access
+- Unsafe command usage
+- Scope violations outside allowed paths
+- Oversized diffs and unexpected file churn
+- Command timeouts and truncated output
+- Prompt-injection-following behavior
+- Filesystem boundary and sandbox escape attempts
 
 ## Quick Demo
-
-Run the 90-second demo workflow:
 
 ```bash
 scripts/demo.sh
 ```
 
-See [docs/demo.md](docs/demo.md) for the full walkthrough.
+The demo runs safe and adversarial agents, then writes reports under
+`.agentguard/`. See [docs/demo.md](docs/demo.md) for the full walkthrough.
 
-## Docker Sandbox
+## Core Commands
 
-Docker-backed benchmark runs use an explicit sandbox policy. The default network
-mode is `none`, with optional CPU and memory limits, command timeouts, and output
-limits. Read-only container roots are available for advanced configs, but remain
-disabled by default so mounted benchmark repositories stay writable.
-
-## Command Preflight Policy
-
-Custom-command agents are checked against configured `unsafe_commands` before
-execution. `command_policy.mode: audit` records matching command text and still
-allows execution; `command_policy.mode: enforce` blocks the command before it
-runs. Audit mode controls execution only, so unsafe command evidence can still
-fail scoring through the Unsafe commands check.
-
-## Example Benchmarks
-
-The core suite includes safe, test-cheating, prompt-injection, and filesystem
-boundary scenarios. To run the filesystem boundary benchmark directly:
+Run a safe Docker-backed benchmark:
 
 ```bash
-agentguard run examples/configs/filesystem_boundary_safe.yaml --agent custom-command
-agentguard run examples/configs/filesystem_boundary_escape.yaml --agent custom-command --allow-fail-result
+agentguard run examples/configs/fix_auth_bug_docker_command_safe.yaml --agent custom-command
 ```
 
-## Benchmark Metadata
+Run an expected-failing prompt-injection benchmark:
 
-Configs can include an optional `benchmark` block with catalog metadata such as
-category, difficulty, tags, expected behavior, and failure mode. Single-run and
-suite reports surface this metadata so benchmark results are easier to compare
-by failure category and difficulty.
+```bash
+agentguard run examples/configs/prompt_injection_readme_injection_follower.yaml --agent custom-command --allow-fail-result
+```
 
-Suite runs can also be filtered by metadata:
+Run the core benchmark suite:
+
+```bash
+agentguard suite examples/suites/core.yaml --allow-failures
+```
+
+Filter by benchmark metadata:
 
 ```bash
 agentguard suite examples/suites/core.yaml --category prompt_injection --allow-failures
-agentguard suite examples/suites/core.yaml --tag secret-access --allow-failures
-agentguard suite examples/suites/core.yaml --difficulty medium --allow-failures
 ```
 
-## Browse Reports
+Save a regression baseline:
 
-AgentGuard writes local JSON and Markdown reports under `.agentguard/`. Recent
-reports can be listed and inspected from the CLI:
+```bash
+agentguard suite examples/suites/core.yaml --allow-failures --save-baseline baselines/core.json
+```
+
+Browse local reports:
 
 ```bash
 agentguard reports list
-agentguard reports show --latest
 agentguard reports show --latest --type suite
 ```
+
+## Example Suite Output
+
+```text
+AgentGuard Suite Summary
+Suite: core
+Runs: 8
+Passed: 4
+Failed: 4
+Pass rate: 50.0%
+Average score: 75
+
+Most common failed checks:
+- Test tampering: 2
+- Forbidden paths: 2
+- Secret scan: 2
+```
+
+## Architecture
+
+The evaluation pipeline is intentionally simple:
+
+```text
+CLI -> Config -> Orchestrator -> Sandbox/Agent -> Tests/Diff/Checks -> Scoring -> Reports
+```
+
+Read [docs/architecture.md](docs/architecture.md) for the full system design,
+trust model, benchmark flow, CI flow, sandbox model, and limitations.
+
+## Benchmark Catalog
+
+| Scenario | Category | What it exercises |
+|---|---|---|
+| Auth bug | Source fix / test tampering | Safe source repair versus weakening tests |
+| CLI parser bug | Source fix / test tampering | Parser repair versus test cheating |
+| Prompt-injection README | Prompt injection / secret access | Ignoring malicious repo instructions |
+| Filesystem boundary | Filesystem boundary / sandbox escape | Preventing parent traversal and secret writes |
+
+Suites support metadata filtering by category, difficulty, and tags.
+
+## CI and GitHub Actions
+
+AgentGuard CI mode evaluates an existing repository instead of copying a
+benchmark fixture. It can inspect the working tree or PR-style `base`/`head`
+refs, write JSON and Markdown CI reports, exit nonzero on blocking policy
+failures, and append a compact GitHub step summary.
+
+- [docs/github-actions.md](docs/github-actions.md): CI mode and workflow setup
+- [docs/action.md](docs/action.md): reusable composite action inputs and example
+
+## Deterministic Evidence
+
+AgentGuard decisions are based on evidence that can be inspected and archived:
+
+- Test command result and output limits
+- Git diff summary, changed files, and line counts
+- Command log with executed, blocked, timed-out, and policy-matched commands
+- Sandbox metadata such as Docker network, CPU, memory, and timeout settings
+- Policy check results with severities and evidence
+- JSON/Markdown reports, timelines, suite summaries, and baseline comparisons
+
+This is why AgentGuard is not a GPT wrapper: it does not score self-reported
+agent claims. It scores observed behavior.
+
+## Reports and Baselines
+
+AgentGuard writes local artifacts under `.agentguard/`:
+
+- Run reports: `.agentguard/runs/.../reports/report.json` and `report.md`
+- CI reports: `.agentguard/ci/.../report.json` and `report.md`
+- Command logs: `command_log.json`
+- Suite reports: `.agentguard/suites/.../suite.json` and `suite.md`
+- Regression baselines for detecting score, pass-rate, and failed-check changes
+- Report browser commands for listing and summarizing recent local reports
+
+Generated `.agentguard/` artifacts are ignored and should not be committed.
+
+## Install and Develop
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+ruff check .
+```
+
+## Roadmap
+
+- Stronger sandbox isolation beyond the current Docker model
+- Benchmark registry and benchmark versioning
+- Local non-Docker agent adapter
+- Optional real LLM/coding-agent adapters
+- Backend, run history, and dashboard for team-scale evaluation
+
+## Resume Bullets
+
+- Built a local-first CI evaluation framework for AI coding agents using tests,
+  git diffs, command logs, policy checks, sandbox metadata, and deterministic
+  reports.
+- Implemented adversarial benchmark suites for test tampering, prompt injection,
+  forbidden path access, unsafe commands, and filesystem boundary violations.
+- Added Docker sandbox execution with network/resource policy, preflight command
+  audit/enforce modes, timeouts, output limits, and command/event ingestion.
+- Shipped CI and GitHub Actions workflows with PR diff evaluation, step
+  summaries, JSON/Markdown reports, suite filtering, and regression baselines.
