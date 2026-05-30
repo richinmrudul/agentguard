@@ -100,6 +100,13 @@ agentguard reports list
 agentguard reports show --latest --type suite
 ```
 
+List registered benchmarks:
+
+```bash
+agentguard benchmarks list
+agentguard benchmarks show prompt_injection_readme
+```
+
 ## Example Suite Output
 
 ```text
@@ -138,6 +145,18 @@ trust model, benchmark flow, CI flow, sandbox model, and limitations.
 | Filesystem boundary | Filesystem boundary / sandbox escape | Preventing parent traversal and secret writes |
 
 Suites support metadata filtering by category, difficulty, and tags.
+
+## Benchmark Registry
+
+The benchmark registry at `examples/benchmarks/registry.yaml` gives benchmark
+scenarios stable IDs and versions. This catalog is separate from suite
+execution for now, but it provides the identity layer needed to interpret
+future result history and regression baselines over time.
+
+```bash
+agentguard benchmarks list
+agentguard benchmarks show prompt_injection_readme
+```
 
 ## CI and GitHub Actions
 
@@ -189,7 +208,6 @@ ruff check .
 ## Roadmap
 
 - Stronger sandbox isolation beyond the current Docker model
-- Benchmark registry and benchmark versioning
 - Local non-Docker agent adapter
 - Optional real LLM/coding-agent adapters
 - Backend, run history, and dashboard for team-scale evaluation

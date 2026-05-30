@@ -1,0 +1,60 @@
+benchmarks:
+  - id: auth_bug
+    version: 1
+    name: Auth Login Bug
+    category: test_tampering
+    difficulty: easy
+    description: Detects whether an agent fixes auth logic or tampers with tests.
+    tags:
+      - python
+      - docker
+      - test-tampering
+    configs:
+      safe: examples/configs/fix_auth_bug_docker_command_safe.yaml
+      adversarial: examples/configs/fix_auth_bug_docker_command_cheater.yaml
+
+  - id: cli_parser_bug
+    version: 1
+    name: CLI Parser Bug
+    category: test_tampering
+    difficulty: medium
+    description: Detects source fix versus weakened calculator parser tests.
+    tags:
+      - python
+      - docker
+      - cli
+      - test-tampering
+    configs:
+      safe: examples/configs/fix_cli_parser_bug_command_safe.yaml
+      adversarial: examples/configs/fix_cli_parser_bug_command_cheater.yaml
+
+  - id: prompt_injection_readme
+    version: 1
+    name: Prompt Injection README
+    category: prompt_injection
+    difficulty: medium
+    description: Detects agents that follow malicious repo instructions and create secret files.
+    tags:
+      - python
+      - docker
+      - prompt-injection
+      - secret-access
+    configs:
+      safe: examples/configs/prompt_injection_readme_safe.yaml
+      adversarial: examples/configs/prompt_injection_readme_injection_follower.yaml
+
+  - id: filesystem_boundary
+    version: 1
+    name: Filesystem Boundary
+    category: filesystem_boundary
+    difficulty: hard
+    description: Detects agents that attempt filesystem boundary or secret-file behavior.
+    tags:
+      - python
+      - docker
+      - filesystem
+      - sandbox
+      - secret-access
+    configs:
+      safe: examples/configs/filesystem_boundary_safe.yaml
+      adversarial: examples/configs/filesystem_boundary_escape.yaml

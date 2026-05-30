@@ -5,6 +5,12 @@ from typing import Optional
 import typer
 
 from agentguard import __version__
+from agentguard.benchmarks.registry import (
+    DEFAULT_REGISTRY_PATH,
+    BenchmarkRegistryEntry,
+    find_benchmark,
+    load_benchmark_registry,
+)
 from agentguard.core.baseline import write_suite_baseline
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.ci import run_ci
@@ -29,12 +35,87 @@ app = typer.Typer(
 )
 reports_app = typer.Typer(help="List and inspect local AgentGuard reports.")
 app.add_typer(reports_app, name="reports")
+benchmarks_app = typer.Typer(help="List and inspect registered AgentGuard benchmarks.")
+app.add_typer(benchmarks_app, name="benchmarks")
 
 
 @app.command()
 def version() -> None:
     """Print the AgentGuard version."""
     typer.echo(__version__)
+
+
+def _format_registry_table(benchmarks: list[BenchmarkRegistryEntry]) -> str:
+    lines = [
+        "Registered AgentGuard Benchmarks",
+        "ID | Version | Category | Difficulty | Tags",
+        "--- | ---: | --- | --- | ---",
+    ]
+    for benchmark in benchmarks:
+        tags = ", ".join(benchmark.tags) if benchmark.tags else "-"
+        lines.append(
+            f"{benchmark.id} | {benchmark.version} | {benchmark.category} | "
+            f"{benchmark.difficulty} | {tags}"
+        )
+    return "\n".join(lines)
+
+
+def _format_registry_entry(benchmark: BenchmarkRegistryEntry) -> str:
+    lines = [
+        f"ID: {benchmark.id}",
+        f"Version: {benchmark.version}",
+        f"Name: {benchmark.name}",
+        f"Category: {benchmark.category}",
+        f"Difficulty: {benchmark.difficulty}",
+        f"Description: {benchmark.description}",
+        f"Tags: {', '.join(benchmark.tags) if benchmark.tags else '-'}",
+        "Configs:",
+    ]
+    for label, config_path in benchmark.configs.items():
+        lines.append(f"- {label}: {config_path}")
+    return "\n".join(lines)
+
+
+@benchmarks_app.command("list")
+def benchmarks_list(
+    registry: Path = typer.Option(
+        DEFAULT_REGISTRY_PATH,
+        "--registry",
+        help="Path to the benchmark registry YAML file.",
+    ),
+) -> None:
+    """List registered AgentGuard benchmarks."""
+    try:
+        benchmark_registry = load_benchmark_registry(registry)
+    except (OSError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    typer.echo(_format_registry_table(benchmark_registry.benchmarks))
+
+
+@benchmarks_app.command("show")
+def benchmarks_show(
+    benchmark_id: str = typer.Argument(..., help="Benchmark ID to show."),
+    registry: Path = typer.Option(
+        DEFAULT_REGISTRY_PATH,
+        "--registry",
+        help="Path to the benchmark registry YAML file.",
+    ),
+) -> None:
+    """Show a registered AgentGuard benchmark."""
+    try:
+        benchmark_registry = load_benchmark_registry(registry)
+    except (OSError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    benchmark = find_benchmark(benchmark_registry, benchmark_id)
+    if benchmark is None:
+        typer.echo(f"Error: benchmark not found: {benchmark_id}", err=True)
+        raise typer.Exit(2)
+
+    typer.echo(_format_registry_entry(benchmark))
 
 
 @reports_app.command("list")
