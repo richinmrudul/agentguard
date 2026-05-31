@@ -22,6 +22,14 @@ from agentguard.core.suite import (
     run_suite,
     suite_filters_from_values,
 )
+from agentguard.history.store import (
+    HistoryRecord,
+    HistoryStats,
+    history_stats,
+    list_history,
+    validate_result,
+    validate_run_type,
+)
 from agentguard.reports.browser import (
     discover_reports,
     format_report_summary,
@@ -37,6 +45,8 @@ app = typer.Typer(
 )
 reports_app = typer.Typer(help="List and inspect local AgentGuard reports.")
 app.add_typer(reports_app, name="reports")
+history_app = typer.Typer(help="List and summarize local AgentGuard run history.")
+app.add_typer(history_app, name="history")
 benchmarks_app = typer.Typer(help="List and inspect registered AgentGuard benchmarks.")
 app.add_typer(benchmarks_app, name="benchmarks")
 
@@ -75,6 +85,50 @@ def _format_registry_entry(benchmark: BenchmarkRegistryEntry) -> str:
     ]
     for label, config_path in benchmark.configs.items():
         lines.append(f"- {label}: {config_path}")
+    return "\n".join(lines)
+
+
+def _format_history_score(score: Optional[float]) -> str:
+    if score is None:
+        return "-"
+    return f"{score:g}"
+
+
+def _format_history_table(records: list[HistoryRecord]) -> str:
+    if not records:
+        return "No history found."
+    lines = [
+        "AgentGuard Run History",
+        "Type | ID | Name | Result | Score | Created At",
+        "--- | --- | --- | --- | ---: | ---",
+    ]
+    for record in records:
+        lines.append(
+            f"{record.run_type} | {record.id} | {record.name} | {record.result} | "
+            f"{_format_history_score(record.score)} | {record.created_at}"
+        )
+    return "\n".join(lines)
+
+
+def _format_history_stats(stats: HistoryStats) -> str:
+    if stats.total_records == 0:
+        return "No history found."
+    average = (
+        f"{stats.average_score:.1f}" if stats.average_score is not None else "-"
+    )
+    lines = [
+        "AgentGuard History Stats",
+        f"Total records: {stats.total_records}",
+        "By type:",
+    ]
+    for run_type, count in sorted(stats.counts_by_type.items()):
+        lines.append(f"- {run_type}: {count}")
+    lines.append("By result:")
+    for result, count in sorted(stats.counts_by_result.items()):
+        lines.append(f"- {result}: {count}")
+    lines.append(f"Average score: {average}")
+    if stats.latest_created_at is not None:
+        lines.append(f"Latest run: {stats.latest_created_at}")
     return "\n".join(lines)
 
 
@@ -260,6 +314,47 @@ def reports_show(
         raise typer.Exit(1)
 
     typer.echo(format_report_summary(report))
+
+
+@history_app.command("list")
+def history_list(
+    run_type: Optional[str] = typer.Option(
+        None,
+        "--type",
+        help="History type to list: run, suite, or ci.",
+    ),
+    result: Optional[str] = typer.Option(
+        None,
+        "--result",
+        help="History result to list: PASS or FAIL.",
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        help="Maximum number of history records to show.",
+    ),
+) -> None:
+    """List recent local AgentGuard run history."""
+    if limit <= 0:
+        raise typer.BadParameter("limit must be positive.", param_hint="--limit")
+    try:
+        validated_type = validate_run_type(run_type)
+        validated_result = validate_result(result)
+    except ValueError as error:
+        raise typer.BadParameter(str(error)) from error
+
+    records = list_history(
+        limit=limit,
+        run_type=validated_type,
+        result=validated_result,
+    )
+    typer.echo(_format_history_table(records))
+
+
+@history_app.command("stats")
+def history_stats_command() -> None:
+    """Summarize local AgentGuard run history."""
+    typer.echo(_format_history_stats(history_stats()))
 
 
 @app.command()

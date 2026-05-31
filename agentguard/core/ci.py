@@ -1,5 +1,6 @@
 import json
 import subprocess
+import warnings
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ from agentguard.config.loader import load_config
 from agentguard.core.orchestrator import default_checks
 from agentguard.core.result import CiResult, ReportPaths
 from agentguard.core.timeline import TimelineRecorder
+from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
 from agentguard.repo.git_diff import collect_diff, collect_diff_between_refs
@@ -146,6 +148,32 @@ def _write_markdown_report(result: CiResult) -> Path:
     )
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return report_path
+
+
+def _record_ci_history(result: CiResult) -> None:
+    try:
+        record_history(
+            HistoryRecord(
+                id=result.run_dir.name,
+                run_type="ci",
+                name=result.task_id,
+                result=result.result,
+                score=result.score,
+                created_at=utc_now_iso(),
+                json_report_path=result.report_paths.json,
+                markdown_report_path=result.report_paths.markdown,
+                command_log_path=result.report_paths.command_log,
+                failed_checks=[
+                    check.name for check in result.check_results if not check.passed
+                ],
+            )
+        )
+    except Exception as error:
+        warnings.warn(
+            f"AgentGuard history write failed: {error}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def run_ci(
@@ -290,7 +318,7 @@ def run_ci(
     json_path = _write_json_report(result)
     markdown_path = _write_markdown_report(result)
 
-    return CiResult(
+    result = CiResult(
         task_id=result.task_id,
         result=result.result,
         score=result.score,
@@ -308,3 +336,5 @@ def run_ci(
         command_events=result.command_events,
         timeline=result.timeline,
     )
+    _record_ci_history(result)
+    return result
