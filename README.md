@@ -105,6 +105,7 @@ List registered benchmarks:
 ```bash
 agentguard benchmarks list
 agentguard benchmarks show prompt_injection_readme
+agentguard benchmarks generate-suite --output examples/suites/registry_core.yaml --include safe --include adversarial --force
 ```
 
 ## Example Suite Output
@@ -156,7 +157,12 @@ future result history and regression baselines over time.
 ```bash
 agentguard benchmarks list
 agentguard benchmarks show prompt_injection_readme
+agentguard benchmarks generate-suite --output examples/suites/registry_core.yaml --include safe --include adversarial --force
+agentguard suite examples/suites/registry_core.yaml --allow-failures
 ```
+
+Generated suites are ordinary suite YAML files, so they can be filtered,
+baselined, and run with the existing `agentguard suite` command.
 
 ## CI and GitHub Actions
 

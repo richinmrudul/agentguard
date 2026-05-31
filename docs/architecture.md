@@ -86,7 +86,7 @@ Report writers produce machine-readable JSON and human-readable Markdown. Report
 
 The suite runner executes multiple benchmark configs and aggregates pass rate, average score, failed-check counts, warning-check counts, best/worst runs, metadata, and individual report paths. Suites can be filtered by benchmark category, difficulty, and tags.
 
-The benchmark registry records stable benchmark IDs, versions, metadata, and config variants for cataloging scenarios without making suite execution depend on the registry yet.
+The benchmark registry records stable benchmark IDs, versions, metadata, and config variants for cataloging scenarios, and it can generate ordinary suite YAML files without making suite execution depend on the registry.
 
 ### Regression Baselines
 
