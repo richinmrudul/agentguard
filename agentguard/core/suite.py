@@ -1,4 +1,5 @@
 import json
+import warnings
 from collections import Counter
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from agentguard.config.loader import load_config
 from agentguard.core.baseline import BaselineComparison, compare_suite_to_baseline
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.result import BenchmarkResult
+from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
 
 
 @dataclass(frozen=True)
@@ -370,11 +372,36 @@ def _write_markdown_report(result: SuiteResult) -> Path:
 def write_suite_reports(result: SuiteResult) -> SuiteResult:
     json_path = _write_json_report(result)
     markdown_path = _write_markdown_report(result)
-    return replace(
+    written = replace(
         result,
         json_report_path=json_path,
         markdown_report_path=markdown_path,
     )
+    _record_suite_history(written)
+    return written
+
+
+def _record_suite_history(result: SuiteResult) -> None:
+    try:
+        record_history(
+            HistoryRecord(
+                id=result.json_report_path.parent.name,
+                run_type="suite",
+                name=result.suite_id,
+                result="FAIL" if result.failed > 0 else "PASS",
+                score=result.average_score,
+                created_at=utc_now_iso(),
+                json_report_path=result.json_report_path,
+                markdown_report_path=result.markdown_report_path,
+                failed_checks=sorted(result.failed_check_counts),
+            )
+        )
+    except Exception as error:
+        warnings.warn(
+            f"AgentGuard history write failed: {error}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def run_suite(

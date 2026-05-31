@@ -96,6 +96,13 @@ Suite baselines serialize stable summaries of previous suite results. Later suit
 
 The report browser discovers local reports under `.agentguard/`, loads JSON reports, infers report type, and formats concise summaries for recent run, suite, and CI reports.
 
+### Run History
+
+The local SQLite history index at `.agentguard/history.db` stores normalized
+summaries for run, suite, and CI reports. Reports remain the source of truth;
+the database is a lightweight cache for recent history, stats, and future
+trend/dashboard features.
+
 ### GitHub Action / CI Mode
 
 CI mode evaluates an existing git repository instead of copying a benchmark fixture. It runs the configured tests, collects either working-tree or base/head diffs, applies the same checks and scoring model, writes reports under `.agentguard/ci`, exits nonzero on failure, and can append a compact report to `GITHUB_STEP_SUMMARY`.
@@ -188,6 +195,7 @@ AgentGuard writes artifacts under `.agentguard/` by default:
 - Markdown report: readable summary for developers and reviewers.
 - Command log: command events with execution metadata, output truncation flags, timeouts, and policy metadata.
 - Timeline: ordered events embedded in reports to explain the run lifecycle.
+- Run history: local SQLite index of normalized report summaries.
 - GitHub step summary: optional CI summary for GitHub Actions.
 - Suite report: aggregate report for many benchmark configs.
 - Baseline comparison: regression/improvement summary against a saved suite baseline.

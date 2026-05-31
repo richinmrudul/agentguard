@@ -100,6 +100,13 @@ agentguard reports list
 agentguard reports show --latest --type suite
 ```
 
+Inspect local run history:
+
+```bash
+agentguard history list
+agentguard history stats
+```
+
 List registered benchmarks:
 
 ```bash
@@ -196,8 +203,13 @@ AgentGuard writes local artifacts under `.agentguard/`:
 - CI reports: `.agentguard/ci/.../report.json` and `report.md`
 - Command logs: `command_log.json`
 - Suite reports: `.agentguard/suites/.../suite.json` and `suite.md`
+- Run history: `.agentguard/history.db`
 - Regression baselines for detecting score, pass-rate, and failed-check changes
 - Report browser commands for listing and summarizing recent local reports
+
+The SQLite history database is a local index of normalized run, suite, and CI
+report summaries for quick listing and stats. JSON and Markdown reports remain
+the source of truth.
 
 Generated `.agentguard/` artifacts are ignored and should not be committed.
 

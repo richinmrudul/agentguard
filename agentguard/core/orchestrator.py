@@ -1,3 +1,4 @@
+import warnings
 from pathlib import Path
 
 from agentguard.agents.base import Agent
@@ -20,6 +21,7 @@ from agentguard.core.result import (
     SandboxMetadata,
 )
 from agentguard.core.timeline import TimelineRecorder
+from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
 from agentguard.instrumentation.agent_event_reader import (
     DEFAULT_AGENT_EVENT_FILE,
     read_agent_events,
@@ -147,6 +149,35 @@ def _validate_agent_config(config, agent_name: str) -> None:
             raise ValueError("Agent 'custom-command' currently requires docker sandbox.")
     if agent_name == LocalCommandAgent.name and not config.agent_command:
         raise ValueError("Agent 'local-command' requires config field 'agent_command'.")
+
+
+def _record_run_history(result: BenchmarkResult) -> None:
+    try:
+        record_history(
+            HistoryRecord(
+                id=result.run_dir.name,
+                run_type="run",
+                name=result.task_id,
+                result=result.result,
+                score=result.score,
+                created_at=utc_now_iso(),
+                json_report_path=result.report_paths.json,
+                markdown_report_path=result.report_paths.markdown,
+                command_log_path=result.report_paths.command_log,
+                category=result.benchmark.category,
+                difficulty=result.benchmark.difficulty,
+                agent=result.agent,
+                failed_checks=[
+                    check.name for check in result.check_results if not check.passed
+                ],
+            )
+        )
+    except Exception as error:
+        warnings.warn(
+            f"AgentGuard history write failed: {error}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
@@ -329,7 +360,7 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
     json_path = write_json_report(partial_result, reports_dir)
     markdown_path = write_markdown_report(partial_result, reports_dir)
 
-    return BenchmarkResult(
+    result = BenchmarkResult(
         task_id=partial_result.task_id,
         agent=partial_result.agent,
         result=partial_result.result,
@@ -350,3 +381,5 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
         command_events=partial_result.command_events,
         timeline=partial_result.timeline,
     )
+    _record_run_history(result)
+    return result
