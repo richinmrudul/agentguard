@@ -9,7 +9,9 @@ from agentguard.benchmarks.registry import (
     DEFAULT_REGISTRY_PATH,
     BenchmarkRegistryEntry,
     find_benchmark,
+    generate_suite_data,
     load_benchmark_registry,
+    write_generated_suite,
 )
 from agentguard.core.baseline import write_suite_baseline
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
@@ -116,6 +118,76 @@ def benchmarks_show(
         raise typer.Exit(2)
 
     typer.echo(_format_registry_entry(benchmark))
+
+
+@benchmarks_app.command("generate-suite")
+def benchmarks_generate_suite(
+    registry: Path = typer.Option(
+        DEFAULT_REGISTRY_PATH,
+        "--registry",
+        help="Path to the benchmark registry YAML file.",
+    ),
+    output: Path = typer.Option(
+        ...,
+        "--output",
+        help="Path for the generated suite YAML file.",
+    ),
+    suite_id: Optional[str] = typer.Option(
+        None,
+        "--suite-id",
+        help="Suite ID to write. Defaults to the output file stem.",
+    ),
+    description: str = typer.Option(
+        "Generated from AgentGuard benchmark registry.",
+        "--description",
+        help="Suite description to write.",
+    ),
+    include: Optional[list[str]] = typer.Option(
+        None,
+        "--include",
+        help="Config keys to include. Repeat or use commas.",
+    ),
+    category: Optional[str] = typer.Option(
+        None,
+        "--category",
+        help="Include only benchmarks with this category.",
+    ),
+    difficulty: Optional[str] = typer.Option(
+        None,
+        "--difficulty",
+        help="Include only benchmarks with this difficulty.",
+    ),
+    tags: Optional[list[str]] = typer.Option(
+        None,
+        "--tag",
+        help="Include only benchmarks containing all requested tags. Repeat or use commas.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite the output file if it already exists.",
+    ),
+) -> None:
+    """Generate an AgentGuard suite YAML from the benchmark registry."""
+    resolved_suite_id = suite_id or output.stem or "registry_suite"
+    try:
+        benchmark_registry = load_benchmark_registry(registry)
+        suite_data = generate_suite_data(
+            benchmark_registry,
+            suite_id=resolved_suite_id,
+            description=description,
+            include=include,
+            category=category,
+            difficulty=difficulty,
+            tags=tags,
+        )
+        written_path = write_generated_suite(suite_data, output, force=force)
+    except (OSError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    typer.echo(f"Generated suite: {written_path}")
+    typer.echo(f"Runs: {len(suite_data['runs'])}")
 
 
 @reports_app.command("list")

@@ -10,6 +10,11 @@ from agentguard.config.schema import VALID_BENCHMARK_DIFFICULTIES
 DEFAULT_REGISTRY_PATH = Path("examples/benchmarks/registry.yaml")
 
 
+class _IndentedSafeDumper(yaml.SafeDumper):
+    def increase_indent(self, flow: bool = False, indentless: bool = False) -> Any:
+        return super().increase_indent(flow, False)
+
+
 @dataclass(frozen=True)
 class BenchmarkRegistryEntry:
     id: str
@@ -26,6 +31,18 @@ class BenchmarkRegistryEntry:
 class BenchmarkRegistry:
     path: Path
     benchmarks: list[BenchmarkRegistryEntry]
+
+
+def normalize_registry_values(raw_values: Optional[list[str]]) -> list[str]:
+    if raw_values is None:
+        return []
+    values: list[str] = []
+    for raw_value in raw_values:
+        for value in raw_value.split(","):
+            normalized = value.strip()
+            if normalized:
+                values.append(normalized)
+    return values
 
 
 def _required_string(
@@ -146,3 +163,83 @@ def find_benchmark(
         if benchmark.id == benchmark_id:
             return benchmark
     return None
+
+
+def _matches_generation_filters(
+    benchmark: BenchmarkRegistryEntry,
+    category: Optional[str],
+    difficulty: Optional[str],
+    tags: list[str],
+) -> bool:
+    if category is not None and benchmark.category != category:
+        return False
+    if difficulty is not None and benchmark.difficulty != difficulty:
+        return False
+    if tags and not set(tags).issubset(set(benchmark.tags)):
+        return False
+    return True
+
+
+def generate_suite_data(
+    registry: BenchmarkRegistry,
+    suite_id: str,
+    description: str,
+    include: Optional[list[str]] = None,
+    category: Optional[str] = None,
+    difficulty: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    normalized_include = normalize_registry_values(include)
+    normalized_tags = normalize_registry_values(tags)
+    normalized_category = category.strip() if category is not None else None
+    normalized_difficulty = difficulty.strip() if difficulty is not None else None
+    if normalized_category == "":
+        raise ValueError("Registry suite filter 'category' must be a non-empty string.")
+    if normalized_difficulty == "":
+        raise ValueError("Registry suite filter 'difficulty' must be a non-empty string.")
+
+    runs: list[dict[str, str]] = []
+    for benchmark in registry.benchmarks:
+        if not _matches_generation_filters(
+            benchmark,
+            normalized_category,
+            normalized_difficulty,
+            normalized_tags,
+        ):
+            continue
+
+        config_keys = normalized_include or list(benchmark.configs.keys())
+        for config_key in config_keys:
+            config_path = benchmark.configs.get(config_key)
+            if config_path is None:
+                continue
+            runs.append({"config": str(config_path), "agent": "custom-command"})
+
+    if not runs:
+        raise ValueError("registry suite generation produced no runs.")
+
+    return {
+        "suite_id": suite_id,
+        "description": description,
+        "runs": runs,
+    }
+
+
+def write_generated_suite(
+    suite_data: dict[str, Any],
+    output_path: Path,
+    force: bool = False,
+) -> Path:
+    path = output_path.expanduser()
+    if path.exists() and not force:
+        raise ValueError(f"output already exists: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as file:
+        yaml.dump(
+            suite_data,
+            file,
+            Dumper=_IndentedSafeDumper,
+            sort_keys=False,
+            default_flow_style=False,
+        )
+    return path
