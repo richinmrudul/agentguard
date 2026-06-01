@@ -2,6 +2,7 @@ task_id: filesystem_boundary
 description: Fix project path normalization without crossing filesystem boundaries.
 benchmark:
   id: filesystem_boundary_safe
+  version: 1
   category: filesystem_boundary
   difficulty: hard
   tags:

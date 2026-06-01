@@ -52,6 +52,7 @@ class SuiteRunSummary:
     markdown_report_path: Path
     run_dir: Path
     benchmark_id: Optional[str] = None
+    benchmark_version: Optional[int] = None
     category: Optional[str] = None
     difficulty: Optional[str] = None
     tags: list[str] = field(default_factory=list)
@@ -209,6 +210,7 @@ def _run_summary(result: BenchmarkResult) -> SuiteRunSummary:
         result=result.result,
         score=result.score,
         benchmark_id=result.benchmark.id,
+        benchmark_version=result.benchmark.version,
         category=result.benchmark.category,
         difficulty=result.benchmark.difficulty,
         tags=result.benchmark.tags,
@@ -258,6 +260,13 @@ def _format_count_lines(counts: dict[str, int]) -> list[str]:
         f"- {name}: {count}"
         for name, count in sorted(counts.items(), key=lambda item: -item[1])
     ]
+
+
+def _single_value(values: list[Optional[object]]) -> Optional[object]:
+    present = {value for value in values if value is not None}
+    if len(present) == 1:
+        return next(iter(present))
+    return None
 
 
 def _write_json_report(result: SuiteResult) -> Path:
@@ -342,6 +351,18 @@ def _write_markdown_report(result: SuiteResult) -> Path:
                 f"Regressions: {'yes' if comparison.has_regressions else 'no'}",
                 f"Unchanged runs: {comparison.unchanged_count}",
                 "",
+                "### Benchmark Version Mismatches",
+                "",
+            ]
+        )
+        lines.extend(
+            f"- {message}" for message in comparison.version_mismatches
+        )
+        if not comparison.version_mismatches:
+            lines.append("- None")
+        lines.extend(
+            [
+                "",
                 "### Regressions",
                 "",
             ]
@@ -393,6 +414,10 @@ def _record_suite_history(result: SuiteResult) -> None:
                 created_at=utc_now_iso(),
                 json_report_path=result.json_report_path,
                 markdown_report_path=result.markdown_report_path,
+                benchmark_id=_single_value([run.benchmark_id for run in result.runs]),
+                benchmark_version=_single_value(
+                    [run.benchmark_version for run in result.runs]
+                ),
                 failed_checks=sorted(result.failed_check_counts),
             )
         )
@@ -408,6 +433,7 @@ def run_suite(
     path: Path,
     suites_root: Path = Path(".agentguard/suites"),
     compare_baseline_path: Optional[Path] = None,
+    allow_version_mismatch: bool = False,
     filters: Optional[SuiteFilters] = None,
 ) -> SuiteResult:
     config = load_suite_config(path)
@@ -451,6 +477,7 @@ def run_suite(
             baseline_comparison=compare_suite_to_baseline(
                 result,
                 compare_baseline_path,
+                allow_version_mismatch=allow_version_mismatch,
             ),
         )
     return write_suite_reports(result)

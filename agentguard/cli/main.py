@@ -791,6 +791,11 @@ def suite_command(
         "--allow-regressions",
         help="Exit 0 even when baseline comparison finds regressions.",
     ),
+    allow_version_mismatch: bool = typer.Option(
+        False,
+        "--allow-version-mismatch",
+        help="Compare against a baseline with different benchmark versions.",
+    ),
 ) -> None:
     """Run multiple AgentGuard benchmark configs as one suite."""
     try:
@@ -802,6 +807,7 @@ def suite_command(
         result = run_suite(
             suite_path,
             compare_baseline_path=compare_baseline,
+            allow_version_mismatch=allow_version_mismatch,
             filters=filters,
         )
     except ValueError as error:
@@ -851,6 +857,12 @@ def suite_command(
         typer.echo("Baseline comparison")
         typer.echo(f"Baseline: {comparison.baseline_path}")
         typer.echo(f"Regressions: {'yes' if comparison.has_regressions else 'no'}")
+        if comparison.version_mismatches:
+            typer.echo("Benchmark version mismatches:")
+            for message in comparison.version_mismatches:
+                typer.echo(f"- {message}")
+        else:
+            typer.echo("Benchmark version mismatches: none")
         if comparison.regressions:
             typer.echo("Regression details:")
             for message in comparison.regressions:

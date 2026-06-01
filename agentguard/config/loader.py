@@ -108,6 +108,27 @@ def _benchmark_string(
     return value
 
 
+def _benchmark_version(mapping: dict[str, Any]) -> Optional[int]:
+    if "version" not in mapping:
+        return None
+    value = mapping["version"]
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("Config field 'benchmark.version' must be an integer.")
+    try:
+        version = int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "Config field 'benchmark.version' must be an integer."
+        ) from error
+    if str(value).strip() != str(version):
+        raise ValueError("Config field 'benchmark.version' must be an integer.")
+    if version <= 0:
+        raise ValueError("Config field 'benchmark.version' must be positive.")
+    return version
+
+
 def _load_benchmark_metadata(data: dict[str, Any]) -> BenchmarkMetadata:
     benchmark = data.get("benchmark", {})
     if benchmark is None:
@@ -130,6 +151,7 @@ def _load_benchmark_metadata(data: dict[str, Any]) -> BenchmarkMetadata:
 
     return BenchmarkMetadata(
         id=_benchmark_string(benchmark, "id"),
+        version=_benchmark_version(benchmark),
         category=_benchmark_string(benchmark, "category"),
         difficulty=difficulty,
         tags=tags,

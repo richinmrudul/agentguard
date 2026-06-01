@@ -24,6 +24,8 @@ HISTORY_CSV_COLUMNS = [
     "command_log_path",
     "category",
     "difficulty",
+    "benchmark_id",
+    "benchmark_version",
     "agent",
     "failed_checks",
 ]
@@ -42,6 +44,8 @@ class HistoryRecord:
     command_log_path: Optional[Path] = None
     category: Optional[str] = None
     difficulty: Optional[str] = None
+    benchmark_id: Optional[str] = None
+    benchmark_version: Optional[int] = None
     agent: Optional[str] = None
     failed_checks: list[str] = field(default_factory=list)
 
@@ -91,11 +95,15 @@ def init_history_db(db_path: Path) -> None:
               command_log_path TEXT,
               category TEXT,
               difficulty TEXT,
+              benchmark_id TEXT,
+              benchmark_version INTEGER,
               agent TEXT,
               failed_checks_json TEXT NOT NULL
             )
             """
         )
+        _ensure_column(connection, "benchmark_id", "TEXT")
+        _ensure_column(connection, "benchmark_version", "INTEGER")
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_runs_run_type ON runs(run_type)"
         )
@@ -105,7 +113,7 @@ def init_history_db(db_path: Path) -> None:
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)"
         )
-        connection.execute("PRAGMA user_version = 1")
+        connection.execute("PRAGMA user_version = 2")
 
 
 def record_history(
@@ -128,10 +136,12 @@ def record_history(
               command_log_path,
               category,
               difficulty,
+              benchmark_id,
+              benchmark_version,
               agent,
               failed_checks_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               run_type = excluded.run_type,
               name = excluded.name,
@@ -143,6 +153,8 @@ def record_history(
               command_log_path = excluded.command_log_path,
               category = excluded.category,
               difficulty = excluded.difficulty,
+              benchmark_id = excluded.benchmark_id,
+              benchmark_version = excluded.benchmark_version,
               agent = excluded.agent,
               failed_checks_json = excluded.failed_checks_json
             """,
@@ -158,6 +170,8 @@ def record_history(
                 _optional_path(record.command_log_path),
                 record.category,
                 record.difficulty,
+                record.benchmark_id,
+                record.benchmark_version,
                 record.agent,
                 json.dumps(record.failed_checks),
             ),
@@ -202,6 +216,8 @@ def list_history(
           command_log_path,
           category,
           difficulty,
+          benchmark_id,
+          benchmark_version,
           agent,
           failed_checks_json
         FROM runs
@@ -316,6 +332,8 @@ def history_records_to_dicts(records: list[HistoryRecord]) -> list[dict[str, obj
             "command_log_path": _optional_path(record.command_log_path),
             "category": record.category,
             "difficulty": record.difficulty,
+            "benchmark_id": record.benchmark_id,
+            "benchmark_version": record.benchmark_version,
             "agent": record.agent,
             "failed_checks": record.failed_checks,
         }
@@ -364,6 +382,23 @@ def _optional_path_from_value(value: Optional[str]) -> Optional[Path]:
     return Path(value) if value is not None else None
 
 
+def _optional_int_from_value(value: Optional[object]) -> Optional[int]:
+    return int(value) if value is not None else None
+
+
+def _ensure_column(
+    connection: sqlite3.Connection,
+    column_name: str,
+    column_type: str,
+) -> None:
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(runs)").fetchall()
+    }
+    if column_name not in columns:
+        connection.execute(f"ALTER TABLE runs ADD COLUMN {column_name} {column_type}")
+
+
 def _history_where_clause(
     *,
     run_type: Optional[str] = None,
@@ -408,6 +443,8 @@ def _record_from_row(row: tuple) -> HistoryRecord:
         command_log_path=_optional_path_from_value(row[8]),
         category=row[9],
         difficulty=row[10],
-        agent=row[11],
-        failed_checks=json.loads(row[12]),
+        benchmark_id=row[11],
+        benchmark_version=_optional_int_from_value(row[12]),
+        agent=row[13],
+        failed_checks=json.loads(row[14]),
     )

@@ -2,12 +2,20 @@ import json
 from pathlib import Path
 from typing import Optional
 
+import pytest
+
 from agentguard.core.baseline import (
     baseline_from_suite_result,
     compare_suite_to_baseline,
     write_suite_baseline,
 )
-from agentguard.core.suite import SuiteResult, SuiteRunHeadline, SuiteRunSummary
+from agentguard.config.loader import load_config
+from agentguard.core.suite import (
+    SuiteResult,
+    SuiteRunHeadline,
+    SuiteRunSummary,
+    load_suite_config,
+)
 
 
 def _suite_result(
@@ -17,9 +25,13 @@ def _suite_result(
     first_result: str = "PASS",
     first_score: int = 100,
     first_failed_checks: Optional[list[str]] = None,
+    first_benchmark_id: Optional[str] = "auth_bug",
+    first_benchmark_version: Optional[int] = 1,
     second_result: str = "FAIL",
     second_score: int = 60,
     second_failed_checks: Optional[list[str]] = None,
+    second_benchmark_id: Optional[str] = "cli_parser",
+    second_benchmark_version: Optional[int] = 1,
     include_second: bool = True,
 ) -> SuiteResult:
     runs = [
@@ -31,6 +43,8 @@ def _suite_result(
             score=first_score,
             failed_checks=[] if first_failed_checks is None else first_failed_checks,
             warning_checks=[],
+            benchmark_id=first_benchmark_id,
+            benchmark_version=first_benchmark_version,
             json_report_path=Path("runs/safe/report.json"),
             markdown_report_path=Path("runs/safe/report.md"),
             run_dir=Path("runs/safe"),
@@ -50,6 +64,8 @@ def _suite_result(
                     else second_failed_checks
                 ),
                 warning_checks=["Scope adherence"],
+                benchmark_id=second_benchmark_id,
+                benchmark_version=second_benchmark_version,
                 json_report_path=Path("runs/cheater/report.json"),
                 markdown_report_path=Path("runs/cheater/report.md"),
                 run_dir=Path("runs/cheater"),
@@ -99,6 +115,125 @@ def test_baseline_serialization_writes_schema_version(tmp_path: Path) -> None:
         not run["config_path"].startswith("/")
         for run in data["runs"].values()
     )
+    first_run = data["runs"]["fix_auth_bug/mock-safe/examples/configs/fix_auth_bug.yaml"]
+    assert first_run["benchmark_id"] == "auth_bug"
+    assert first_run["benchmark_version"] == 1
+
+
+def test_real_core_suite_baseline_row_has_benchmark_version_one(
+    tmp_path: Path,
+) -> None:
+    suite = load_suite_config(Path("examples/suites/core.yaml"))
+    first_run = suite.runs[0]
+    config = load_config(first_run.config_path)
+    result = SuiteResult(
+        suite_id=suite.suite_id,
+        description=suite.description,
+        suite_path=suite.suite_path,
+        total_runs=1,
+        passed=1,
+        failed=0,
+        pass_rate=100.0,
+        average_score=100,
+        best_run=SuiteRunHeadline(
+            task_id=config.task_id,
+            agent=first_run.agent,
+            result="PASS",
+            score=100,
+        ),
+        worst_run=SuiteRunHeadline(
+            task_id=config.task_id,
+            agent=first_run.agent,
+            result="PASS",
+            score=100,
+        ),
+        failed_check_counts={},
+        warning_check_counts={},
+        result_counts={"PASS": 1},
+        runs=[
+            SuiteRunSummary(
+                task_id=config.task_id,
+                config_path=first_run.config_path,
+                agent=first_run.agent,
+                result="PASS",
+                score=100,
+                failed_checks=[],
+                warning_checks=[],
+                benchmark_id=config.benchmark.id,
+                benchmark_version=config.benchmark.version,
+                json_report_path=Path("runs/core/report.json"),
+                markdown_report_path=Path("runs/core/report.md"),
+                run_dir=Path("runs/core"),
+            )
+        ],
+        json_report_path=tmp_path / "suite.json",
+        markdown_report_path=tmp_path / "suite.md",
+    )
+
+    baseline = baseline_from_suite_result(result)
+    baseline_run = next(iter(baseline.runs.values()))
+
+    assert baseline_run.benchmark_id == "auth_bug_safe"
+    assert baseline_run.benchmark_version == 1
+
+
+def test_matching_benchmark_versions_compare_cleanly(tmp_path: Path) -> None:
+    baseline_path = write_suite_baseline(_suite_result(tmp_path), tmp_path / "core.json")
+
+    comparison = compare_suite_to_baseline(_suite_result(tmp_path), baseline_path)
+
+    assert comparison.version_mismatches == []
+
+
+def test_mismatched_benchmark_versions_fail_by_default(tmp_path: Path) -> None:
+    baseline_path = write_suite_baseline(_suite_result(tmp_path), tmp_path / "core.json")
+
+    with pytest.raises(ValueError, match="Benchmark version mismatch"):
+        compare_suite_to_baseline(
+            _suite_result(tmp_path, first_benchmark_version=2),
+            baseline_path,
+        )
+
+
+def test_allow_version_mismatch_permits_comparison_and_reports_details(
+    tmp_path: Path,
+) -> None:
+    baseline_path = write_suite_baseline(_suite_result(tmp_path), tmp_path / "core.json")
+
+    comparison = compare_suite_to_baseline(
+        _suite_result(tmp_path, first_benchmark_version=2),
+        baseline_path,
+        allow_version_mismatch=True,
+    )
+
+    assert comparison.version_mismatches == [
+        "Benchmark version mismatch for fix_auth_bug/mock-safe "
+        "(auth_bug): baseline 1 -> current 2"
+    ]
+
+
+def test_absent_benchmark_versions_keep_existing_compare_behavior(
+    tmp_path: Path,
+) -> None:
+    baseline_path = write_suite_baseline(
+        _suite_result(
+            tmp_path,
+            first_benchmark_version=None,
+            second_benchmark_version=None,
+        ),
+        tmp_path / "core.json",
+    )
+
+    comparison = compare_suite_to_baseline(
+        _suite_result(
+            tmp_path,
+            first_benchmark_version=None,
+            second_benchmark_version=None,
+        ),
+        baseline_path,
+    )
+
+    assert comparison.version_mismatches == []
 
 
 def test_compare_detects_pass_rate_decrease(tmp_path: Path) -> None:

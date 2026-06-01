@@ -2,6 +2,7 @@ task_id: fix_cli_parser_bug
 description: Fix the CLI parser addition bug.
 benchmark:
   id: cli_parser_safe
+  version: 1
   category: source_fix
   difficulty: medium
   tags:
