@@ -1,4 +1,7 @@
+import csv
+import json
 import sqlite3
+from io import StringIO
 from pathlib import Path
 
 import pytest
@@ -16,6 +19,9 @@ from agentguard.core.result import (
 )
 from agentguard.history.store import (
     HistoryRecord,
+    export_history_csv,
+    export_history_json,
+    history_records_to_dicts,
     history_stats,
     history_trends,
     init_history_db,
@@ -297,6 +303,52 @@ def test_trends_respects_type_and_name_filters(tmp_path: Path) -> None:
     assert trends.run_type == "suite"
 
 
+def test_json_export_returns_list_of_dicts(tmp_path: Path) -> None:
+    db_path = tmp_path / "history.db"
+    record_history(_record("run-1", result="FAIL"), db_path)
+
+    records = list_history(db_path)
+    exported = json.loads(export_history_json(records))
+
+    assert exported == history_records_to_dicts(records)
+    assert exported[0]["id"] == "run-1"
+    assert exported[0]["failed_checks"] == ["Tests passed"]
+
+
+def test_csv_export_includes_header_and_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "history.db"
+    record_history(_record("run-1", result="FAIL"), db_path)
+
+    exported = export_history_csv(list_history(db_path))
+    rows = list(csv.DictReader(StringIO(exported)))
+
+    assert exported.startswith("id,run_type,name,result,score,created_at")
+    assert rows[0]["id"] == "run-1"
+    assert rows[0]["failed_checks"] == "Tests passed"
+
+
+def test_filters_apply_to_exported_records(tmp_path: Path) -> None:
+    db_path = tmp_path / "history.db"
+    record_history(_record("run-1", name="fix_auth_bug"), db_path)
+    record_history(_record("suite-1", run_type="suite", name="core"), db_path)
+
+    records = list_history(db_path, limit=None, name="core")
+    exported = json.loads(export_history_json(records))
+
+    assert [record["id"] for record in exported] == ["suite-1"]
+
+
+def test_empty_export_json_is_empty_list() -> None:
+    assert export_history_json([]) == "[]\n"
+
+
+def test_empty_export_csv_has_header_only() -> None:
+    exported = export_history_csv([])
+
+    assert exported.startswith("id,run_type,name,result,score,created_at")
+    assert list(csv.DictReader(StringIO(exported))) == []
+
+
 def test_missing_db_returns_empty_history_and_stats(tmp_path: Path) -> None:
     db_path = tmp_path / "missing.db"
 
@@ -431,6 +483,116 @@ def test_history_cli_rejects_invalid_type_result_and_limit() -> None:
     assert "result must be one of" in invalid_result.output
     assert invalid_limit.exit_code == 2
     assert "limit must be positive" in invalid_limit.output
+
+
+def test_history_export_cli_writes_output_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    record_history(_record("run-1"), Path(".agentguard/history.db"))
+    output = tmp_path / "exports/history.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "history",
+            "export",
+            "--format",
+            "json",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"History exported: {output}" in result.output
+    assert json.loads(output.read_text(encoding="utf-8"))[0]["id"] == "run-1"
+
+
+def test_history_export_cli_existing_output_without_force_exits_2(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    record_history(_record("run-1"), Path(".agentguard/history.db"))
+    output = tmp_path / "history.json"
+    output.write_text("existing", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["history", "export", "--output", str(output)],
+    )
+
+    assert result.exit_code == 2
+    assert "output already exists" in result.output
+    assert output.read_text(encoding="utf-8") == "existing"
+
+
+def test_history_export_cli_force_overwrites_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    record_history(_record("run-1"), Path(".agentguard/history.db"))
+    output = tmp_path / "history.json"
+    output.write_text("existing", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["history", "export", "--output", str(output), "--force"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(output.read_text(encoding="utf-8"))[0]["id"] == "run-1"
+
+
+def test_history_export_cli_stdout_json(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    record_history(_record("run-1"), Path(".agentguard/history.db"))
+
+    result = runner.invoke(app, ["history", "export", "--format", "json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)[0]["id"] == "run-1"
+
+
+def test_history_export_cli_stdout_csv(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    record_history(_record("run-1"), Path(".agentguard/history.db"))
+
+    result = runner.invoke(app, ["history", "export", "--format", "csv"])
+
+    assert result.exit_code == 0
+    rows = list(csv.DictReader(StringIO(result.output)))
+    assert rows[0]["id"] == "run-1"
+
+
+def test_history_export_cli_invalid_format_exits_2() -> None:
+    result = runner.invoke(app, ["history", "export", "--format", "yaml"])
+
+    assert result.exit_code == 2
+    assert "format must be one of" in result.output
+
+
+def test_history_export_cli_invalid_limit_exits_2() -> None:
+    result = runner.invoke(app, ["history", "export", "--limit", "0"])
+
+    assert result.exit_code == 2
+    assert "limit must be positive" in result.output
+
+
+def test_history_export_cli_empty_outputs(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    json_result = runner.invoke(app, ["history", "export", "--format", "json"])
+    csv_result = runner.invoke(app, ["history", "export", "--format", "csv"])
+
+    assert json_result.exit_code == 0
+    assert json_result.output == "[]\n"
+    assert csv_result.exit_code == 0
+    assert csv_result.output.startswith("id,run_type,name,result,score,created_at")
+    assert list(csv.DictReader(StringIO(csv_result.output))) == []
 
 
 def test_history_write_failure_warns_without_raising(

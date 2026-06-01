@@ -26,6 +26,8 @@ from agentguard.history.store import (
     HistoryRecord,
     HistoryStats,
     HistoryTrends,
+    export_history_csv,
+    export_history_json,
     history_stats,
     history_trends,
     list_history,
@@ -167,6 +169,12 @@ def _format_history_trends(trends: HistoryTrends) -> str:
 
 def _has_history_filters(*values: Optional[str]) -> bool:
     return any(value is not None for value in values)
+
+
+def _validate_history_export_format(export_format: str) -> str:
+    if export_format not in {"json", "csv"}:
+        raise ValueError("format must be one of: csv, json.")
+    return export_format
 
 
 @benchmarks_app.command("list")
@@ -498,6 +506,92 @@ def history_trends_command(
         difficulty=difficulty,
     )
     typer.echo(_format_history_trends(trends))
+
+
+@history_app.command("export")
+def history_export_command(
+    export_format: str = typer.Option(
+        "json",
+        "--format",
+        help="Export format: json or csv.",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        help="Path to write the export. Prints to stdout when omitted.",
+    ),
+    limit: Optional[int] = typer.Option(
+        None,
+        "--limit",
+        help="Maximum number of history records to export.",
+    ),
+    run_type: Optional[str] = typer.Option(
+        None,
+        "--type",
+        help="History type to export: run, suite, or ci.",
+    ),
+    result: Optional[str] = typer.Option(
+        None,
+        "--result",
+        help="History result to export: PASS or FAIL.",
+    ),
+    name: Optional[str] = typer.Option(
+        None,
+        "--name",
+        help="History name to export exactly.",
+    ),
+    category: Optional[str] = typer.Option(
+        None,
+        "--category",
+        help="History category to export exactly.",
+    ),
+    difficulty: Optional[str] = typer.Option(
+        None,
+        "--difficulty",
+        help="History difficulty to export exactly.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite the output file if it already exists.",
+    ),
+) -> None:
+    """Export local AgentGuard run history as JSON or CSV."""
+    if limit is not None and limit <= 0:
+        raise typer.BadParameter("limit must be positive.", param_hint="--limit")
+    try:
+        validated_format = _validate_history_export_format(export_format)
+        validated_type = validate_run_type(run_type)
+        validated_result = validate_result(result)
+    except ValueError as error:
+        raise typer.BadParameter(str(error)) from error
+
+    records = list_history(
+        limit=limit,
+        run_type=validated_type,
+        result=validated_result,
+        name=name,
+        category=category,
+        difficulty=difficulty,
+    )
+    content = (
+        export_history_json(records)
+        if validated_format == "json"
+        else export_history_csv(records)
+    )
+    if output is None:
+        typer.echo(content, nl=False)
+        return
+
+    if output.exists() and not force:
+        typer.echo(
+            f"Error: output already exists: {output}. Use --force to overwrite.",
+            err=True,
+        )
+        raise typer.Exit(2)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(content, encoding="utf-8")
+    typer.echo(f"History exported: {output}")
 
 
 @app.command()

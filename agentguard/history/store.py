@@ -1,8 +1,10 @@
+import csv
 import json
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
 from typing import Optional
 
@@ -10,6 +12,21 @@ from typing import Optional
 DEFAULT_HISTORY_DB_PATH = Path(".agentguard/history.db")
 VALID_RUN_TYPES = {"run", "suite", "ci"}
 VALID_RESULTS = {"PASS", "FAIL"}
+HISTORY_CSV_COLUMNS = [
+    "id",
+    "run_type",
+    "name",
+    "result",
+    "score",
+    "created_at",
+    "json_report_path",
+    "markdown_report_path",
+    "command_log_path",
+    "category",
+    "difficulty",
+    "agent",
+    "failed_checks",
+]
 
 
 @dataclass(frozen=True)
@@ -149,14 +166,14 @@ def record_history(
 
 def list_history(
     db_path: Path = DEFAULT_HISTORY_DB_PATH,
-    limit: int = 20,
+    limit: Optional[int] = 20,
     run_type: Optional[str] = None,
     result: Optional[str] = None,
     name: Optional[str] = None,
     category: Optional[str] = None,
     difficulty: Optional[str] = None,
 ) -> list[HistoryRecord]:
-    if limit <= 0:
+    if limit is not None and limit <= 0:
         raise ValueError("limit must be positive.")
     validate_run_type(run_type)
     validate_result(result)
@@ -171,6 +188,7 @@ def list_history(
         difficulty=difficulty,
     )
 
+    limit_clause = "LIMIT ?" if limit is not None else ""
     query = f"""
         SELECT
           id,
@@ -189,9 +207,10 @@ def list_history(
         FROM runs
         {where}
         ORDER BY created_at DESC, id DESC
-        LIMIT ?
+        {limit_clause}
     """
-    params.append(limit)
+    if limit is not None:
+        params.append(limit)
 
     with sqlite3.connect(db_path) as connection:
         rows = connection.execute(query, params).fetchall()
@@ -281,6 +300,42 @@ def history_trends(
         recent_results=[record.result for record in records],
         latest_report_path=latest.json_report_path,
     )
+
+
+def history_records_to_dicts(records: list[HistoryRecord]) -> list[dict[str, object]]:
+    return [
+        {
+            "id": record.id,
+            "run_type": record.run_type,
+            "name": record.name,
+            "result": record.result,
+            "score": record.score,
+            "created_at": record.created_at,
+            "json_report_path": str(record.json_report_path),
+            "markdown_report_path": _optional_path(record.markdown_report_path),
+            "command_log_path": _optional_path(record.command_log_path),
+            "category": record.category,
+            "difficulty": record.difficulty,
+            "agent": record.agent,
+            "failed_checks": record.failed_checks,
+        }
+        for record in records
+    ]
+
+
+def export_history_json(records: list[HistoryRecord]) -> str:
+    return json.dumps(history_records_to_dicts(records), indent=2) + "\n"
+
+
+def export_history_csv(records: list[HistoryRecord]) -> str:
+    output = StringIO()
+    writer = csv.DictWriter(output, fieldnames=HISTORY_CSV_COLUMNS)
+    writer.writeheader()
+    for record in records:
+        row = history_records_to_dicts([record])[0]
+        row["failed_checks"] = ";".join(record.failed_checks)
+        writer.writerow(row)
+    return output.getvalue()
 
 
 def validate_run_type(run_type: Optional[str]) -> Optional[str]:
