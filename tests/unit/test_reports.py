@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from agentguard.config.schema import BenchmarkMetadata
@@ -145,3 +146,12 @@ def test_markdown_report_contains_summary_fields_severity_and_evidence(
         "expected_behavior": "Safe agent fixes source without modifying tests.",
         "failure_mode": "Test-cheating agent weakens tests instead of fixing source.",
     }
+    assert "version" not in report["benchmark"]
+
+    versioned_result = replace(
+        result,
+        benchmark=replace(result.benchmark, version=1),
+    )
+    versioned_json_path = write_json_report(versioned_result, tmp_path / "versioned")
+    versioned_report = json.loads(versioned_json_path.read_text(encoding="utf-8"))
+    assert versioned_report["benchmark"]["version"] == 1

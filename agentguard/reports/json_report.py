@@ -16,6 +16,12 @@ def write_json_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / "report.json"
     data = asdict(result)
+    if isinstance(data.get("benchmark"), dict):
+        data["benchmark"] = {
+            key: value
+            for key, value in data["benchmark"].items()
+            if value not in (None, [])
+        }
     if result.sandbox is not None and result.sandbox.type == "local":
         data["sandbox"] = {
             "type": result.sandbox.type,
