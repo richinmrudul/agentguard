@@ -101,7 +101,9 @@ The report browser discovers local reports under `.agentguard/`, loads JSON repo
 The local SQLite history index at `.agentguard/history.db` stores normalized
 summaries for run, suite, and CI reports. Reports remain the source of truth;
 the database is a lightweight cache for recent history, stats, and future
-trend/dashboard features.
+trend/dashboard features. History queries support exact-match filters for type,
+name, category, and difficulty, plus a trends view over recent scores and
+results.
 
 ### GitHub Action / CI Mode
 
