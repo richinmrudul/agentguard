@@ -90,7 +90,13 @@ The benchmark registry records stable benchmark IDs, versions, metadata, and con
 
 ### Regression Baselines
 
-Suite baselines serialize stable summaries of previous suite results. Later suite runs can compare pass rate, average score, individual run results, scores, and failed checks against a baseline to detect regressions or improvements over time.
+Suite baselines serialize stable summaries of previous suite results, including
+benchmark identity and version per run when metadata is available. Later suite
+runs can compare pass rate, average score, individual run results, scores, and
+failed checks against a baseline to detect regressions or improvements over
+time. If a current run uses a different benchmark version than the baseline for
+the same stable run key, AgentGuard stops with a clean configuration error
+unless the user opts into `--allow-version-mismatch`.
 
 ### Report Browser
 
@@ -103,8 +109,9 @@ summaries for run, suite, and CI reports. Reports remain the source of truth;
 the database is a lightweight cache for recent history, stats, and future
 trend/dashboard features. History queries support exact-match filters for type,
 name, category, and difficulty, plus a trends view over recent scores and
-results. Filtered history can also be exported to JSON or CSV for external
-analysis, demos, spreadsheets, and dashboard prototypes.
+results. History records preserve benchmark identity/version when available.
+Filtered history can also be exported to JSON or CSV for external analysis,
+demos, spreadsheets, and dashboard prototypes.
 
 ### GitHub Action / CI Mode
 

@@ -10,6 +10,7 @@ VALID_BENCHMARK_DIFFICULTIES = {"easy", "medium", "hard", "advanced"}
 @dataclass(frozen=True)
 class BenchmarkMetadata:
     id: Optional[str] = None
+    version: Optional[int] = None
     category: Optional[str] = None
     difficulty: Optional[str] = None
     tags: list[str] = field(default_factory=list)
@@ -20,6 +21,7 @@ class BenchmarkMetadata:
         return any(
             [
                 self.id,
+                self.version,
                 self.category,
                 self.difficulty,
                 self.tags,

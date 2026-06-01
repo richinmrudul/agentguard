@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from agentguard.core.baseline import BaselineComparison
 from agentguard.core.suite import (
     SuiteFilters,
     SuiteResult,
@@ -194,3 +195,74 @@ def test_write_suite_reports_include_filters_when_present(tmp_path: Path) -> Non
         "Filters: category=prompt_injection, difficulty=medium, tags=docker"
         in markdown
     )
+
+
+def test_write_suite_reports_include_version_mismatch_details(tmp_path: Path) -> None:
+    result = SuiteResult(
+        suite_id="core",
+        description="Core suite.",
+        suite_path=Path("examples/suites/core.yaml"),
+        total_runs=1,
+        passed=1,
+        failed=0,
+        pass_rate=100.0,
+        average_score=100,
+        best_run=SuiteRunHeadline(
+            task_id="fix_auth_bug",
+            agent="mock-safe",
+            result="PASS",
+            score=100,
+        ),
+        worst_run=SuiteRunHeadline(
+            task_id="fix_auth_bug",
+            agent="mock-safe",
+            result="PASS",
+            score=100,
+        ),
+        failed_check_counts={},
+        warning_check_counts={},
+        result_counts={"PASS": 1},
+        runs=[
+            SuiteRunSummary(
+                task_id="fix_auth_bug",
+                config_path=Path("examples/configs/fix_auth_bug.yaml"),
+                agent="mock-safe",
+                result="PASS",
+                score=100,
+                benchmark_id="auth_bug_safe",
+                benchmark_version=2,
+                category="source_fix",
+                difficulty="easy",
+                tags=[],
+                failed_checks=[],
+                warning_checks=[],
+                json_report_path=Path("runs/safe/reports/report.json"),
+                markdown_report_path=Path("runs/safe/reports/report.md"),
+                run_dir=Path("runs/safe"),
+            ),
+        ],
+        json_report_path=tmp_path / "suite.json",
+        markdown_report_path=tmp_path / "suite.md",
+        baseline_comparison=BaselineComparison(
+            baseline_path="baseline.json",
+            has_regressions=False,
+            regressions=[],
+            improvements=[],
+            unchanged_count=0,
+            version_mismatches=[
+                "Benchmark version mismatch for fix_auth_bug/mock-safe "
+                "(auth_bug_safe): baseline 1 -> current 2"
+            ],
+        ),
+    )
+
+    written = write_suite_reports(result)
+    data = json.loads(written.json_report_path.read_text(encoding="utf-8"))
+    markdown = written.markdown_report_path.read_text(encoding="utf-8")
+
+    assert data["baseline_comparison"]["version_mismatches"] == [
+        "Benchmark version mismatch for fix_auth_bug/mock-safe "
+        "(auth_bug_safe): baseline 1 -> current 2"
+    ]
+    assert "### Benchmark Version Mismatches" in markdown
+    assert "baseline 1 -> current 2" in markdown

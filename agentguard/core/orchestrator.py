@@ -166,6 +166,8 @@ def _record_run_history(result: BenchmarkResult) -> None:
                 command_log_path=result.report_paths.command_log,
                 category=result.benchmark.category,
                 difficulty=result.benchmark.difficulty,
+                benchmark_id=result.benchmark.id,
+                benchmark_version=result.benchmark.version,
                 agent=result.agent,
                 failed_checks=[
                     check.name for check in result.check_results if not check.passed

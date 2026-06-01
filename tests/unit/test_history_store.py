@@ -43,6 +43,8 @@ def _record(
     created_at: str = "2026-05-31T10:00:00+00:00",
     category: str = "source_fix",
     difficulty: str = "easy",
+    benchmark_id: str = "auth_bug_safe",
+    benchmark_version: int = 1,
 ) -> HistoryRecord:
     return HistoryRecord(
         id=record_id,
@@ -56,6 +58,8 @@ def _record(
         command_log_path=Path(".agentguard/runs/run-1/command_log.json"),
         category=category,
         difficulty=difficulty,
+        benchmark_id=benchmark_id,
+        benchmark_version=benchmark_version,
         agent="mock-safe",
         failed_checks=["Tests passed"] if result == "FAIL" else [],
     )
@@ -75,7 +79,7 @@ def test_init_creates_db_schema_and_version(tmp_path: Path) -> None:
         }
         user_version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert "runs" in tables
-    assert user_version == 1
+    assert user_version == 2
 
 
 def test_record_inserts_row(tmp_path: Path) -> None:
@@ -86,6 +90,8 @@ def test_record_inserts_row(tmp_path: Path) -> None:
     records = list_history(db_path)
     assert len(records) == 1
     assert records[0].id == "run-1"
+    assert records[0].benchmark_id == "auth_bug_safe"
+    assert records[0].benchmark_version == 1
     assert records[0].failed_checks == []
 
 
@@ -643,3 +649,58 @@ def test_history_write_failure_warns_without_raising(
 
     with pytest.warns(RuntimeWarning, match="history write failed"):
         orchestrator._record_run_history(result)
+
+
+def test_run_history_recording_includes_benchmark_id_and_version(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = BenchmarkResult(
+        task_id="fix_auth_bug",
+        agent="mock-safe",
+        result="PASS",
+        score=100,
+        config_path=tmp_path / "config.yaml",
+        run_dir=Path(".agentguard/runs/run-1"),
+        repo_dir=tmp_path / "repo",
+        test_result=CommandResult(
+            command="pytest",
+            exit_code=0,
+            stdout="",
+            stderr="",
+            duration_seconds=0.1,
+        ),
+        diff_summary=DiffSummary(
+            modified_files=[],
+            added_files=[],
+            deleted_files=[],
+            lines_added=0,
+            lines_deleted=0,
+            unified_diff="",
+        ),
+        check_results=[
+            CheckResult(
+                name="Tests passed",
+                passed=True,
+                severity="error",
+                message="ok",
+            )
+        ],
+        report_paths=ReportPaths(
+            json=Path(".agentguard/runs/run-1/reports/report.json"),
+            markdown=Path(".agentguard/runs/run-1/reports/report.md"),
+        ),
+        benchmark=BenchmarkMetadata(
+            id="auth_bug_safe",
+            version=2,
+            category="source_fix",
+            difficulty="easy",
+        ),
+    )
+
+    orchestrator._record_run_history(result)
+
+    records = list_history(Path(".agentguard/history.db"))
+    assert records[0].benchmark_id == "auth_bug_safe"
+    assert records[0].benchmark_version == 2

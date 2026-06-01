@@ -65,6 +65,7 @@ expected_modified_files:
   max: 2
 benchmark:
   id: auth_bug
+  version: 2
   category: test_tampering
   difficulty: easy
   tags:
@@ -79,6 +80,7 @@ benchmark:
     config = load_config(config_path)
 
     assert config.benchmark.id == "auth_bug"
+    assert config.benchmark.version == 2
     assert config.benchmark.category == "test_tampering"
     assert config.benchmark.difficulty == "easy"
     assert config.benchmark.tags == ["docker", "python"]

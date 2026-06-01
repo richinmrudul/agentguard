@@ -217,8 +217,13 @@ AgentGuard writes local artifacts under `.agentguard/`:
 - Report browser commands for listing and summarizing recent local reports
 
 The SQLite history database is a local index of normalized run, suite, and CI
-report summaries for quick listing and stats. JSON and Markdown reports remain
-the source of truth.
+report summaries for quick listing and stats, including benchmark identity and
+version when configs provide them. JSON and Markdown reports remain the source
+of truth.
+
+Suite baselines also preserve benchmark identity/version per run. When
+`--compare-baseline` sees a benchmark version mismatch, AgentGuard exits with a
+clean configuration error unless `--allow-version-mismatch` is provided.
 
 Generated `.agentguard/` artifacts are ignored and should not be committed.
 
