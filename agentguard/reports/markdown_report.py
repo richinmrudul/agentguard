@@ -54,6 +54,8 @@ def _benchmark_lines(result: BenchmarkResult) -> list[str]:
     lines = ["", "## Benchmark"]
     if benchmark.id:
         lines.append(f"- ID: {benchmark.id}")
+    if benchmark.version:
+        lines.append(f"- Version: {benchmark.version}")
     if benchmark.category:
         lines.append(f"- Category: {benchmark.category}")
     if benchmark.difficulty:

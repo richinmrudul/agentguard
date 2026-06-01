@@ -1,7 +1,16 @@
+from pathlib import Path
+
 from typer.testing import CliRunner
 
+import agentguard.cli.main as cli_main
 from agentguard import __version__
 from agentguard.cli.main import app
+from agentguard.core.baseline import BaselineComparison
+from agentguard.core.suite import (
+    SuiteResult,
+    SuiteRunHeadline,
+    SuiteRunSummary,
+)
 
 runner = CliRunner()
 
@@ -136,3 +145,83 @@ def test_benchmark_with_failure_exits_zero_with_allow_failures() -> None:
 
     assert result.exit_code == 0
     assert "Failed: 1" in result.output
+
+
+def test_suite_allow_version_mismatch_passes_flag_and_prints_details(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured = {}
+
+    def fake_run_suite(*args, **kwargs):
+        captured["allow_version_mismatch"] = kwargs["allow_version_mismatch"]
+        return SuiteResult(
+            suite_id="core",
+            description="Core suite.",
+            suite_path=Path("suite.yaml"),
+            total_runs=1,
+            passed=1,
+            failed=0,
+            pass_rate=100.0,
+            average_score=100,
+            best_run=SuiteRunHeadline(
+                task_id="fix_auth_bug",
+                agent="mock-safe",
+                result="PASS",
+                score=100,
+            ),
+            worst_run=SuiteRunHeadline(
+                task_id="fix_auth_bug",
+                agent="mock-safe",
+                result="PASS",
+                score=100,
+            ),
+            failed_check_counts={},
+            warning_check_counts={},
+            result_counts={"PASS": 1},
+            runs=[
+                SuiteRunSummary(
+                    task_id="fix_auth_bug",
+                    config_path=Path("config.yaml"),
+                    agent="mock-safe",
+                    result="PASS",
+                    score=100,
+                    failed_checks=[],
+                    warning_checks=[],
+                    json_report_path=Path("report.json"),
+                    markdown_report_path=Path("report.md"),
+                    run_dir=Path("run"),
+                )
+            ],
+            json_report_path=tmp_path / "suite.json",
+            markdown_report_path=tmp_path / "suite.md",
+            baseline_comparison=BaselineComparison(
+                baseline_path="baseline.json",
+                has_regressions=False,
+                regressions=[],
+                improvements=[],
+                unchanged_count=0,
+                version_mismatches=[
+                    "Benchmark version mismatch for fix_auth_bug/mock-safe "
+                    "(auth_bug): baseline 1 -> current 2"
+                ],
+            ),
+        )
+
+    monkeypatch.setattr(cli_main, "run_suite", fake_run_suite)
+
+    result = runner.invoke(
+        app,
+        [
+            "suite",
+            "suite.yaml",
+            "--compare-baseline",
+            "baseline.json",
+            "--allow-version-mismatch",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["allow_version_mismatch"] is True
+    assert "Benchmark version mismatches:" in result.output
+    assert "baseline 1 -> current 2" in result.output
