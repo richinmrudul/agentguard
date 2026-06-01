@@ -104,7 +104,10 @@ Inspect local run history:
 
 ```bash
 agentguard history list
+agentguard history list --type suite --result FAIL
 agentguard history stats
+agentguard history stats --type suite
+agentguard history trends --name core --type suite
 ```
 
 List registered benchmarks:

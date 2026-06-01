@@ -25,7 +25,9 @@ from agentguard.core.suite import (
 from agentguard.history.store import (
     HistoryRecord,
     HistoryStats,
+    HistoryTrends,
     history_stats,
+    history_trends,
     list_history,
     validate_result,
     validate_run_type,
@@ -110,8 +112,10 @@ def _format_history_table(records: list[HistoryRecord]) -> str:
     return "\n".join(lines)
 
 
-def _format_history_stats(stats: HistoryStats) -> str:
+def _format_history_stats(stats: HistoryStats, *, has_filters: bool = False) -> str:
     if stats.total_records == 0:
+        if has_filters:
+            return "No history found for selected filters."
         return "No history found."
     average = (
         f"{stats.average_score:.1f}" if stats.average_score is not None else "-"
@@ -130,6 +134,39 @@ def _format_history_stats(stats: HistoryStats) -> str:
     if stats.latest_created_at is not None:
         lines.append(f"Latest run: {stats.latest_created_at}")
     return "\n".join(lines)
+
+
+def _format_history_delta(delta: Optional[float]) -> str:
+    if delta is None:
+        return "-"
+    return f"{delta:+g}"
+
+
+def _format_history_trends(trends: HistoryTrends) -> str:
+    if trends.records_count == 0:
+        return "No history found for selected filters."
+    run_type = trends.run_type or "-"
+    pass_rate = f"{trends.pass_rate:.1f}%" if trends.pass_rate is not None else "-"
+    lines = [
+        "AgentGuard History Trends",
+        f"Name: {trends.name}",
+        f"Type: {run_type}",
+        f"Records: {trends.records_count}",
+        f"Latest score: {_format_history_score(trends.latest_score)}",
+        f"Previous score: {_format_history_score(trends.previous_score)}",
+        f"Delta: {_format_history_delta(trends.delta)}",
+        f"Pass count: {trends.pass_count}",
+        f"Fail count: {trends.fail_count}",
+        f"Pass rate: {pass_rate}",
+        f"Recent results newest-first: {' '.join(trends.recent_results)}",
+    ]
+    if trends.latest_report_path is not None:
+        lines.append(f"Latest report: {trends.latest_report_path}")
+    return "\n".join(lines)
+
+
+def _has_history_filters(*values: Optional[str]) -> bool:
+    return any(value is not None for value in values)
 
 
 @benchmarks_app.command("list")
@@ -328,6 +365,21 @@ def history_list(
         "--result",
         help="History result to list: PASS or FAIL.",
     ),
+    name: Optional[str] = typer.Option(
+        None,
+        "--name",
+        help="History name to list exactly.",
+    ),
+    category: Optional[str] = typer.Option(
+        None,
+        "--category",
+        help="History category to list exactly.",
+    ),
+    difficulty: Optional[str] = typer.Option(
+        None,
+        "--difficulty",
+        help="History difficulty to list exactly.",
+    ),
     limit: int = typer.Option(
         20,
         "--limit",
@@ -347,14 +399,105 @@ def history_list(
         limit=limit,
         run_type=validated_type,
         result=validated_result,
+        name=name,
+        category=category,
+        difficulty=difficulty,
     )
     typer.echo(_format_history_table(records))
 
 
 @history_app.command("stats")
-def history_stats_command() -> None:
+def history_stats_command(
+    run_type: Optional[str] = typer.Option(
+        None,
+        "--type",
+        help="History type to summarize: run, suite, or ci.",
+    ),
+    name: Optional[str] = typer.Option(
+        None,
+        "--name",
+        help="History name to summarize exactly.",
+    ),
+    category: Optional[str] = typer.Option(
+        None,
+        "--category",
+        help="History category to summarize exactly.",
+    ),
+    difficulty: Optional[str] = typer.Option(
+        None,
+        "--difficulty",
+        help="History difficulty to summarize exactly.",
+    ),
+) -> None:
     """Summarize local AgentGuard run history."""
-    typer.echo(_format_history_stats(history_stats()))
+    try:
+        validated_type = validate_run_type(run_type)
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--type") from error
+
+    stats = history_stats(
+        run_type=validated_type,
+        name=name,
+        category=category,
+        difficulty=difficulty,
+    )
+    typer.echo(
+        _format_history_stats(
+            stats,
+            has_filters=_has_history_filters(
+                validated_type,
+                name,
+                category,
+                difficulty,
+            ),
+        )
+    )
+
+
+@history_app.command("trends")
+def history_trends_command(
+    name: str = typer.Option(
+        ...,
+        "--name",
+        help="History name to analyze exactly.",
+    ),
+    run_type: Optional[str] = typer.Option(
+        None,
+        "--type",
+        help="History type to analyze: run, suite, or ci.",
+    ),
+    category: Optional[str] = typer.Option(
+        None,
+        "--category",
+        help="History category to analyze exactly.",
+    ),
+    difficulty: Optional[str] = typer.Option(
+        None,
+        "--difficulty",
+        help="History difficulty to analyze exactly.",
+    ),
+    limit: int = typer.Option(
+        10,
+        "--limit",
+        help="Maximum number of history records to analyze.",
+    ),
+) -> None:
+    """Show score and result trends for local AgentGuard history."""
+    if limit <= 0:
+        raise typer.BadParameter("limit must be positive.", param_hint="--limit")
+    try:
+        validated_type = validate_run_type(run_type)
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--type") from error
+
+    trends = history_trends(
+        name=name,
+        limit=limit,
+        run_type=validated_type,
+        category=category,
+        difficulty=difficulty,
+    )
+    typer.echo(_format_history_trends(trends))
 
 
 @app.command()
