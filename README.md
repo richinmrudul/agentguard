@@ -108,7 +108,13 @@ agentguard history list --type suite --result FAIL
 agentguard history stats
 agentguard history stats --type suite
 agentguard history trends --name core --type suite
+agentguard history export --format csv --output /tmp/agentguard-history.csv
+agentguard history export --format json --type suite --output /tmp/suites.json
 ```
+
+History exports are useful for external analysis, demos, spreadsheet workflows,
+and dashboard prototypes. They use the local SQLite history index; JSON and
+Markdown reports remain the source of truth.
 
 List registered benchmarks:
 

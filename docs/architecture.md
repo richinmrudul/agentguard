@@ -103,7 +103,8 @@ summaries for run, suite, and CI reports. Reports remain the source of truth;
 the database is a lightweight cache for recent history, stats, and future
 trend/dashboard features. History queries support exact-match filters for type,
 name, category, and difficulty, plus a trends view over recent scores and
-results.
+results. Filtered history can also be exported to JSON or CSV for external
+analysis, demos, spreadsheets, and dashboard prototypes.
 
 ### GitHub Action / CI Mode
 
