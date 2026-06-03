@@ -478,6 +478,7 @@ def run_suite(
                 result,
                 compare_baseline_path,
                 allow_version_mismatch=allow_version_mismatch,
+                only_compare_current_runs=active_filters.has_filters(),
             ),
         )
     return write_suite_reports(result)

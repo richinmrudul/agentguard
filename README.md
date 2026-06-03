@@ -93,6 +93,19 @@ Save a regression baseline:
 agentguard suite examples/suites/core.yaml --allow-failures --save-baseline baselines/core.json
 ```
 
+Gate a pull request or CI job against a baseline:
+
+```bash
+agentguard gate suite examples/suites/core.yaml --baseline baselines/core.json --allow-failures
+```
+
+GitHub Actions can run the gate after checkout and dependency setup:
+
+```yaml
+- name: AgentGuard gate
+  run: agentguard gate suite examples/suites/core.yaml --baseline baselines/core.json --allow-failures
+```
+
 Browse local reports:
 
 ```bash

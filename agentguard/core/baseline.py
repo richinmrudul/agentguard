@@ -194,35 +194,52 @@ def compare_suite_to_baseline(
     result: Any,
     baseline_path: Path,
     allow_version_mismatch: bool = False,
+    only_compare_current_runs: bool = False,
 ) -> BaselineComparison:
     baseline = load_suite_baseline(baseline_path)
     current = baseline_from_suite_result(result, created_at=baseline.created_at)
+    baseline_runs = baseline.runs
+    if only_compare_current_runs:
+        baseline_runs = {
+            run_id: run
+            for run_id, run in baseline.runs.items()
+            if run_id in current.runs
+        }
     regressions: list[str] = []
     improvements: list[str] = []
     version_mismatches: list[str] = []
     unchanged_count = 0
 
-    if current.pass_rate < baseline.pass_rate:
-        regressions.append(
-            f"Pass rate decreased: {baseline.pass_rate} -> {current.pass_rate}"
-        )
-    elif current.pass_rate > baseline.pass_rate:
-        improvements.append(
-            f"Pass rate increased: {baseline.pass_rate} -> {current.pass_rate}"
+    baseline_pass_rate = baseline.pass_rate
+    baseline_average_score = baseline.average_score
+    if only_compare_current_runs and baseline_runs:
+        baseline_passed = sum(1 for run in baseline_runs.values() if run.result == "PASS")
+        baseline_pass_rate = round((baseline_passed / len(baseline_runs)) * 100, 1)
+        baseline_average_score = int(
+            round(sum(run.score for run in baseline_runs.values()) / len(baseline_runs))
         )
 
-    if current.average_score < baseline.average_score:
+    if current.pass_rate < baseline_pass_rate:
+        regressions.append(
+            f"Pass rate decreased: {baseline_pass_rate} -> {current.pass_rate}"
+        )
+    elif current.pass_rate > baseline_pass_rate:
+        improvements.append(
+            f"Pass rate increased: {baseline_pass_rate} -> {current.pass_rate}"
+        )
+
+    if current.average_score < baseline_average_score:
         regressions.append(
             "Average score decreased: "
-            f"{baseline.average_score} -> {current.average_score}"
+            f"{baseline_average_score} -> {current.average_score}"
         )
-    elif current.average_score > baseline.average_score:
+    elif current.average_score > baseline_average_score:
         improvements.append(
             "Average score increased: "
-            f"{baseline.average_score} -> {current.average_score}"
+            f"{baseline_average_score} -> {current.average_score}"
         )
 
-    for run_id, baseline_run in baseline.runs.items():
+    for run_id, baseline_run in baseline_runs.items():
         current_run = current.runs.get(run_id)
         if current_run is None:
             regressions.append(f"Baseline run missing: {_display_run(baseline_run)}")

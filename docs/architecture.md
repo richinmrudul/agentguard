@@ -98,6 +98,14 @@ time. If a current run uses a different benchmark version than the baseline for
 the same stable run key, AgentGuard stops with a clean configuration error
 unless the user opts into `--allow-version-mismatch`.
 
+### CI Suite Gate
+
+The `gate suite` command sits on top of suite execution, baseline comparison,
+and the local report/history writers. It runs a suite with optional metadata
+filters, compares against a required baseline, prints a compact CI-focused
+summary, and exits with gate semantics for suite failures, regressions, invalid
+inputs, and benchmark version mismatches.
+
 ### Report Browser
 
 The report browser discovers local reports under `.agentguard/`, loads JSON reports, infers report type, and formats concise summaries for recent run, suite, and CI reports.
