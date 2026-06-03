@@ -528,6 +528,233 @@ def test_suite_cli_allow_version_mismatch_reports_details(tmp_path: Path) -> Non
     assert "baseline 999 -> current 1" in result.output
 
 
+def test_gate_suite_passes_with_matching_baseline_when_failures_allowed(
+    tmp_path: Path,
+) -> None:
+    suite_path = _write_local_suite(tmp_path)
+    baseline_path = tmp_path / "baseline.json"
+    save_result = runner.invoke(
+        app,
+        [
+            "suite",
+            str(suite_path),
+            "--allow-failures",
+            "--save-baseline",
+            str(baseline_path),
+        ],
+    )
+    assert save_result.exit_code == 0
+
+    result = runner.invoke(
+        app,
+        [
+            "gate",
+            "suite",
+            str(suite_path),
+            "--baseline",
+            str(baseline_path),
+            "--allow-failures",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "AgentGuard Gate Summary" in result.output
+    assert "Regressions: no" in result.output
+    assert "Gate result: PASS" in result.output
+
+
+def test_gate_suite_fails_on_suite_failures_unless_allowed(tmp_path: Path) -> None:
+    suite_path = _write_local_suite(tmp_path)
+    baseline_path = tmp_path / "baseline.json"
+    save_result = runner.invoke(
+        app,
+        [
+            "suite",
+            str(suite_path),
+            "--allow-failures",
+            "--save-baseline",
+            str(baseline_path),
+        ],
+    )
+    assert save_result.exit_code == 0
+
+    result = runner.invoke(
+        app,
+        ["gate", "suite", str(suite_path), "--baseline", str(baseline_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "Failed: 1" in result.output
+    assert "Gate result: FAIL" in result.output
+
+
+def test_gate_suite_fails_on_regression_unless_allowed(tmp_path: Path) -> None:
+    suite_path = _write_local_suite(tmp_path)
+    baseline_path = tmp_path / "baseline.json"
+    save_result = runner.invoke(
+        app,
+        [
+            "suite",
+            str(suite_path),
+            "--allow-failures",
+            "--save-baseline",
+            str(baseline_path),
+        ],
+    )
+    assert save_result.exit_code == 0
+    _expect_all_pass_baseline(baseline_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "gate",
+            "suite",
+            str(suite_path),
+            "--baseline",
+            str(baseline_path),
+            "--allow-failures",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Regressions: yes" in result.output
+    assert "Gate result: FAIL" in result.output
+
+    allowed = runner.invoke(
+        app,
+        [
+            "gate",
+            "suite",
+            str(suite_path),
+            "--baseline",
+            str(baseline_path),
+            "--allow-failures",
+            "--allow-regressions",
+        ],
+    )
+
+    assert allowed.exit_code == 0
+    assert "Regressions: yes" in allowed.output
+    assert "Gate result: PASS" in allowed.output
+
+
+def test_gate_suite_fails_on_version_mismatch_unless_allowed(tmp_path: Path) -> None:
+    suite_path = _write_versioned_suite(tmp_path, _write_versioned_config(tmp_path))
+    baseline_path = tmp_path / "baseline.json"
+    save_result = runner.invoke(
+        app,
+        ["suite", str(suite_path), "--save-baseline", str(baseline_path)],
+    )
+    assert save_result.exit_code == 0
+    _mutate_first_baseline_version(baseline_path, 999)
+
+    result = runner.invoke(
+        app,
+        ["gate", "suite", str(suite_path), "--baseline", str(baseline_path)],
+    )
+
+    assert result.exit_code == 2
+    assert "Benchmark version mismatch" in result.output
+
+    allowed = runner.invoke(
+        app,
+        [
+            "gate",
+            "suite",
+            str(suite_path),
+            "--baseline",
+            str(baseline_path),
+            "--allow-version-mismatch",
+        ],
+    )
+
+    assert allowed.exit_code == 0
+    assert "Version mismatches: yes" in allowed.output
+    assert "baseline 999 -> current 1" in allowed.output
+    assert "Gate result: PASS" in allowed.output
+
+
+def test_gate_suite_supports_metadata_filters(tmp_path: Path) -> None:
+    suite_path = _write_filter_suite(tmp_path)
+    baseline_path = tmp_path / "baseline.json"
+    filter_args = [
+        "--category",
+        "source_fix",
+        "--difficulty",
+        "easy",
+        "--tag",
+        "docker",
+    ]
+    save_result = runner.invoke(
+        app,
+        [
+            "suite",
+            str(suite_path),
+            *filter_args,
+            "--save-baseline",
+            str(baseline_path),
+        ],
+    )
+    assert save_result.exit_code == 0
+
+    result = runner.invoke(
+        app,
+        [
+            "gate",
+            "suite",
+            str(suite_path),
+            "--baseline",
+            str(baseline_path),
+            *filter_args,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Runs: 1" in result.output
+    assert "Gate result: PASS" in result.output
+
+
+def test_gate_suite_invalid_baseline_exits_2(tmp_path: Path) -> None:
+    suite_path = _write_versioned_suite(tmp_path, _write_versioned_config(tmp_path))
+    missing_baseline = tmp_path / "missing.json"
+
+    result = runner.invoke(
+        app,
+        ["gate", "suite", str(suite_path), "--baseline", str(missing_baseline)],
+    )
+
+    assert result.exit_code == 2
+    assert "Could not read baseline" in result.output
+
+
+def test_gate_suite_save_current_baseline_writes_file(tmp_path: Path) -> None:
+    suite_path = _write_versioned_suite(tmp_path, _write_versioned_config(tmp_path))
+    baseline_path = tmp_path / "baseline.json"
+    current_baseline_path = tmp_path / "current.json"
+    save_result = runner.invoke(
+        app,
+        ["suite", str(suite_path), "--save-baseline", str(baseline_path)],
+    )
+    assert save_result.exit_code == 0
+
+    result = runner.invoke(
+        app,
+        [
+            "gate",
+            "suite",
+            str(suite_path),
+            "--baseline",
+            str(baseline_path),
+            "--save-current-baseline",
+            str(current_baseline_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert current_baseline_path.exists()
+    assert f"Current baseline saved: {current_baseline_path}" in result.output
+
+
 def test_suite_command_exists_in_help() -> None:
     result = runner.invoke(app, ["--help"])
 

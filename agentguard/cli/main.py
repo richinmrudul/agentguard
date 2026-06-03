@@ -53,6 +53,8 @@ history_app = typer.Typer(help="List and summarize local AgentGuard run history.
 app.add_typer(history_app, name="history")
 benchmarks_app = typer.Typer(help="List and inspect registered AgentGuard benchmarks.")
 app.add_typer(benchmarks_app, name="benchmarks")
+gate_app = typer.Typer(help="CI gate commands for AgentGuard suites.")
+app.add_typer(gate_app, name="gate")
 
 
 @app.command()
@@ -175,6 +177,33 @@ def _validate_history_export_format(export_format: str) -> str:
     if export_format not in {"json", "csv"}:
         raise ValueError("format must be one of: csv, json.")
     return export_format
+
+
+def _echo_gate_summary(result, baseline_path: Path, gate_result: str) -> None:
+    comparison = result.baseline_comparison
+    has_regressions = bool(comparison and comparison.has_regressions)
+    version_mismatches = comparison.version_mismatches if comparison else []
+    typer.echo("AgentGuard Gate Summary")
+    typer.echo(f"Suite: {result.suite_id}")
+    typer.echo(f"Baseline: {baseline_path}")
+    typer.echo(f"Runs: {result.total_runs}")
+    typer.echo(f"Passed: {result.passed}")
+    typer.echo(f"Failed: {result.failed}")
+    typer.echo(f"Pass rate: {result.pass_rate}%")
+    typer.echo(f"Average score: {result.average_score}")
+    typer.echo(f"Regressions: {'yes' if has_regressions else 'no'}")
+    typer.echo(f"Version mismatches: {'yes' if version_mismatches else 'no'}")
+    if version_mismatches:
+        typer.echo("Benchmark version mismatches:")
+        for message in version_mismatches:
+            typer.echo(f"- {message}")
+    if comparison and comparison.regressions:
+        typer.echo("Regression details:")
+        for message in comparison.regressions:
+            typer.echo(f"- {message}")
+    typer.echo(f"Gate result: {gate_result}")
+    typer.echo(f"Suite JSON report path: {result.json_report_path}")
+    typer.echo(f"Suite Markdown report path: {result.markdown_report_path}")
 
 
 @benchmarks_app.command("list")
@@ -750,6 +779,84 @@ def benchmark_command(
     typer.echo(f"Benchmark JSON report path: {summary.report_paths.json}")
     typer.echo(f"Benchmark Markdown report path: {summary.report_paths.markdown}")
     if summary.fail_count > 0 and not allow_failures:
+        raise typer.Exit(1)
+
+
+@gate_app.command("suite")
+def gate_suite_command(
+    suite_path: Path = typer.Argument(..., help="Path to the AgentGuard suite file."),
+    baseline: Path = typer.Option(
+        ...,
+        "--baseline",
+        help="Baseline JSON file to compare against.",
+    ),
+    allow_failures: bool = typer.Option(
+        False,
+        "--allow-failures",
+        help="Do not fail the gate for failed suite runs.",
+    ),
+    allow_regressions: bool = typer.Option(
+        False,
+        "--allow-regressions",
+        help="Do not fail the gate for baseline regressions.",
+    ),
+    allow_version_mismatch: bool = typer.Option(
+        False,
+        "--allow-version-mismatch",
+        help="Do not fail the gate for benchmark version mismatches.",
+    ),
+    category: Optional[str] = typer.Option(
+        None,
+        "--category",
+        help="Run only suite entries with this benchmark category.",
+    ),
+    difficulty: Optional[str] = typer.Option(
+        None,
+        "--difficulty",
+        help="Run only suite entries with this benchmark difficulty.",
+    ),
+    tags: Optional[list[str]] = typer.Option(
+        None,
+        "--tag",
+        help="Run only entries containing all requested tags. Repeat or use commas.",
+    ),
+    save_current_baseline: Optional[Path] = typer.Option(
+        None,
+        "--save-current-baseline",
+        help="Write the current suite result as a baseline after the run.",
+    ),
+) -> None:
+    """Run a suite as a CI gate against a required baseline."""
+    try:
+        filters = suite_filters_from_values(
+            category=category,
+            difficulty=difficulty,
+            tags=tags,
+        )
+        result = run_suite(
+            suite_path,
+            compare_baseline_path=baseline,
+            allow_version_mismatch=allow_version_mismatch,
+            filters=filters,
+        )
+    except ValueError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    comparison = result.baseline_comparison
+    has_regressions = bool(comparison and comparison.has_regressions)
+    gate_failed = (
+        (result.failed > 0 and not allow_failures)
+        or (has_regressions and not allow_regressions)
+    )
+    gate_result = "FAIL" if gate_failed else "PASS"
+    _echo_gate_summary(result, baseline, gate_result)
+
+    if save_current_baseline is not None:
+        baseline_path = write_suite_baseline(result, save_current_baseline)
+        typer.echo(f"Current baseline saved: {baseline_path}")
+
+    if gate_failed:
         raise typer.Exit(1)
 
 
