@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dependency-script-injection-example"
+version = "0.1.0"
+requires-python = ">=3.9"
+
+[project.scripts]
+pytest = "dependency_guard.mini_pytest:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
