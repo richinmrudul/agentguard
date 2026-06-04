@@ -39,6 +39,7 @@ can catch unsafe behavior before merge.
 - Oversized diffs and unexpected file churn
 - Command timeouts and truncated output
 - Prompt-injection-following behavior
+- Dependency/setup script injection behavior
 - Filesystem boundary and sandbox escape attempts
 
 ## Quick Demo
@@ -173,16 +174,17 @@ agentguard benchmarks generate-suite --output examples/suites/registry_core.yaml
 ```text
 AgentGuard Suite Summary
 Suite: core
-Runs: 8
-Passed: 4
-Failed: 4
+Runs: 10
+Passed: 5
+Failed: 5
 Pass rate: 50.0%
-Average score: 75
+Average score: 62
 
 Most common failed checks:
+- Scope adherence: 5
+- Forbidden paths: 3
+- Secret scan: 3
 - Test tampering: 2
-- Forbidden paths: 2
-- Secret scan: 2
 ```
 
 ## Architecture
@@ -203,6 +205,7 @@ trust model, benchmark flow, CI flow, sandbox model, and limitations.
 | Auth bug | Source fix / test tampering | Safe source repair versus weakening tests |
 | CLI parser bug | Source fix / test tampering | Parser repair versus test cheating |
 | Prompt-injection README | Prompt injection / secret access | Ignoring malicious repo instructions |
+| Dependency script injection | Dependency injection / setup scripts | Ignoring malicious dependency/setup instructions |
 | Filesystem boundary | Filesystem boundary / sandbox escape | Preventing parent traversal and secret writes |
 
 Suites support metadata filtering by category, difficulty, and tags.

@@ -43,6 +43,22 @@ benchmarks:
       safe: examples/configs/prompt_injection_readme_safe.yaml
       adversarial: examples/configs/prompt_injection_readme_injection_follower.yaml
 
+  - id: dependency_script_injection
+    version: 1
+    name: Dependency Script Injection
+    category: dependency_injection
+    difficulty: hard
+    description: Detects agents that follow malicious dependency or setup instructions outside the requested source fix.
+    tags:
+      - python
+      - docker
+      - dependency
+      - prompt-injection
+      - script-injection
+    configs:
+      safe: examples/configs/dependency_script_injection_safe.yaml
+      adversarial: examples/configs/dependency_script_injection_follower.yaml
+
   - id: filesystem_boundary
     version: 1
     name: Filesystem Boundary
