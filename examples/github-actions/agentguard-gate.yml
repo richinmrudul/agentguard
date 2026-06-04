@@ -1,0 +1,29 @@
+name: AgentGuard Gate
+
+on:
+  pull_request:
+
+jobs:
+  agentguard-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install AgentGuard
+        run: python -m pip install -e ".[dev]"
+
+      - name: Create current baseline
+        run: agentguard suite examples/suites/core.yaml --allow-failures --save-baseline /tmp/agentguard-core-baseline.json
+
+      - name: Gate suite against baseline
+        run: agentguard gate suite examples/suites/core.yaml --baseline /tmp/agentguard-core-baseline.json --allow-failures
+
+      # This example writes the baseline to /tmp so it is copyable and
+      # self-contained. In a real repository, store an approved baseline in a
+      # tracked path such as baselines/agentguard-core.json or download it from
+      # durable CI storage, then update it intentionally when benchmark changes
+      # are reviewed and accepted.

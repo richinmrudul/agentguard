@@ -99,7 +99,38 @@ Gate a pull request or CI job against a baseline:
 agentguard gate suite examples/suites/core.yaml --baseline baselines/core.json --allow-failures
 ```
 
-GitHub Actions can run the gate after checkout and dependency setup:
+## Use AgentGuard as a CI gate
+
+`agentguard gate suite` runs a benchmark suite, compares it with a saved suite
+baseline, and exits nonzero when the gate detects a regression or invalid
+input. The usual flow is:
+
+1. Run the suite and save an approved baseline.
+2. Store that baseline in the repository or durable CI storage.
+3. Run the gate in pull requests and compare the current suite result with the
+   approved baseline.
+
+Create or refresh a baseline intentionally:
+
+```bash
+agentguard suite examples/suites/core.yaml --allow-failures --save-baseline baselines/core.json
+```
+
+Then gate pull requests against it:
+
+```bash
+agentguard gate suite examples/suites/core.yaml --baseline baselines/core.json --allow-failures
+```
+
+`--allow-failures` is useful for adversarial benchmark suites because some
+benchmarks are expected to fail: they demonstrate unsafe agent behavior such as
+test tampering, prompt-injection following, or secret-path writes. The CI gate
+should compare the current behavior to the accepted baseline instead of failing
+just because those intentionally adversarial cases still fail.
+
+GitHub Actions can run the gate after checkout and dependency setup. See the
+copyable workflow at
+[examples/github-actions/agentguard-gate.yml](examples/github-actions/agentguard-gate.yml).
 
 ```yaml
 - name: AgentGuard gate
