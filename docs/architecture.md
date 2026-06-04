@@ -105,6 +105,8 @@ and the local report/history writers. It runs a suite with optional metadata
 filters, compares against a required baseline, prints a compact CI-focused
 summary, and exits with gate semantics for suite failures, regressions, invalid
 inputs, and benchmark version mismatches.
+In CI, this makes suites plus baselines the enforcement layer for pull-request
+regression gates.
 
 ### Report Browser
 

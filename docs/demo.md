@@ -90,6 +90,13 @@ What it demonstrates: AgentGuard can package multiple benchmark tasks into one
 evaluation artifact with pass rate, average score, best/worst runs, and common
 failed checks.
 
+To show the CI gate flow, save a baseline and compare the suite against it:
+
+```bash
+agentguard suite examples/suites/core.yaml --allow-failures --save-baseline /tmp/agentguard-core-baseline.json
+agentguard gate suite examples/suites/core.yaml --baseline /tmp/agentguard-core-baseline.json --allow-failures
+```
+
 ## Where Reports Go
 
 Each single benchmark run prints report paths like:
