@@ -10,6 +10,16 @@ from typing import Any, Optional
 from agentguard.config.loader import load_config
 from agentguard.core.baseline import BaselineComparison, compare_suite_to_baseline
 from agentguard.core.orchestrator import run_benchmark
+from agentguard.core.reliability_baseline import (
+    ConfidenceInterval,
+    ReliabilityComparison,
+    compare_matrix_reliability,
+    evaluate_minimum_reliability,
+    reliability_combination_key,
+    reliability_thresholds,
+    wilson_score_interval,
+    write_matrix_reliability_baseline,
+)
 from agentguard.core.result import BenchmarkResult
 from agentguard.core.suite import (
     SuiteFilters,
@@ -31,6 +41,7 @@ class MatrixGroupSummary:
     minimum_score: int
     maximum_score: int
     score_standard_deviation: float
+    confidence_interval_95: ConfidenceInterval
     combinations_with_any_pass: int
     combinations_with_all_passes: int
 
@@ -45,6 +56,7 @@ class MatrixReliabilitySummary:
     minimum_score: int
     maximum_score: int
     score_standard_deviation: float
+    confidence_interval_95: ConfidenceInterval
     combinations_with_any_pass: int
     combinations_with_all_passes: int
 
@@ -52,9 +64,12 @@ class MatrixReliabilitySummary:
 @dataclass(frozen=True)
 class MatrixCombinationSummary:
     task_id: str
+    config_path: Path
     benchmark_id: Optional[str]
+    benchmark_version: Optional[int]
     agent: str
     trials: int
+    attempts: int
     passed: int
     failed: int
     success_rate: float
@@ -62,6 +77,7 @@ class MatrixCombinationSummary:
     minimum_score: int
     maximum_score: int
     score_standard_deviation: float
+    confidence_interval_95: ConfidenceInterval
     any_pass: bool
     all_passed: bool
 
@@ -116,6 +132,8 @@ class MatrixResult:
     combinations: dict[str, MatrixCombinationSummary] = field(default_factory=dict)
     filters: SuiteFilters = field(default_factory=SuiteFilters)
     baseline_comparison: Optional[BaselineComparison] = None
+    reliability_baseline_path: Optional[Path] = None
+    reliability_comparison: Optional[ReliabilityComparison] = None
 
 
 def normalize_matrix_agents(raw_agents: Optional[list[str]]) -> list[str]:
@@ -259,6 +277,7 @@ def _group_summary(rows: list[MatrixRowSummary]) -> MatrixGroupSummary:
         minimum_score=min(scores),
         maximum_score=max(scores),
         score_standard_deviation=round(stdev(scores), 2) if total > 1 else 0.0,
+        confidence_interval_95=wilson_score_interval(passed, total),
         combinations_with_any_pass=sum(
             summary.any_pass for summary in combinations.values()
         ),
@@ -281,13 +300,18 @@ def _summaries_by(
 
 
 def _combination_key(row: MatrixRowSummary) -> str:
-    benchmark_id = row.benchmark_id or row.task_id
     config_path = row.config_path.expanduser().resolve()
     try:
         portable_path = config_path.relative_to(Path.cwd().resolve()).as_posix()
     except ValueError:
         portable_path = config_path.as_posix()
-    return f"{benchmark_id}/{portable_path}/{row.agent}"
+    return reliability_combination_key(
+        portable_path,
+        row.benchmark_id,
+        row.benchmark_version,
+        row.task_id,
+        row.agent,
+    )
 
 
 def _combination_summaries(
@@ -305,9 +329,12 @@ def _combination_summaries(
         attempts = len(combination_rows)
         summaries[key] = MatrixCombinationSummary(
             task_id=combination_rows[0].task_id,
+            config_path=combination_rows[0].config_path,
             benchmark_id=combination_rows[0].benchmark_id,
+            benchmark_version=combination_rows[0].benchmark_version,
             agent=combination_rows[0].agent,
             trials=attempts,
+            attempts=attempts,
             passed=passed,
             failed=attempts - passed,
             success_rate=round((passed / attempts) * 100, 1),
@@ -317,6 +344,7 @@ def _combination_summaries(
             score_standard_deviation=(
                 round(stdev(scores), 2) if attempts > 1 else 0.0
             ),
+            confidence_interval_95=wilson_score_interval(passed, attempts),
             any_pass=passed > 0,
             all_passed=passed == attempts,
         )
@@ -339,6 +367,7 @@ def _reliability_summary(
         minimum_score=min(scores),
         maximum_score=max(scores),
         score_standard_deviation=round(stdev(scores), 2) if attempts > 1 else 0.0,
+        confidence_interval_95=wilson_score_interval(passed, attempts),
         combinations_with_any_pass=sum(
             summary.any_pass for summary in combinations.values()
         ),
@@ -375,6 +404,10 @@ def _write_json_report(result: MatrixResult) -> Path:
     data = asdict(result)
     if result.baseline_comparison is None:
         data.pop("baseline_comparison", None)
+    if result.reliability_baseline_path is None:
+        data.pop("reliability_baseline_path", None)
+    if result.reliability_comparison is None:
+        data.pop("reliability_comparison", None)
     if not result.filters.has_filters():
         data.pop("filters", None)
     with result.json_report_path.open("w", encoding="utf-8") as file:
@@ -411,6 +444,11 @@ def _reliability_lines(summary: MatrixReliabilitySummary) -> list[str]:
         f"Minimum score: {summary.minimum_score}",
         f"Maximum score: {summary.maximum_score}",
         f"Score standard deviation: {summary.score_standard_deviation}",
+        (
+            "95% confidence interval: "
+            f"{summary.confidence_interval_95.lower_bound}% to "
+            f"{summary.confidence_interval_95.upper_bound}%"
+        ),
         f"Combinations with any pass: {summary.combinations_with_any_pass}",
         f"Combinations with all passes: {summary.combinations_with_all_passes}",
     ]
@@ -434,6 +472,8 @@ def _write_markdown_report(result: MatrixResult) -> Path:
     ]
     if result.filters.has_filters():
         lines.append(f"Filters: {format_suite_filters(result.filters)}")
+    if result.reliability_baseline_path is not None:
+        lines.append(f"Reliability baseline: {result.reliability_baseline_path}")
     if result.reliability is not None:
         lines.extend(["", "## Reliability", "", *_reliability_lines(result.reliability)])
         lines.extend(
@@ -444,9 +484,12 @@ def _write_markdown_report(result: MatrixResult) -> Path:
                 (
                     "| Agent | Attempts | Passed | Failed | Success Rate | "
                     "Average Score | Minimum | Maximum | Std Dev | Any Pass | "
-                    "All Passes |"
+                    "All Passes | 95% CI |"
                 ),
-                "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+                (
+                    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+                    "---:|---|"
+                ),
             ]
         )
         for agent, summary in result.per_agent_reliability.items():
@@ -456,7 +499,9 @@ def _write_markdown_report(result: MatrixResult) -> Path:
                 f"{summary.average_score} | {summary.minimum_score} | "
                 f"{summary.maximum_score} | {summary.score_standard_deviation} | "
                 f"{summary.combinations_with_any_pass} | "
-                f"{summary.combinations_with_all_passes} |"
+                f"{summary.combinations_with_all_passes} | "
+                f"{summary.confidence_interval_95.lower_bound}% to "
+                f"{summary.confidence_interval_95.upper_bound}% |"
             )
         lines.extend(
             [
@@ -466,9 +511,12 @@ def _write_markdown_report(result: MatrixResult) -> Path:
                 (
                     "| Task | Benchmark | Agent | Trials | Passed | Failed | "
                     "Success Rate | Average Score | Minimum | Maximum | Std Dev | "
-                    "Any Pass | All Passed |"
+                    "Any Pass | All Passed | 95% CI |"
                 ),
-                "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
+                (
+                    "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"
+                    "---|---|---|"
+                ),
             ]
         )
         for summary in result.combinations.values():
@@ -479,7 +527,9 @@ def _write_markdown_report(result: MatrixResult) -> Path:
                 f"{summary.average_score} | {summary.minimum_score} | "
                 f"{summary.maximum_score} | {summary.score_standard_deviation} | "
                 f"{'yes' if summary.any_pass else 'no'} | "
-                f"{'yes' if summary.all_passed else 'no'} |"
+                f"{'yes' if summary.all_passed else 'no'} | "
+                f"{summary.confidence_interval_95.lower_bound}% to "
+                f"{summary.confidence_interval_95.upper_bound}% |"
             )
     lines.extend(["", *_summary_table("By Agent", result.per_agent)])
     lines.extend(["", *_summary_table("By Category", result.per_category)])
@@ -521,6 +571,57 @@ def _write_markdown_report(result: MatrixResult) -> Path:
         if not comparison.regressions:
             lines.append("- None")
 
+    if result.reliability_comparison is not None:
+        comparison = result.reliability_comparison
+        thresholds = comparison.thresholds
+        lines.extend(
+            [
+                "",
+                "## Reliability Gate",
+                "",
+                (
+                    f"Reliability baseline: "
+                    f"{comparison.baseline_path or result.reliability_baseline_path or '-'}"
+                ),
+                (
+                    "Minimum success rate: "
+                    f"{thresholds.min_success_rate}%"
+                    if thresholds.min_success_rate is not None
+                    else "Minimum success rate: not configured"
+                ),
+                (
+                    "Maximum success-rate drop: "
+                    f"{thresholds.max_success_rate_drop} points"
+                ),
+                (
+                    "Maximum average-score drop: "
+                    f"{thresholds.max_average_score_drop} points"
+                ),
+                (
+                    "Reliability regressions: "
+                    f"{'yes' if comparison.has_regressions else 'no'}"
+                ),
+                "",
+                "### Regression Details",
+                "",
+            ]
+        )
+        lines.extend(f"- {detail.message}" for detail in comparison.regressions)
+        if not comparison.regressions:
+            lines.append("- None")
+        lines.extend(["", "### Missing Combinations", ""])
+        lines.extend(f"- {key}" for key in comparison.missing_combinations)
+        if not comparison.missing_combinations:
+            lines.append("- None")
+        lines.extend(["", "### New Combinations", ""])
+        lines.extend(f"- {key}" for key in comparison.new_combinations)
+        if not comparison.new_combinations:
+            lines.append("- None")
+        lines.extend(["", "### Version Mismatches", ""])
+        lines.extend(f"- {message}" for message in comparison.version_mismatches)
+        if not comparison.version_mismatches:
+            lines.append("- None")
+
     lines.extend(["", "## Individual Reports", ""])
     for row in result.runs:
         lines.append(
@@ -552,9 +653,20 @@ def run_matrix(
     allow_version_mismatch: bool = False,
     filters: Optional[SuiteFilters] = None,
     trials: int = 1,
+    save_reliability_baseline_path: Optional[Path] = None,
+    compare_reliability_baseline_path: Optional[Path] = None,
+    min_success_rate: Optional[float] = None,
+    max_success_rate_drop: float = 0,
+    max_average_score_drop: float = 0,
+    force_reliability_baseline: bool = False,
 ) -> MatrixResult:
     if isinstance(trials, bool) or not isinstance(trials, int) or trials <= 0:
         raise ValueError("Matrix trials must be a positive integer.")
+    thresholds = reliability_thresholds(
+        min_success_rate=min_success_rate,
+        max_success_rate_drop=max_success_rate_drop,
+        max_average_score_drop=max_average_score_drop,
+    )
     config = load_suite_config(path)
     active_filters = filters or SuiteFilters()
     filtered_runs = filter_suite_runs(config.runs, active_filters)
@@ -600,6 +712,7 @@ def run_matrix(
         per_agent_reliability=_reliability_by_agent(rows, combinations),
         combinations=combinations,
         filters=active_filters,
+        reliability_baseline_path=save_reliability_baseline_path,
     )
     if compare_baseline_path is not None:
         result = replace(
@@ -610,5 +723,30 @@ def run_matrix(
                 allow_version_mismatch=allow_version_mismatch,
                 only_compare_current_runs=active_filters.has_filters(),
             ),
+        )
+    if compare_reliability_baseline_path is not None:
+        result = replace(
+            result,
+            reliability_comparison=compare_matrix_reliability(
+                result,
+                compare_reliability_baseline_path,
+                thresholds,
+                allow_version_mismatch=allow_version_mismatch,
+                only_compare_current_combinations=active_filters.has_filters(),
+            ),
+        )
+    elif min_success_rate is not None:
+        result = replace(
+            result,
+            reliability_comparison=evaluate_minimum_reliability(
+                result,
+                thresholds,
+            ),
+        )
+    if save_reliability_baseline_path is not None:
+        write_matrix_reliability_baseline(
+            result,
+            save_reliability_baseline_path,
+            force=force_reliability_baseline,
         )
     return write_matrix_reports(result)

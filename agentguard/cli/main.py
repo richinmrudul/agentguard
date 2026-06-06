@@ -1047,6 +1047,41 @@ def matrix_command(
         "--compare-baseline",
         help="Compare this matrix against an existing matrix/suite baseline.",
     ),
+    save_reliability_baseline: Optional[Path] = typer.Option(
+        None,
+        "--save-reliability-baseline",
+        help="Write an aggregate matrix reliability baseline JSON file.",
+    ),
+    compare_reliability_baseline: Optional[Path] = typer.Option(
+        None,
+        "--compare-reliability-baseline",
+        help="Compare aggregate matrix reliability against a saved baseline.",
+    ),
+    min_success_rate: Optional[float] = typer.Option(
+        None,
+        "--min-success-rate",
+        help="Require overall and per-combination success rates at or above this percent.",
+    ),
+    max_success_rate_drop: float = typer.Option(
+        0,
+        "--max-success-rate-drop",
+        help="Maximum allowed success-rate drop in percentage points.",
+    ),
+    max_average_score_drop: float = typer.Option(
+        0,
+        "--max-average-score-drop",
+        help="Maximum allowed average-score drop in points.",
+    ),
+    allow_reliability_regressions: bool = typer.Option(
+        False,
+        "--allow-reliability-regressions",
+        help="Exit 0 for reliability regressions while still reporting them.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing reliability baseline output file.",
+    ),
     allow_regressions: bool = typer.Option(
         False,
         "--allow-regressions",
@@ -1073,6 +1108,12 @@ def matrix_command(
             allow_version_mismatch=allow_version_mismatch,
             filters=filters,
             trials=trials,
+            save_reliability_baseline_path=save_reliability_baseline,
+            compare_reliability_baseline_path=compare_reliability_baseline,
+            min_success_rate=min_success_rate,
+            max_success_rate_drop=max_success_rate_drop,
+            max_average_score_drop=max_average_score_drop,
+            force_reliability_baseline=force,
         )
     except ValueError as error:
         typer.echo(f"Error: {error}", err=True)
@@ -1089,7 +1130,11 @@ def matrix_command(
     typer.echo(f"Passed: {result.passed}")
     typer.echo(f"Failed: {result.failed}")
     typer.echo(f"Pass rate: {result.pass_rate}%")
-    typer.echo(f"Overall success rate: {result.reliability.success_rate}%")
+    interval = result.reliability.confidence_interval_95
+    typer.echo(
+        f"Overall success rate: {result.reliability.success_rate}% "
+        f"(95% CI {interval.lower_bound}% to {interval.upper_bound}%)"
+    )
     typer.echo(f"Average score: {result.average_score}")
     typer.echo("")
     typer.echo("Agent | Attempts | Passed | Failed | Success Rate | Average Score")
@@ -1109,6 +1154,37 @@ def matrix_command(
         typer.echo(f"Regressions: {'yes' if comparison.has_regressions else 'no'}")
         for message in comparison.regressions:
             typer.echo(f"- {message}")
+    if save_reliability_baseline is not None:
+        typer.echo(f"Reliability baseline saved: {save_reliability_baseline}")
+    if result.reliability_comparison is not None:
+        comparison = result.reliability_comparison
+        thresholds = comparison.thresholds
+        typer.echo("")
+        typer.echo("Reliability comparison")
+        if comparison.baseline_path is not None:
+            typer.echo(f"Reliability baseline compared: {comparison.baseline_path}")
+        if thresholds.min_success_rate is not None:
+            typer.echo(
+                f"Minimum required success rate: {thresholds.min_success_rate}%"
+            )
+        typer.echo(
+            "Maximum success-rate drop: "
+            f"{thresholds.max_success_rate_drop} points"
+        )
+        typer.echo(
+            "Maximum average-score drop: "
+            f"{thresholds.max_average_score_drop} points"
+        )
+        typer.echo(
+            "Reliability regressions: "
+            f"{'yes' if comparison.has_regressions else 'no'}"
+        )
+        for detail in comparison.regressions:
+            typer.echo(f"- {detail.message}")
+        for key in comparison.new_combinations:
+            typer.echo(f"- New current combination: {key}")
+        for message in comparison.version_mismatches:
+            typer.echo(f"- {message}")
     typer.echo(f"Matrix JSON report path: {result.json_report_path}")
     typer.echo(f"Matrix Markdown report path: {result.markdown_report_path}")
 
@@ -1119,6 +1195,12 @@ def matrix_command(
         result.baseline_comparison is not None
         and result.baseline_comparison.has_regressions
         and not allow_regressions
+    ):
+        raise typer.Exit(1)
+    if (
+        result.reliability_comparison is not None
+        and result.reliability_comparison.has_regressions
+        and not allow_reliability_regressions
     ):
         raise typer.Exit(1)
     if result.failed > 0 and not allow_failures:
