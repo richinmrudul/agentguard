@@ -1,4 +1,5 @@
 import json
+import time
 import warnings
 from collections import Counter
 from dataclasses import asdict, dataclass, field, replace
@@ -13,6 +14,20 @@ from agentguard.core.baseline import BaselineComparison, compare_suite_to_baseli
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.result import BenchmarkResult
 from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
+from agentguard.provenance.manifest import (
+    ChildExecution,
+    ExecutionManifest,
+    agentguard_identity,
+    artifact_identity,
+    benchmark_identity,
+    configuration_identity,
+    host_identity,
+    policy_identity,
+    portable_path,
+    source_identity,
+    utc_now_iso as manifest_utc_now_iso,
+    write_manifest,
+)
 
 
 @dataclass(frozen=True)
@@ -51,6 +66,8 @@ class SuiteRunSummary:
     json_report_path: Path
     markdown_report_path: Path
     run_dir: Path
+    execution_id: Optional[str] = None
+    manifest_path: Optional[Path] = None
     benchmark_id: Optional[str] = None
     benchmark_version: Optional[int] = None
     category: Optional[str] = None
@@ -84,6 +101,7 @@ class SuiteResult:
     runs: list[SuiteRunSummary]
     json_report_path: Path
     markdown_report_path: Path
+    manifest_path: Optional[Path] = None
     filters: SuiteFilters = field(default_factory=SuiteFilters)
     baseline_comparison: Optional[BaselineComparison] = None
 
@@ -219,6 +237,8 @@ def _run_summary(result: BenchmarkResult) -> SuiteRunSummary:
         json_report_path=result.report_paths.json,
         markdown_report_path=result.report_paths.markdown,
         run_dir=result.run_dir,
+        execution_id=result.execution_id,
+        manifest_path=result.report_paths.manifest,
     )
 
 
@@ -385,6 +405,18 @@ def _write_markdown_report(result: SuiteResult) -> Path:
         lines.append(f"  - Run directory: {run.run_dir}")
         lines.append(f"  - JSON: {run.json_report_path}")
         lines.append(f"  - Markdown: {run.markdown_report_path}")
+        lines.append(f"  - Manifest: {run.manifest_path or '-'}")
+
+    lines.extend(
+        [
+            "",
+            "## Provenance",
+            "",
+            f"- Execution ID: {result.json_report_path.parent.name}",
+            f"- Manifest: {result.manifest_path or '-'}",
+            f"- Child executions: {len(result.runs)}",
+        ]
+    )
 
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report_path
@@ -398,7 +430,6 @@ def write_suite_reports(result: SuiteResult) -> SuiteResult:
         json_report_path=json_path,
         markdown_report_path=markdown_path,
     )
-    _record_suite_history(written)
     return written
 
 
@@ -414,6 +445,7 @@ def _record_suite_history(result: SuiteResult) -> None:
                 created_at=utc_now_iso(),
                 json_report_path=result.json_report_path,
                 markdown_report_path=result.markdown_report_path,
+                manifest_path=result.manifest_path,
                 benchmark_id=_single_value([run.benchmark_id for run in result.runs]),
                 benchmark_version=_single_value(
                     [run.benchmark_version for run in result.runs]
@@ -436,16 +468,24 @@ def run_suite(
     allow_version_mismatch: bool = False,
     filters: Optional[SuiteFilters] = None,
 ) -> SuiteResult:
+    created_at = manifest_utc_now_iso()
+    started = time.monotonic()
     config = load_suite_config(path)
     active_filters = filters or SuiteFilters()
     suite_runs = filter_suite_runs(config.runs, active_filters)
+    summary_dir = _suite_dir(config.suite_id, suites_root)
+    execution_id = summary_dir.name
     run_results = [
-        run_benchmark(run.config_path, run.agent)
+        run_benchmark(
+            run.config_path,
+            run.agent,
+            parent_execution_id=execution_id,
+            parent_execution_type="suite",
+        )
         for run in suite_runs
     ]
     runs = [_run_summary(result) for result in run_results]
     total_runs = len(runs)
-    summary_dir = _suite_dir(config.suite_id, suites_root)
     result_counts = dict(Counter(run.result for run in runs))
     passed = result_counts.get("PASS", 0)
     failed = result_counts.get("FAIL", 0)
@@ -469,6 +509,7 @@ def run_suite(
         runs=runs,
         json_report_path=summary_dir / "suite.json",
         markdown_report_path=summary_dir / "suite.md",
+        manifest_path=summary_dir / "manifest.json",
         filters=active_filters,
     )
     if compare_baseline_path is not None:
@@ -481,4 +522,62 @@ def run_suite(
                 only_compare_current_runs=active_filters.has_filters(),
             ),
         )
-    return write_suite_reports(result)
+    result = write_suite_reports(result)
+    loaded_configs = {
+        run.config_path.expanduser().resolve(): load_config(run.config_path)
+        for run in suite_runs
+    }
+    manifest = ExecutionManifest(
+        execution_id=execution_id,
+        execution_type="suite",
+        created_at=created_at,
+        completed_at=manifest_utc_now_iso(),
+        duration_seconds=round(time.monotonic() - started, 6),
+        agentguard=agentguard_identity(),
+        host=host_identity(
+            docker_relevant=any(
+                loaded.sandbox.type == "docker"
+                for loaded in loaded_configs.values()
+            )
+        ),
+        source=source_identity(Path.cwd()),
+        configuration=configuration_identity(
+            config.suite_path,
+            {
+                "suite_id": config.suite_id,
+                "filters": asdict(active_filters),
+                "agents": [run.agent for run in suite_runs],
+            },
+        ),
+        agent=None,
+        benchmarks=[
+            benchmark_identity(loaded) for loaded in loaded_configs.values()
+        ],
+        policies=[
+            policy_identity(loaded) for loaded in loaded_configs.values()
+        ],
+        artifacts=artifact_identity(
+            result.json_report_path,
+            result.markdown_report_path,
+        ),
+        child_executions=[
+            ChildExecution(
+                execution_id=run.execution_id or run.run_dir.name,
+                execution_type="run",
+                manifest_path=(
+                    portable_path(run.manifest_path)
+                    if run.manifest_path is not None
+                    else None
+                ),
+                task_id=run.task_id,
+                agent=run.agent,
+            )
+            for run in result.runs
+        ],
+    )
+    if result.manifest_path is not None:
+        written_manifest = write_manifest(manifest, result.manifest_path)
+        if written_manifest is None:
+            result = replace(result, manifest_path=None)
+    _record_suite_history(result)
+    return result

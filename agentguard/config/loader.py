@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -12,6 +13,7 @@ from agentguard.config.schema import (
     DiffLimits,
     ExpectedModifiedFiles,
     SandboxConfig,
+    ScalarMetadata,
 )
 
 
@@ -27,14 +29,17 @@ def _string_list(data: dict[str, Any], key: str) -> list[str]:
     return value
 
 
-def _agent_command(data: dict[str, Any]) -> Optional[Union[str, list[str]]]:
-    value = data.get("agent_command")
+def _argv_field(
+    data: dict[str, Any],
+    key: str,
+) -> Optional[Union[str, list[str]]]:
+    value = data.get(key)
     if value is None:
         return None
     if isinstance(value, str):
         if not value:
             raise ValueError(
-                "Config field 'agent_command' must be a non-empty string "
+                f"Config field '{key}' must be a non-empty string "
                 "or a non-empty list of strings."
             )
         return value
@@ -43,7 +48,7 @@ def _agent_command(data: dict[str, Any]) -> Optional[Union[str, list[str]]]:
     ):
         return value
     raise ValueError(
-        "Config field 'agent_command' must be a non-empty string "
+        f"Config field '{key}' must be a non-empty string "
         "or a non-empty list of strings."
     )
 
@@ -59,6 +64,32 @@ def _string_mapping(data: dict[str, Any], key: str) -> dict[str, str]:
         if not isinstance(env_key, str) or not isinstance(env_value, str):
             raise ValueError(f"Config field '{key}' must be a mapping of strings.")
         result[env_key] = env_value
+    return result
+
+
+def _metadata_mapping(
+    data: dict[str, Any],
+    key: str,
+) -> dict[str, ScalarMetadata]:
+    value = data.get(key, {})
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"Config field '{key}' must be a mapping.")
+    result: dict[str, ScalarMetadata] = {}
+    for metadata_key, metadata_value in value.items():
+        if not isinstance(metadata_key, str) or not metadata_key.strip():
+            raise ValueError(
+                f"Config field '{key}' keys must be non-empty strings."
+            )
+        if not isinstance(metadata_value, (str, int, float, bool)):
+            raise ValueError(
+                f"Config field '{key}' values must be strings, integers, "
+                "floats, or booleans."
+            )
+        if isinstance(metadata_value, float) and not math.isfinite(metadata_value):
+            raise ValueError(f"Config field '{key}' float values must be finite.")
+        result[metadata_key] = metadata_value
     return result
 
 
@@ -330,8 +361,10 @@ def load_config(config_path: Path) -> AgentGuardConfig:
     for field in required_string_fields:
         if not isinstance(data.get(field), str) or not data[field]:
             raise ValueError(f"Config field '{field}' must be a non-empty string.")
-    agent_command = _agent_command(data)
+    agent_command = _argv_field(data, "agent_command")
     agent_name = _optional_non_empty_string(data, "agent_name", "config")
+    agent_version_command = _argv_field(data, "agent_version_command")
+    agent_model = _optional_non_empty_string(data, "agent_model", "config")
     if mode == "benchmark" and (
         not isinstance(data.get("repo_template"), str) or not data["repo_template"]
     ):
@@ -359,6 +392,9 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         agent_command=agent_command,
         agent_name=agent_name,
         agent_environment=_string_mapping(data, "agent_environment"),
+        agent_version_command=agent_version_command,
+        agent_model=agent_model,
+        agent_metadata=_metadata_mapping(data, "agent_metadata"),
         agent_workdir=_agent_workdir(data),
         command_timeout_seconds=_positive_int_with_default(
             data,

@@ -273,7 +273,9 @@ def test_real_parallel_attempts_isolate_workspaces_and_record_history(
     assert all(row.json_report_path.is_file() for row in result.runs)
     assert all(row.markdown_report_path.is_file() for row in result.runs)
     records = list_history(tmp_path / ".agentguard/history.db", limit=None)
-    assert len(records) == 4
+    assert len(records) == 5
+    assert sum(record.run_type == "run" for record in records) == 4
+    assert sum(record.run_type == "matrix" for record in records) == 1
 
 
 def test_runtime_failure_does_not_cancel_other_attempts(

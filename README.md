@@ -78,7 +78,19 @@ agent_command:
 agent_environment:
   AGENT_MODE: benchmark
 agent_workdir: repo_root
+agent_version_command:
+  - my-agent
+  - --version
+agent_model: coding-model-v1
+agent_metadata:
+  provider: internal
+  temperature: 0
 ```
+
+`agent_version_command` accepts the same string-or-argv shape as
+`agent_command`, runs with `shell=False`, and is bounded by timeout and output
+limits. Detection failure produces a warning but does not fail evaluation.
+`agent_metadata` accepts only scalar string, integer, float, or boolean values.
 
 Run an expected-failing benchmark:
 
@@ -186,6 +198,9 @@ AgentGuard writes local artifacts under `.agentguard/` by default:
 - Run reports: `.agentguard/runs/.../reports/report.json` and `report.md`
 - Suite reports: `.agentguard/suites/.../suite.json` and `suite.md`
 - Matrix reports: `.agentguard/matrices/.../matrix.json` and `matrix.md`
+- Run manifests: `.agentguard/runs/.../manifest.json`
+- Suite manifests: `.agentguard/suites/.../manifest.json`
+- Matrix manifests: `.agentguard/matrices/.../manifest.json`
 - CI reports: `.agentguard/ci/.../report.json` and `report.md`
 - Command logs: `command_log.json`
 - Timeline data embedded in reports
@@ -216,6 +231,41 @@ agentguard history export --format json --type suite --output /tmp/suites.json
 History exports are useful for external analysis, demos, spreadsheet workflows,
 and dashboard prototypes. They use the local SQLite history index; JSON and
 Markdown reports remain the source of truth.
+
+## Execution Provenance
+
+Every run, suite, and matrix writes a versioned execution manifest after its
+JSON and Markdown reports. Manifests identify the AgentGuard version and source
+revision, host and optional Docker version, evaluated source revision, config
+and suite SHA-256 hashes, resolved execution options, agent adapter/version/model,
+benchmark IDs and versions, command and sandbox policies, artifact paths, and
+suite or matrix parent-child execution IDs. Matrix manifests also record agents,
+trials, workers, execution mode, and executed attempt counts.
+
+Verify that a manifest is structurally valid and its referenced configs are
+unchanged:
+
+```bash
+agentguard manifest verify .agentguard/runs/RUN_ID/manifest.json
+agentguard manifest show .agentguard/runs/RUN_ID/manifest.json
+```
+
+Verification exits `0` when available inputs match, `1` when a referenced input
+changed or is missing, and `2` for invalid JSON or schema. It never runs an
+agent or benchmark.
+
+Manifests deliberately omit full environment variables and raw stdout/stderr.
+Configured agent environment variable names are recorded without values.
+Secret-sensitive metadata values and common credential-bearing argument forms
+such as `--token`, `--api-key`, `--password`, authorization headers, and URL
+credentials are redacted. Sanitization is defensive pattern matching, not a
+proof that an unrecognized positional secret cannot be exposed; avoid placing
+secrets directly in arbitrary command arguments or metadata.
+
+Provenance manifests make inputs and execution policy inspectable and improve
+reproducibility. They do not guarantee identical results from nondeterministic
+agents, external services, mutable dependencies, host scheduling, or unpinned
+toolchains.
 
 ## Benchmarks
 
