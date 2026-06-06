@@ -1,6 +1,7 @@
 import csv
 import json
 import sqlite3
+import threading
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -29,6 +30,8 @@ HISTORY_CSV_COLUMNS = [
     "agent",
     "failed_checks",
 ]
+_SCHEMA_LOCK = threading.Lock()
+_SQLITE_TIMEOUT_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -80,40 +83,42 @@ def utc_now_iso() -> str:
 
 def init_history_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS runs (
-              id TEXT PRIMARY KEY,
-              run_type TEXT NOT NULL,
-              name TEXT NOT NULL,
-              result TEXT NOT NULL,
-              score REAL,
-              created_at TEXT NOT NULL,
-              json_report_path TEXT NOT NULL,
-              markdown_report_path TEXT,
-              command_log_path TEXT,
-              category TEXT,
-              difficulty TEXT,
-              benchmark_id TEXT,
-              benchmark_version INTEGER,
-              agent TEXT,
-              failed_checks_json TEXT NOT NULL
+    # Schema setup is process-local serialized; record writes still use separate connections.
+    with _SCHEMA_LOCK:
+        with sqlite3.connect(db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runs (
+                  id TEXT PRIMARY KEY,
+                  run_type TEXT NOT NULL,
+                  name TEXT NOT NULL,
+                  result TEXT NOT NULL,
+                  score REAL,
+                  created_at TEXT NOT NULL,
+                  json_report_path TEXT NOT NULL,
+                  markdown_report_path TEXT,
+                  command_log_path TEXT,
+                  category TEXT,
+                  difficulty TEXT,
+                  benchmark_id TEXT,
+                  benchmark_version INTEGER,
+                  agent TEXT,
+                  failed_checks_json TEXT NOT NULL
+                )
+                """
             )
-            """
-        )
-        _ensure_column(connection, "benchmark_id", "TEXT")
-        _ensure_column(connection, "benchmark_version", "INTEGER")
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_runs_run_type ON runs(run_type)"
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_runs_result ON runs(result)"
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)"
-        )
-        connection.execute("PRAGMA user_version = 2")
+            _ensure_column(connection, "benchmark_id", "TEXT")
+            _ensure_column(connection, "benchmark_version", "INTEGER")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_runs_run_type ON runs(run_type)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_runs_result ON runs(result)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)"
+            )
+            connection.execute("PRAGMA user_version = 2")
 
 
 def record_history(
@@ -121,7 +126,8 @@ def record_history(
     db_path: Path = DEFAULT_HISTORY_DB_PATH,
 ) -> None:
     init_history_db(db_path)
-    with sqlite3.connect(db_path) as connection:
+    with sqlite3.connect(db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as connection:
+        connection.execute(f"PRAGMA busy_timeout = {_SQLITE_TIMEOUT_SECONDS * 1000}")
         connection.execute(
             """
             INSERT INTO runs (

@@ -307,12 +307,32 @@ Baselines capture stable suite summaries. Comparing a new suite run against a ba
 Matrix mode applies the same filters before agent expansion. Without agent
 overrides it preserves the suite rows as written. Repeated `--agent` options
 expand each filtered row once per requested agent, and `--trials` expands those
-combinations only after filtering and agent selection. Trials execute serially,
-do not modify suite YAML, and retain the ordinary per-run report and history
-behavior. The matrix aggregation layer records trial indices, success rates,
-score ranges, sample standard deviation (defined as `0.0` for one sample), and
-whether each combination passed at least once or on every attempt. These values
-describe observed reliability across the requested executions; they do not
+combinations only after filtering and agent selection. The resulting attempt
+list has a stable suite, agent, and trial order before execution begins.
+
+`--workers` selects a bounded standard-library thread pool. A value of `1`
+retains the direct serial path; larger values keep at most the effective worker
+count in flight. Each worker invokes the ordinary benchmark orchestrator, which
+copies the benchmark template into a unique run directory and owns its command
+tracker, timeline, reports, and agent workspace. Run IDs include random entropy
+in addition to timestamps to avoid concurrent path collisions. SQLite history
+writes use separate connections with busy waiting, while schema setup is
+serialized within the process. Matrix futures are stored by their preassigned
+attempt index and aggregated in that index order, so completion order cannot
+reorder JSON or Markdown rows.
+
+With `--fail-fast`, the scheduler stops submitting new attempts after observing
+the first failed row. Already submitted attempts may finish. Unscheduled
+attempts are excluded from run and reliability aggregates, while
+`attempts_planned`, `attempts_executed`, and `stopped_early` make the partial
+execution explicit. Without fail-fast, one failed or crashed attempt becomes a
+structured failed row and does not cancel unrelated work. Host and Docker CPU,
+memory, and I/O capacity determine useful worker counts.
+
+The matrix aggregation layer records trial indices, success rates, score
+ranges, sample standard deviation (defined as `0.0` for one sample), and whether
+each combination passed at least once or on every attempt. These values
+describe observed reliability across the executed attempts; they do not
 guarantee deterministic future behavior.
 
 Reliability summaries include a 95% Wilson score confidence interval for the

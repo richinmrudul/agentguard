@@ -1,11 +1,13 @@
 import json
-import subprocess
+import time
 from collections import Counter
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import stdev
 from typing import Any, Optional
+from uuid import uuid4
 
 from agentguard.config.loader import load_config
 from agentguard.core.baseline import BaselineComparison, compare_suite_to_baseline
@@ -124,6 +126,13 @@ class MatrixResult:
     failed_check_counts: dict[str, int]
     json_report_path: Path
     markdown_report_path: Path
+    requested_workers: int = 1
+    effective_workers: int = 1
+    execution_mode: str = "serial"
+    duration_seconds: float = 0.0
+    attempts_planned: int = 0
+    attempts_executed: int = 0
+    stopped_early: bool = False
     trials: int = 1
     reliability: Optional[MatrixReliabilitySummary] = None
     per_agent_reliability: dict[str, MatrixReliabilitySummary] = field(
@@ -175,9 +184,15 @@ def expand_matrix_trials(
     ]
 
 
+def validate_matrix_workers(workers: int) -> int:
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers <= 0:
+        raise ValueError("Matrix workers must be a positive integer.")
+    return workers
+
+
 def _matrix_id(suite_id: str) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
-    return f"{suite_id}-{timestamp}"
+    return f"{suite_id}-{timestamp}-{uuid4().hex[:8]}"
 
 
 def _json_default(value: Any) -> str:
@@ -258,8 +273,74 @@ def _run_matrix_row(
             trial_index,
             trial_count,
         )
-    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+    except ValueError:
+        raise
+    except Exception as error:
         return _error_row(run, error, trial_index, trial_count)
+
+
+def _run_serial_attempts(
+    trial_runs: list[tuple[SuiteRunConfig, int]],
+    trial_count: int,
+    fail_fast: bool,
+) -> tuple[list[MatrixRowSummary], bool]:
+    rows = []
+    for run, trial_index in trial_runs:
+        row = _run_matrix_row(run, trial_index, trial_count)
+        rows.append(row)
+        if fail_fast and row.result == "FAIL":
+            break
+    return rows, len(rows) < len(trial_runs)
+
+
+def _run_parallel_attempts(
+    trial_runs: list[tuple[SuiteRunConfig, int]],
+    trial_count: int,
+    workers: int,
+    fail_fast: bool,
+) -> tuple[list[MatrixRowSummary], bool]:
+    rows_by_index: dict[int, MatrixRowSummary] = {}
+    next_index = 0
+    stopped_early = False
+    executor = ThreadPoolExecutor(max_workers=workers)
+    futures: dict[Future[MatrixRowSummary], int] = {}
+
+    def submit_next() -> bool:
+        nonlocal next_index
+        if next_index >= len(trial_runs):
+            return False
+        run, trial_index = trial_runs[next_index]
+        future = executor.submit(_run_matrix_row, run, trial_index, trial_count)
+        futures[future] = next_index
+        next_index += 1
+        return True
+
+    try:
+        for _ in range(workers):
+            submit_next()
+
+        while futures:
+            completed, _ = wait(futures, return_when=FIRST_COMPLETED)
+            for future in sorted(completed, key=lambda item: futures[item]):
+                index = futures.pop(future)
+                row = future.result()
+                rows_by_index[index] = row
+                if fail_fast and row.result == "FAIL":
+                    stopped_early = next_index < len(trial_runs)
+
+            if stopped_early:
+                continue
+            while len(futures) < workers and submit_next():
+                pass
+    except BaseException:
+        # Pending futures never started, so cancelling them cannot discard run artifacts.
+        executor.shutdown(wait=True, cancel_futures=True)
+        raise
+    else:
+        executor.shutdown(wait=True)
+
+    rows = [rows_by_index[index] for index in sorted(rows_by_index)]
+    return rows, stopped_early
 
 
 def _group_summary(rows: list[MatrixRowSummary]) -> MatrixGroupSummary:
@@ -464,6 +545,13 @@ def _write_markdown_report(result: MatrixResult) -> Path:
         f"Suite config: {result.suite_path}",
         f"Agents: {', '.join(result.agents)}",
         f"Trials per combination: {result.trials}",
+        f"Requested workers: {result.requested_workers}",
+        f"Effective workers: {result.effective_workers}",
+        f"Execution mode: {result.execution_mode}",
+        f"Execution duration: {result.duration_seconds:.3f} seconds",
+        f"Attempts planned: {result.attempts_planned}",
+        f"Attempts executed: {result.attempts_executed}",
+        f"Stopped early: {'yes' if result.stopped_early else 'no'}",
         f"Runs: {result.total_runs}",
         f"Passed: {result.passed}",
         f"Failed: {result.failed}",
@@ -659,9 +747,12 @@ def run_matrix(
     max_success_rate_drop: float = 0,
     max_average_score_drop: float = 0,
     force_reliability_baseline: bool = False,
+    workers: int = 1,
+    fail_fast: bool = False,
 ) -> MatrixResult:
     if isinstance(trials, bool) or not isinstance(trials, int) or trials <= 0:
         raise ValueError("Matrix trials must be a positive integer.")
+    requested_workers = validate_matrix_workers(workers)
     thresholds = reliability_thresholds(
         min_success_rate=min_success_rate,
         max_success_rate_drop=max_success_rate_drop,
@@ -675,10 +766,20 @@ def run_matrix(
     for run in matrix_runs:
         load_config(run.config_path)
     trial_runs = expand_matrix_trials(matrix_runs, trials)
-    rows = [
-        _run_matrix_row(run, trial_index, trials)
-        for run, trial_index in trial_runs
-    ]
+    attempts_planned = len(trial_runs)
+    effective_workers = min(requested_workers, attempts_planned)
+    execution_mode = "parallel" if effective_workers > 1 else "serial"
+    started = time.monotonic()
+    if requested_workers == 1:
+        rows, stopped_early = _run_serial_attempts(trial_runs, trials, fail_fast)
+    else:
+        rows, stopped_early = _run_parallel_attempts(
+            trial_runs,
+            trials,
+            effective_workers,
+            fail_fast,
+        )
+    duration_seconds = round(time.monotonic() - started, 6)
     total_runs = len(rows)
     result_counts = dict(Counter(row.result for row in rows))
     passed = result_counts.get("PASS", 0)
@@ -707,6 +808,13 @@ def run_matrix(
         ),
         json_report_path=report_dir / "matrix.json",
         markdown_report_path=report_dir / "matrix.md",
+        requested_workers=requested_workers,
+        effective_workers=effective_workers,
+        execution_mode=execution_mode,
+        duration_seconds=duration_seconds,
+        attempts_planned=attempts_planned,
+        attempts_executed=total_runs,
+        stopped_early=stopped_early,
         trials=trials,
         reliability=_reliability_summary(rows, combinations),
         per_agent_reliability=_reliability_by_agent(rows, combinations),
