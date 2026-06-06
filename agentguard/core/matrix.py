@@ -1,5 +1,7 @@
 import json
+import inspect
 import time
+import warnings
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field, replace
@@ -29,6 +31,21 @@ from agentguard.core.suite import (
     filter_suite_runs,
     format_suite_filters,
     load_suite_config,
+)
+from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
+from agentguard.provenance.manifest import (
+    ChildExecution,
+    ExecutionManifest,
+    agentguard_identity,
+    artifact_identity,
+    benchmark_identity,
+    configuration_identity,
+    host_identity,
+    policy_identity,
+    portable_path,
+    source_identity,
+    utc_now_iso as manifest_utc_now_iso,
+    write_manifest,
 )
 
 
@@ -96,6 +113,8 @@ class MatrixRowSummary:
     json_report_path: Optional[Path]
     markdown_report_path: Optional[Path]
     run_dir: Optional[Path]
+    execution_id: Optional[str] = None
+    manifest_path: Optional[Path] = None
     benchmark_id: Optional[str] = None
     benchmark_version: Optional[int] = None
     category: Optional[str] = None
@@ -126,6 +145,7 @@ class MatrixResult:
     failed_check_counts: dict[str, int]
     json_report_path: Path
     markdown_report_path: Path
+    manifest_path: Optional[Path] = None
     requested_workers: int = 1
     effective_workers: int = 1
     execution_mode: str = "serial"
@@ -223,6 +243,8 @@ def _row_from_result(
         json_report_path=result.report_paths.json,
         markdown_report_path=result.report_paths.markdown,
         run_dir=result.run_dir,
+        execution_id=getattr(result, "execution_id", None),
+        manifest_path=getattr(result.report_paths, "manifest", None),
         benchmark_id=result.benchmark.id,
         benchmark_version=result.benchmark.version,
         category=result.benchmark.category,
@@ -266,10 +288,11 @@ def _run_matrix_row(
     run: SuiteRunConfig,
     trial_index: int,
     trial_count: int,
+    matrix_id: str,
 ) -> MatrixRowSummary:
     try:
         return _row_from_result(
-            run_benchmark(run.config_path, run.agent),
+            _invoke_run_benchmark(run, matrix_id),
             trial_index,
             trial_count,
         )
@@ -279,14 +302,27 @@ def _run_matrix_row(
         return _error_row(run, error, trial_index, trial_count)
 
 
+def _invoke_run_benchmark(run: SuiteRunConfig, matrix_id: str) -> BenchmarkResult:
+    parameters = inspect.signature(run_benchmark).parameters
+    if "parent_execution_id" not in parameters:
+        return run_benchmark(run.config_path, run.agent)
+    return run_benchmark(
+        run.config_path,
+        run.agent,
+        parent_execution_id=matrix_id,
+        parent_execution_type="matrix",
+    )
+
+
 def _run_serial_attempts(
     trial_runs: list[tuple[SuiteRunConfig, int]],
     trial_count: int,
     fail_fast: bool,
+    matrix_id: str,
 ) -> tuple[list[MatrixRowSummary], bool]:
     rows = []
     for run, trial_index in trial_runs:
-        row = _run_matrix_row(run, trial_index, trial_count)
+        row = _run_matrix_row(run, trial_index, trial_count, matrix_id)
         rows.append(row)
         if fail_fast and row.result == "FAIL":
             break
@@ -298,6 +334,7 @@ def _run_parallel_attempts(
     trial_count: int,
     workers: int,
     fail_fast: bool,
+    matrix_id: str,
 ) -> tuple[list[MatrixRowSummary], bool]:
     rows_by_index: dict[int, MatrixRowSummary] = {}
     next_index = 0
@@ -310,7 +347,13 @@ def _run_parallel_attempts(
         if next_index >= len(trial_runs):
             return False
         run, trial_index = trial_runs[next_index]
-        future = executor.submit(_run_matrix_row, run, trial_index, trial_count)
+        future = executor.submit(
+            _run_matrix_row,
+            run,
+            trial_index,
+            trial_count,
+            matrix_id,
+        )
         futures[future] = next_index
         next_index += 1
         return True
@@ -724,6 +767,18 @@ def _write_markdown_report(result: MatrixResult) -> Path:
         lines.append(f"  - Run directory: {row.run_dir or '-'}")
         lines.append(f"  - JSON: {row.json_report_path or '-'}")
         lines.append(f"  - Markdown: {row.markdown_report_path or '-'}")
+        lines.append(f"  - Manifest: {row.manifest_path or '-'}")
+
+    lines.extend(
+        [
+            "",
+            "## Provenance",
+            "",
+            f"- Execution ID: {result.matrix_id}",
+            f"- Manifest: {result.manifest_path or '-'}",
+            f"- Child executions: {len([row for row in result.runs if row.execution_id])}",
+        ]
+    )
 
     result.markdown_report_path.write_text(
         "\n".join(lines) + "\n",
@@ -736,6 +791,30 @@ def write_matrix_reports(result: MatrixResult) -> MatrixResult:
     _write_json_report(result)
     _write_markdown_report(result)
     return result
+
+
+def _record_matrix_history(result: MatrixResult) -> None:
+    try:
+        record_history(
+            HistoryRecord(
+                id=result.matrix_id,
+                run_type="matrix",
+                name=result.suite_id,
+                result="FAIL" if result.failed else "PASS",
+                score=result.average_score,
+                created_at=utc_now_iso(),
+                json_report_path=result.json_report_path,
+                markdown_report_path=result.markdown_report_path,
+                manifest_path=result.manifest_path,
+                failed_checks=sorted(result.failed_check_counts),
+            )
+        )
+    except Exception as error:
+        warnings.warn(
+            f"AgentGuard history write failed: {error}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def run_matrix(
@@ -755,6 +834,7 @@ def run_matrix(
     workers: int = 1,
     fail_fast: bool = False,
 ) -> MatrixResult:
+    created_at = manifest_utc_now_iso()
     if isinstance(trials, bool) or not isinstance(trials, int) or trials <= 0:
         raise ValueError("Matrix trials must be a positive integer.")
     requested_workers = validate_matrix_workers(workers)
@@ -764,6 +844,7 @@ def run_matrix(
         max_average_score_drop=max_average_score_drop,
     )
     config = load_suite_config(path)
+    matrix_id = _matrix_id(config.suite_id)
     active_filters = filters or SuiteFilters()
     filtered_runs = filter_suite_runs(config.runs, active_filters)
     selected_agents = normalize_matrix_agents(agents)
@@ -776,20 +857,25 @@ def run_matrix(
     execution_mode = "parallel" if effective_workers > 1 else "serial"
     started = time.monotonic()
     if requested_workers == 1:
-        rows, stopped_early = _run_serial_attempts(trial_runs, trials, fail_fast)
+        rows, stopped_early = _run_serial_attempts(
+            trial_runs,
+            trials,
+            fail_fast,
+            matrix_id,
+        )
     else:
         rows, stopped_early = _run_parallel_attempts(
             trial_runs,
             trials,
             effective_workers,
             fail_fast,
+            matrix_id,
         )
     duration_seconds = round(time.monotonic() - started, 6)
     total_runs = len(rows)
     result_counts = dict(Counter(row.result for row in rows))
     passed = result_counts.get("PASS", 0)
     failed = result_counts.get("FAIL", 0)
-    matrix_id = _matrix_id(config.suite_id)
     report_dir = matrices_root / matrix_id
     combinations = _combination_summaries(rows)
     result = MatrixResult(
@@ -813,6 +899,7 @@ def run_matrix(
         ),
         json_report_path=report_dir / "matrix.json",
         markdown_report_path=report_dir / "matrix.md",
+        manifest_path=report_dir / "manifest.json",
         requested_workers=requested_workers,
         effective_workers=effective_workers,
         execution_mode=execution_mode,
@@ -862,4 +949,71 @@ def run_matrix(
             save_reliability_baseline_path,
             force=force_reliability_baseline,
         )
-    return write_matrix_reports(result)
+    result = write_matrix_reports(result)
+    unique_configs = {
+        run.config_path.expanduser().resolve(): load_config(run.config_path)
+        for run in matrix_runs
+    }
+    manifest = ExecutionManifest(
+        execution_id=matrix_id,
+        execution_type="matrix",
+        created_at=created_at,
+        completed_at=manifest_utc_now_iso(),
+        duration_seconds=round(time.monotonic() - started, 6),
+        agentguard=agentguard_identity(),
+        host=host_identity(
+            docker_relevant=any(
+                loaded.sandbox.type == "docker"
+                for loaded in unique_configs.values()
+            )
+        ),
+        source=source_identity(Path.cwd()),
+        configuration=configuration_identity(
+            config.suite_path,
+            {
+                "suite_id": config.suite_id,
+                "filters": asdict(active_filters),
+                "agents": selected_agents or [run.agent for run in filtered_runs],
+            },
+        ),
+        agent=None,
+        benchmarks=[
+            benchmark_identity(loaded) for loaded in unique_configs.values()
+        ],
+        policies=[policy_identity(loaded) for loaded in unique_configs.values()],
+        artifacts=artifact_identity(
+            result.json_report_path,
+            result.markdown_report_path,
+        ),
+        child_executions=[
+            ChildExecution(
+                execution_id=row.execution_id,
+                execution_type="run",
+                manifest_path=(
+                    portable_path(row.manifest_path)
+                    if row.manifest_path is not None
+                    else None
+                ),
+                task_id=row.task_id,
+                agent=row.agent,
+                trial_index=row.trial_index,
+            )
+            for row in result.runs
+            if row.execution_id is not None
+        ],
+        matrix={
+            "agents": result.agents,
+            "trials": result.trials,
+            "requested_workers": result.requested_workers,
+            "effective_workers": result.effective_workers,
+            "execution_mode": result.execution_mode,
+            "attempts_planned": result.attempts_planned,
+            "attempts_executed": result.attempts_executed,
+            "stopped_early": result.stopped_early,
+        },
+    )
+    if result.manifest_path is not None:
+        if write_manifest(manifest, result.manifest_path) is None:
+            result = replace(result, manifest_path=None)
+    _record_matrix_history(result)
+    return result

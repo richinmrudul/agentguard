@@ -1,5 +1,8 @@
+import time
 import warnings
+from dataclasses import replace
 from pathlib import Path
+from typing import Optional
 
 from agentguard.agents.agent_command_agent import AgentCommandAgent
 from agentguard.agents.base import Agent
@@ -31,6 +34,20 @@ from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
 from agentguard.repo.git_diff import collect_diff
 from agentguard.repo.manager import RepoManager
+from agentguard.provenance.manifest import (
+    ExecutionManifest,
+    agent_identity,
+    agentguard_identity,
+    artifact_identity,
+    benchmark_identity,
+    configuration_identity,
+    detect_agent_version,
+    host_identity,
+    policy_identity,
+    source_identity,
+    utc_now_iso as manifest_utc_now_iso,
+    write_manifest,
+)
 from agentguard.reports.json_report import write_json_report
 from agentguard.reports.markdown_report import write_markdown_report
 from agentguard.scoring.scorer import score_checks
@@ -173,6 +190,7 @@ def _record_run_history(result: BenchmarkResult) -> None:
                 json_report_path=result.report_paths.json,
                 markdown_report_path=result.report_paths.markdown,
                 command_log_path=result.report_paths.command_log,
+                manifest_path=result.report_paths.manifest,
                 category=result.benchmark.category,
                 difficulty=result.benchmark.difficulty,
                 benchmark_id=result.benchmark.id,
@@ -191,7 +209,15 @@ def _record_run_history(result: BenchmarkResult) -> None:
         )
 
 
-def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
+def run_benchmark(
+    config_path: Path,
+    agent_name: str,
+    *,
+    parent_execution_id: Optional[str] = None,
+    parent_execution_type: Optional[str] = None,
+) -> BenchmarkResult:
+    created_at = manifest_utc_now_iso()
+    started = time.monotonic()
     config = load_config(config_path)
     _validate_agent_config(config, agent_name)
     timeline = TimelineRecorder()
@@ -208,6 +234,13 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
     )
     command_tracker = CommandTracker()
     command_event_index = 0
+    detected_version, version_status, version_warning = detect_agent_version(config)
+    if version_warning is not None:
+        warnings.warn(
+            f"AgentGuard agent version detection: {version_warning}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     agent = _agent_for_config(config, agent_name)
     timeline.add("agent_started", f"Agent {agent_name} started", {"agent": agent_name})
@@ -332,6 +365,7 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
         json=reports_dir / "report.json",
         markdown=reports_dir / "report.md",
         command_log=command_log_path,
+        manifest=prepared.run_dir / "manifest.json",
     )
     timeline.add(
         "reports_written",
@@ -367,6 +401,15 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
         benchmark=config.benchmark,
         command_events=command_tracker.events,
         timeline=timeline.events,
+        execution_id=prepared.run_id,
+        parent_execution_id=parent_execution_id,
+        parent_execution_type=parent_execution_type,
+        provenance_summary={
+            "execution_id": prepared.run_id,
+            "execution_type": "run",
+            "manifest_path": str(report_paths.manifest),
+            "parent_execution_id": parent_execution_id,
+        },
     )
     json_path = write_json_report(partial_result, reports_dir)
     markdown_path = write_markdown_report(partial_result, reports_dir)
@@ -386,11 +429,51 @@ def run_benchmark(config_path: Path, agent_name: str) -> BenchmarkResult:
             json=json_path,
             markdown=markdown_path,
             command_log=command_log_path,
+            manifest=report_paths.manifest,
         ),
         sandbox=partial_result.sandbox,
         benchmark=partial_result.benchmark,
         command_events=partial_result.command_events,
         timeline=partial_result.timeline,
+        execution_id=partial_result.execution_id,
+        parent_execution_id=partial_result.parent_execution_id,
+        parent_execution_type=partial_result.parent_execution_type,
+        provenance_summary=partial_result.provenance_summary,
     )
+    manifest = ExecutionManifest(
+        execution_id=prepared.run_id,
+        execution_type="run",
+        created_at=created_at,
+        completed_at=manifest_utc_now_iso(),
+        duration_seconds=round(time.monotonic() - started, 6),
+        agentguard=agentguard_identity(),
+        host=host_identity(docker_relevant=config.sandbox.type == "docker"),
+        source=source_identity(config.repo_template),
+        configuration=configuration_identity(
+            config.config_path,
+            {
+                "task_id": config.task_id,
+                "mode": config.mode,
+                "agent_workdir": config.agent_workdir,
+            },
+        ),
+        agent=agent_identity(
+            config,
+            agent_name,
+            detected_version,
+            version_status,
+            version_warning,
+        ),
+        benchmarks=[benchmark_identity(config)],
+        policies=[policy_identity(config)],
+        artifacts=artifact_identity(json_path, markdown_path, command_log_path),
+        parent_execution_id=parent_execution_id,
+        parent_execution_type=parent_execution_type,
+    )
+    if write_manifest(manifest, report_paths.manifest) is None:
+        result = replace(
+            result,
+            report_paths=replace(result.report_paths, manifest=None),
+        )
     _record_run_history(result)
     return result

@@ -93,6 +93,20 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
 
     lines.extend(_benchmark_lines(result))
     lines.extend(_sandbox_lines(result))
+    if result.report_paths.manifest is not None:
+        lines.extend(
+            [
+                "",
+                "## Provenance",
+                f"- Execution ID: {result.execution_id or result.run_dir.name}",
+                f"- Manifest: {result.report_paths.manifest}",
+            ]
+        )
+        if result.parent_execution_id is not None:
+            lines.append(
+                f"- Parent: {result.parent_execution_type or 'execution'} "
+                f"{result.parent_execution_id}"
+            )
 
     lines.extend(["", "## Modified Files"])
     if result.diff_summary.changed_files:
@@ -127,6 +141,7 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
             "## Reports",
             f"- JSON: {result.report_paths.json}",
             f"- Markdown: {result.report_paths.markdown}",
+            f"- Manifest: {result.report_paths.manifest or '-'}",
             "",
         ]
     )

@@ -29,6 +29,8 @@ def write_json_report(result: BenchmarkResult, reports_dir: Path) -> Path:
             "max_output_bytes": result.sandbox.max_output_bytes,
         }
     data["command_log_path"] = result.report_paths.command_log
+    data["manifest_path"] = result.report_paths.manifest
+    data["provenance"] = result.provenance_summary
     data["evidence"] = [
         evidence for check in result.check_results for evidence in check.evidence
     ]

@@ -53,6 +53,7 @@ class ReportPaths:
     json: Path
     markdown: Path
     command_log: Optional[Path] = None
+    manifest: Optional[Path] = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,10 @@ class BenchmarkResult:
     benchmark: BenchmarkMetadata = field(default_factory=BenchmarkMetadata)
     command_events: list[CommandEvent] = field(default_factory=list)
     timeline: list[TimelineEvent] = field(default_factory=list)
+    execution_id: Optional[str] = None
+    parent_execution_id: Optional[str] = None
+    parent_execution_type: Optional[str] = None
+    provenance_summary: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

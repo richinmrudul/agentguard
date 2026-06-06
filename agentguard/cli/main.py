@@ -35,6 +35,11 @@ from agentguard.history.store import (
     validate_result,
     validate_run_type,
 )
+from agentguard.provenance.manifest import (
+    load_manifest,
+    provenance_summary,
+    verify_manifest,
+)
 from agentguard.reports.browser import (
     discover_reports,
     format_report_summary,
@@ -56,12 +61,42 @@ benchmarks_app = typer.Typer(help="List and inspect registered AgentGuard benchm
 app.add_typer(benchmarks_app, name="benchmarks")
 gate_app = typer.Typer(help="CI gate commands for AgentGuard suites.")
 app.add_typer(gate_app, name="gate")
+manifest_app = typer.Typer(help="Inspect and verify execution manifests.")
+app.add_typer(manifest_app, name="manifest")
 
 
 @app.command()
 def version() -> None:
     """Print the AgentGuard version."""
     typer.echo(__version__)
+
+
+@manifest_app.command("verify")
+def manifest_verify(
+    path: Path = typer.Argument(..., help="Path to an execution manifest."),
+) -> None:
+    """Validate a manifest and verify referenced configuration hashes."""
+    result = verify_manifest(path)
+    for message in result.messages:
+        typer.echo(message)
+    if result.exit_code:
+        raise typer.Exit(result.exit_code)
+
+
+@manifest_app.command("show")
+def manifest_show(
+    path: Path = typer.Argument(..., help="Path to an execution manifest."),
+) -> None:
+    """Print a concise execution provenance summary."""
+    try:
+        data = load_manifest(path)
+        result = verify_manifest(path)
+        if result.exit_code == 2:
+            raise ValueError(result.messages[0])
+    except ValueError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(provenance_summary(data))
 
 
 def _format_registry_table(benchmarks: list[BenchmarkRegistryEntry]) -> str:
@@ -205,6 +240,7 @@ def _echo_gate_summary(result, baseline_path: Path, gate_result: str) -> None:
     typer.echo(f"Gate result: {gate_result}")
     typer.echo(f"Suite JSON report path: {result.json_report_path}")
     typer.echo(f"Suite Markdown report path: {result.markdown_report_path}")
+    typer.echo(f"Suite manifest path: {result.manifest_path or '-'}")
 
 
 @benchmarks_app.command("list")
@@ -662,6 +698,7 @@ def run(
         typer.echo(f"Command log path: {result.report_paths.command_log}")
     typer.echo(f"JSON report path: {result.report_paths.json}")
     typer.echo(f"Markdown report path: {result.report_paths.markdown}")
+    typer.echo(f"Manifest path: {result.report_paths.manifest or '-'}")
     if result.result == "FAIL" and not allow_fail_result:
         raise typer.Exit(1)
 
@@ -986,6 +1023,7 @@ def suite_command(
         typer.echo(f"Unchanged runs: {comparison.unchanged_count}")
     typer.echo(f"Suite JSON report path: {result.json_report_path}")
     typer.echo(f"Suite Markdown report path: {result.markdown_report_path}")
+    typer.echo(f"Suite manifest path: {result.manifest_path or '-'}")
     if save_baseline is not None:
         baseline_path = write_suite_baseline(result, save_baseline)
         typer.echo(f"Baseline saved: {baseline_path}")
@@ -1208,6 +1246,7 @@ def matrix_command(
             typer.echo(f"- {message}")
     typer.echo(f"Matrix JSON report path: {result.json_report_path}")
     typer.echo(f"Matrix Markdown report path: {result.markdown_report_path}")
+    typer.echo(f"Matrix manifest path: {result.manifest_path or '-'}")
 
     if save_baseline is not None:
         baseline_path = write_suite_baseline(result, save_baseline)

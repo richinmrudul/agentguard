@@ -11,7 +11,7 @@ from typing import Optional
 
 
 DEFAULT_HISTORY_DB_PATH = Path(".agentguard/history.db")
-VALID_RUN_TYPES = {"run", "suite", "ci"}
+VALID_RUN_TYPES = {"run", "suite", "matrix", "ci"}
 VALID_RESULTS = {"PASS", "FAIL"}
 HISTORY_CSV_COLUMNS = [
     "id",
@@ -23,6 +23,7 @@ HISTORY_CSV_COLUMNS = [
     "json_report_path",
     "markdown_report_path",
     "command_log_path",
+    "manifest_path",
     "category",
     "difficulty",
     "benchmark_id",
@@ -45,6 +46,7 @@ class HistoryRecord:
     json_report_path: Path
     markdown_report_path: Optional[Path] = None
     command_log_path: Optional[Path] = None
+    manifest_path: Optional[Path] = None
     category: Optional[str] = None
     difficulty: Optional[str] = None
     benchmark_id: Optional[str] = None
@@ -98,6 +100,7 @@ def init_history_db(db_path: Path) -> None:
                   json_report_path TEXT NOT NULL,
                   markdown_report_path TEXT,
                   command_log_path TEXT,
+                  manifest_path TEXT,
                   category TEXT,
                   difficulty TEXT,
                   benchmark_id TEXT,
@@ -109,6 +112,7 @@ def init_history_db(db_path: Path) -> None:
             )
             _ensure_column(connection, "benchmark_id", "TEXT")
             _ensure_column(connection, "benchmark_version", "INTEGER")
+            _ensure_column(connection, "manifest_path", "TEXT")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_run_type ON runs(run_type)"
             )
@@ -118,7 +122,7 @@ def init_history_db(db_path: Path) -> None:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)"
             )
-            connection.execute("PRAGMA user_version = 2")
+            connection.execute("PRAGMA user_version = 3")
 
 
 def record_history(
@@ -140,6 +144,7 @@ def record_history(
               json_report_path,
               markdown_report_path,
               command_log_path,
+              manifest_path,
               category,
               difficulty,
               benchmark_id,
@@ -147,7 +152,7 @@ def record_history(
               agent,
               failed_checks_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               run_type = excluded.run_type,
               name = excluded.name,
@@ -157,6 +162,7 @@ def record_history(
               json_report_path = excluded.json_report_path,
               markdown_report_path = excluded.markdown_report_path,
               command_log_path = excluded.command_log_path,
+              manifest_path = excluded.manifest_path,
               category = excluded.category,
               difficulty = excluded.difficulty,
               benchmark_id = excluded.benchmark_id,
@@ -174,6 +180,7 @@ def record_history(
                 str(record.json_report_path),
                 _optional_path(record.markdown_report_path),
                 _optional_path(record.command_log_path),
+                _optional_path(record.manifest_path),
                 record.category,
                 record.difficulty,
                 record.benchmark_id,
@@ -220,6 +227,7 @@ def list_history(
           json_report_path,
           markdown_report_path,
           command_log_path,
+          manifest_path,
           category,
           difficulty,
           benchmark_id,
@@ -336,6 +344,7 @@ def history_records_to_dicts(records: list[HistoryRecord]) -> list[dict[str, obj
             "json_report_path": str(record.json_report_path),
             "markdown_report_path": _optional_path(record.markdown_report_path),
             "command_log_path": _optional_path(record.command_log_path),
+            "manifest_path": _optional_path(record.manifest_path),
             "category": record.category,
             "difficulty": record.difficulty,
             "benchmark_id": record.benchmark_id,
@@ -447,10 +456,11 @@ def _record_from_row(row: tuple) -> HistoryRecord:
         json_report_path=Path(row[6]),
         markdown_report_path=_optional_path_from_value(row[7]),
         command_log_path=_optional_path_from_value(row[8]),
-        category=row[9],
-        difficulty=row[10],
-        benchmark_id=row[11],
-        benchmark_version=_optional_int_from_value(row[12]),
-        agent=row[13],
-        failed_checks=json.loads(row[14]),
+        manifest_path=_optional_path_from_value(row[9]),
+        category=row[10],
+        difficulty=row[11],
+        benchmark_id=row[12],
+        benchmark_version=_optional_int_from_value(row[13]),
+        agent=row[14],
+        failed_checks=json.loads(row[15]),
     )

@@ -3,6 +3,9 @@ from pathlib import Path
 from typing import Optional, Union
 
 
+ScalarMetadata = Union[str, int, float, bool]
+
+
 VALID_SEVERITIES = {"info", "warning", "error", "critical"}
 VALID_BENCHMARK_DIFFICULTIES = {"easy", "medium", "hard", "advanced"}
 
@@ -79,6 +82,9 @@ class AgentGuardConfig:
     agent_command: Optional[Union[str, list[str]]] = None
     agent_name: Optional[str] = None
     agent_environment: dict[str, str] = field(default_factory=dict)
+    agent_version_command: Optional[Union[str, list[str]]] = None
+    agent_model: Optional[str] = None
+    agent_metadata: dict[str, ScalarMetadata] = field(default_factory=dict)
     agent_workdir: str = "repo_root"
     command_timeout_seconds: int = 60
     max_output_bytes: int = 200000

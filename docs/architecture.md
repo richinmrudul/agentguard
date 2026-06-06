@@ -24,7 +24,7 @@ timelines, and reports.
 The benchmark pipeline is:
 
 ```text
-Config -> prepared repo -> agent -> sandbox/local runner -> tests -> diff/checks -> score -> reports/history
+Config -> prepared repo -> agent -> sandbox/local runner -> tests -> diff/checks -> score -> reports -> manifest/history
 ```
 
 1. The CLI loads a YAML config or suite file.
@@ -37,7 +37,8 @@ Config -> prepared repo -> agent -> sandbox/local runner -> tests -> diff/checks
 6. Git diff collection and policy checks inspect changed files, test paths,
    forbidden paths, unsafe commands, scope, diff size, and secret patterns.
 7. Scoring converts check results into `PASS` or `FAIL`.
-8. JSON and Markdown reports are written, and local history is indexed.
+8. JSON and Markdown reports are written.
+9. A sanitized execution manifest is written, and local history is indexed.
 
 CI mode uses the same checks and scoring model, but evaluates the existing
 checkout instead of copying a benchmark template.
@@ -60,7 +61,8 @@ flowchart TD
     TestRunner --> PolicyChecks
     PolicyChecks --> Scoring[Scoring]
     Scoring --> Reports[Reports]
-    Reports --> ExitCode[Exit Code / CI Result]
+    Reports --> Manifest[Execution Manifest]
+    Manifest --> ExitCode[Exit Code / CI Result]
 ```
 
 ## Core Components
@@ -95,7 +97,8 @@ Current adapters include:
   repo.
 - `agent-command` for a generic local command-line coding agent configured with
   `agent_command`, optional `agent_name`, optional `agent_environment`, and
-  optional `agent_workdir`.
+  optional `agent_workdir`. Configs may also declare `agent_version_command`,
+  `agent_model`, and scalar `agent_metadata` for provenance.
 
 `agent-command` runs with `shell=False`. String commands are parsed with
 `shlex.split`; list commands are used as argv directly. By default it runs in
@@ -126,6 +129,27 @@ Scoring starts at 100 and deducts points for failed checks by severity. Warnings
 
 Report writers produce machine-readable JSON and human-readable Markdown. Reports include task identity, score, check results, diff summary, command events, sandbox metadata, benchmark metadata, and timeline events.
 
+### Execution Manifest
+
+The provenance layer writes `.agentguard/.../manifest.json` only after final
+reports exist. Its typed, versioned schema records execution identity and
+timestamps, AgentGuard and source Git state when detectable, host and sandbox
+policy, config and benchmark content hashes, sanitized agent identity, artifact
+paths, and parent-child relationships. Suite and matrix IDs are allocated
+before child runs; matrix workers receive the immutable parent ID as an
+argument, so parallel attempts do not depend on shared mutable provenance
+state.
+
+Serialization uses readable indentation and deterministic key ordering.
+Manifest failures warn without replacing the evaluation result. The verifier
+validates schema version and required fields, then recomputes referenced config
+hashes without executing an agent or benchmark.
+
+The manifest never contains full environment variables or raw stdout/stderr.
+Agent environment names are retained without values. Secret-sensitive metadata
+keys and common credential argument forms are redacted. This is pattern-based
+sanitization and cannot recognize every possible positional or encoded secret.
+
 ### Suite Runner
 
 The suite runner executes multiple benchmark configs and aggregates pass rate, average score, failed-check counts, warning-check counts, best/worst runs, metadata, and individual report paths. Suites can be filtered by benchmark category, difficulty, and tags.
@@ -151,7 +175,7 @@ These layers sit above single-run evaluation:
 - Baseline: saves an approved suite summary, including benchmark identity and
   version when metadata is available. Matrix mode reuses this format because
   matrix rows have the same stable task/agent/config identity.
-- History: indexes run, suite, and CI report summaries in
+- History: indexes run, suite, matrix, and CI report summaries in
   `.agentguard/history.db` for recent history, stats, trends, and exports.
 - Gate: runs a suite, compares it with a required baseline, prints a compact
   CI-focused summary, and exits nonzero for invalid inputs, regressions, or
@@ -184,11 +208,13 @@ The report browser discovers local reports under `.agentguard/`, loads JSON repo
 ### Run History
 
 The local SQLite history index at `.agentguard/history.db` stores normalized
-summaries for run, suite, and CI reports. Reports remain the source of truth;
-the database is a lightweight cache for recent history, stats, and future
+summaries for run, suite, matrix, and CI reports. Reports and manifests remain
+the source of truth; the database is a lightweight cache for recent history, stats, and future
 trend/dashboard features. History queries support exact-match filters for type,
 name, category, and difficulty, plus a trends view over recent scores and
-results. History records preserve benchmark identity/version when available.
+results. History records preserve benchmark identity/version and nullable
+manifest paths when available. Existing databases are migrated by adding the
+manifest column.
 Filtered history can also be exported to JSON or CSV for external analysis,
 demos, spreadsheets, and dashboard prototypes.
 
@@ -208,6 +234,7 @@ CI mode evaluates an existing git repository instead of copying a benchmark fixt
 8. Run policy checks.
 9. Score the result.
 10. Write JSON, Markdown, command log, and timeline-backed reports.
+11. Write the execution manifest and index its path in history.
 
 ```mermaid
 sequenceDiagram
@@ -219,6 +246,7 @@ sequenceDiagram
     participant Runner as Sandbox / Command Runner
     participant Checks as Policy Checks
     participant Reports
+    participant Manifest
 
     User->>CLI: agentguard run config.yaml --agent ...
     CLI->>Orchestrator: run_benchmark(config, agent)
@@ -233,7 +261,8 @@ sequenceDiagram
     Orchestrator->>Checks: evaluate tests, diff, commands, policy
     Checks-->>Orchestrator: check results
     Orchestrator->>Reports: write artifacts
-    Reports-->>CLI: report paths and result
+    Orchestrator->>Manifest: write sanitized provenance
+    Manifest-->>CLI: report and manifest paths
 ```
 
 ## CI Mode Flow
@@ -290,6 +319,8 @@ AgentGuard writes artifacts under `.agentguard/` by default:
 - Markdown report: readable summary for developers and reviewers.
 - Command log: command events with execution metadata, output truncation flags, timeouts, and policy metadata.
 - Timeline: ordered events embedded in reports to explain the run lifecycle.
+- Execution manifest: sanitized, hashed run/suite/matrix provenance and
+  parent-child execution identity.
 - Run history: local SQLite index of normalized report summaries.
 - GitHub step summary: optional CI summary for GitHub Actions.
 - Suite report: aggregate report for many benchmark configs.
@@ -353,6 +384,11 @@ statistical significance. Instead, it applies direct operational rules:
 The reliability baseline is separate from suite baselines because repeated
 trial aggregates, confidence intervals, and combination-level pass behavior
 cannot be represented faithfully as one-shot suite rows.
+
+Execution manifests improve reproducibility by recording what was evaluated and
+under which policy. They do not guarantee identical behavior from
+nondeterministic agents, external APIs, mutable dependencies, scheduling, or
+other unpinned environmental inputs.
 
 ## Limitations and Future Work
 
