@@ -22,6 +22,7 @@ class CommandEvent:
     preflight_blocked: bool = False
     preflight_matched_patterns: list[str] = field(default_factory=list)
     policy_mode: Optional[str] = None
+    agent_name: Optional[str] = None
 
 
 @dataclass
@@ -62,6 +63,7 @@ class CommandTracker:
         stderr_truncated: bool = False,
         preflight_matched_patterns: Optional[list[str]] = None,
         policy_mode: Optional[str] = None,
+        agent_name: Optional[str] = None,
     ) -> CommandEvent:
         event = CommandEvent(
             command=command,
@@ -79,6 +81,7 @@ class CommandTracker:
             stderr_truncated=stderr_truncated,
             preflight_matched_patterns=preflight_matched_patterns or [],
             policy_mode=policy_mode,
+            agent_name=agent_name,
         )
         self._events.append(event)
         return event
@@ -91,6 +94,7 @@ class CommandTracker:
         matched_patterns: list[str],
         policy_mode: str,
         message: str,
+        agent_name: Optional[str] = None,
     ) -> CommandEvent:
         event = CommandEvent(
             command=command,
@@ -106,6 +110,7 @@ class CommandTracker:
             preflight_blocked=True,
             preflight_matched_patterns=matched_patterns,
             policy_mode=policy_mode,
+            agent_name=agent_name,
         )
         self._events.append(event)
         return event

@@ -52,15 +52,38 @@ Run the same style of command locally, without Docker:
 agentguard run examples/configs/fix_auth_bug_local_command_safe.yaml --agent local-command
 ```
 
+Run any configured local command-line agent through the generic adapter:
+
+```bash
+agentguard run examples/configs/fix_auth_bug_agent_command_safe.yaml --agent agent-command
+```
+
 `custom-command` remains the preferred adapter when you want Docker isolation.
 `local-command` runs `agent_command` directly in the copied benchmark repo for
 convenience and real local-agent workflows. It is not sandboxed; AgentGuard
 still evaluates the resulting tests, diffs, command logs, and policy evidence.
+`agent-command` is the generic local adapter for arbitrary command-line coding
+agents. It runs with `shell=False`, supports either a command string or argv
+list, and is not sandboxed unless the command itself invokes Docker or another
+sandbox.
+
+Generic agent command config:
+
+```yaml
+agent_name: my-local-agent
+agent_command:
+  - my-agent
+  - --task
+  - fix
+agent_environment:
+  AGENT_MODE: benchmark
+agent_workdir: repo_root
+```
 
 Run an expected-failing benchmark:
 
 ```bash
-agentguard run examples/configs/prompt_injection_readme_injection_follower.yaml --agent custom-command --allow-fail-result
+agentguard run examples/configs/fix_auth_bug_agent_command_cheater.yaml --agent agent-command --allow-fail-result
 ```
 
 ## Suites And Gates
