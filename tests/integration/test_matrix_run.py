@@ -512,3 +512,211 @@ def test_matrix_cli_saves_and_compares_baseline(tmp_path: Path) -> None:
     assert compare.exit_code == 0
     assert "Baseline comparison" in compare.output
     assert "Regressions: no" in compare.output
+
+
+def test_matrix_cli_saves_and_compares_reliability_baseline(
+    tmp_path: Path,
+) -> None:
+    suite_path = _write_local_suite(tmp_path)
+    baseline_path = tmp_path / "reliability.json"
+    save = runner.invoke(
+        app,
+        [
+            "matrix",
+            str(suite_path),
+            "--trials",
+            "3",
+            "--allow-failures",
+            "--save-reliability-baseline",
+            str(baseline_path),
+            "--output-dir",
+            str(tmp_path / "save-reliability"),
+        ],
+    )
+    compare = runner.invoke(
+        app,
+        [
+            "matrix",
+            str(suite_path),
+            "--trials",
+            "3",
+            "--allow-failures",
+            "--compare-reliability-baseline",
+            str(baseline_path),
+            "--output-dir",
+            str(tmp_path / "compare-reliability"),
+        ],
+    )
+
+    assert save.exit_code == 0
+    assert "Reliability baseline saved:" in save.output
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    assert baseline["schema"] == "agentguard.matrix-reliability-baseline"
+    assert baseline["schema_version"] == 1
+    assert baseline["trials"] == 3
+    assert baseline["overall"]["confidence_interval_95"]
+    assert baseline["per_combination"]
+    assert compare.exit_code == 0
+    assert "Reliability baseline compared:" in compare.output
+    assert "Reliability regressions: no" in compare.output
+    report_path = _report_path(compare.output, "Matrix JSON report path")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["reliability"]["confidence_interval_95"]
+    assert report["reliability_comparison"]["has_regressions"] is False
+
+
+def test_matrix_cli_reliability_regression_and_allow_override(
+    tmp_path: Path,
+) -> None:
+    suite_path = _write_local_suite(tmp_path)
+    baseline_path = tmp_path / "regression.json"
+    save = runner.invoke(
+        app,
+        [
+            "matrix",
+            str(suite_path),
+            "--trials",
+            "3",
+            "--allow-failures",
+            "--save-reliability-baseline",
+            str(baseline_path),
+            "--output-dir",
+            str(tmp_path / "regression-save"),
+        ],
+    )
+    assert save.exit_code == 0
+
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    failing_row = next(
+        row
+        for row in baseline["per_combination"].values()
+        if row["agent"] == "mock-test-cheater"
+    )
+    failing_row.update(
+        {
+            "passed": 3,
+            "failed": 0,
+            "success_rate": 100.0,
+            "average_score": 100.0,
+            "minimum_score": 100,
+            "maximum_score": 100,
+            "score_standard_deviation": 0.0,
+            "any_pass": True,
+            "all_passed": True,
+        }
+    )
+    baseline_path.write_text(
+        json.dumps(baseline, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    arguments = [
+        "matrix",
+        str(suite_path),
+        "--trials",
+        "3",
+        "--allow-failures",
+        "--compare-reliability-baseline",
+        str(baseline_path),
+    ]
+    failed = runner.invoke(
+        app,
+        [*arguments, "--output-dir", str(tmp_path / "regression-failed")],
+    )
+    allowed = runner.invoke(
+        app,
+        [
+            *arguments,
+            "--allow-reliability-regressions",
+            "--output-dir",
+            str(tmp_path / "regression-allowed"),
+        ],
+    )
+
+    assert failed.exit_code == 1
+    assert allowed.exit_code == 0
+    assert "Reliability regressions: yes" in failed.output
+    assert "success rate dropped 100.0 points" in failed.output
+    assert "changed from at least one pass to no passes" in failed.output
+    assert "Reliability regressions: yes" in allowed.output
+
+
+def test_matrix_cli_minimum_success_rate_gate(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "matrix",
+            str(_write_local_suite(tmp_path)),
+            "--trials",
+            "2",
+            "--allow-failures",
+            "--min-success-rate",
+            "75",
+            "--output-dir",
+            str(tmp_path / "minimum"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Minimum required success rate: 75.0%" in result.output
+    assert "Overall success rate below minimum" in result.output
+    assert "success rate below minimum" in result.output
+
+
+def test_matrix_cli_reliability_validation_errors_exit_two(
+    tmp_path: Path,
+) -> None:
+    suite_path = _write_local_suite(tmp_path)
+    invalid_schema = tmp_path / "suite-baseline.json"
+    invalid_schema.write_text(
+        json.dumps({"schema_version": 1, "runs": {}}),
+        encoding="utf-8",
+    )
+
+    invalid_percent = runner.invoke(
+        app,
+        ["matrix", str(suite_path), "--min-success-rate", "101"],
+    )
+    invalid_drop = runner.invoke(
+        app,
+        ["matrix", str(suite_path), "--max-success-rate-drop", "-1"],
+    )
+    invalid_baseline = runner.invoke(
+        app,
+        [
+            "matrix",
+            str(suite_path),
+            "--compare-reliability-baseline",
+            str(invalid_schema),
+        ],
+    )
+
+    assert invalid_percent.exit_code == 2
+    assert invalid_drop.exit_code == 2
+    assert invalid_baseline.exit_code == 2
+    assert "Traceback" not in invalid_percent.output
+    assert "Traceback" not in invalid_drop.output
+    assert "Traceback" not in invalid_baseline.output
+    assert "Reliability baseline schema" in invalid_baseline.output
+
+
+def test_matrix_cli_reliability_baseline_requires_force_to_overwrite(
+    tmp_path: Path,
+) -> None:
+    suite_path = _write_local_suite(tmp_path)
+    baseline_path = tmp_path / "existing.json"
+    baseline_path.write_text("{}\n", encoding="utf-8")
+    arguments = [
+        "matrix",
+        str(suite_path),
+        "--allow-failures",
+        "--save-reliability-baseline",
+        str(baseline_path),
+    ]
+
+    refused = runner.invoke(app, arguments)
+    forced = runner.invoke(app, [*arguments, "--force"])
+
+    assert refused.exit_code == 2
+    assert "Use --force to overwrite" in refused.output
+    assert forced.exit_code == 0

@@ -143,6 +143,11 @@ These layers sit above single-run evaluation:
   expands those combinations into serial, independent benchmark executions,
   then computes overall, per-agent, and per-combination reliability metrics. It
   writes comparative reports under `.agentguard/matrices/...`.
+- Matrix reliability gate: serializes aggregate trial reliability in a
+  dedicated, versioned schema and compares later matrices by stable
+  benchmark/config, benchmark version, and agent identity. It applies explicit
+  minimum-success and allowed-drop thresholds without changing the older
+  suite-compatible baseline format.
 - Baseline: saves an approved suite summary, including benchmark identity and
   version when metadata is available. Matrix mode reuses this format because
   matrix rows have the same stable task/agent/config identity.
@@ -309,6 +314,25 @@ score ranges, sample standard deviation (defined as `0.0` for one sample), and
 whether each combination passed at least once or on every attempt. These values
 describe observed reliability across the requested executions; they do not
 guarantee deterministic future behavior.
+
+Reliability summaries include a 95% Wilson score confidence interval for the
+observed pass probability. Wilson intervals remain bounded between 0% and 100%
+and are intentionally broad for small samples, especially one trial. The gate
+does not treat interval overlap as a significance test and makes no claim of
+statistical significance. Instead, it applies direct operational rules:
+
+- overall and per-combination success rates must meet `--min-success-rate` when
+  configured;
+- success-rate and average-score drops may equal their configured thresholds,
+  but larger drops are regressions;
+- losing any-pass or all-passed status is a regression;
+- missing baseline combinations are regressions unless matrix filters
+  intentionally limit comparison to current combinations;
+- new current combinations are reported without failing the gate.
+
+The reliability baseline is separate from suite baselines because repeated
+trial aggregates, confidence intervals, and combination-level pass behavior
+cannot be represented faithfully as one-shot suite rows.
 
 ## Limitations and Future Work
 

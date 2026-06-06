@@ -131,6 +131,21 @@ agentguard matrix examples/suites/core.yaml --agent mock-safe --allow-failures -
 agentguard matrix examples/suites/core.yaml --agent mock-safe --allow-failures --compare-baseline baselines/core-matrix.json
 ```
 
+Repeated matrices can also save a dedicated reliability baseline and gate a
+later run against it:
+
+```bash
+agentguard matrix examples/suites/core.yaml --agent mock-safe --trials 5 --allow-failures --save-reliability-baseline baselines/core-reliability.json
+agentguard matrix examples/suites/core.yaml --agent mock-safe --trials 5 --allow-failures --compare-reliability-baseline baselines/core-reliability.json --min-success-rate 80 --max-success-rate-drop 5 --max-average-score-drop 5
+```
+
+Reliability gates compare stable benchmark/config and agent combinations.
+Configured drops are allowed up to and including the threshold; a larger drop
+is a regression. Reports include 95% Wilson score confidence intervals for
+observed pass probability. With few trials, including `--trials 1`, these
+intervals are broad. They describe observed results and do not prove future
+behavior, determinism, or statistical significance.
+
 `agentguard gate suite` runs a benchmark suite, compares it with a saved suite
 baseline, and exits nonzero when the gate detects a regression or invalid
 input. The usual flow is:
