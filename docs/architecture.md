@@ -83,7 +83,24 @@ In benchmark mode, the repo manager copies the configured template repository in
 
 ### Agent Adapters
 
-Agent adapters provide the boundary between AgentGuard and a coding agent. Current adapters include mock agents and a custom-command adapter. The adapter contract is intentionally small: run against a prepared repository and record or emit command evidence.
+Agent adapters provide the boundary between AgentGuard and a coding agent. The
+adapter contract is intentionally small: run against a prepared repository and
+record or emit command evidence.
+
+Current adapters include:
+
+- Mock agents for deterministic tests and demos.
+- `custom-command` for Docker-backed configured commands.
+- `local-command` for a configured local command string in the copied benchmark
+  repo.
+- `agent-command` for a generic local command-line coding agent configured with
+  `agent_command`, optional `agent_name`, optional `agent_environment`, and
+  optional `agent_workdir`.
+
+`agent-command` runs with `shell=False`. String commands are parsed with
+`shlex.split`; list commands are used as argv directly. By default it runs in
+the copied benchmark repo, but `agent_workdir: config_dir` runs it relative to
+the config file directory.
 
 ### Docker Sandbox / Command Runner
 
@@ -227,6 +244,12 @@ The platform reduces reliance on trust by collecting independent evidence from t
 AgentGuard supports local execution and Docker-backed execution.
 
 Local mode is simple and useful for CI and development workflows, but it runs commands on the host. It should be used when the repository and command are trusted enough for the local environment.
+
+The generic `agent-command` adapter is local execution. It is not sandboxed by
+AgentGuard unless the configured command itself invokes Docker, a VM, or another
+sandbox. AgentGuard still records command evidence, applies preflight command
+policy, enforces timeout/output limits, runs tests, inspects diffs, and writes
+reports.
 
 Docker mode runs commands in a container with a mounted repository workspace. Configurable controls include image, working directory, network mode, memory limit, CPU limit, read-only root filesystem mode, command timeout, and output byte limit. The default Docker network mode is `none`, which reduces accidental or malicious network access during benchmark runs.
 

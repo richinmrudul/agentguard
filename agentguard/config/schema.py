@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 
 VALID_SEVERITIES = {"info", "warning", "error", "critical"}
@@ -76,7 +76,10 @@ class AgentGuardConfig:
     diff_limits: DiffLimits
     secret_patterns: list[str]
     config_path: Path
-    agent_command: Optional[str] = None
+    agent_command: Optional[Union[str, list[str]]] = None
+    agent_name: Optional[str] = None
+    agent_environment: dict[str, str] = field(default_factory=dict)
+    agent_workdir: str = "repo_root"
     command_timeout_seconds: int = 60
     max_output_bytes: int = 200000
     command_policy: CommandPolicyConfig = field(default_factory=CommandPolicyConfig)

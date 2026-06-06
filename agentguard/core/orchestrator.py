@@ -1,6 +1,7 @@
 import warnings
 from pathlib import Path
 
+from agentguard.agents.agent_command_agent import AgentCommandAgent
 from agentguard.agents.base import Agent
 from agentguard.agents.custom_command_agent import CustomCommandAgent
 from agentguard.agents.local_command_agent import LocalCommandAgent
@@ -75,6 +76,7 @@ def _record_command_events(
                 "preflight_blocked": event.preflight_blocked,
                 "preflight_matched_patterns": event.preflight_matched_patterns,
                 "policy_mode": event.policy_mode,
+                "agent_name": event.agent_name,
             },
         )
     return len(events)
@@ -124,7 +126,10 @@ def _failed_local_agent_event(command_tracker: CommandTracker):
     for event in command_tracker.events:
         if (
             event.executed
-            and event.command_text.startswith("local agent:")
+            and (
+                event.command_text.startswith("local agent:")
+                or event.command_text.startswith("agent command:")
+            )
             and event.exit_code != 0
         ):
             return event
@@ -132,6 +137,8 @@ def _failed_local_agent_event(command_tracker: CommandTracker):
 
 
 def _agent_for_config(config, agent_name: str) -> Agent:
+    if agent_name == AgentCommandAgent.name:
+        return AgentCommandAgent(config)
     if agent_name == CustomCommandAgent.name:
         return CustomCommandAgent(config)
     if agent_name == LocalCommandAgent.name:
@@ -140,6 +147,8 @@ def _agent_for_config(config, agent_name: str) -> Agent:
 
 
 def _validate_agent_config(config, agent_name: str) -> None:
+    if agent_name == AgentCommandAgent.name and not config.agent_command:
+        raise ValueError("Agent 'agent-command' requires config field 'agent_command'.")
     if agent_name == CustomCommandAgent.name:
         if not config.agent_command:
             raise ValueError(

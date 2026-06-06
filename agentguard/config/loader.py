@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import yaml
 
@@ -17,12 +17,56 @@ from agentguard.config.schema import (
 
 VALID_DOCKER_NETWORKS = {"none", "bridge"}
 VALID_COMMAND_POLICY_MODES = {"audit", "enforce"}
+VALID_AGENT_WORKDIRS = {"repo_root", "config_dir"}
 
 
 def _string_list(data: dict[str, Any], key: str) -> list[str]:
     value = data.get(key, [])
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ValueError(f"Config field '{key}' must be a list of strings.")
+    return value
+
+
+def _agent_command(data: dict[str, Any]) -> Optional[Union[str, list[str]]]:
+    value = data.get("agent_command")
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if not value:
+            raise ValueError(
+                "Config field 'agent_command' must be a non-empty string "
+                "or a non-empty list of strings."
+            )
+        return value
+    if isinstance(value, list) and value and all(
+        isinstance(item, str) and item for item in value
+    ):
+        return value
+    raise ValueError(
+        "Config field 'agent_command' must be a non-empty string "
+        "or a non-empty list of strings."
+    )
+
+
+def _string_mapping(data: dict[str, Any], key: str) -> dict[str, str]:
+    value = data.get(key, {})
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"Config field '{key}' must be a mapping of strings.")
+    result: dict[str, str] = {}
+    for env_key, env_value in value.items():
+        if not isinstance(env_key, str) or not isinstance(env_value, str):
+            raise ValueError(f"Config field '{key}' must be a mapping of strings.")
+        result[env_key] = env_value
+    return result
+
+
+def _agent_workdir(data: dict[str, Any]) -> str:
+    value = data.get("agent_workdir", "repo_root")
+    if value not in VALID_AGENT_WORKDIRS:
+        valid = ", ".join(sorted(VALID_AGENT_WORKDIRS))
+        raise ValueError(f"Config field 'agent_workdir' must be one of: {valid}.")
     return value
 
 
@@ -286,11 +330,8 @@ def load_config(config_path: Path) -> AgentGuardConfig:
     for field in required_string_fields:
         if not isinstance(data.get(field), str) or not data[field]:
             raise ValueError(f"Config field '{field}' must be a non-empty string.")
-    agent_command = data.get("agent_command")
-    if agent_command is not None and (
-        not isinstance(agent_command, str) or not agent_command
-    ):
-        raise ValueError("Config field 'agent_command' must be a non-empty string.")
+    agent_command = _agent_command(data)
+    agent_name = _optional_non_empty_string(data, "agent_name", "config")
     if mode == "benchmark" and (
         not isinstance(data.get("repo_template"), str) or not data["repo_template"]
     ):
@@ -316,6 +357,9 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         repo_template=repo_template,
         test_command=data["test_command"],
         agent_command=agent_command,
+        agent_name=agent_name,
+        agent_environment=_string_mapping(data, "agent_environment"),
+        agent_workdir=_agent_workdir(data),
         command_timeout_seconds=_positive_int_with_default(
             data,
             "command_timeout_seconds",

@@ -1,0 +1,164 @@
+import shlex
+import subprocess
+import time
+from pathlib import Path
+from typing import Optional
+
+from agentguard.agents.base import Agent
+from agentguard.config.schema import AgentGuardConfig
+from agentguard.core.result import CommandResult
+from agentguard.instrumentation.command_tracker import CommandTracker
+from agentguard.instrumentation.output_limits import limit_output
+from agentguard.instrumentation.test_runner import _build_test_env
+from agentguard.policy.command_policy import evaluate_command_policy
+
+
+class AgentCommandAgent(Agent):
+    name = "agent-command"
+
+    def __init__(self, config: AgentGuardConfig) -> None:
+        self.config = config
+
+    def run(
+        self,
+        repo_dir: Path,
+        command_tracker: Optional[CommandTracker] = None,
+    ) -> None:
+        if not self.config.agent_command:
+            raise ValueError(
+                "Agent 'agent-command' requires config field 'agent_command'."
+            )
+        if command_tracker is None:
+            raise ValueError("Agent 'agent-command' requires command tracking.")
+
+        argv = self._argv()
+        if not argv:
+            raise ValueError("Config field 'agent_command' cannot be empty.")
+
+        raw_command_text = self._raw_command_text()
+        command_text = f"agent command: {raw_command_text}"
+        workdir = self._workdir(repo_dir)
+        decision = evaluate_command_policy(
+            command_text=raw_command_text,
+            unsafe_patterns=self.config.unsafe_commands,
+            mode=self.config.command_policy.mode,
+        )
+        if not decision.allowed:
+            command_tracker.record_preflight_blocked(
+                command=argv,
+                command_text=command_text,
+                cwd=workdir,
+                matched_patterns=decision.matched_patterns,
+                policy_mode=decision.mode,
+                message=decision.message,
+                agent_name=self.config.agent_name,
+            )
+            return
+
+        self._run_argv(
+            repo_dir=repo_dir,
+            workdir=workdir,
+            argv=argv,
+            command_text=command_text,
+            command_tracker=command_tracker,
+            preflight_matched_patterns=decision.matched_patterns,
+            policy_mode=decision.mode if decision.matched_patterns else None,
+        )
+
+    def _argv(self) -> list[str]:
+        command = self.config.agent_command
+        if isinstance(command, str):
+            return shlex.split(command)
+        if command is None:
+            return []
+        return list(command)
+
+    def _raw_command_text(self) -> str:
+        command = self.config.agent_command
+        if isinstance(command, str):
+            return command
+        if command is None:
+            return ""
+        return shlex.join(command)
+
+    def _workdir(self, repo_dir: Path) -> Path:
+        if self.config.agent_workdir == "config_dir":
+            return self.config.config_path.parent
+        return repo_dir
+
+    def _env(self, repo_dir: Path) -> dict[str, str]:
+        env = _build_test_env(repo_dir)
+        env.update(self.config.agent_environment)
+        return env
+
+    def _run_argv(
+        self,
+        repo_dir: Path,
+        workdir: Path,
+        argv: list[str],
+        command_text: str,
+        command_tracker: CommandTracker,
+        preflight_matched_patterns: list[str],
+        policy_mode: Optional[str],
+    ) -> CommandResult:
+        started = time.monotonic()
+        timed_out = False
+        try:
+            completed = subprocess.run(
+                argv,
+                cwd=workdir,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=self._env(repo_dir),
+                timeout=self.config.command_timeout_seconds,
+            )
+            exit_code = completed.returncode
+            stdout = completed.stdout
+            stderr = completed.stderr
+        except FileNotFoundError as error:
+            exit_code = 127
+            stdout = ""
+            stderr = f"Agent command executable not found: {error.filename}"
+        except subprocess.TimeoutExpired as error:
+            timed_out = True
+            exit_code = 124
+            stdout = error.stdout or ""
+            stderr = error.stderr or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode(errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
+            stderr = (
+                f"{stderr}\nAgent command timed out after "
+                f"{self.config.command_timeout_seconds} seconds."
+            ).strip()
+
+        duration_seconds = time.monotonic() - started
+        limited_stdout = limit_output(stdout, self.config.max_output_bytes)
+        limited_stderr = limit_output(stderr, self.config.max_output_bytes)
+        command_tracker.record_executed(
+            command=argv,
+            command_text=command_text,
+            cwd=workdir,
+            exit_code=exit_code,
+            stdout=limited_stdout.text,
+            stderr=limited_stderr.text,
+            duration_seconds=duration_seconds,
+            timed_out=timed_out,
+            stdout_truncated=limited_stdout.truncated,
+            stderr_truncated=limited_stderr.truncated,
+            preflight_matched_patterns=preflight_matched_patterns,
+            policy_mode=policy_mode,
+            agent_name=self.config.agent_name,
+        )
+        return CommandResult(
+            command=command_text,
+            exit_code=exit_code,
+            stdout=limited_stdout.text,
+            stderr=limited_stderr.text,
+            duration_seconds=duration_seconds,
+            timed_out=timed_out,
+            stdout_truncated=limited_stdout.truncated,
+            stderr_truncated=limited_stderr.truncated,
+        )

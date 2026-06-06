@@ -52,6 +52,113 @@ def test_load_docker_command_agent_config() -> None:
     assert config.sandbox.read_only is False
 
 
+def test_load_agent_command_config_fields() -> None:
+    config = load_config(Path("examples/configs/fix_auth_bug_agent_command_safe.yaml"))
+
+    assert config.agent_command == ["python3", "agent_scripts/safe_agent.py"]
+    assert config.agent_name == "auth-safe-script"
+    assert config.agent_environment == {}
+    assert config.agent_workdir == "repo_root"
+
+
+def test_config_accepts_agent_command_environment_and_config_dir_workdir(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+agent_command:
+  - python
+  - -c
+  - print('ok')
+agent_name: example-agent
+agent_environment:
+  AGENTGUARD_DEMO: enabled
+agent_workdir: config_dir
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.agent_command == ["python", "-c", "print('ok')"]
+    assert config.agent_name == "example-agent"
+    assert config.agent_environment == {"AGENTGUARD_DEMO": "enabled"}
+    assert config.agent_workdir == "config_dir"
+
+
+def test_config_rejects_invalid_agent_command_list(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+agent_command:
+  - python
+  - 123
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="agent_command"):
+        load_config(config_path)
+
+
+def test_config_rejects_invalid_agent_environment(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+agent_command: python -c pass
+agent_environment:
+  AGENTGUARD_DEMO: true
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="agent_environment"):
+        load_config(config_path)
+
+
+def test_config_rejects_invalid_agent_workdir(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+agent_command: python -c pass
+agent_workdir: nowhere
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="agent_workdir"):
+        load_config(config_path)
+
+
 def test_config_accepts_valid_benchmark_metadata(tmp_path: Path) -> None:
     config_path = tmp_path / "agentguard.yaml"
     config_path.write_text(
