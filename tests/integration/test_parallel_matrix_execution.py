@@ -307,11 +307,13 @@ def test_runtime_failure_does_not_cancel_other_attempts(
     assert result.passed == 4
 
 
+@pytest.mark.parametrize("failing_run_number", [1, 2])
 def test_fail_fast_stops_scheduling_and_uses_executed_attempts(
     tmp_path: Path,
     monkeypatch,
+    failing_run_number: int,
 ) -> None:
-    release = threading.Event()
+    barrier = threading.Barrier(2)
     lock = threading.Lock()
     calls = 0
 
@@ -320,8 +322,8 @@ def test_fail_fast_stops_scheduling_and_uses_executed_attempts(
         with lock:
             calls += 1
             run_number = calls
-        if run_number == 1:
-            release.set()
+        barrier.wait(timeout=2)
+        if run_number == failing_run_number:
             return _fake_result(
                 config_path,
                 agent,
@@ -329,7 +331,6 @@ def test_fail_fast_stops_scheduling_and_uses_executed_attempts(
                 result="FAIL",
                 score=0,
             )
-        assert release.wait(timeout=2)
         return _fake_result(config_path, agent, run_number)
 
     monkeypatch.setattr("agentguard.core.matrix.run_benchmark", fake_run)
@@ -347,6 +348,42 @@ def test_fail_fast_stops_scheduling_and_uses_executed_attempts(
     assert result.reliability.attempts == 2
     assert result.reliability.success_rate == 50.0
     assert next(iter(result.combinations.values())).attempts == 2
+
+
+def test_fail_fast_runtime_error_prevents_replenishment(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    barrier = threading.Barrier(2)
+    lock = threading.Lock()
+    calls = 0
+
+    def fake_run(config_path: Path, agent: str):
+        nonlocal calls
+        with lock:
+            calls += 1
+            run_number = calls
+        barrier.wait(timeout=2)
+        if run_number == 2:
+            raise RuntimeError("controlled failure")
+        return _fake_result(config_path, agent, run_number)
+
+    monkeypatch.setattr("agentguard.core.matrix.run_benchmark", fake_run)
+    result = run_matrix(
+        _write_suite(tmp_path),
+        trials=6,
+        workers=2,
+        fail_fast=True,
+        matrices_root=tmp_path / "matrices",
+    )
+
+    assert calls == 2
+    assert result.attempts_planned == 6
+    assert result.attempts_executed == 2
+    assert result.stopped_early is True
+    assert result.failed == 1
+    assert result.runs[1].error == "RuntimeError: controlled failure"
+    assert result.reliability.attempts == 2
 
 
 def test_reports_and_cli_include_concurrency_metadata(

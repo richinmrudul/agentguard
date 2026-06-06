@@ -320,7 +320,12 @@ def _run_parallel_attempts(
             submit_next()
 
         while futures:
-            completed, _ = wait(futures, return_when=FIRST_COMPLETED)
+            if fail_fast:
+                # Finish the submitted wave before replenishing so a peer failure
+                # cannot race with scheduling the next attempt.
+                completed, _ = wait(futures)
+            else:
+                completed, _ = wait(futures, return_when=FIRST_COMPLETED)
             for future in sorted(completed, key=lambda item: futures[item]):
                 index = futures.pop(future)
                 row = future.result()
