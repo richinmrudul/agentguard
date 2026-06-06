@@ -1,10 +1,14 @@
 # AgentGuard Architecture
 
-AgentGuard is a CI/CD-style safety and reliability evaluation platform for AI coding agents. It runs an agent against a benchmark repository or an existing CI repository, captures deterministic evidence, applies policy checks, scores the result, and writes reports that humans and automation can inspect.
+AgentGuard is a local-first evaluation harness for AI coding agents. It runs an
+agent against a benchmark repository or existing CI checkout, captures
+deterministic evidence, applies policy checks, scores the result, and writes
+reports that humans and automation can inspect.
 
-AgentGuard is not a GPT wrapper. It does not try to decide whether an agent "seems trustworthy" from the agent's own explanation. It evaluates observable evidence: tests, git diffs, changed files, command logs, policy checks, sandbox metadata, timelines, and reports.
-
-The core idea is simple: treat AI coding agents like untrusted contributors, run them in a controlled workflow, and judge the resulting repository state with repeatable checks.
+AgentGuard is not a GPT wrapper. It does not judge whether an agent "seems
+trustworthy" from the agent's own explanation. It evaluates observable evidence:
+tests, git diffs, changed files, command logs, policy checks, sandbox metadata,
+timelines, and reports.
 
 ## Design Goals
 
@@ -15,7 +19,30 @@ The core idea is simple: treat AI coding agents like untrusted contributors, run
 - Support benchmark and real-repo modes. Benchmark mode evaluates agents against controlled tasks; CI mode evaluates changes in an existing repository.
 - Keep extension points clear. Agent adapters, checks, scoring, reports, benchmark suites, and sandbox runners are intentionally separable.
 
-## High-Level Architecture
+## Pipeline
+
+The benchmark pipeline is:
+
+```text
+Config -> prepared repo -> agent -> sandbox/local runner -> tests -> diff/checks -> score -> reports/history
+```
+
+1. The CLI loads a YAML config or suite file.
+2. Benchmark mode copies the configured repo template into `.agentguard/runs/...`
+   and creates an initial git baseline.
+3. The selected agent adapter runs against that prepared repo.
+4. Commands run through Docker or the local command runner, and command evidence
+   is recorded.
+5. AgentGuard runs the configured tests.
+6. Git diff collection and policy checks inspect changed files, test paths,
+   forbidden paths, unsafe commands, scope, diff size, and secret patterns.
+7. Scoring converts check results into `PASS` or `FAIL`.
+8. JSON and Markdown reports are written, and local history is indexed.
+
+CI mode uses the same checks and scoring model, but evaluates the existing
+checkout instead of copying a benchmark template.
+
+## Component Flow
 
 ```mermaid
 flowchart TD
@@ -87,6 +114,20 @@ Report writers produce machine-readable JSON and human-readable Markdown. Report
 The suite runner executes multiple benchmark configs and aggregates pass rate, average score, failed-check counts, warning-check counts, best/worst runs, metadata, and individual report paths. Suites can be filtered by benchmark category, difficulty, and tags.
 
 The benchmark registry records stable benchmark IDs, versions, metadata, and config variants for cataloging scenarios, and it can generate ordinary suite YAML files without making suite execution depend on the registry.
+
+## Suite, Baseline, History, And Gate Layers
+
+These layers sit above single-run evaluation:
+
+- Suite: runs many benchmark configs and writes one aggregate report under
+  `.agentguard/suites/...`.
+- Baseline: saves an approved suite summary, including benchmark identity and
+  version when metadata is available.
+- History: indexes run, suite, and CI report summaries in
+  `.agentguard/history.db` for recent history, stats, trends, and exports.
+- Gate: runs a suite, compares it with a required baseline, prints a compact
+  CI-focused summary, and exits nonzero for invalid inputs, regressions, or
+  suite failures that are not explicitly allowed.
 
 ### Regression Baselines
 
