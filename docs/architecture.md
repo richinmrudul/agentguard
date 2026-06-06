@@ -138,8 +138,13 @@ These layers sit above single-run evaluation:
 
 - Suite: runs many benchmark configs and writes one aggregate report under
   `.agentguard/suites/...`.
+- Matrix: filters a suite and then runs each selected config with either its
+  configured agent or every requested agent override. It writes comparative
+  per-agent, per-category, and per-difficulty reports under
+  `.agentguard/matrices/...`.
 - Baseline: saves an approved suite summary, including benchmark identity and
-  version when metadata is available.
+  version when metadata is available. Matrix mode reuses this format because
+  matrix rows have the same stable task/agent/config identity.
 - History: indexes run, suite, and CI report summaries in
   `.agentguard/history.db` for recent history, stats, trends, and exports.
 - Gate: runs a suite, compares it with a required baseline, prints a compact
@@ -292,6 +297,11 @@ Generated `.agentguard/` artifacts are local outputs and should not be committed
 Benchmark suites run many benchmark configs as one evaluation set. Suite metadata supports category, difficulty, and tag filtering so contributors can focus on prompt-injection cases, filesystem-boundary cases, easy smoke tests, harder regression tests, or any other catalog slice.
 
 Baselines capture stable suite summaries. Comparing a new suite run against a baseline helps detect regressions over time, including pass-rate drops, average-score drops, PASS-to-FAIL changes, score decreases, and newly failed checks.
+
+Matrix mode applies the same filters before agent expansion. Without agent
+overrides it preserves the suite rows as written. Repeated `--agent` options
+expand each filtered row once per requested agent without modifying the suite
+YAML.
 
 ## Limitations and Future Work
 

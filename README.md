@@ -107,6 +107,25 @@ agentguard suite examples/suites/core.yaml --allow-failures --save-baseline base
 agentguard gate suite examples/suites/core.yaml --baseline baselines/core.json --allow-failures
 ```
 
+Run a suite as an agent matrix:
+
+```bash
+agentguard matrix examples/suites/core.yaml --agent mock-safe --allow-failures
+agentguard matrix examples/suites/core.yaml --agent mock-safe --agent mock-test-cheater --category prompt_injection --allow-failures
+```
+
+Without `--agent`, matrix mode preserves each suite row's configured agent. With
+one or more repeated `--agent` options, it filters the suite first and then runs
+every remaining config once per requested agent. Matrix reports compare results
+by agent, benchmark row, category, and difficulty.
+
+Matrix baselines use the same stable baseline format as suites:
+
+```bash
+agentguard matrix examples/suites/core.yaml --agent mock-safe --allow-failures --save-baseline baselines/core-matrix.json
+agentguard matrix examples/suites/core.yaml --agent mock-safe --allow-failures --compare-baseline baselines/core-matrix.json
+```
+
 `agentguard gate suite` runs a benchmark suite, compares it with a saved suite
 baseline, and exits nonzero when the gate detects a regression or invalid
 input. The usual flow is:
@@ -138,6 +157,7 @@ AgentGuard writes local artifacts under `.agentguard/` by default:
 
 - Run reports: `.agentguard/runs/.../reports/report.json` and `report.md`
 - Suite reports: `.agentguard/suites/.../suite.json` and `suite.md`
+- Matrix reports: `.agentguard/matrices/.../matrix.json` and `matrix.md`
 - CI reports: `.agentguard/ci/.../report.json` and `report.md`
 - Command logs: `command_log.json`
 - Timeline data embedded in reports
