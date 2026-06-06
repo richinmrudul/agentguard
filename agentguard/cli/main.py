@@ -16,6 +16,7 @@ from agentguard.benchmarks.registry import (
 from agentguard.core.baseline import write_suite_baseline
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.ci import run_ci
+from agentguard.core.matrix import run_matrix
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.suite import (
     format_suite_filters,
@@ -985,6 +986,121 @@ def suite_command(
         typer.echo(f"Unchanged runs: {comparison.unchanged_count}")
     typer.echo(f"Suite JSON report path: {result.json_report_path}")
     typer.echo(f"Suite Markdown report path: {result.markdown_report_path}")
+    if save_baseline is not None:
+        baseline_path = write_suite_baseline(result, save_baseline)
+        typer.echo(f"Baseline saved: {baseline_path}")
+    if (
+        result.baseline_comparison is not None
+        and result.baseline_comparison.has_regressions
+        and not allow_regressions
+    ):
+        raise typer.Exit(1)
+    if result.failed > 0 and not allow_failures:
+        raise typer.Exit(1)
+
+
+@app.command("matrix")
+def matrix_command(
+    suite_path: Path = typer.Argument(..., help="Path to the AgentGuard suite file."),
+    agents: Optional[list[str]] = typer.Option(
+        None,
+        "--agent",
+        help="Override suite agents. Repeat to run each entry with multiple agents.",
+    ),
+    allow_failures: bool = typer.Option(
+        False,
+        "--allow-failures",
+        help="Exit 0 even when one or more matrix runs fail.",
+    ),
+    category: Optional[str] = typer.Option(
+        None,
+        "--category",
+        help="Run only suite entries with this benchmark category.",
+    ),
+    difficulty: Optional[str] = typer.Option(
+        None,
+        "--difficulty",
+        help="Run only suite entries with this benchmark difficulty.",
+    ),
+    tags: Optional[list[str]] = typer.Option(
+        None,
+        "--tag",
+        help="Run only entries containing all requested tags. Repeat or use commas.",
+    ),
+    output_dir: Optional[Path] = typer.Option(
+        None,
+        "--output-dir",
+        help="Root directory for matrix report artifacts.",
+    ),
+    save_baseline: Optional[Path] = typer.Option(
+        None,
+        "--save-baseline",
+        help="Write a matrix-compatible baseline JSON file after the run.",
+    ),
+    compare_baseline: Optional[Path] = typer.Option(
+        None,
+        "--compare-baseline",
+        help="Compare this matrix against an existing matrix/suite baseline.",
+    ),
+    allow_regressions: bool = typer.Option(
+        False,
+        "--allow-regressions",
+        help="Exit 0 even when baseline comparison finds regressions.",
+    ),
+    allow_version_mismatch: bool = typer.Option(
+        False,
+        "--allow-version-mismatch",
+        help="Compare against a baseline with different benchmark versions.",
+    ),
+) -> None:
+    """Run a suite across its configured agents or an agent override matrix."""
+    try:
+        filters = suite_filters_from_values(
+            category=category,
+            difficulty=difficulty,
+            tags=tags,
+        )
+        result = run_matrix(
+            suite_path,
+            agents=agents,
+            matrices_root=output_dir or Path(".agentguard/matrices"),
+            compare_baseline_path=compare_baseline,
+            allow_version_mismatch=allow_version_mismatch,
+            filters=filters,
+        )
+    except ValueError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    typer.echo("AgentGuard Matrix Summary")
+    typer.echo(f"Suite: {result.suite_id}")
+    typer.echo(f"Agents: {', '.join(result.agents)}")
+    if result.filters.has_filters():
+        typer.echo(f"Filters: {format_suite_filters(result.filters)}")
+    typer.echo(f"Total runs: {result.total_runs}")
+    typer.echo(f"Passed: {result.passed}")
+    typer.echo(f"Failed: {result.failed}")
+    typer.echo(f"Pass rate: {result.pass_rate}%")
+    typer.echo(f"Average score: {result.average_score}")
+    typer.echo("")
+    typer.echo("Agent | Runs | Passed | Failed | Average Score")
+    typer.echo("--- | ---: | ---: | ---: | ---:")
+    for agent, summary in result.per_agent.items():
+        typer.echo(
+            f"{agent} | {summary.runs} | {summary.passed} | "
+            f"{summary.failed} | {summary.average_score}"
+        )
+    if result.baseline_comparison is not None:
+        comparison = result.baseline_comparison
+        typer.echo("")
+        typer.echo("Baseline comparison")
+        typer.echo(f"Baseline: {comparison.baseline_path}")
+        typer.echo(f"Regressions: {'yes' if comparison.has_regressions else 'no'}")
+        for message in comparison.regressions:
+            typer.echo(f"- {message}")
+    typer.echo(f"Matrix JSON report path: {result.json_report_path}")
+    typer.echo(f"Matrix Markdown report path: {result.markdown_report_path}")
+
     if save_baseline is not None:
         baseline_path = write_suite_baseline(result, save_baseline)
         typer.echo(f"Baseline saved: {baseline_path}")
