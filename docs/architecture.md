@@ -139,9 +139,10 @@ These layers sit above single-run evaluation:
 - Suite: runs many benchmark configs and writes one aggregate report under
   `.agentguard/suites/...`.
 - Matrix: filters a suite and then runs each selected config with either its
-  configured agent or every requested agent override. It writes comparative
-  per-agent, per-category, and per-difficulty reports under
-  `.agentguard/matrices/...`.
+  configured agent or every requested agent override. A trial aggregation layer
+  expands those combinations into serial, independent benchmark executions,
+  then computes overall, per-agent, and per-combination reliability metrics. It
+  writes comparative reports under `.agentguard/matrices/...`.
 - Baseline: saves an approved suite summary, including benchmark identity and
   version when metadata is available. Matrix mode reuses this format because
   matrix rows have the same stable task/agent/config identity.
@@ -300,8 +301,14 @@ Baselines capture stable suite summaries. Comparing a new suite run against a ba
 
 Matrix mode applies the same filters before agent expansion. Without agent
 overrides it preserves the suite rows as written. Repeated `--agent` options
-expand each filtered row once per requested agent without modifying the suite
-YAML.
+expand each filtered row once per requested agent, and `--trials` expands those
+combinations only after filtering and agent selection. Trials execute serially,
+do not modify suite YAML, and retain the ordinary per-run report and history
+behavior. The matrix aggregation layer records trial indices, success rates,
+score ranges, sample standard deviation (defined as `0.0` for one sample), and
+whether each combination passed at least once or on every attempt. These values
+describe observed reliability across the requested executions; they do not
+guarantee deterministic future behavior.
 
 ## Limitations and Future Work
 
