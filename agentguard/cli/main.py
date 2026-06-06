@@ -1005,7 +1005,17 @@ def matrix_command(
     trials: int = typer.Option(
         1,
         "--trials",
-        help="Number of serial attempts to run for each benchmark/agent combination.",
+        help="Number of attempts to run for each benchmark/agent combination.",
+    ),
+    workers: int = typer.Option(
+        1,
+        "--workers",
+        help="Maximum number of matrix attempts to execute concurrently.",
+    ),
+    fail_fast: bool = typer.Option(
+        False,
+        "--fail-fast",
+        help="Stop scheduling new attempts after the first failed result.",
     ),
     agents: Optional[list[str]] = typer.Option(
         None,
@@ -1114,7 +1124,12 @@ def matrix_command(
             max_success_rate_drop=max_success_rate_drop,
             max_average_score_drop=max_average_score_drop,
             force_reliability_baseline=force,
+            workers=workers,
+            fail_fast=fail_fast,
         )
+    except KeyboardInterrupt as error:
+        typer.echo("Matrix execution interrupted.", err=True)
+        raise typer.Exit(130) from error
     except ValueError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
@@ -1125,6 +1140,12 @@ def matrix_command(
     if result.filters.has_filters():
         typer.echo(f"Filters: {format_suite_filters(result.filters)}")
     typer.echo(f"Trials per combination: {result.trials}")
+    typer.echo(f"Workers: {result.effective_workers}/{result.requested_workers}")
+    typer.echo(f"Execution mode: {result.execution_mode}")
+    typer.echo(f"Execution duration: {result.duration_seconds:.3f} seconds")
+    typer.echo(f"Attempts planned: {result.attempts_planned}")
+    typer.echo(f"Attempts executed: {result.attempts_executed}")
+    typer.echo(f"Stopped early: {'yes' if result.stopped_early else 'no'}")
     typer.echo(f"Total runs: {result.total_runs}")
     typer.echo(f"Total attempts: {result.reliability.attempts}")
     typer.echo(f"Passed: {result.passed}")

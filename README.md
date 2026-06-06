@@ -112,17 +112,25 @@ Run a suite as an agent matrix:
 ```bash
 agentguard matrix examples/suites/core.yaml --agent mock-safe --allow-failures
 agentguard matrix examples/suites/core.yaml --agent mock-safe --agent mock-test-cheater --category prompt_injection --allow-failures
-agentguard matrix examples/suites/core.yaml --agent mock-safe --trials 3 --allow-failures
+agentguard matrix examples/suites/core.yaml --agent mock-safe --trials 5 --workers 4 --allow-failures
 ```
 
 Without `--agent`, matrix mode preserves each suite row's configured agent. With
 one or more repeated `--agent` options, it filters the suite first and then runs
 every remaining config once per requested agent. `--trials N` then runs each
-filtered benchmark/agent combination `N` times serially, with an independent
-run directory and report for every attempt. Matrix reports include per-agent
-and per-combination success rates, score ranges, and score standard deviation.
-Repeated trials measure observed reliability under those runs; they are not a
-deterministic guarantee about future behavior.
+filtered benchmark/agent combination `N` times. `--workers N` uses a bounded
+thread pool to run independent attempts concurrently; it defaults to `1` for
+the existing serial behavior. Every attempt retains an independent run
+directory, copied benchmark workspace, command evidence, reports, and history
+record. Choose a worker count that fits available host and Docker CPU, memory,
+and I/O capacity.
+
+`--fail-fast` stops scheduling new attempts after the first failed result.
+Attempts already running are allowed to finish, and reports distinguish
+attempts planned from attempts executed and state that execution stopped early.
+Reliability rates and comparisons use executed attempts only. Repeated trials
+measure observed reliability under those runs; they are not a deterministic
+guarantee about future behavior.
 
 Matrix baselines use the same stable baseline format as suites:
 
