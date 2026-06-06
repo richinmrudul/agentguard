@@ -1002,6 +1002,11 @@ def suite_command(
 @app.command("matrix")
 def matrix_command(
     suite_path: Path = typer.Argument(..., help="Path to the AgentGuard suite file."),
+    trials: int = typer.Option(
+        1,
+        "--trials",
+        help="Number of serial attempts to run for each benchmark/agent combination.",
+    ),
     agents: Optional[list[str]] = typer.Option(
         None,
         "--agent",
@@ -1067,6 +1072,7 @@ def matrix_command(
             compare_baseline_path=compare_baseline,
             allow_version_mismatch=allow_version_mismatch,
             filters=filters,
+            trials=trials,
         )
     except ValueError as error:
         typer.echo(f"Error: {error}", err=True)
@@ -1077,18 +1083,23 @@ def matrix_command(
     typer.echo(f"Agents: {', '.join(result.agents)}")
     if result.filters.has_filters():
         typer.echo(f"Filters: {format_suite_filters(result.filters)}")
+    typer.echo(f"Trials per combination: {result.trials}")
     typer.echo(f"Total runs: {result.total_runs}")
+    typer.echo(f"Total attempts: {result.reliability.attempts}")
     typer.echo(f"Passed: {result.passed}")
     typer.echo(f"Failed: {result.failed}")
     typer.echo(f"Pass rate: {result.pass_rate}%")
+    typer.echo(f"Overall success rate: {result.reliability.success_rate}%")
     typer.echo(f"Average score: {result.average_score}")
     typer.echo("")
-    typer.echo("Agent | Runs | Passed | Failed | Average Score")
-    typer.echo("--- | ---: | ---: | ---: | ---:")
+    typer.echo("Agent | Attempts | Passed | Failed | Success Rate | Average Score")
+    typer.echo("--- | ---: | ---: | ---: | ---: | ---:")
     for agent, summary in result.per_agent.items():
+        reliability = result.per_agent_reliability[agent]
         typer.echo(
             f"{agent} | {summary.runs} | {summary.passed} | "
-            f"{summary.failed} | {summary.average_score}"
+            f"{summary.failed} | {reliability.success_rate}% | "
+            f"{reliability.average_score}"
         )
     if result.baseline_comparison is not None:
         comparison = result.baseline_comparison
