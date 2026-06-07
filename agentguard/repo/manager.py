@@ -29,7 +29,7 @@ class RepoManager:
             raise ValueError("Benchmark mode requires repo_template.")
 
         run_dir.mkdir(parents=True, exist_ok=False)
-        shutil.copytree(config.repo_template, repo_dir)
+        shutil.copytree(config.repo_template, repo_dir, symlinks=True)
         self._git(repo_dir, "init")
         self._git(repo_dir, "add", ".")
         self._git(

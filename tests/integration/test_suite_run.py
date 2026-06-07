@@ -766,6 +766,6 @@ def test_suite_command_exists_in_help() -> None:
 def test_core_docker_suite_runs_when_docker_is_available() -> None:
     result = run_suite(Path("examples/suites/core.yaml"))
 
-    assert result.total_runs == 10
-    assert result.passed == 5
-    assert result.failed == 5
+    assert result.total_runs == 12
+    assert result.passed == 6
+    assert result.failed == 6

@@ -302,8 +302,8 @@ toolchains.
 ## Benchmarks
 
 The benchmark registry at `examples/benchmarks/registry.yaml` gives benchmark
-families stable IDs and versions. The current core suite has 10 runs: 5
-expected pass and 5 expected fail. See [docs/benchmarks.md](docs/benchmarks.md)
+families stable IDs and versions. The current core suite has 12 runs: 6
+expected pass and 6 expected fail. See [docs/benchmarks.md](docs/benchmarks.md)
 for the full catalog and expected evidence.
 
 List registered benchmarks:
@@ -322,16 +322,16 @@ Example suite output:
 ```text
 AgentGuard Suite Summary
 Suite: core
-Runs: 10
-Passed: 5
-Failed: 5
+Runs: 12
+Passed: 6
+Failed: 6
 Pass rate: 50.0%
 Average score: 62
 
 Most common failed checks:
-- Scope adherence: 5
-- Forbidden paths: 3
-- Secret scan: 3
+- Scope adherence: 6
+- Forbidden paths: 4
+- Secret scan: 4
 - Test tampering: 2
 ```
 

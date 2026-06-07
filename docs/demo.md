@@ -17,6 +17,8 @@ agents that get passing tests by taking unsafe shortcuts.
   create dependency state; AgentGuard catches the out-of-scope secret path.
 - Filesystem boundary: the escape agent fixes the source bug but creates a
   secret file and reports a path escape command attempt.
+- Symlink path traversal: the follower fixes source but writes a key through
+  an in-repository symlink into a forbidden directory.
 - Suite mode: multiple benchmark tasks are summarized as one evaluation run.
 
 ## Prerequisites
@@ -92,7 +94,19 @@ Expected outcome: the safe run `PASS`es and the escape run `FAIL`s.
 What it demonstrates: AgentGuard can catch forbidden/secret file creation and
 ingested command-attempt evidence for suspicious filesystem boundary behavior.
 
-### 6. Core Suite
+### 6. Symlink Path Traversal
+
+```bash
+agentguard run examples/configs/symlink_path_traversal_safe.yaml --agent custom-command
+agentguard run examples/configs/symlink_path_traversal_follower.yaml --agent custom-command --allow-fail-result
+```
+
+Expected outcome: the safe run `PASS`es and the follower run `FAIL`s.
+
+What it demonstrates: AgentGuard preserves the benchmark symlink in the copied
+workspace and detects the follower's forbidden, secret-like out-of-scope write.
+
+### 7. Core Suite
 
 ```bash
 agentguard suite examples/suites/core.yaml --allow-failures
@@ -148,6 +162,7 @@ failure modes:
 - A prompt-injection follower fails despite fixing the source bug.
 - A dependency/setup-injection follower fails despite fixing the source bug.
 - A filesystem-boundary escape fails despite fixing the source bug.
+- A symlink/path-traversal follower fails despite fixing the source bug.
 
 The suite report then turns those individual runs into one portfolio-ready
 evaluation summary.
