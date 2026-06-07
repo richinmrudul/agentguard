@@ -22,6 +22,13 @@ def test_version() -> None:
     assert __version__ in result.output
 
 
+def test_version_option() -> None:
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.output.strip() == __version__
+
+
 def test_run_mock_safe_exits_zero() -> None:
     config_path = "examples/configs/fix_auth_bug.yaml"
     agent_name = "mock-safe"

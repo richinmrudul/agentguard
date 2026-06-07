@@ -75,6 +75,25 @@ evaluate_app = typer.Typer(help="Validate and run external coding-agent profiles
 app.add_typer(evaluate_app, name="evaluate")
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Print the AgentGuard version and exit.",
+    ),
+) -> None:
+    """Run AgentGuard commands."""
+
+
 @app.command()
 def version() -> None:
     """Print the AgentGuard version."""
