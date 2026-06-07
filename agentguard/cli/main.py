@@ -14,6 +14,7 @@ from agentguard.benchmarks.registry import (
     load_benchmark_registry,
     write_generated_suite,
 )
+from agentguard.benchmarks.audit import run_benchmark_audit
 from agentguard.core.baseline import write_suite_baseline
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.ci import run_ci
@@ -260,6 +261,7 @@ def _format_registry_entry(benchmark: BenchmarkRegistryEntry) -> str:
         f"Difficulty: {benchmark.difficulty}",
         f"Description: {benchmark.description}",
         f"Tags: {', '.join(benchmark.tags) if benchmark.tags else '-'}",
+        f"Contract: {benchmark.contract}",
         "Configs:",
     ]
     for label, config_path in benchmark.configs.items():
@@ -490,6 +492,88 @@ def benchmarks_generate_suite(
 
     typer.echo(f"Generated suite: {written_path}")
     typer.echo(f"Runs: {len(suite_data['runs'])}")
+
+
+@benchmarks_app.command("audit")
+def benchmarks_audit(
+    registry: Path = typer.Option(
+        DEFAULT_REGISTRY_PATH,
+        "--registry",
+        help="Path to the benchmark registry YAML file.",
+    ),
+    benchmark_ids: Optional[list[str]] = typer.Option(
+        None,
+        "--benchmark",
+        help="Benchmark IDs to audit. Repeat or use commas.",
+    ),
+    static_only: bool = typer.Option(
+        False,
+        "--static-only",
+        help="Validate corpus metadata without executing benchmarks.",
+    ),
+    trials: int = typer.Option(1, "--trials", help="Trials per contract variant."),
+    workers: int = typer.Option(1, "--workers", help="Maximum concurrent trials."),
+    output_dir: Optional[Path] = typer.Option(
+        None,
+        "--output-dir",
+        help="Root directory for audit artifacts.",
+    ),
+    allow_contract_failures: bool = typer.Option(
+        False,
+        "--allow-contract-failures",
+        help="Exit 0 while still reporting contract violations.",
+    ),
+    strict_unexpected_checks: bool = typer.Option(
+        False,
+        "--strict-unexpected-checks",
+        help="Treat every unexpected failed check as a contract failure.",
+    ),
+    category: Optional[str] = typer.Option(None, "--category"),
+    difficulty: Optional[str] = typer.Option(None, "--difficulty"),
+    tags: Optional[list[str]] = typer.Option(None, "--tag"),
+) -> None:
+    """Validate benchmark contracts and optionally execute their variants."""
+    try:
+        result = run_benchmark_audit(
+            registry,
+            benchmark_ids=benchmark_ids,
+            static_only=static_only,
+            trials=trials,
+            workers=workers,
+            output_dir=output_dir,
+            strict_unexpected_checks=strict_unexpected_checks,
+            category=category,
+            difficulty=difficulty,
+            tags=tags,
+        )
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    typer.echo("AgentGuard Benchmark Audit")
+    typer.echo(f"Mode: {result.mode}")
+    typer.echo(f"Benchmarks: {result.total_benchmarks}")
+    typer.echo(f"Variants: {result.total_variants}")
+    typer.echo(f"Trials: {result.total_trials}")
+    typer.echo(f"Contracts passed: {result.passed_contracts}")
+    typer.echo(f"Contracts failed: {result.failed_contracts}")
+    typer.echo(f"Unstable variants: {result.unstable_variants}")
+    typer.echo(f"Errors: {result.error_count}")
+    typer.echo(f"Warnings: {result.warning_count}")
+    if result.violations:
+        typer.echo("")
+        typer.echo("Severity | Benchmark | Variant | Trial | Field | Message")
+        typer.echo("--- | --- | --- | ---: | --- | ---")
+        for violation in result.violations:
+            typer.echo(
+                f"{violation.severity} | {violation.benchmark_id} | "
+                f"{violation.variant} | {violation.trial_index} | "
+                f"{violation.field} | {violation.message}"
+            )
+    typer.echo(f"Audit JSON report path: {result.json_report_path}")
+    typer.echo(f"Audit Markdown report path: {result.markdown_report_path}")
+    if result.has_failures and not allow_contract_failures:
+        raise typer.Exit(1)
 
 
 @reports_app.command("list")

@@ -21,6 +21,9 @@ def _write_valid_registry(tmp_path: Path) -> Path:
     config_dir.mkdir()
     (config_dir / "safe.yaml").write_text("task_id: safe\n", encoding="utf-8")
     (config_dir / "cheater.yaml").write_text("task_id: cheater\n", encoding="utf-8")
+    contract_dir = tmp_path / "contracts"
+    contract_dir.mkdir()
+    (contract_dir / "auth_bug.yaml").write_text("{}\n", encoding="utf-8")
     return _write_registry(
         tmp_path,
         """
@@ -37,6 +40,7 @@ benchmarks:
     configs:
       safe: configs/safe.yaml
       adversarial: configs/cheater.yaml
+    contract: contracts/auth_bug.yaml
 """,
     )
 
@@ -67,6 +71,9 @@ def test_rejects_duplicate_ids(
     config_dir = tmp_path / "configs"
     config_dir.mkdir()
     (config_dir / "safe.yaml").write_text("task_id: safe\n", encoding="utf-8")
+    contract_dir = tmp_path / "contracts"
+    contract_dir.mkdir()
+    (contract_dir / "auth_bug.yaml").write_text("{}\n", encoding="utf-8")
     registry_path = _write_registry(
         tmp_path,
         """
@@ -81,6 +88,7 @@ benchmarks:
       - python
     configs:
       safe: configs/safe.yaml
+    contract: contracts/auth_bug.yaml
   - id: auth_bug
     version: 1
     name: Auth Login Bug Copy
@@ -91,6 +99,7 @@ benchmarks:
       - python
     configs:
       safe: configs/safe.yaml
+    contract: contracts/auth_bug.yaml
 """,
     )
     monkeypatch.chdir(tmp_path)

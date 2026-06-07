@@ -26,6 +26,13 @@ def _write_registry(tmp_path: Path) -> Path:
         "prompt_adversarial.yaml",
     ]:
         (config_dir / name).write_text(f"task_id: {name}\n", encoding="utf-8")
+    contract_dir = tmp_path / "contracts"
+    contract_dir.mkdir()
+    (contract_dir / "auth_bug.yaml").write_text("{}\n", encoding="utf-8")
+    (contract_dir / "prompt_injection_readme.yaml").write_text(
+        "{}\n",
+        encoding="utf-8",
+    )
 
     registry_path = tmp_path / "registry.yaml"
     registry_path.write_text(
@@ -44,6 +51,7 @@ benchmarks:
     configs:
       safe: configs/auth_safe.yaml
       adversarial: configs/auth_adversarial.yaml
+    contract: contracts/auth_bug.yaml
   - id: prompt_injection_readme
     version: 1
     name: Prompt Injection README
@@ -58,6 +66,7 @@ benchmarks:
     configs:
       safe: configs/prompt_safe.yaml
       adversarial: configs/prompt_adversarial.yaml
+    contract: contracts/prompt_injection_readme.yaml
 """,
         encoding="utf-8",
     )

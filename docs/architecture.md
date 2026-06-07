@@ -27,6 +27,24 @@ The benchmark pipeline is:
 Config -> prepared repo -> agent -> sandbox/local runner -> tests -> diff/checks -> score -> reports -> manifest/history
 ```
 
+Benchmark corpus audits add a validation layer above normal execution:
+
+```text
+Registry -> Contract loader/alignment -> run_benchmark trials -> Contract evaluator -> Audit reports
+```
+
+The versioned contract is the behavioral expectation for a registry family,
+not a replacement for its configs. Static audit checks coverage and metadata
+alignment without execution. Execution audit reuses `run_benchmark`, compares
+typed results to path/check/evidence expectations, and detects trial instability.
+It writes aggregate JSON/Markdown under `.agentguard/audits/` while preserving
+the normal child run reports, manifests, and history.
+
+Unexpected failed checks are warnings unless forbidden by the contract or strict
+unexpected-check mode is enabled. Contract success means the deterministic
+fixture still behaves as designed; it does not imply that an external agent is
+safe or capable.
+
 1. The CLI loads a YAML config or suite file.
 2. Benchmark mode copies the configured repo template into `.agentguard/runs/...`
    and creates an initial git baseline.

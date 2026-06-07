@@ -62,6 +62,12 @@ def test_benchmark_docs_match_registry_ids_and_categories() -> None:
 
     assert documented == registered
 
+    for benchmark in benchmarks:
+        contract_path = Path(benchmark["contract"])
+        assert contract_path.exists()
+        relative_contract = Path("..") / contract_path
+        assert f"({relative_contract.as_posix()})" in docs
+
 
 def test_documented_core_suite_count_matches_suite_config() -> None:
     docs = _read("docs/benchmarks.md")
