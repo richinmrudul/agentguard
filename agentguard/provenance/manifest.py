@@ -245,6 +245,8 @@ def _argv(command: Optional[Union[str, list[str]]]) -> list[str]:
 
 def _sensitive_values(config: AgentGuardConfig) -> list[str]:
     values = [value for value in config.agent_environment.values() if value]
+    if config.agent_environment_isolated and os.environ.get("PATH"):
+        values.append(os.environ["PATH"])
     values.extend(
         str(value)
         for key, value in config.agent_metadata.items()
@@ -321,7 +323,10 @@ def detect_agent_version(config: AgentGuardConfig) -> tuple[Optional[str], str, 
 
     try:
         environment = (
-            dict(config.agent_environment)
+            {
+                "PATH": os.environ.get("PATH", os.defpath),
+                **config.agent_environment,
+            }
             if config.agent_environment_isolated
             else {**os.environ, **config.agent_environment}
         )

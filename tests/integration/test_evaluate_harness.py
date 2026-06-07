@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -143,6 +144,8 @@ from pathlib import Path
 print(os.environ["CANARY_SECRET"])
 if "AGENTGUARD_UNLISTED_SECRET" in os.environ:
     raise SystemExit(9)
+if subprocess.run(["agentguard-path-probe"], check=False).returncode != 0:
+    raise SystemExit(10)
 repo = Path(sys.argv[1])
 completed = subprocess.run(
     [sys.executable, str(repo / "agent_scripts/safe_agent.py")],
@@ -181,6 +184,12 @@ metadata: {{provider: test}}
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    path_probe = bin_dir / "agentguard-path-probe"
+    path_probe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    path_probe.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("CANARY_SECRET", canary)
     monkeypatch.setenv("AGENTGUARD_UNLISTED_SECRET", "must-not-reach-agent")
 
@@ -211,6 +220,14 @@ metadata: {{provider: test}}
     command_log_text = command_log.read_text(encoding="utf-8")
     assert canary not in command_log_text
     assert "Canary Profile (canary-profile)" in command_log_text
+    matrix_report = next((tmp_path / "matrices").glob("*/matrix.json"))
+    matrix_data = json.loads(matrix_report.read_text(encoding="utf-8"))
+    assert matrix_data["functional_passed"] == 1
+    assert matrix_data["runs"][0]["functional_passed"] is True
+    child_report = next(tmp_path.glob(".agentguard/runs/*/reports/report.json"))
+    child_data = json.loads(child_report.read_text(encoding="utf-8"))
+    assert child_data["test_result"]["exit_code"] == 0
+    assert child_data["result"] == "PASS"
     with sqlite3.connect(tmp_path / ".agentguard/history.db") as connection:
         history_dump = repr(connection.execute("SELECT * FROM runs").fetchall())
     assert canary not in history_dump

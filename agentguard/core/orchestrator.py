@@ -27,7 +27,11 @@ from agentguard.core.result import (
     SandboxMetadata,
 )
 from agentguard.core.timeline import TimelineEvent, TimelineRecorder
-from agentguard.evaluation.profile import AgentProfile, render_invocation
+from agentguard.evaluation.profile import (
+    AgentProfile,
+    render_invocation,
+    resolve_profile_argv,
+)
 from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
 from agentguard.instrumentation.agent_event_reader import (
     DEFAULT_AGENT_EVENT_FILE,
@@ -328,7 +332,14 @@ def run_benchmark(
             agent_name=evaluation_profile.id,
             agent_environment=invocation.environment,
             agent_environment_isolated=True,
-            agent_version_command=evaluation_profile.version_command,
+            agent_version_command=(
+                resolve_profile_argv(
+                    evaluation_profile,
+                    evaluation_profile.version_command,
+                )
+                if evaluation_profile.version_command is not None
+                else None
+            ),
             agent_model=evaluation_profile.model,
             agent_metadata={
                 **evaluation_profile.metadata,

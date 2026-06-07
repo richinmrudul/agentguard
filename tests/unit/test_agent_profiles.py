@@ -10,6 +10,7 @@ from agentguard.evaluation.profile import (
     load_agent_profile,
     load_task_prompt,
     render_invocation,
+    resolve_profile_argv,
 )
 
 
@@ -204,6 +205,8 @@ def test_invocation_renders_supported_placeholders_without_substrings(
     rendered = render_invocation(profile, config, repo_dir)
     dry = dry_run_invocation(profile, config)
 
+    assert Path(rendered.argv[0]).is_absolute()
+    assert rendered.display_argv[0] == "python3"
     assert rendered.argv[1] == str(prompt_file.resolve())
     assert rendered.argv[2] == str(repo_dir.resolve())
     assert dry.display_argv[1].startswith("[TASK_FILE sha256:")
@@ -275,3 +278,25 @@ def test_environment_allowlist_copies_only_requested_names(
     assert rendered.environment == {"ALLOWED_VALUE": "canary"}
     assert "UNLISTED_VALUE" not in rendered.environment
     assert os.environ["UNLISTED_VALUE"] == "must-not-pass"
+
+
+def test_profile_relative_executable_resolves_independently_of_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = tmp_path / "profile-agent"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+    profile = load_agent_profile(
+        _write_profile(
+            tmp_path,
+            executable="./profile-agent",
+        )
+    )
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    monkeypatch.chdir(unrelated)
+
+    resolved = resolve_profile_argv(profile, profile.command)
+
+    assert resolved[0] == str(executable.resolve())

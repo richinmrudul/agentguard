@@ -182,20 +182,46 @@ def missing_environment_names(profile: AgentProfile) -> list[str]:
     return [name for name in profile.environment if name not in os.environ]
 
 
+def _resolved_executable(
+    profile: AgentProfile,
+    executable: str,
+) -> Optional[str]:
+    path = Path(executable).expanduser()
+    if path.is_absolute():
+        return (
+            str(path.resolve())
+            if path.is_file() and os.access(path, os.X_OK)
+            else None
+        )
+    has_path_separator = os.sep in executable or (
+        os.altsep is not None and os.altsep in executable
+    )
+    if has_path_separator:
+        profile_relative = (profile.profile_path.parent / path).resolve()
+        if profile_relative.is_file() and os.access(profile_relative, os.X_OK):
+            return str(profile_relative)
+    resolved = shutil.which(executable)
+    return str(Path(resolved).resolve()) if resolved is not None else None
+
+
+def resolve_profile_argv(
+    profile: AgentProfile,
+    command: list[str],
+) -> list[str]:
+    resolved = _resolved_executable(profile, command[0])
+    if resolved is None:
+        raise ValueError(f"Agent profile executable is not available: {command[0]}")
+    return [resolved, *command[1:]]
+
+
 def executable_available(profile: AgentProfile) -> bool:
-    executable = profile.command[0]
-    if Path(executable).is_absolute():
-        return Path(executable).is_file()
-    return shutil.which(executable) is not None
+    return _resolved_executable(profile, profile.command[0]) is not None
 
 
 def version_executable_available(profile: AgentProfile) -> bool:
     if profile.version_command is None:
         return True
-    executable = profile.version_command[0]
-    if Path(executable).is_absolute():
-        return Path(executable).is_file()
-    return shutil.which(executable) is not None
+    return _resolved_executable(profile, profile.version_command[0]) is not None
 
 
 def render_invocation(
@@ -219,7 +245,10 @@ def render_invocation(
         "{task_file}": f"[TASK_FILE sha256:{prompt.sha256}]",
         "{repo_dir}": "[REPO_DIR]",
     }
-    argv = [replacements.get(argument, argument) for argument in profile.command]
+    argv = resolve_profile_argv(
+        profile,
+        [replacements.get(argument, argument) for argument in profile.command],
+    )
     display_argv = sanitize_arguments(
         [
             display_replacements.get(argument, argument)

@@ -1,3 +1,4 @@
+import os
 import shlex
 import subprocess
 import time
@@ -119,7 +120,8 @@ class AgentCommandAgent(Agent):
 
     def _env(self, repo_dir: Path) -> dict[str, str]:
         if self.config.agent_environment_isolated:
-            env = dict(self.config.agent_environment)
+            env = {"PATH": os.environ.get("PATH", os.defpath)}
+            env.update(self.config.agent_environment)
             src_path = (repo_dir / "src").resolve()
             if src_path.exists():
                 env["PYTHONPATH"] = str(src_path)
@@ -176,6 +178,8 @@ class AgentCommandAgent(Agent):
         sensitive_values = [
             value for value in self.config.agent_environment.values() if value
         ]
+        if self.config.agent_environment_isolated and os.environ.get("PATH"):
+            sensitive_values.append(os.environ["PATH"])
         if self.config.agent_display_command is not None:
             sensitive_values.extend(
                 actual
