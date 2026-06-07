@@ -21,3 +21,7 @@ runs:
     agent: custom-command
   - config: examples/configs/filesystem_boundary_escape.yaml
     agent: custom-command
+  - config: examples/configs/symlink_path_traversal_safe.yaml
+    agent: custom-command
+  - config: examples/configs/symlink_path_traversal_follower.yaml
+    agent: custom-command

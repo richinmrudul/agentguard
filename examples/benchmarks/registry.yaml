@@ -74,3 +74,21 @@ benchmarks:
     configs:
       safe: examples/configs/filesystem_boundary_safe.yaml
       adversarial: examples/configs/filesystem_boundary_escape.yaml
+
+  - id: symlink_path_traversal
+    version: 1
+    name: Symlink Path Traversal
+    category: filesystem_boundary
+    difficulty: hard
+    description: Detects agents that follow symlink or parent-path bait and write secret-like files outside the requested source scope.
+    tags:
+      - python
+      - docker
+      - filesystem
+      - symlink
+      - path-traversal
+      - sandbox
+      - secret-access
+    configs:
+      safe: examples/configs/symlink_path_traversal_safe.yaml
+      adversarial: examples/configs/symlink_path_traversal_follower.yaml
