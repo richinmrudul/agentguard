@@ -105,6 +105,36 @@ Current adapters include:
 the copied benchmark repo, but `agent_workdir: config_dir` runs it relative to
 the config file directory.
 
+### External-Agent Evaluation Profiles
+
+The evaluation harness adds a provider-neutral profile and task-rendering layer
+above the existing matrix and `agent-command` paths:
+
+```text
+profile + suite + benchmark task -> validate -> sanitized plan
+profile + copied run workspace -> render argv -> agent-command -> matrix reports
+```
+
+Schema-versioned profiles contain argv-list commands, optional argv-list
+version detection, model identity, scalar metadata, working-directory policy,
+and environment variable names. They do not contain environment values.
+Benchmark configs contain exactly one task source when used by this workflow:
+an inline prompt or a bounded prompt file confined to the config directory.
+
+Validation rejects unknown or embedded placeholders before execution. Dry-run
+uses stable workspace markers and prompt hashes. During execution, the
+orchestrator prepares each independent benchmark copy before replacing complete
+`{task_prompt}`, `{task_file}`, and `{repo_dir}` argv items. The real argv and
+allowlisted process environment are passed to `agent-command`; command evidence,
+reports, and provenance receive the sanitized display argv instead. This
+per-run rendering keeps parallel matrix workers independent and preserves the
+matrix parent execution ID in every child manifest.
+
+The matrix aggregation records both functional success (the configured tests
+returned zero) and policy-compliant success (the AgentGuard result is `PASS`).
+It also counts unsafe functional successes where tests passed but policy checks
+failed.
+
 ### Docker Sandbox / Command Runner
 
 The Docker runner executes configured commands inside a container using a mounted repository workspace, working directory, environment, network mode, optional memory and CPU limits, timeout handling, and output limits. It also records executed command events through the command tracker.

@@ -14,12 +14,14 @@ from agentguard.config.schema import (
     ExpectedModifiedFiles,
     SandboxConfig,
     ScalarMetadata,
+    TaskConfig,
 )
 
 
 VALID_DOCKER_NETWORKS = {"none", "bridge"}
 VALID_COMMAND_POLICY_MODES = {"audit", "enforce"}
 VALID_AGENT_WORKDIRS = {"repo_root", "config_dir"}
+MAX_TASK_PROMPT_FILE_BYTES = 65536
 
 
 def _string_list(data: dict[str, Any], key: str) -> list[str]:
@@ -99,6 +101,44 @@ def _agent_workdir(data: dict[str, Any]) -> str:
         valid = ", ".join(sorted(VALID_AGENT_WORKDIRS))
         raise ValueError(f"Config field 'agent_workdir' must be one of: {valid}.")
     return value
+
+
+def _load_task(data: dict[str, Any], config_path: Path) -> Optional[TaskConfig]:
+    raw_task = data.get("task")
+    if raw_task is None:
+        return None
+    if not isinstance(raw_task, dict):
+        raise ValueError("Config field 'task' must be a mapping.")
+    prompt = raw_task.get("prompt")
+    prompt_file = raw_task.get("prompt_file")
+    if (prompt is None) == (prompt_file is None):
+        raise ValueError(
+            "Config field 'task' requires exactly one of prompt or prompt_file."
+        )
+    if prompt is not None:
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Config field 'task.prompt' must be a non-empty string.")
+        return TaskConfig(prompt=prompt)
+    if not isinstance(prompt_file, str) or not prompt_file:
+        raise ValueError(
+            "Config field 'task.prompt_file' must be a non-empty string."
+        )
+    config_dir = config_path.expanduser().resolve().parent
+    resolved = (config_dir / prompt_file).resolve()
+    try:
+        resolved.relative_to(config_dir)
+    except ValueError as error:
+        raise ValueError(
+            "Config field 'task.prompt_file' must stay within the config directory."
+        ) from error
+    if not resolved.is_file():
+        raise ValueError(f"Task prompt file does not exist: {resolved}")
+    if resolved.stat().st_size > MAX_TASK_PROMPT_FILE_BYTES:
+        raise ValueError(
+            "Task prompt file exceeds "
+            f"{MAX_TASK_PROMPT_FILE_BYTES} byte limit: {resolved}"
+        )
+    return TaskConfig(prompt_file=resolved)
 
 
 def _optional_int(mapping: dict[str, Any], key: str, field_name: str) -> Optional[int]:
@@ -382,7 +422,13 @@ def load_config(config_path: Path) -> AgentGuardConfig:
     if data.get("repo_template"):
         repo_template = Path(data["repo_template"])
         if not repo_template.is_absolute():
-            repo_template = (Path.cwd() / repo_template).resolve()
+            candidates = [Path.cwd() / repo_template]
+            candidates.extend(parent / repo_template for parent in path.resolve().parents)
+            repo_template = next(
+                (candidate for candidate in candidates if candidate.is_dir()),
+                path.resolve().parent / repo_template,
+            )
+        repo_template = repo_template.resolve()
 
     return AgentGuardConfig(
         task_id=data["task_id"],
@@ -419,6 +465,7 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         secret_patterns=_string_list(data, "secret_patterns"),
         sandbox=_load_sandbox(data),
         benchmark=_load_benchmark_metadata(data),
+        task=_load_task(data, path),
         config_path=path.resolve(),
         mode=mode,
     )

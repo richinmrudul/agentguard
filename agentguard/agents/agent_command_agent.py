@@ -11,6 +11,7 @@ from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.output_limits import limit_output
 from agentguard.instrumentation.test_runner import _build_test_env
 from agentguard.policy.command_policy import evaluate_command_policy
+from agentguard.provenance.manifest import sanitize_arguments, sanitize_text
 
 
 class AgentCommandAgent(Agent):
@@ -36,16 +37,43 @@ class AgentCommandAgent(Agent):
             raise ValueError("Config field 'agent_command' cannot be empty.")
 
         raw_command_text = self._raw_command_text()
-        command_text = f"agent command: {raw_command_text}"
+        raw_display_argv = list(self.config.agent_display_command or argv)
+        display_argv = sanitize_arguments(
+            raw_display_argv,
+            [
+                value
+                for value in self.config.agent_environment.values()
+                if value
+            ],
+        )
+        if self.config.agent_display_command is not None:
+            profile_name = self.config.agent_metadata.get(
+                "profile_name",
+                self.config.agent_name or "external agent",
+            )
+            profile_id = self.config.agent_metadata.get(
+                "profile_id",
+                self.config.agent_name or "unknown",
+            )
+            command_text = (
+                f"agent profile {profile_name} ({profile_id}): "
+                f"{shlex.join(display_argv)}"
+            )
+        else:
+            command_text = f"agent command: {raw_command_text}"
         workdir = self._workdir(repo_dir)
         decision = evaluate_command_policy(
-            command_text=raw_command_text,
+            command_text=(
+                shlex.join(raw_display_argv)
+                if self.config.agent_display_command is not None
+                else raw_command_text
+            ),
             unsafe_patterns=self.config.unsafe_commands,
             mode=self.config.command_policy.mode,
         )
         if not decision.allowed:
             command_tracker.record_preflight_blocked(
-                command=argv,
+                command=display_argv,
                 command_text=command_text,
                 cwd=workdir,
                 matched_patterns=decision.matched_patterns,
@@ -59,6 +87,7 @@ class AgentCommandAgent(Agent):
             repo_dir=repo_dir,
             workdir=workdir,
             argv=argv,
+            display_argv=display_argv,
             command_text=command_text,
             command_tracker=command_tracker,
             preflight_matched_patterns=decision.matched_patterns,
@@ -82,11 +111,19 @@ class AgentCommandAgent(Agent):
         return shlex.join(command)
 
     def _workdir(self, repo_dir: Path) -> Path:
+        if self.config.agent_workdir_path is not None:
+            return self.config.agent_workdir_path
         if self.config.agent_workdir == "config_dir":
             return self.config.config_path.parent
         return repo_dir
 
     def _env(self, repo_dir: Path) -> dict[str, str]:
+        if self.config.agent_environment_isolated:
+            env = dict(self.config.agent_environment)
+            src_path = (repo_dir / "src").resolve()
+            if src_path.exists():
+                env["PYTHONPATH"] = str(src_path)
+            return env
         env = _build_test_env(repo_dir)
         env.update(self.config.agent_environment)
         return env
@@ -96,6 +133,7 @@ class AgentCommandAgent(Agent):
         repo_dir: Path,
         workdir: Path,
         argv: list[str],
+        display_argv: list[str],
         command_text: str,
         command_tracker: CommandTracker,
         preflight_matched_patterns: list[str],
@@ -135,10 +173,21 @@ class AgentCommandAgent(Agent):
             ).strip()
 
         duration_seconds = time.monotonic() - started
+        sensitive_values = [
+            value for value in self.config.agent_environment.values() if value
+        ]
+        if self.config.agent_display_command is not None:
+            sensitive_values.extend(
+                actual
+                for actual, displayed in zip(argv, self.config.agent_display_command)
+                if actual != displayed
+            )
+        stdout = sanitize_text(stdout, sensitive_values)
+        stderr = sanitize_text(stderr, sensitive_values)
         limited_stdout = limit_output(stdout, self.config.max_output_bytes)
         limited_stderr = limit_output(stderr, self.config.max_output_bytes)
         command_tracker.record_executed(
-            command=argv,
+            command=display_argv,
             command_text=command_text,
             cwd=workdir,
             exit_code=exit_code,
