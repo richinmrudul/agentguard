@@ -65,6 +65,12 @@ class CommandPolicyConfig:
 
 
 @dataclass(frozen=True)
+class TaskConfig:
+    prompt: Optional[str] = None
+    prompt_file: Optional[Path] = None
+
+
+@dataclass(frozen=True)
 class AgentGuardConfig:
     task_id: str
     description: str
@@ -85,12 +91,16 @@ class AgentGuardConfig:
     agent_version_command: Optional[Union[str, list[str]]] = None
     agent_model: Optional[str] = None
     agent_metadata: dict[str, ScalarMetadata] = field(default_factory=dict)
+    agent_display_command: Optional[list[str]] = None
+    agent_workdir_path: Optional[Path] = None
+    agent_environment_isolated: bool = False
     agent_workdir: str = "repo_root"
     command_timeout_seconds: int = 60
     max_output_bytes: int = 200000
     command_policy: CommandPolicyConfig = field(default_factory=CommandPolicyConfig)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     benchmark: BenchmarkMetadata = field(default_factory=BenchmarkMetadata)
+    task: Optional[TaskConfig] = None
     mode: str = "benchmark"
 
     def severity_for(self, check_key: str, default: str) -> str:

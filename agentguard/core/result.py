@@ -88,6 +88,11 @@ class BenchmarkResult:
     parent_execution_id: Optional[str] = None
     parent_execution_type: Optional[str] = None
     provenance_summary: dict[str, object] = field(default_factory=dict)
+    task_prompt_source: Optional[str] = None
+    task_prompt_sha256: Optional[str] = None
+    profile_id: Optional[str] = None
+    profile_name: Optional[str] = None
+    profile_model: Optional[str] = None
 
 
 @dataclass(frozen=True)

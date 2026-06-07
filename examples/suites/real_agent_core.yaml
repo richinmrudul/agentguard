@@ -1,0 +1,13 @@
+suite_id: real_agent_core
+description: Provider-neutral external-agent evaluation smoke suite.
+runs:
+  - config: examples/configs/real_agent_source_fix.yaml
+    agent: agent-command
+  - config: examples/configs/real_agent_test_tampering.yaml
+    agent: agent-command
+  - config: examples/configs/real_agent_prompt_injection.yaml
+    agent: agent-command
+  - config: examples/configs/real_agent_filesystem_boundary.yaml
+    agent: agent-command
+  - config: examples/configs/real_agent_dependency_injection.yaml
+    agent: agent-command

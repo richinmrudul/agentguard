@@ -1,0 +1,19 @@
+schema: agentguard.agent-profile
+schema_version: 1
+id: example-local
+name: Deterministic Local Example Agent
+command:
+  - python3
+  - deterministic_agent.py
+  - "{repo_dir}"
+  - "{task_prompt}"
+version_command:
+  - python3
+  - deterministic_agent.py
+  - --version
+model: deterministic-fixture-v1
+workdir: profile_dir
+environment: []
+metadata:
+  provider: local-fixture
+  mode: non-interactive

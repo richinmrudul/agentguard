@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+import yaml
 
 from agentguard import __version__
 from agentguard.benchmarks.registry import (
@@ -35,6 +36,12 @@ from agentguard.history.store import (
     validate_result,
     validate_run_type,
 )
+from agentguard.evaluation.harness import (
+    build_evaluation_plan,
+    format_evaluation_plan,
+    run_evaluation,
+    validate_evaluation,
+)
 from agentguard.provenance.manifest import (
     load_manifest,
     provenance_summary,
@@ -63,6 +70,8 @@ gate_app = typer.Typer(help="CI gate commands for AgentGuard suites.")
 app.add_typer(gate_app, name="gate")
 manifest_app = typer.Typer(help="Inspect and verify execution manifests.")
 app.add_typer(manifest_app, name="manifest")
+evaluate_app = typer.Typer(help="Validate and run external coding-agent profiles.")
+app.add_typer(evaluate_app, name="evaluate")
 
 
 @app.command()
@@ -93,10 +102,138 @@ def manifest_show(
         result = verify_manifest(path)
         if result.exit_code == 2:
             raise ValueError(result.messages[0])
-    except ValueError as error:
+    except (OSError, ValueError, yaml.YAMLError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
     typer.echo(provenance_summary(data))
+
+
+@evaluate_app.command("validate")
+def evaluate_validate(
+    profile: Path = typer.Option(..., "--profile", help="Agent profile YAML."),
+    suite: Path = typer.Option(..., "--suite", help="Benchmark suite YAML."),
+) -> None:
+    """Validate an external-agent profile and suite without executing them."""
+    try:
+        plan = validate_evaluation(profile, suite)
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(
+        f"Valid evaluation: {plan.profile.name} / {plan.suite_id} / "
+        f"{len(plan.runs)} benchmark(s)"
+    )
+
+
+@evaluate_app.command("dry-run")
+def evaluate_dry_run(
+    profile: Path = typer.Option(..., "--profile", help="Agent profile YAML."),
+    suite: Path = typer.Option(..., "--suite", help="Benchmark suite YAML."),
+    category: Optional[str] = typer.Option(None, "--category"),
+    difficulty: Optional[str] = typer.Option(None, "--difficulty"),
+    tags: Optional[list[str]] = typer.Option(None, "--tag"),
+    trials: int = typer.Option(1, "--trials"),
+    workers: int = typer.Option(1, "--workers"),
+) -> None:
+    """Render a sanitized external-agent evaluation plan without execution."""
+    try:
+        filters = suite_filters_from_values(category, difficulty, tags)
+        plan = build_evaluation_plan(
+            profile,
+            suite,
+            filters=filters,
+            trials=trials,
+            workers=workers,
+        )
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(format_evaluation_plan(plan))
+    missing = [
+        name for name in plan.profile.environment if name not in os.environ
+    ]
+    if missing:
+        raise typer.Exit(2)
+
+
+@evaluate_app.command("run")
+def evaluate_run(
+    profile: Path = typer.Option(..., "--profile", help="Agent profile YAML."),
+    suite: Path = typer.Option(..., "--suite", help="Benchmark suite YAML."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm external execution."),
+    category: Optional[str] = typer.Option(None, "--category"),
+    difficulty: Optional[str] = typer.Option(None, "--difficulty"),
+    tags: Optional[list[str]] = typer.Option(None, "--tag"),
+    trials: int = typer.Option(1, "--trials"),
+    workers: int = typer.Option(1, "--workers"),
+    allow_failures: bool = typer.Option(False, "--allow-failures"),
+    output_dir: Optional[Path] = typer.Option(None, "--output-dir"),
+    save_reliability_baseline: Optional[Path] = typer.Option(
+        None, "--save-reliability-baseline"
+    ),
+    compare_reliability_baseline: Optional[Path] = typer.Option(
+        None, "--compare-reliability-baseline"
+    ),
+    min_success_rate: Optional[float] = typer.Option(None, "--min-success-rate"),
+    max_success_rate_drop: float = typer.Option(0, "--max-success-rate-drop"),
+    max_average_score_drop: float = typer.Option(
+        0, "--max-average-score-drop"
+    ),
+    force: bool = typer.Option(False, "--force"),
+) -> None:
+    """Run a confirmed external coding-agent evaluation through matrix mode."""
+    try:
+        filters = suite_filters_from_values(category, difficulty, tags)
+        plan = build_evaluation_plan(
+            profile,
+            suite,
+            filters=filters,
+            trials=trials,
+            workers=workers,
+        )
+        if not yes:
+            typer.echo(format_evaluation_plan(plan))
+            typer.echo("Execution not confirmed; rerun with --yes.", err=True)
+            raise typer.Exit(2)
+        result = run_evaluation(
+            profile,
+            suite,
+            filters=filters,
+            trials=trials,
+            workers=workers,
+            output_dir=output_dir or Path(".agentguard/matrices"),
+            save_reliability_baseline_path=save_reliability_baseline,
+            compare_reliability_baseline_path=compare_reliability_baseline,
+            min_success_rate=min_success_rate,
+            max_success_rate_drop=max_success_rate_drop,
+            max_average_score_drop=max_average_score_drop,
+            force_reliability_baseline=force,
+        )
+    except typer.Exit:
+        raise
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo("AgentGuard External Agent Evaluation")
+    typer.echo(f"Profile: {result.profile_name} ({result.profile_id})")
+    typer.echo(f"Model: {result.profile_model or '-'}")
+    typer.echo(f"Attempts: {result.attempts_executed}")
+    typer.echo(
+        f"Functional success: {result.functional_passed}/"
+        f"{result.attempts_executed} ({result.functional_success_rate}%)"
+    )
+    typer.echo(
+        f"Policy-compliant success: {result.policy_compliant_passed}/"
+        f"{result.attempts_executed} ({result.policy_compliant_success_rate}%)"
+    )
+    typer.echo(
+        f"Unsafe functional successes: {result.unsafe_functional_successes}"
+    )
+    typer.echo(f"Matrix JSON report path: {result.json_report_path}")
+    typer.echo(f"Matrix Markdown report path: {result.markdown_report_path}")
+    typer.echo(f"Matrix manifest path: {result.manifest_path or '-'}")
+    if result.failed and not allow_failures:
+        raise typer.Exit(1)
 
 
 def _format_registry_table(benchmarks: list[BenchmarkRegistryEntry]) -> str:

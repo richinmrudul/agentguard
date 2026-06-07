@@ -20,11 +20,18 @@ from agentguard.checks.unsafe_commands import UnsafeCommandsCheck
 from agentguard.config.loader import load_config
 from agentguard.core.result import (
     BenchmarkResult,
+    CheckResult,
     CommandResult,
+    DiffSummary,
     ReportPaths,
     SandboxMetadata,
 )
-from agentguard.core.timeline import TimelineRecorder
+from agentguard.core.timeline import TimelineEvent, TimelineRecorder
+from agentguard.evaluation.profile import (
+    AgentProfile,
+    render_invocation,
+    resolve_profile_argv,
+)
 from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
 from agentguard.instrumentation.agent_event_reader import (
     DEFAULT_AGENT_EVENT_FILE,
@@ -44,6 +51,7 @@ from agentguard.provenance.manifest import (
     detect_agent_version,
     host_identity,
     policy_identity,
+    sanitize_text,
     source_identity,
     utc_now_iso as manifest_utc_now_iso,
     write_manifest,
@@ -146,11 +154,88 @@ def _failed_local_agent_event(command_tracker: CommandTracker):
             and (
                 event.command_text.startswith("local agent:")
                 or event.command_text.startswith("agent command:")
+                or event.command_text.startswith("agent profile ")
             )
             and event.exit_code != 0
         ):
             return event
     return None
+
+
+def _sanitize_value(value, sensitive_values: list[str]):
+    if isinstance(value, str):
+        return sanitize_text(value, sensitive_values)
+    if isinstance(value, list):
+        return [_sanitize_value(item, sensitive_values) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_value(item, sensitive_values)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _sanitize_profile_evidence(
+    test_result: CommandResult,
+    diff_summary: DiffSummary,
+    check_results: list[CheckResult],
+    command_tracker: CommandTracker,
+    sensitive_values: list[str],
+) -> tuple[
+    CommandResult,
+    DiffSummary,
+    list[CheckResult],
+]:
+    for event in command_tracker.events:
+        event.command = [
+            sanitize_text(argument, sensitive_values) for argument in event.command
+        ]
+        event.command_text = sanitize_text(event.command_text, sensitive_values)
+        event.cwd = sanitize_text(event.cwd, sensitive_values)
+        event.stdout = sanitize_text(event.stdout, sensitive_values)
+        event.stderr = sanitize_text(event.stderr, sensitive_values)
+        if event.reason is not None:
+            event.reason = sanitize_text(event.reason, sensitive_values)
+    return (
+        replace(
+            test_result,
+            command=sanitize_text(test_result.command, sensitive_values),
+            stdout=sanitize_text(test_result.stdout, sensitive_values),
+            stderr=sanitize_text(test_result.stderr, sensitive_values),
+        ),
+        replace(
+            diff_summary,
+            unified_diff=sanitize_text(
+                diff_summary.unified_diff,
+                sensitive_values,
+            ),
+        ),
+        [
+            replace(
+                check,
+                message=sanitize_text(check.message, sensitive_values),
+                evidence=[
+                    sanitize_text(item, sensitive_values)
+                    for item in check.evidence
+                ],
+            )
+            for check in check_results
+        ],
+    )
+
+
+def _sanitize_timeline_events(
+    events: list[TimelineEvent],
+    sensitive_values: list[str],
+) -> list[TimelineEvent]:
+    return [
+        replace(
+            event,
+            message=sanitize_text(event.message, sensitive_values),
+            metadata=_sanitize_value(event.metadata, sensitive_values),
+        )
+        for event in events
+    ]
 
 
 def _agent_for_config(config, agent_name: str) -> Agent:
@@ -215,11 +300,13 @@ def run_benchmark(
     *,
     parent_execution_id: Optional[str] = None,
     parent_execution_type: Optional[str] = None,
+    evaluation_profile: Optional[AgentProfile] = None,
 ) -> BenchmarkResult:
     created_at = manifest_utc_now_iso()
     started = time.monotonic()
     config = load_config(config_path)
-    _validate_agent_config(config, agent_name)
+    if evaluation_profile is None:
+        _validate_agent_config(config, agent_name)
     timeline = TimelineRecorder()
     timeline.add(
         "run_started",
@@ -234,6 +321,41 @@ def run_benchmark(
     )
     command_tracker = CommandTracker()
     command_event_index = 0
+    task_prompt_source = None
+    task_prompt_sha256 = None
+    if evaluation_profile is not None:
+        invocation = render_invocation(evaluation_profile, config, prepared.repo_dir)
+        config = replace(
+            config,
+            agent_command=invocation.argv,
+            agent_display_command=invocation.display_argv,
+            agent_name=evaluation_profile.id,
+            agent_environment=invocation.environment,
+            agent_environment_isolated=True,
+            agent_version_command=(
+                resolve_profile_argv(
+                    evaluation_profile,
+                    evaluation_profile.version_command,
+                )
+                if evaluation_profile.version_command is not None
+                else None
+            ),
+            agent_model=evaluation_profile.model,
+            agent_metadata={
+                **evaluation_profile.metadata,
+                "profile_id": evaluation_profile.id,
+                "profile_name": evaluation_profile.name,
+            },
+            agent_workdir=(
+                "repo_root"
+                if evaluation_profile.workdir == "repo_root"
+                else "config_dir"
+            ),
+            agent_workdir_path=invocation.workdir,
+        )
+        task_prompt_source = invocation.task_prompt.source
+        task_prompt_sha256 = invocation.task_prompt.sha256
+        _validate_agent_config(config, agent_name)
     detected_version, version_status, version_warning = detect_agent_version(config)
     if version_warning is not None:
         warnings.warn(
@@ -358,6 +480,18 @@ def run_benchmark(
             "result": score_result.result,
         },
     )
+    if evaluation_profile is not None:
+        (
+            test_result,
+            diff_summary,
+            check_results,
+        ) = _sanitize_profile_evidence(
+            test_result,
+            diff_summary,
+            check_results,
+            command_tracker,
+            [value for value in config.agent_environment.values() if value],
+        )
     command_log_path = command_tracker.write_json(prepared.run_dir)
 
     reports_dir = prepared.run_dir / "reports"
@@ -385,9 +519,15 @@ def run_benchmark(
             "failed_check_names": failed_check_names,
         },
     )
+    timeline_events = timeline.events
+    if evaluation_profile is not None:
+        timeline_events = _sanitize_timeline_events(
+            timeline_events,
+            [value for value in config.agent_environment.values() if value],
+        )
     partial_result = BenchmarkResult(
         task_id=config.task_id,
-        agent=agent_name,
+        agent=evaluation_profile.id if evaluation_profile else agent_name,
         result=score_result.result,
         score=score_result.score,
         config_path=config.config_path,
@@ -400,7 +540,7 @@ def run_benchmark(
         sandbox=_sandbox_metadata(config),
         benchmark=config.benchmark,
         command_events=command_tracker.events,
-        timeline=timeline.events,
+        timeline=timeline_events,
         execution_id=prepared.run_id,
         parent_execution_id=parent_execution_id,
         parent_execution_type=parent_execution_type,
@@ -409,7 +549,17 @@ def run_benchmark(
             "execution_type": "run",
             "manifest_path": str(report_paths.manifest),
             "parent_execution_id": parent_execution_id,
+            "profile_id": (
+                evaluation_profile.id if evaluation_profile is not None else None
+            ),
+            "task_prompt_source": task_prompt_source,
+            "task_prompt_sha256": task_prompt_sha256,
         },
+        task_prompt_source=task_prompt_source,
+        task_prompt_sha256=task_prompt_sha256,
+        profile_id=evaluation_profile.id if evaluation_profile else None,
+        profile_name=evaluation_profile.name if evaluation_profile else None,
+        profile_model=evaluation_profile.model if evaluation_profile else None,
     )
     json_path = write_json_report(partial_result, reports_dir)
     markdown_path = write_markdown_report(partial_result, reports_dir)
@@ -439,6 +589,11 @@ def run_benchmark(
         parent_execution_id=partial_result.parent_execution_id,
         parent_execution_type=partial_result.parent_execution_type,
         provenance_summary=partial_result.provenance_summary,
+        task_prompt_source=partial_result.task_prompt_source,
+        task_prompt_sha256=partial_result.task_prompt_sha256,
+        profile_id=partial_result.profile_id,
+        profile_name=partial_result.profile_name,
+        profile_model=partial_result.profile_model,
     )
     manifest = ExecutionManifest(
         execution_id=prepared.run_id,
@@ -455,6 +610,11 @@ def run_benchmark(
                 "task_id": config.task_id,
                 "mode": config.mode,
                 "agent_workdir": config.agent_workdir,
+                "profile_id": (
+                    evaluation_profile.id if evaluation_profile is not None else None
+                ),
+                "task_prompt_source": task_prompt_source,
+                "task_prompt_sha256": task_prompt_sha256,
             },
         ),
         agent=agent_identity(

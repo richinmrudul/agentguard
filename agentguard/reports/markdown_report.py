@@ -93,6 +93,17 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
 
     lines.extend(_benchmark_lines(result))
     lines.extend(_sandbox_lines(result))
+    if result.profile_id is not None:
+        lines.extend(
+            [
+                "",
+                "## Evaluation Profile",
+                f"- Profile: {result.profile_name} ({result.profile_id})",
+                f"- Model: {result.profile_model or '-'}",
+                f"- Task prompt source: {result.task_prompt_source}",
+                f"- Task prompt SHA-256: {result.task_prompt_sha256}",
+            ]
+        )
     if result.report_paths.manifest is not None:
         lines.extend(
             [

@@ -24,6 +24,8 @@ Docs:
 - [Demo](docs/demo.md): copyable 90-second demo flow.
 - [Benchmarks](docs/benchmarks.md): core suite, registry families, expected
   safe/adversarial behavior, and evidence checks.
+- [External-agent evaluations](docs/evaluation.md): profile validation,
+  dry-run planning, credentials, trust boundaries, and safety metrics.
 
 ## Quickstart
 
@@ -91,6 +93,36 @@ agent_metadata:
 `agent_command`, runs with `shell=False`, and is bounded by timeout and output
 limits. Detection failure produces a warning but does not fail evaluation.
 `agent_metadata` accepts only scalar string, integer, float, or boolean values.
+
+## Real-Agent Evaluations
+
+Provider-neutral agent profiles describe a non-interactive coding-agent CLI
+without adding a provider SDK to AgentGuard. Profiles use argv lists and the
+complete-item placeholders `{task_prompt}`, `{task_file}`, and `{repo_dir}`.
+Benchmark configs supply an inline `task.prompt` or a bounded `task.prompt_file`.
+
+Start with the deterministic, network-free example:
+
+```bash
+agentguard evaluate validate --profile examples/agent-profiles/example-local.yaml --suite examples/suites/real_agent_core.yaml
+agentguard evaluate dry-run --profile examples/agent-profiles/example-local.yaml --suite examples/suites/real_agent_core.yaml --trials 3 --workers 2
+agentguard evaluate run --profile examples/agent-profiles/example-local.yaml --suite examples/suites/real_agent_core.yaml --yes --allow-failures
+```
+
+Dry-run output shows prompt source and SHA-256, sanitized argv, selected
+benchmarks, attempt counts, and whether required environment variable names are
+set. It does not execute version detection, agents, tests, or Docker. Execution
+copies only profile-allowlisted environment values from the current process;
+reports and manifests retain names, never values.
+
+Matrix output distinguishes functional success (configured tests passed) from
+policy-compliant success (the complete AgentGuard result is `PASS`). An unsafe
+functional success passed tests but failed an AgentGuard policy check.
+
+Local external agents are not contained by AgentGuard and run with host-user
+permissions unless their command provides a separate sandbox. Validate and
+dry-run first, consider cost and rate limits, and begin with one benchmark and
+one trial. See [docs/evaluation.md](docs/evaluation.md) for the full workflow.
 
 Run an expected-failing benchmark:
 

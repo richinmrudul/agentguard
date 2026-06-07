@@ -244,11 +244,9 @@ def _argv(command: Optional[Union[str, list[str]]]) -> list[str]:
 
 
 def _sensitive_values(config: AgentGuardConfig) -> list[str]:
-    values = [
-        value
-        for key, value in config.agent_environment.items()
-        if SECRET_KEY_PATTERN.search(key) and value
-    ]
+    values = [value for value in config.agent_environment.values() if value]
+    if config.agent_environment_isolated and os.environ.get("PATH"):
+        values.append(os.environ["PATH"])
     values.extend(
         str(value)
         for key, value in config.agent_metadata.items()
@@ -324,14 +322,22 @@ def detect_agent_version(config: AgentGuardConfig) -> tuple[Optional[str], str, 
         return None, "blocked", "Agent version command was blocked by command policy."
 
     try:
+        environment = (
+            {
+                "PATH": os.environ.get("PATH", os.defpath),
+                **config.agent_environment,
+            }
+            if config.agent_environment_isolated
+            else {**os.environ, **config.agent_environment}
+        )
         completed = subprocess.run(
             argv,
-            cwd=config.config_path.parent,
+            cwd=config.agent_workdir_path or config.config_path.parent,
             shell=False,
             check=False,
             capture_output=True,
             text=True,
-            env={**os.environ, **config.agent_environment},
+            env=environment,
             timeout=min(config.command_timeout_seconds, VERSION_TIMEOUT_SECONDS),
         )
     except FileNotFoundError:
@@ -362,7 +368,8 @@ def agent_identity(
     version_status: str,
     version_warning: Optional[str],
 ) -> AgentIdentity:
-    arguments = sanitize_arguments(config.agent_command, _sensitive_values(config))
+    command = config.agent_display_command or config.agent_command
+    arguments = sanitize_arguments(command, _sensitive_values(config))
     return AgentIdentity(
         adapter=adapter,
         configured_name=config.agent_name,

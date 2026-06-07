@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import stdev
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from agentguard.config.loader import load_config
@@ -63,6 +63,11 @@ class MatrixGroupSummary:
     confidence_interval_95: ConfidenceInterval
     combinations_with_any_pass: int
     combinations_with_all_passes: int
+    functional_passed: int = 0
+    functional_success_rate: float = 0.0
+    policy_compliant_passed: int = 0
+    policy_compliant_success_rate: float = 0.0
+    unsafe_functional_successes: int = 0
 
 
 @dataclass(frozen=True)
@@ -123,6 +128,10 @@ class MatrixRowSummary:
     error: Optional[str] = None
     trial_index: int = 1
     trial_count: int = 1
+    functional_passed: bool = False
+    task_prompt_source: Optional[str] = None
+    task_prompt_sha256: Optional[str] = None
+    profile_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -163,6 +172,14 @@ class MatrixResult:
     baseline_comparison: Optional[BaselineComparison] = None
     reliability_baseline_path: Optional[Path] = None
     reliability_comparison: Optional[ReliabilityComparison] = None
+    functional_passed: int = 0
+    functional_success_rate: float = 0.0
+    policy_compliant_passed: int = 0
+    policy_compliant_success_rate: float = 0.0
+    unsafe_functional_successes: int = 0
+    profile_id: Optional[str] = None
+    profile_name: Optional[str] = None
+    profile_model: Optional[str] = None
 
 
 def normalize_matrix_agents(raw_agents: Optional[list[str]]) -> list[str]:
@@ -252,6 +269,17 @@ def _row_from_result(
         tags=result.benchmark.tags,
         trial_index=trial_index,
         trial_count=trial_count,
+        functional_passed=(
+            getattr(
+                getattr(result, "test_result", None),
+                "exit_code",
+                0 if result.result == "PASS" else 1,
+            )
+            == 0
+        ),
+        task_prompt_source=getattr(result, "task_prompt_source", None),
+        task_prompt_sha256=getattr(result, "task_prompt_sha256", None),
+        profile_id=getattr(result, "profile_id", None),
     )
 
 
@@ -289,10 +317,13 @@ def _run_matrix_row(
     trial_index: int,
     trial_count: int,
     matrix_id: str,
+    benchmark_runner: Optional[
+        Callable[[Path, str, str], BenchmarkResult]
+    ] = None,
 ) -> MatrixRowSummary:
     try:
         return _row_from_result(
-            _invoke_run_benchmark(run, matrix_id),
+            _invoke_run_benchmark(run, matrix_id, benchmark_runner),
             trial_index,
             trial_count,
         )
@@ -302,7 +333,13 @@ def _run_matrix_row(
         return _error_row(run, error, trial_index, trial_count)
 
 
-def _invoke_run_benchmark(run: SuiteRunConfig, matrix_id: str) -> BenchmarkResult:
+def _invoke_run_benchmark(
+    run: SuiteRunConfig,
+    matrix_id: str,
+    benchmark_runner: Optional[Callable[[Path, str, str], BenchmarkResult]],
+) -> BenchmarkResult:
+    if benchmark_runner is not None:
+        return benchmark_runner(run.config_path, run.agent, matrix_id)
     parameters = inspect.signature(run_benchmark).parameters
     if "parent_execution_id" not in parameters:
         return run_benchmark(run.config_path, run.agent)
@@ -319,10 +356,19 @@ def _run_serial_attempts(
     trial_count: int,
     fail_fast: bool,
     matrix_id: str,
+    benchmark_runner: Optional[
+        Callable[[Path, str, str], BenchmarkResult]
+    ] = None,
 ) -> tuple[list[MatrixRowSummary], bool]:
     rows = []
     for run, trial_index in trial_runs:
-        row = _run_matrix_row(run, trial_index, trial_count, matrix_id)
+        row = _run_matrix_row(
+            run,
+            trial_index,
+            trial_count,
+            matrix_id,
+            benchmark_runner,
+        )
         rows.append(row)
         if fail_fast and row.result == "FAIL":
             break
@@ -335,6 +381,9 @@ def _run_parallel_attempts(
     workers: int,
     fail_fast: bool,
     matrix_id: str,
+    benchmark_runner: Optional[
+        Callable[[Path, str, str], BenchmarkResult]
+    ] = None,
 ) -> tuple[list[MatrixRowSummary], bool]:
     rows_by_index: dict[int, MatrixRowSummary] = {}
     next_index = 0
@@ -353,6 +402,7 @@ def _run_parallel_attempts(
             trial_index,
             trial_count,
             matrix_id,
+            benchmark_runner,
         )
         futures[future] = next_index
         next_index += 1
@@ -396,6 +446,10 @@ def _group_summary(rows: list[MatrixRowSummary]) -> MatrixGroupSummary:
     total = len(rows)
     scores = [row.score for row in rows]
     combinations = _combination_summaries(rows)
+    functional_passed = sum(row.functional_passed for row in rows)
+    unsafe_functional_successes = sum(
+        row.functional_passed and row.result != "PASS" for row in rows
+    )
     return MatrixGroupSummary(
         runs=total,
         attempts=total,
@@ -413,6 +467,11 @@ def _group_summary(rows: list[MatrixRowSummary]) -> MatrixGroupSummary:
         combinations_with_all_passes=sum(
             summary.all_passed for summary in combinations.values()
         ),
+        functional_passed=functional_passed,
+        functional_success_rate=round((functional_passed / total) * 100, 1),
+        policy_compliant_passed=passed,
+        policy_compliant_success_rate=round((passed / total) * 100, 1),
+        unsafe_functional_successes=unsafe_functional_successes,
     )
 
 
@@ -606,6 +665,28 @@ def _write_markdown_report(result: MatrixResult) -> Path:
         f"Pass rate: {result.pass_rate}%",
         f"Average score: {result.average_score}",
     ]
+    if result.profile_id is not None:
+        lines.extend(
+            [
+                f"Profile: {result.profile_name} ({result.profile_id})",
+                f"Model: {result.profile_model or '-'}",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Safety Outcomes",
+            "",
+            f"Functional passed: {result.functional_passed}",
+            f"Functional success rate: {result.functional_success_rate}%",
+            f"Policy-compliant passed: {result.policy_compliant_passed}",
+            (
+                "Policy-compliant success rate: "
+                f"{result.policy_compliant_success_rate}%"
+            ),
+            f"Unsafe functional successes: {result.unsafe_functional_successes}",
+        ]
+    )
     if result.filters.has_filters():
         lines.append(f"Filters: {format_suite_filters(result.filters)}")
     if result.reliability_baseline_path is not None:
@@ -618,20 +699,23 @@ def _write_markdown_report(result: MatrixResult) -> Path:
                 "### Per-Agent Reliability",
                 "",
                 (
-                    "| Agent | Attempts | Passed | Failed | Success Rate | "
-                    "Average Score | Minimum | Maximum | Std Dev | Any Pass | "
-                    "All Passes | 95% CI |"
+                    "| Agent | Attempts | Functional | Policy-Compliant | "
+                    "Unsafe Functional | Success Rate | Average Score | "
+                    "Minimum | Maximum | Std Dev | Any Pass | All Passes | 95% CI |"
                 ),
                 (
                     "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
-                    "---:|---|"
+                    "---:|---:|---|"
                 ),
             ]
         )
         for agent, summary in result.per_agent_reliability.items():
             lines.append(
-                f"| {agent} | {summary.attempts} | {summary.passed} | "
-                f"{summary.failed} | {summary.success_rate}% | "
+                f"| {agent} | {summary.attempts} | "
+                f"{result.per_agent[agent].functional_passed} | "
+                f"{result.per_agent[agent].policy_compliant_passed} | "
+                f"{result.per_agent[agent].unsafe_functional_successes} | "
+                f"{summary.success_rate}% | "
                 f"{summary.average_score} | {summary.minimum_score} | "
                 f"{summary.maximum_score} | {summary.score_standard_deviation} | "
                 f"{summary.combinations_with_any_pass} | "
@@ -677,16 +761,20 @@ def _write_markdown_report(result: MatrixResult) -> Path:
             "",
             (
                 "| Task | Benchmark | Category | Difficulty | Agent | Trial | "
-                "Result | Score | Failed Checks |"
+                "Functional | Policy | Score | Prompt | Failed Checks |"
             ),
-            "|---|---|---|---|---|---:|---|---:|---|",
+            "|---|---|---|---|---|---:|---|---|---:|---|---|",
         ]
     )
     for row in result.runs:
         lines.append(
             f"| {row.task_id} | {row.benchmark_id or '-'} | "
             f"{row.category or '-'} | {row.difficulty or '-'} | {row.agent} | "
-            f"{row.trial_index}/{row.trial_count} | {row.result} | {row.score} | "
+            f"{row.trial_index}/{row.trial_count} | "
+            f"{'PASS' if row.functional_passed else 'FAIL'} | {row.result} | "
+            f"{row.score} | "
+            f"{row.task_prompt_source or '-'} "
+            f"{row.task_prompt_sha256 or '-'} | "
             f"{_format_checks(row.failed_checks)} |"
         )
         if row.error:
@@ -833,6 +921,13 @@ def run_matrix(
     force_reliability_baseline: bool = False,
     workers: int = 1,
     fail_fast: bool = False,
+    benchmark_runner: Optional[
+        Callable[[Path, str, str], BenchmarkResult]
+    ] = None,
+    profile_id: Optional[str] = None,
+    profile_name: Optional[str] = None,
+    profile_model: Optional[str] = None,
+    resolve_suite_config_paths: bool = False,
 ) -> MatrixResult:
     created_at = manifest_utc_now_iso()
     if isinstance(trials, bool) or not isinstance(trials, int) or trials <= 0:
@@ -843,7 +938,10 @@ def run_matrix(
         max_success_rate_drop=max_success_rate_drop,
         max_average_score_drop=max_average_score_drop,
     )
-    config = load_suite_config(path)
+    config = load_suite_config(
+        path,
+        resolve_config_paths=resolve_suite_config_paths,
+    )
     matrix_id = _matrix_id(config.suite_id)
     active_filters = filters or SuiteFilters()
     filtered_runs = filter_suite_runs(config.runs, active_filters)
@@ -862,6 +960,7 @@ def run_matrix(
             trials,
             fail_fast,
             matrix_id,
+            benchmark_runner,
         )
     else:
         rows, stopped_early = _run_parallel_attempts(
@@ -870,6 +969,7 @@ def run_matrix(
             effective_workers,
             fail_fast,
             matrix_id,
+            benchmark_runner,
         )
     duration_seconds = round(time.monotonic() - started, 6)
     total_runs = len(rows)
@@ -878,6 +978,10 @@ def run_matrix(
     failed = result_counts.get("FAIL", 0)
     report_dir = matrices_root / matrix_id
     combinations = _combination_summaries(rows)
+    functional_passed = sum(row.functional_passed for row in rows)
+    unsafe_functional_successes = sum(
+        row.functional_passed and row.result != "PASS" for row in rows
+    )
     result = MatrixResult(
         matrix_id=matrix_id,
         suite_id=config.suite_id,
@@ -913,6 +1017,14 @@ def run_matrix(
         combinations=combinations,
         filters=active_filters,
         reliability_baseline_path=save_reliability_baseline_path,
+        functional_passed=functional_passed,
+        functional_success_rate=round((functional_passed / total_runs) * 100, 1),
+        policy_compliant_passed=passed,
+        policy_compliant_success_rate=round((passed / total_runs) * 100, 1),
+        unsafe_functional_successes=unsafe_functional_successes,
+        profile_id=profile_id,
+        profile_name=profile_name,
+        profile_model=profile_model,
     )
     if compare_baseline_path is not None:
         result = replace(
@@ -1010,6 +1122,14 @@ def run_matrix(
             "attempts_planned": result.attempts_planned,
             "attempts_executed": result.attempts_executed,
             "stopped_early": result.stopped_early,
+            "functional_passed": result.functional_passed,
+            "functional_success_rate": result.functional_success_rate,
+            "policy_compliant_passed": result.policy_compliant_passed,
+            "policy_compliant_success_rate": result.policy_compliant_success_rate,
+            "unsafe_functional_successes": result.unsafe_functional_successes,
+            "profile_id": result.profile_id,
+            "profile_name": result.profile_name,
+            "profile_model": result.profile_model,
         },
     )
     if result.manifest_path is not None:

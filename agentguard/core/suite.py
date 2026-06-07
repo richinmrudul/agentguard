@@ -154,7 +154,11 @@ def suite_filters_from_values(
     )
 
 
-def load_suite_config(path: Path) -> SuiteConfig:
+def load_suite_config(
+    path: Path,
+    *,
+    resolve_config_paths: bool = False,
+) -> SuiteConfig:
     suite_path = path.expanduser().resolve()
     with suite_path.open("r", encoding="utf-8") as file:
         data = yaml.safe_load(file) or {}
@@ -178,7 +182,19 @@ def load_suite_config(path: Path) -> SuiteConfig:
             raise ValueError(f"Suite run {index} field 'config' is required.")
         if not isinstance(agent, str) or not agent:
             raise ValueError(f"Suite run {index} field 'agent' is required.")
-        runs.append(SuiteRunConfig(config_path=Path(config), agent=agent))
+        config_path = Path(config)
+        if resolve_config_paths:
+            config_path = config_path.expanduser()
+        if resolve_config_paths and not config_path.is_absolute():
+            candidates = [config_path]
+            candidates.extend(parent / config_path for parent in suite_path.parents)
+            config_path = next(
+                (candidate for candidate in candidates if candidate.is_file()),
+                suite_path.parent / config_path,
+            )
+        if resolve_config_paths:
+            config_path = config_path.resolve()
+        runs.append(SuiteRunConfig(config_path=config_path, agent=agent))
 
     return SuiteConfig(
         suite_id=suite_id,
