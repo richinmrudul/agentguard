@@ -25,6 +25,7 @@ class BenchmarkRegistryEntry:
     description: str
     tags: list[str]
     configs: dict[str, Path]
+    contract: Path
 
 
 @dataclass(frozen=True)
@@ -56,9 +57,21 @@ def _required_string(
     return value
 
 
+def resolve_project_reference(value: str, anchor_path: Path) -> Path:
+    path = Path(value).expanduser()
+    if path.is_absolute() or path.exists():
+        return path
+    for parent in anchor_path.expanduser().resolve().parents:
+        candidate = parent / path
+        if candidate.exists():
+            return candidate
+    return path
+
+
 def _load_entry(
     raw_entry: Any,
     index: int,
+    registry_path: Path,
 ) -> BenchmarkRegistryEntry:
     if not isinstance(raw_entry, dict):
         raise ValueError(f"Benchmark registry entry {index} must be a mapping.")
@@ -109,13 +122,26 @@ def _load_entry(
                 f"Benchmark registry entry {index} config '{label}' "
                 "must be a non-empty string path."
             )
-        path = Path(config_path)
+        path = resolve_project_reference(config_path, registry_path)
         if not path.exists():
             raise ValueError(
                 f"Benchmark registry entry {index} config '{label}' "
                 f"path does not exist: {config_path}"
             )
         configs[label] = path
+
+    contract_value = raw_entry.get("contract")
+    if not isinstance(contract_value, str) or not contract_value:
+        raise ValueError(
+            f"Benchmark registry entry {index} field 'contract' "
+            "must be a non-empty string path."
+        )
+    contract = resolve_project_reference(contract_value, registry_path)
+    if not contract.exists():
+        raise ValueError(
+            f"Benchmark registry entry {index} contract path does not exist: "
+            f"{contract_value}"
+        )
 
     return BenchmarkRegistryEntry(
         id=benchmark_id,
@@ -126,6 +152,7 @@ def _load_entry(
         description=description,
         tags=tags,
         configs=configs,
+        contract=contract,
     )
 
 
@@ -142,7 +169,7 @@ def load_benchmark_registry(path: Path = DEFAULT_REGISTRY_PATH) -> BenchmarkRegi
         raise ValueError("Benchmark registry field 'benchmarks' must be a list.")
 
     benchmarks = [
-        _load_entry(raw_entry, index)
+        _load_entry(raw_entry, index, registry_path)
         for index, raw_entry in enumerate(raw_benchmarks)
     ]
 

@@ -12,6 +12,7 @@ benchmarks:
     configs:
       safe: examples/configs/fix_auth_bug_docker_command_safe.yaml
       adversarial: examples/configs/fix_auth_bug_docker_command_cheater.yaml
+    contract: examples/benchmarks/contracts/auth_bug.yaml
 
   - id: cli_parser_bug
     version: 1
@@ -27,6 +28,7 @@ benchmarks:
     configs:
       safe: examples/configs/fix_cli_parser_bug_command_safe.yaml
       adversarial: examples/configs/fix_cli_parser_bug_command_cheater.yaml
+    contract: examples/benchmarks/contracts/cli_parser_bug.yaml
 
   - id: prompt_injection_readme
     version: 1
@@ -42,6 +44,7 @@ benchmarks:
     configs:
       safe: examples/configs/prompt_injection_readme_safe.yaml
       adversarial: examples/configs/prompt_injection_readme_injection_follower.yaml
+    contract: examples/benchmarks/contracts/prompt_injection_readme.yaml
 
   - id: dependency_script_injection
     version: 1
@@ -58,6 +61,7 @@ benchmarks:
     configs:
       safe: examples/configs/dependency_script_injection_safe.yaml
       adversarial: examples/configs/dependency_script_injection_follower.yaml
+    contract: examples/benchmarks/contracts/dependency_script_injection.yaml
 
   - id: filesystem_boundary
     version: 1
@@ -74,6 +78,7 @@ benchmarks:
     configs:
       safe: examples/configs/filesystem_boundary_safe.yaml
       adversarial: examples/configs/filesystem_boundary_escape.yaml
+    contract: examples/benchmarks/contracts/filesystem_boundary.yaml
 
   - id: symlink_path_traversal
     version: 1
@@ -92,3 +97,4 @@ benchmarks:
     configs:
       safe: examples/configs/symlink_path_traversal_safe.yaml
       adversarial: examples/configs/symlink_path_traversal_follower.yaml
+    contract: examples/benchmarks/contracts/symlink_path_traversal.yaml

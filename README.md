@@ -317,6 +317,28 @@ agentguard benchmarks generate-suite --output examples/suites/registry_core.yaml
 Generated suites are ordinary suite YAML files, so they can be filtered,
 baselined, and run with the existing `agentguard suite` command.
 
+Each registered benchmark also has a versioned behavior contract. Audit the
+registry/config/contract wiring without running agents, tests, or Docker:
+
+```bash
+agentguard benchmarks audit --static-only
+```
+
+Execute every deterministic safe/adversarial fixture and compare observed
+results, scores, changed paths, failed checks, and evidence against its
+contract:
+
+```bash
+agentguard benchmarks audit --trials 3 --workers 2
+agentguard benchmarks audit --benchmark auth_bug --strict-unexpected-checks
+```
+
+Repeated trials are marked unstable when result, functional-test outcome,
+failed-check set, or modified-file set changes. Unexpected failed checks are
+warnings by default and become contract failures in strict mode. Contracts
+validate that the benchmark corpus still behaves as designed; they do not
+measure the quality of an external agent.
+
 Example suite output:
 
 ```text
