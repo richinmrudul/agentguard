@@ -36,6 +36,31 @@ pip install -e ".[dev]"
 agentguard --help
 ```
 
+## Installation Verification
+
+For development, install AgentGuard and its test tools in editable mode:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+Verify a real package build and installed console script:
+
+```bash
+bash scripts/package_smoke.sh
+```
+
+The smoke script builds a wheel and source distribution, installs the wheel with
+the existing `dev` extra in an isolated temporary virtual environment, and runs
+the installed `agentguard` CLI. The `dev` extra supplies `pytest` for the copied
+repo example's test command; normal runtime use only needs the base install. The
+`examples/` directory is repository-relative and is not included in the Python
+package, so the script explicitly copies those files into its temporary working
+directory. Docker is only required for Docker-backed benchmarks; the package
+smoke workflow uses the local `mock-safe` benchmark.
+
 Run the demo:
 
 ```bash
