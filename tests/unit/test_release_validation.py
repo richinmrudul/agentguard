@@ -9,8 +9,10 @@ from pathlib import Path
 
 import pytest
 import yaml
+from typer.testing import CliRunner
 
 from agentguard import __version__
+from agentguard.cli.main import app
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +20,11 @@ PYPROJECT = ROOT / "pyproject.toml"
 BUILD_SCRIPT = ROOT / "scripts/build_release.sh"
 VALIDATION_SCRIPT = ROOT / "scripts/validate_release_artifacts.py"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
+LICENSE = ROOT / "LICENSE"
+CHANGELOG = ROOT / "CHANGELOG.md"
+README = ROOT / "README.md"
+RELEASE_DOC = ROOT / "docs/release.md"
+EVALUATION_DOC = ROOT / "docs/evaluation.md"
 SUPPORTED_PYTHON = ["3.9", "3.10", "3.11", "3.12"]
 
 
@@ -55,8 +62,9 @@ def test_project_metadata_declares_tested_python_range() -> None:
         "for AI coding agents."
     )
     assert project["dependencies"] == ["PyYAML>=6.0.0", "typer>=0.12.0"]
-    assert "license" not in project
+    assert project["license"] == {"file": "LICENSE"}
     classifiers = set(project["classifiers"])
+    assert "License :: OSI Approved :: MIT License" in classifiers
     for version in SUPPORTED_PYTHON:
         assert f"Programming Language :: Python :: {version}" in classifiers
     assert "Programming Language :: Python :: 3.13" not in classifiers
@@ -69,9 +77,40 @@ def test_project_metadata_declares_tested_python_range() -> None:
 
 def test_package_version_sources_agree() -> None:
     project_version = _load_pyproject()["project"]["version"]
+    result = CliRunner().invoke(app, ["--version"])
 
     assert project_version == __version__
     assert installed_version("agentguard") == __version__
+    assert result.exit_code == 0
+    assert result.output.strip() == project_version
+
+
+def test_release_readiness_documents_and_license_agree() -> None:
+    license_text = LICENSE.read_text(encoding="utf-8")
+    changelog = CHANGELOG.read_text(encoding="utf-8")
+    readme = README.read_text(encoding="utf-8")
+    release_doc = RELEASE_DOC.read_text(encoding="utf-8")
+    evaluation_doc = EVALUATION_DOC.read_text(encoding="utf-8")
+
+    assert license_text.startswith("MIT License\n")
+    assert "Copyright (c) 2026 Richin Mrudul" in license_text
+    assert "## Unreleased" in changelog
+    assert "## v0.1.0 - Draft" in changelog
+    for target in ("LICENSE", "CHANGELOG.md", "docs/release.md"):
+        assert f"]({target})" in readme
+    assert "no external-agent benchmark results are" in evaluation_doc
+    assert "published with v0.1.0" in evaluation_doc
+
+    forbidden_publish_commands = (
+        "twine upload",
+        "uv publish",
+        "hatch publish",
+        "flit publish",
+        "poetry publish",
+        "gh release create",
+        "git tag ",
+    )
+    assert not any(command in release_doc for command in forbidden_publish_commands)
 
 
 def test_build_release_script_is_executable_and_never_publishes() -> None:

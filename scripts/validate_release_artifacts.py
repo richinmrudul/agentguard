@@ -33,6 +33,7 @@ FORBIDDEN_NAMES = {
     "history.db",
 }
 EXPECTED_NAME = "agentguard"
+EXPECTED_LICENSE_FILE = "LICENSE"
 
 
 def _wheel_members(path: Path) -> set[str]:
@@ -96,6 +97,7 @@ def _assert_metadata(label: str, metadata: email.message.Message) -> str:
     name = metadata.get("Name")
     version = metadata.get("Version")
     requires_python = metadata.get("Requires-Python")
+    license_files = metadata.get_all("License-File", [])
     if name != EXPECTED_NAME:
         raise AssertionError(f"{label} has unexpected name: {name!r}")
     if not version:
@@ -103,6 +105,10 @@ def _assert_metadata(label: str, metadata: email.message.Message) -> str:
     if requires_python != ">=3.9":
         raise AssertionError(
             f"{label} has unexpected Requires-Python: {requires_python!r}"
+        )
+    if EXPECTED_LICENSE_FILE not in license_files:
+        raise AssertionError(
+            f"{label} is missing License-File metadata: {license_files!r}"
         )
     return version
 
@@ -115,6 +121,10 @@ def validate_artifacts(wheel_path: Path, sdist_path: Path) -> None:
     _assert_required_members("sdist", sdist_members)
     _assert_forbidden_members("wheel", wheel_members)
     _assert_forbidden_members("sdist", sdist_members)
+    if not any(member.endswith("/LICENSE") for member in wheel_members):
+        raise AssertionError("wheel is missing the MIT license file")
+    if EXPECTED_LICENSE_FILE not in sdist_members:
+        raise AssertionError("sdist is missing the MIT license file")
 
     wheel_version = _assert_metadata("wheel", _metadata_from_wheel(wheel_path))
     sdist_version = _assert_metadata("sdist", _metadata_from_sdist(sdist_path))

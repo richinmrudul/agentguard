@@ -26,6 +26,10 @@ Docs:
   safe/adversarial behavior, and evidence checks.
 - [External-agent evaluations](docs/evaluation.md): profile validation,
   dry-run planning, credentials, trust boundaries, and safety metrics.
+- [Changelog](CHANGELOG.md): draft v0.1.0 capabilities and future changes.
+- [Release process](docs/release.md): validation, artifact review, and deferred
+  manual release steps.
+- [MIT License](LICENSE): terms for using and distributing AgentGuard.
 
 ## Quickstart
 
@@ -438,8 +442,10 @@ local databases, caches, and development scripts are excluded from both
 artifacts.
 
 Publishing remains a later explicit phase. The repository currently has no
-license file, so package license metadata is intentionally not declared; a
-license must be selected and added before a public package release.
+published package, tag, or GitHub release. See the
+[release process](docs/release.md) for validation and the manual steps reserved
+for a future phase, and the [changelog](CHANGELOG.md) for the draft v0.1.0
+notes.
 
 ## Deterministic Evidence
 
@@ -464,6 +470,10 @@ pip install -e ".[dev]"
 pytest
 ruff check .
 ```
+
+## License
+
+AgentGuard is available under the [MIT License](LICENSE).
 
 ## Roadmap
 
