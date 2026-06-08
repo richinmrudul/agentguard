@@ -19,6 +19,7 @@ def _result_debug(result) -> str:
     )
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_prompt_injection_safe_agent_passes() -> None:
     result = run_benchmark(
@@ -35,6 +36,7 @@ def test_prompt_injection_safe_agent_passes() -> None:
     )
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_prompt_injection_follower_fails_with_secret_evidence() -> None:
     result = run_benchmark(

@@ -38,6 +38,15 @@ agentguard --help
 
 ## Installation Verification
 
+AgentGuard supports Python 3.9, 3.10, 3.11, and 3.12. CI tests each listed
+version; versions not listed are not currently claimed as supported.
+
+Install from a source checkout:
+
+```bash
+python -m pip install .
+```
+
 For development, install AgentGuard and its test tools in editable mode:
 
 ```bash
@@ -46,20 +55,35 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-Verify a real package build and installed console script:
+Build and validate a wheel and source distribution without publishing:
+
+```bash
+bash scripts/build_release.sh
+```
+
+Install the resulting wheel:
+
+```bash
+python -m pip install dist/agentguard-*.whl
+agentguard --version
+```
+
+Verify a real package build and installed console script in a disposable
+environment:
 
 ```bash
 bash scripts/package_smoke.sh
 ```
 
-The smoke script builds a wheel and source distribution, installs the wheel with
-the existing `dev` extra in an isolated temporary virtual environment, and runs
-the installed `agentguard` CLI. The `dev` extra supplies `pytest` for the copied
-repo example's test command; normal runtime use only needs the base install. The
-`examples/` directory is repository-relative and is not included in the Python
-package, so the script explicitly copies those files into its temporary working
-directory. Docker is only required for Docker-backed benchmarks; the package
-smoke workflow uses the local `mock-safe` benchmark.
+The smoke script builds a wheel and source distribution, installs only the
+wheel's runtime dependencies in an isolated temporary virtual environment, and
+runs the installed `agentguard` CLI. The `examples/` directory is
+repository-relative and is not included in the Python package, so the script
+explicitly copies those files into its temporary working directory before
+running a local-command auth benchmark. Docker is only required for
+Docker-backed benchmarks; the package smoke workflow and compatibility test
+matrix use non-Docker coverage. The full integration CI job runs Docker-gated
+tests once on Python 3.11.
 
 Run the demo:
 
@@ -391,6 +415,31 @@ failures, and append a compact GitHub step summary.
 
 - [docs/github-actions.md](docs/github-actions.md): CI mode and workflow setup
 - [docs/action.md](docs/action.md): reusable composite action inputs and example
+
+The repository CI tests Python 3.9 through 3.12, runs Ruff once, runs the full
+Docker-backed integration suite on Python 3.11, and builds validated wheel and
+source-distribution artifacts. Those artifacts are uploaded to the workflow run
+for inspection only. CI does not publish to PyPI, create tags, or create GitHub
+releases.
+
+## Release Status
+
+Release validation is intentionally separate from publication:
+
+```bash
+bash scripts/build_release.sh
+bash scripts/package_smoke.sh
+```
+
+The wheel contains the importable `agentguard` package and console entry point.
+The source distribution additionally contains build metadata and the README.
+Repository examples, docs, tests, workflows, generated `.agentguard` data,
+local databases, caches, and development scripts are excluded from both
+artifacts.
+
+Publishing remains a later explicit phase. The repository currently has no
+license file, so package license metadata is intentionally not declared; a
+license must be selected and added before a public package release.
 
 ## Deterministic Evidence
 

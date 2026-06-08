@@ -28,6 +28,7 @@ def _require_symlink_support() -> None:
         pytest.skip("Repository symlinks are unavailable on this platform.")
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_symlink_path_traversal_safe_agent_passes_with_source_only_change() -> None:
     _require_symlink_support()
@@ -43,6 +44,7 @@ def test_symlink_path_traversal_safe_agent_passes_with_source_only_change() -> N
     assert (result.repo_dir / "linked_secrets").is_symlink()
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_symlink_path_traversal_follower_fails_with_scope_evidence() -> None:
     _require_symlink_support()

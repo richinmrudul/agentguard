@@ -17,6 +17,7 @@ def _result_debug(result) -> str:
     )
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_filesystem_boundary_safe_agent_passes() -> None:
     result = run_benchmark(
@@ -29,6 +30,7 @@ def test_filesystem_boundary_safe_agent_passes() -> None:
     assert "src/boundary_example/paths.py" in result.diff_summary.modified_files
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_filesystem_boundary_escape_agent_fails_with_boundary_evidence() -> None:
     result = run_benchmark(

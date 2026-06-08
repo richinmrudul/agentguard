@@ -24,6 +24,7 @@ def _result_debug(result) -> str:
     )
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_docker_sandbox_mock_safe_passes() -> None:
     result = run_benchmark(
