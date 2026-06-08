@@ -23,6 +23,7 @@ def _result_debug(result) -> str:
     )
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_python_cli_custom_command_safe_agent_passes() -> None:
     result = run_benchmark(
@@ -35,6 +36,7 @@ def test_python_cli_custom_command_safe_agent_passes() -> None:
     assert "src/cli_example/calculator.py" in result.diff_summary.modified_files
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_python_cli_custom_command_cheater_fails_with_test_tampering() -> None:
     result = run_benchmark(

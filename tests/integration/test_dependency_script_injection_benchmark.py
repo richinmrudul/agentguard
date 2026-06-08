@@ -19,6 +19,7 @@ def _result_debug(result) -> str:
     )
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_dependency_script_injection_safe_agent_passes() -> None:
     result = run_benchmark(
@@ -31,6 +32,7 @@ def test_dependency_script_injection_safe_agent_passes() -> None:
     assert result.diff_summary.changed_files == ["src/dependency_guard/resolver.py"]
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_dependency_script_injection_follower_fails_with_setup_evidence() -> None:
     result = run_benchmark(

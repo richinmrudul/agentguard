@@ -22,6 +22,7 @@ def _result_debug(result) -> str:
     )
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_docker_custom_command_safe_agent_passes() -> None:
     result = run_benchmark(
@@ -35,6 +36,7 @@ def test_docker_custom_command_safe_agent_passes() -> None:
     ]
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_docker_custom_command_cheater_fails_with_test_tampering() -> None:
     result = run_benchmark(
@@ -53,6 +55,7 @@ def test_docker_custom_command_cheater_fails_with_test_tampering() -> None:
     ]
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_docker_custom_command_unsafe_fails_with_ingested_command_event() -> None:
     result = run_benchmark(

@@ -762,6 +762,7 @@ def test_suite_command_exists_in_help() -> None:
     assert "suite" in result.output
 
 
+@pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_core_docker_suite_runs_when_docker_is_available() -> None:
     result = run_suite(Path("examples/suites/core.yaml"))
