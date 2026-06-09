@@ -29,6 +29,10 @@ from agentguard.diagnostics.overhead import (
     DEFAULT_CONFIG_PATH as DEFAULT_OVERHEAD_CONFIG_PATH,
 )
 from agentguard.diagnostics.overhead import run_overhead_benchmark
+from agentguard.diagnostics.mutations import (
+    DEFAULT_CATALOG_PATH as DEFAULT_MUTATION_CATALOG_PATH,
+)
+from agentguard.diagnostics.mutations import run_mutation_audit
 from agentguard.history.store import (
     HistoryRecord,
     HistoryStats,
@@ -77,6 +81,8 @@ manifest_app = typer.Typer(help="Inspect and verify execution manifests.")
 app.add_typer(manifest_app, name="manifest")
 evaluate_app = typer.Typer(help="Validate and run external coding-agent profiles.")
 app.add_typer(evaluate_app, name="evaluate")
+diagnostics_app = typer.Typer(help="Run deterministic AgentGuard diagnostics.")
+app.add_typer(diagnostics_app, name="diagnostics")
 
 
 def _version_callback(value: bool) -> None:
@@ -218,6 +224,79 @@ def benchmark_overhead_command(
         "Limitations: machine/workload specific; filesystem caches are not "
         "fully controlled; no universal performance claim is implied."
     )
+
+
+@diagnostics_app.command("mutations")
+def diagnostics_mutations_command(
+    catalog: Path = typer.Option(
+        DEFAULT_MUTATION_CATALOG_PATH,
+        "--catalog",
+        help="Versioned mutation catalog YAML.",
+    ),
+    mutations: Optional[list[str]] = typer.Option(
+        None,
+        "--mutation",
+        help="Mutation IDs to run. Repeat or use commas.",
+    ),
+    category: Optional[str] = typer.Option(
+        None,
+        "--category",
+        help="Run only mutations in this category.",
+    ),
+    output_dir: Optional[Path] = typer.Option(
+        None,
+        "--output-dir",
+        help="Root directory for mutation audit artifacts.",
+    ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Fail on any additional unexpected failed check.",
+    ),
+    allow_detection_failures: bool = typer.Option(
+        False,
+        "--allow-detection-failures",
+        help="Exit 0 while preserving detection failures in reports.",
+    ),
+) -> None:
+    """Audit check detection behavior with controlled repository mutations."""
+    try:
+        result = run_mutation_audit(
+            catalog,
+            mutation_ids=mutations,
+            category=category,
+            output_dir=output_dir,
+            strict=strict,
+        )
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    typer.echo("AgentGuard Policy Mutation Audit")
+    typer.echo(f"Mutations: {result.total_mutations}")
+    typer.echo(f"Safe mutations: {result.safe_mutations}")
+    typer.echo(f"Unsafe mutations: {result.unsafe_mutations}")
+    typer.echo(
+        "Controlled mutation detection rate: "
+        f"{result.controlled_mutation_detection_rate:.2f}%"
+    )
+    typer.echo(f"Safe-fixture pass rate: {result.safe_fixture_pass_rate:.2f}%")
+    typer.echo(f"Missed detections: {result.missed_detections}")
+    typer.echo(f"Forbidden detections: {result.forbidden_detections}")
+    typer.echo(f"Unexpected detections: {result.unexpected_detections}")
+    typer.echo("")
+    typer.echo("Check | Expected | Observed | Misses | Unexpected")
+    typer.echo("--- | ---: | ---: | ---: | ---:")
+    for check in result.per_check:
+        typer.echo(
+            f"{check.check} | {check.expected_detections} | "
+            f"{check.observed_detections} | {check.misses} | "
+            f"{check.unexpected_detections}"
+        )
+    typer.echo(f"JSON report path: {result.json_report_path}")
+    typer.echo(f"Markdown report path: {result.markdown_report_path}")
+    if result.has_failures and not allow_detection_failures:
+        raise typer.Exit(1)
 
 
 @manifest_app.command("verify")
