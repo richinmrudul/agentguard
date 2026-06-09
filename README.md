@@ -26,6 +26,8 @@ Docs:
   safe/adversarial behavior, and evidence checks.
 - [External-agent evaluations](docs/evaluation.md): profile validation,
   dry-run planning, credentials, trust boundaries, and safety metrics.
+- [Performance diagnostics](docs/performance.md): deterministic overhead
+  methodology, reproduction, interpretation, and limitations.
 - [Changelog](CHANGELOG.md): draft v0.1.0 capabilities and future changes.
 - [Release process](docs/release.md): validation, artifact review, and deferred
   manual release steps.
@@ -94,6 +96,15 @@ Run the demo:
 ```bash
 scripts/demo.sh
 ```
+
+Measure instrumentation overhead with the deterministic local fixture:
+
+```bash
+agentguard benchmark-overhead --iterations 10 --warmups 2
+```
+
+The JSON and Markdown results are machine- and workload-specific diagnostics,
+not universal performance claims. See [docs/performance.md](docs/performance.md).
 
 Run a safe Docker-backed benchmark:
 
