@@ -25,6 +25,10 @@ from agentguard.core.suite import (
     run_suite,
     suite_filters_from_values,
 )
+from agentguard.diagnostics.overhead import (
+    DEFAULT_CONFIG_PATH as DEFAULT_OVERHEAD_CONFIG_PATH,
+)
+from agentguard.diagnostics.overhead import run_overhead_benchmark
 from agentguard.history.store import (
     HistoryRecord,
     HistoryStats,
@@ -98,6 +102,122 @@ def main(
 def version() -> None:
     """Print the AgentGuard version."""
     typer.echo(__version__)
+
+
+@app.command("benchmark-overhead")
+def benchmark_overhead_command(
+    config_path: Path = typer.Option(
+        DEFAULT_OVERHEAD_CONFIG_PATH,
+        "--config",
+        help="Deterministic local benchmark config.",
+    ),
+    agent: str = typer.Option(
+        "mock-safe",
+        "--agent",
+        help="Deterministic local agent to execute.",
+    ),
+    iterations: int = typer.Option(
+        10,
+        "--iterations",
+        help="Measured paired iterations.",
+    ),
+    warmups: int = typer.Option(
+        2,
+        "--warmups",
+        help="Warmup pairs excluded from statistics.",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        help="JSON output path; Markdown uses the same stem.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite existing JSON and Markdown output.",
+    ),
+    no_history: bool = typer.Option(
+        False,
+        "--no-history",
+        help="Exclude AgentGuard history writing from the measured workload.",
+    ),
+    no_manifest: bool = typer.Option(
+        False,
+        "--no-manifest",
+        help="Exclude AgentGuard manifest writing from the measured workload.",
+    ),
+) -> None:
+    """Measure AgentGuard overhead against direct deterministic execution."""
+    if iterations <= 0:
+        raise typer.BadParameter(
+            "iterations must be positive.",
+            param_hint="--iterations",
+        )
+    if warmups < 0:
+        raise typer.BadParameter(
+            "warmups must be non-negative.",
+            param_hint="--warmups",
+        )
+    try:
+        result = run_overhead_benchmark(
+            config_path,
+            agent,
+            iterations=iterations,
+            warmups=warmups,
+            output_path=output,
+            force=force,
+            record_history_enabled=not no_history,
+            write_manifest_enabled=not no_manifest,
+        )
+    except (FileExistsError, OSError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    summary = result.data["summary"]
+    config = result.data["config"]
+    assert isinstance(summary, dict)
+    assert isinstance(config, dict)
+    direct = summary["direct_seconds"]
+    guarded = summary["agentguard_seconds"]
+    overhead = summary["absolute_overhead_seconds"]
+    relative = summary["relative_overhead_percent"]
+    slowdown = summary["slowdown_ratio"]
+    throughput = summary["throughput_runs_per_minute"]
+    assert isinstance(direct, dict)
+    assert isinstance(guarded, dict)
+    assert isinstance(overhead, dict)
+    assert isinstance(relative, dict)
+    assert isinstance(slowdown, dict)
+    assert isinstance(throughput, dict)
+
+    typer.echo("AgentGuard Instrumentation Overhead")
+    typer.echo(f"Workload/config: {config['task_id']} / {config['path']}")
+    typer.echo(f"Agent: {result.data['agent']}")
+    typer.echo(
+        f"Iterations: {result.data['iterations']} measured, "
+        f"{result.data['warmups']} warmups"
+    )
+    typer.echo(f"Direct median: {float(direct['median']):.6f}s")
+    typer.echo(f"AgentGuard median: {float(guarded['median']):.6f}s")
+    typer.echo(
+        f"Median absolute overhead: {float(overhead['median']):.6f}s"
+    )
+    typer.echo(
+        f"Median relative overhead: {float(relative['median']):.2f}%"
+    )
+    typer.echo(f"Slowdown ratio: {float(slowdown['median']):.3f}x")
+    typer.echo(
+        "Throughput: "
+        f"direct {float(throughput['direct_median']):.2f} runs/minute, "
+        "AgentGuard "
+        f"{float(throughput['agentguard_median']):.2f} runs/minute"
+    )
+    typer.echo(f"JSON output: {result.paths.json}")
+    typer.echo(f"Markdown output: {result.paths.markdown}")
+    typer.echo(
+        "Limitations: machine/workload specific; filesystem caches are not "
+        "fully controlled; no universal performance claim is implied."
+    )
 
 
 @manifest_app.command("verify")

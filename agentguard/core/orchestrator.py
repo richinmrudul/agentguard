@@ -1,8 +1,9 @@
 import time
 import warnings
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
-from typing import Optional
+from typing import ContextManager, Optional
 
 from agentguard.agents.agent_command_agent import AgentCommandAgent
 from agentguard.agents.base import Agent
@@ -27,6 +28,7 @@ from agentguard.core.result import (
     SandboxMetadata,
 )
 from agentguard.core.timeline import TimelineEvent, TimelineRecorder
+from agentguard.core.timing import StageTimingRecorder
 from agentguard.evaluation.profile import (
     AgentProfile,
     render_invocation,
@@ -294,6 +296,15 @@ def _record_run_history(result: BenchmarkResult) -> None:
         )
 
 
+def _measure_stage(
+    timing_recorder: Optional[StageTimingRecorder],
+    stage: str,
+) -> ContextManager[None]:
+    if timing_recorder is None:
+        return nullcontext()
+    return timing_recorder.measure(stage)
+
+
 def run_benchmark(
     config_path: Path,
     agent_name: str,
@@ -301,10 +312,16 @@ def run_benchmark(
     parent_execution_id: Optional[str] = None,
     parent_execution_type: Optional[str] = None,
     evaluation_profile: Optional[AgentProfile] = None,
+    timing_recorder: Optional[StageTimingRecorder] = None,
+    record_history_enabled: bool = True,
+    write_manifest_enabled: bool = True,
 ) -> BenchmarkResult:
+    if timing_recorder is not None:
+        timing_recorder.start_total()
     created_at = manifest_utc_now_iso()
     started = time.monotonic()
-    config = load_config(config_path)
+    with _measure_stage(timing_recorder, "configuration"):
+        config = load_config(config_path)
     if evaluation_profile is None:
         _validate_agent_config(config, agent_name)
     timeline = TimelineRecorder()
@@ -313,7 +330,8 @@ def run_benchmark(
         f"Run started for task {config.task_id} with agent {agent_name}",
         {"task_id": config.task_id, "agent": agent_name},
     )
-    prepared = RepoManager().prepare(config, agent_name)
+    with _measure_stage(timing_recorder, "workspace_preparation"):
+        prepared = RepoManager().prepare(config, agent_name)
     timeline.add(
         "repo_prepared",
         "Prepared isolated repo workspace",
@@ -356,7 +374,8 @@ def run_benchmark(
         task_prompt_source = invocation.task_prompt.source
         task_prompt_sha256 = invocation.task_prompt.sha256
         _validate_agent_config(config, agent_name)
-    detected_version, version_status, version_warning = detect_agent_version(config)
+    with _measure_stage(timing_recorder, "agent_setup"):
+        detected_version, version_status, version_warning = detect_agent_version(config)
     if version_warning is not None:
         warnings.warn(
             f"AgentGuard agent version detection: {version_warning}",
@@ -366,7 +385,8 @@ def run_benchmark(
 
     agent = _agent_for_config(config, agent_name)
     timeline.add("agent_started", f"Agent {agent_name} started", {"agent": agent_name})
-    agent.run(prepared.repo_dir, command_tracker)
+    with _measure_stage(timing_recorder, "agent_execution"):
+        agent.run(prepared.repo_dir, command_tracker)
     timeline.add(
         "agent_completed",
         f"Agent {agent_name} completed",
@@ -430,10 +450,11 @@ def run_benchmark(
             f"Tests started: {config.test_command}",
             {"command": config.test_command},
         )
-        test_result = _test_runner(config, command_tracker).run(
-            prepared.repo_dir,
-            config.test_command,
-        )
+        with _measure_stage(timing_recorder, "test_execution"):
+            test_result = _test_runner(config, command_tracker).run(
+                prepared.repo_dir,
+                config.test_command,
+            )
         timeline.add(
             "tests_completed",
             f"Tests completed with exit code {test_result.exit_code}",
@@ -444,6 +465,7 @@ def run_benchmark(
             command_tracker,
             command_event_index,
         )
+    policy_started = timing_recorder.now() if timing_recorder is not None else None
     diff_summary = collect_diff(prepared.repo_dir)
     timeline.add(
         "diff_collected",
@@ -464,6 +486,10 @@ def run_benchmark(
         for check in default_checks()
     ]
     score_result = score_checks(check_results)
+    if timing_recorder is not None and policy_started is not None:
+        timing_recorder.stages["policy_check_evaluation"] = (
+            timing_recorder.now() - policy_started
+        )
     failed_check_names = [check.name for check in check_results if not check.passed]
     blocking_failures = [
         check.name
@@ -492,14 +518,19 @@ def run_benchmark(
             command_tracker,
             [value for value in config.agent_environment.values() if value],
         )
-    command_log_path = command_tracker.write_json(prepared.run_dir)
+    with _measure_stage(timing_recorder, "report_writing"):
+        command_log_path = command_tracker.write_json(prepared.run_dir)
 
     reports_dir = prepared.run_dir / "reports"
     report_paths = ReportPaths(
         json=reports_dir / "report.json",
         markdown=reports_dir / "report.md",
         command_log=command_log_path,
-        manifest=prepared.run_dir / "manifest.json",
+        manifest=(
+            prepared.run_dir / "manifest.json"
+            if write_manifest_enabled
+            else None
+        ),
     )
     timeline.add(
         "reports_written",
@@ -561,8 +592,9 @@ def run_benchmark(
         profile_name=evaluation_profile.name if evaluation_profile else None,
         profile_model=evaluation_profile.model if evaluation_profile else None,
     )
-    json_path = write_json_report(partial_result, reports_dir)
-    markdown_path = write_markdown_report(partial_result, reports_dir)
+    with _measure_stage(timing_recorder, "report_writing"):
+        json_path = write_json_report(partial_result, reports_dir)
+        markdown_path = write_markdown_report(partial_result, reports_dir)
 
     result = BenchmarkResult(
         task_id=partial_result.task_id,
@@ -630,10 +662,24 @@ def run_benchmark(
         parent_execution_id=parent_execution_id,
         parent_execution_type=parent_execution_type,
     )
-    if write_manifest(manifest, report_paths.manifest) is None:
+    if write_manifest_enabled:
+        with _measure_stage(timing_recorder, "manifest_writing"):
+            if (
+                report_paths.manifest is None
+                or write_manifest(manifest, report_paths.manifest) is None
+            ):
+                result = replace(
+                    result,
+                    report_paths=replace(result.report_paths, manifest=None),
+                )
+    else:
         result = replace(
             result,
             report_paths=replace(result.report_paths, manifest=None),
         )
-    _record_run_history(result)
+    if record_history_enabled:
+        with _measure_stage(timing_recorder, "history_writing"):
+            _record_run_history(result)
+    if timing_recorder is not None:
+        timing_recorder.finish_total()
     return result
