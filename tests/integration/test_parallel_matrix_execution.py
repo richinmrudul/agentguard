@@ -307,6 +307,14 @@ def test_runtime_failure_does_not_cancel_other_attempts(
     assert result.stopped_early is False
     assert result.failed == 1
     assert result.passed == 4
+    failed_row = next(row for row in result.runs if row.error)
+    assert failed_row.error == "RuntimeError: controlled failure"
+    report = json.loads(result.json_report_path.read_text(encoding="utf-8"))
+    report_row = next(row for row in report["runs"] if row["error"])
+    assert report_row["error"] == "RuntimeError: controlled failure"
+    markdown = result.markdown_report_path.read_text(encoding="utf-8")
+    assert "Execution error for parallel_task / mock-safe" in markdown
+    assert "RuntimeError: controlled failure" in markdown
 
 
 @pytest.mark.parametrize("failing_run_number", [1, 2])

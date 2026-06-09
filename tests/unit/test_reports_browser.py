@@ -74,6 +74,14 @@ def test_invalid_json_is_skipped(tmp_path: Path, monkeypatch) -> None:
     assert reports[0].id == "valid"
 
 
+def test_non_object_report_is_skipped(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / ".agentguard/runs/list/reports/report.json"
+    _write_json(path, ["not", "an", "object"], 100)
+
+    assert discover_reports() == []
+
+
 def test_latest_selects_newest_report(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     _write_run_report(tmp_path, "old", mtime=100)
@@ -146,6 +154,53 @@ def test_cli_invalid_limit_exits_two(tmp_path: Path, monkeypatch) -> None:
 
     assert result.exit_code == 2
     assert "limit must be positive" in result.output
+
+
+def test_cli_invalid_report_type_exits_two_without_traceback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["reports", "list", "--type", "matrix"])
+
+    assert result.exit_code == 2
+    assert "report type must be one of: ci, run, suite" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_show_rejects_conflicting_or_missing_selector(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    report_path = _write_run_report(tmp_path, "run")
+
+    conflicting = runner.invoke(
+        app,
+        ["reports", "show", str(report_path), "--latest"],
+    )
+    missing = runner.invoke(app, ["reports", "show"])
+
+    assert conflicting.exit_code == 2
+    assert "not both" in conflicting.output
+    assert missing.exit_code == 2
+    assert "provide a report path or use --latest" in missing.output
+
+
+def test_cli_show_invalid_report_exits_two_without_traceback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "invalid.json"
+    path.write_text("{invalid", encoding="utf-8")
+
+    result = runner.invoke(app, ["reports", "show", str(path)])
+
+    assert result.exit_code == 2
+    assert "Error:" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_cli_show_latest_with_no_reports_exits_nonzero(
@@ -249,7 +304,7 @@ def _write_ci_report(
     return _write_json(path, data, mtime)
 
 
-def _write_json(path: Path, data: dict, mtime: int) -> Path:
+def _write_json(path: Path, data: object, mtime: int) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data), encoding="utf-8")
     os.utime(path, (mtime, mtime))

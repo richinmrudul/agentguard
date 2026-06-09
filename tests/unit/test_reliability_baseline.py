@@ -198,6 +198,16 @@ def test_suite_baseline_schema_is_rejected(tmp_path: Path) -> None:
         load_matrix_reliability_baseline(path)
 
 
+def test_corrupt_reliability_metrics_are_rejected_with_context(tmp_path: Path) -> None:
+    path = write_matrix_reliability_baseline(_result(tmp_path), tmp_path / "base.json")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["overall"]["failed"] = 99
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid reliability metrics for overall"):
+        load_matrix_reliability_baseline(path)
+
+
 def test_matching_comparison_has_no_regression(tmp_path: Path) -> None:
     result = _result(tmp_path)
     path = write_matrix_reliability_baseline(result, tmp_path / "baseline.json")
@@ -320,6 +330,33 @@ def test_missing_and_new_combinations(tmp_path: Path) -> None:
     assert comparison.has_regressions is True
     assert len(comparison.missing_combinations) == 1
     assert len(comparison.new_combinations) == 1
+
+
+def test_subset_comparison_can_ignore_missing_baseline_combinations(
+    tmp_path: Path,
+) -> None:
+    baseline = _result(
+        tmp_path,
+        [
+            _combination(tmp_path, task_id="auth", benchmark_id="auth"),
+            _combination(tmp_path, task_id="prompt", benchmark_id="prompt"),
+        ],
+    )
+    path = write_matrix_reliability_baseline(baseline, tmp_path / "baseline.json")
+    current = _result(
+        tmp_path,
+        [_combination(tmp_path, task_id="auth", benchmark_id="auth")],
+    )
+
+    comparison = compare_matrix_reliability(
+        current,
+        path,
+        reliability_thresholds(),
+        only_compare_current_combinations=True,
+    )
+
+    assert comparison.has_regressions is False
+    assert comparison.missing_combinations == []
 
 
 def test_minimum_success_rate_applies_overall_and_per_combination(
