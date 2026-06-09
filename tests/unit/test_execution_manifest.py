@@ -16,9 +16,11 @@ from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.suite import run_suite
 from agentguard.history.store import init_history_db, list_history
 from agentguard.provenance.manifest import (
+    MANIFEST_SCHEMA,
     agent_identity,
     detect_agent_version,
     git_identity,
+    load_manifest,
     sanitize_arguments,
     sha256_file,
     verify_manifest,
@@ -386,6 +388,51 @@ def test_manifest_verify_exit_codes_for_matching_changed_missing_and_invalid(
     cli_result = runner.invoke(app, ["manifest", "verify", str(invalid)])
     assert cli_result.exit_code == 2
     assert "Traceback" not in cli_result.output
+
+
+def test_manifest_validation_rejects_non_object_and_invalid_structure(
+    tmp_path: Path,
+) -> None:
+    non_object = tmp_path / "list.json"
+    non_object.write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="root must be an object"):
+        load_manifest(non_object)
+
+    invalid_schema = tmp_path / "invalid-schema.json"
+    invalid_schema.write_text(
+        json.dumps({"schema": f"{MANIFEST_SCHEMA}.invalid"}),
+        encoding="utf-8",
+    )
+    result = verify_manifest(invalid_schema)
+
+    assert result.status == "invalid"
+    assert result.exit_code == 2
+    assert result.messages == ["Invalid manifest schema identifier."]
+
+
+def test_manifest_verification_reports_changed_and_missing_references(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_config(tmp_path)
+    run = run_benchmark(config_path, "mock-safe")
+    manifest_path = Path(run.report_paths.manifest)
+
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8") + "\n# changed\n",
+        encoding="utf-8",
+    )
+    changed = verify_manifest(manifest_path)
+    assert changed.status == "changed"
+    assert any(
+        message.startswith("CHANGED configuration:") for message in changed.messages
+    )
+
+    config_path.unlink()
+    missing = verify_manifest(manifest_path)
+    assert missing.status == "changed"
+    assert any(
+        message.startswith("MISSING configuration:") for message in missing.messages
+    )
 
 
 def test_history_migrates_manifest_path_column(tmp_path: Path) -> None:

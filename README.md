@@ -30,6 +30,8 @@ Docs:
   methodology, reproduction, interpretation, and limitations.
 - [Detection quality](docs/detection-quality.md): controlled policy mutations,
   check sensitivity, safe-fixture behavior, and limitations.
+- [Testing and quality](docs/testing.md): test layers, coverage measurement,
+  CI gate, and known limits.
 - [Changelog](CHANGELOG.md): draft v0.1.0 capabilities and future changes.
 - [Release process](docs/release.md): validation, artifact review, and deferred
   manual release steps.
@@ -492,6 +494,7 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 ruff check .
+bash scripts/coverage.sh
 ```
 
 ## License
