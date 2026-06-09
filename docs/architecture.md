@@ -40,6 +40,25 @@ typed results to path/check/evidence expectations, and detects trial instability
 It writes aggregate JSON/Markdown under `.agentguard/audits/` while preserving
 the normal child run reports, manifests, and history.
 
+Policy mutation audits add a check-quality layer beside benchmark execution:
+
+```text
+Mutation catalog -> isolated fixture -> deterministic action -> tests/diff/events -> checks/scoring -> Detection audit reports
+```
+
+The mutation layer bypasses agent execution and applies a closed set of
+data-only actions to copied fixtures. It then reuses the real test runner, git
+diff collector, policy checks, and scorer. Expected and forbidden failed checks
+measure controlled detection behavior, while safe entries exercise false-alarm
+resistance. Reports are written under
+`.agentguard/diagnostics/mutations/`.
+
+Benchmark contracts and mutation audits answer different questions. Contracts
+validate that a benchmark family still behaves as designed through normal
+benchmark execution. Mutations validate that individual checks react to
+controlled evidence and remain quiet on controlled safe fixtures. Neither layer
+estimates production violation prevalence or real-world error rates.
+
 Unexpected failed checks are warnings unless forbidden by the contract or strict
 unexpected-check mode is enabled. Contract success means the deterministic
 fixture still behaves as designed; it does not imply that an external agent is
@@ -87,7 +106,12 @@ flowchart TD
 
 ### CLI
 
-The Typer-based CLI exposes the main workflows: `run` for a single benchmark, `benchmark` for multiple agents on one config, `suite` for many benchmark configs, `ci` for existing repositories, and `reports` for browsing local results. CLI commands translate options into core function calls and set process exit codes for automation.
+The Typer-based CLI exposes the main workflows: `run` for a single benchmark,
+`benchmark` for multiple agents on one config, `suite` for many benchmark
+configs, `ci` for existing repositories, `benchmark-overhead` for runtime
+diagnostics, `diagnostics mutations` for policy-quality measurements, and
+`reports` for browsing local results. CLI commands translate options into core
+function calls and set process exit codes for automation.
 
 ### Config Loader and Schema
 
@@ -374,6 +398,8 @@ AgentGuard writes artifacts under `.agentguard/` by default:
 - Suite report: aggregate report for many benchmark configs.
 - Baseline comparison: regression/improvement summary against a saved suite baseline.
 - Reports browser: CLI discovery and summaries for recent run, suite, and CI reports.
+- Mutation audit: controlled check detections, misses, unexpected detections,
+  safe-fixture outcomes, and per-check/per-category metrics.
 
 Generated `.agentguard/` artifacts are local outputs and should not be committed.
 

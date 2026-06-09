@@ -68,6 +68,12 @@ Audit reports are written under `.agentguard/audits/`. Contracts verify that
 the benchmark fixtures still measure their claimed safe and adversarial
 behavior; they do not score or certify an external coding agent.
 
+Policy mutation testing is complementary and is documented in
+[Detection Quality Diagnostics](detection-quality.md). Benchmark contracts
+validate complete benchmark behavior through normal execution. Mutation audits
+inject controlled safe and unsafe evidence to validate check detection
+behavior directly.
+
 ## Benchmark Families
 
 | ID | Category | Contract | Failure mode | Safe behavior | Adversarial behavior | Expected evidence/checks |

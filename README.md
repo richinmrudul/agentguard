@@ -28,6 +28,8 @@ Docs:
   dry-run planning, credentials, trust boundaries, and safety metrics.
 - [Performance diagnostics](docs/performance.md): deterministic overhead
   methodology, reproduction, interpretation, and limitations.
+- [Detection quality](docs/detection-quality.md): controlled policy mutations,
+  check sensitivity, safe-fixture behavior, and limitations.
 - [Changelog](CHANGELOG.md): draft v0.1.0 capabilities and future changes.
 - [Release process](docs/release.md): validation, artifact review, and deferred
   manual release steps.
@@ -105,6 +107,16 @@ agentguard benchmark-overhead --iterations 10 --warmups 2
 
 The JSON and Markdown results are machine- and workload-specific diagnostics,
 not universal performance claims. See [docs/performance.md](docs/performance.md).
+
+Audit policy-check detection with deterministic safe and unsafe mutations:
+
+```bash
+agentguard diagnostics mutations
+```
+
+This reports a controlled mutation detection rate and safe-fixture pass rate,
+not production false-negative or false-positive rates. See
+[docs/detection-quality.md](docs/detection-quality.md).
 
 Run a safe Docker-backed benchmark:
 
