@@ -76,6 +76,12 @@ a real-world false-negative rate. Safe-fixture pass rate is not a real-world
 false-positive rate. Synthetic mutations do not estimate production violation
 prevalence.
 
+To compare how required controlled detections change when exactly one check is
+prevented from executing, use the
+[policy ablation study](policy-ablation.md). Mutation audit establishes whether
+the catalog expectations hold; ablation uses that valid control to calculate
+escapes, unique contribution, redundant coverage, and check overlap.
+
 ## Expectations And Strict Mode
 
 A mutation fails when an expected detection is missed or a forbidden detection
@@ -140,6 +146,11 @@ Mutation testing validates the check layer itself by injecting controlled
 evidence and asking whether the expected checks react without alarming on the
 safe fixtures. The two layers are complementary: contracts protect benchmark
 meaning, while mutations protect detection behavior.
+
+Policy ablation is a third, dependent layer. It reuses the mutation audit
+execution and compares control to one-disabled-check conditions. Its
+contribution metrics describe only the controlled catalog and do not turn
+mutation results into production security claims.
 
 ## Limitations
 

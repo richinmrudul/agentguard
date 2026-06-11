@@ -33,6 +33,7 @@ from agentguard.diagnostics.mutations import (
     DEFAULT_CATALOG_PATH as DEFAULT_MUTATION_CATALOG_PATH,
 )
 from agentguard.diagnostics.mutations import run_mutation_audit
+from agentguard.diagnostics.ablation import run_policy_ablation
 from agentguard.history.store import (
     HistoryRecord,
     HistoryStats,
@@ -296,6 +297,105 @@ def diagnostics_mutations_command(
     typer.echo(f"JSON report path: {result.json_report_path}")
     typer.echo(f"Markdown report path: {result.markdown_report_path}")
     if result.has_failures and not allow_detection_failures:
+        raise typer.Exit(1)
+
+
+@diagnostics_app.command("ablation")
+def diagnostics_ablation_command(
+    catalog: Path = typer.Option(
+        DEFAULT_MUTATION_CATALOG_PATH,
+        "--catalog",
+        help="Versioned mutation catalog YAML.",
+    ),
+    checks: Optional[list[str]] = typer.Option(
+        None,
+        "--check",
+        help="Checks to study. Repeat or use commas.",
+    ),
+    mutations: Optional[list[str]] = typer.Option(
+        None,
+        "--mutation",
+        help="Mutation IDs to run. Repeat or use commas.",
+    ),
+    category: Optional[str] = typer.Option(
+        None,
+        "--category",
+        help="Run only mutations in this category.",
+    ),
+    trials: int = typer.Option(1, "--trials", help="Trials per condition."),
+    workers: int = typer.Option(1, "--workers", help="Concurrent trial workers."),
+    output_dir: Optional[Path] = typer.Option(
+        None,
+        "--output-dir",
+        help="Root directory for ablation study artifacts.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace an existing study directory if IDs collide.",
+    ),
+    allow_study_failures: bool = typer.Option(
+        False,
+        "--allow-study-failures",
+        help="Exit 0 while preserving invalid, unstable, or failed findings.",
+    ),
+) -> None:
+    """Measure controlled policy-check contribution by single-check ablation."""
+    try:
+        result = run_policy_ablation(
+            catalog,
+            check_values=checks,
+            mutation_ids=mutations,
+            category=category,
+            trials=trials,
+            workers=workers,
+            output_dir=output_dir,
+            force=force,
+        )
+    except (FileExistsError, OSError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    typer.echo("AgentGuard Policy Ablation Study")
+    typer.echo(
+        f"Control valid: {'yes' if result.control_validity.valid else 'no'}"
+    )
+    typer.echo(
+        "Controlled mutation detection rate: "
+        f"{float(result.control_metrics['controlled_mutation_detection_rate']):.2f}%"
+    )
+    typer.echo(
+        "Safe-fixture pass rate: "
+        f"{float(result.control_metrics['safe_fixture_pass_rate']):.2f}%"
+    )
+    typer.echo("")
+    typer.echo(
+        "Disabled Check | Escaped Mutations | Detection Delta | "
+        "Newly Passing Unsafe | Safe Pass Delta"
+    )
+    typer.echo("--- | ---: | ---: | ---: | ---:")
+    for condition in result.conditions[1:]:
+        typer.echo(
+            f"{condition.disabled_check} | "
+            f"{len(condition.escaped_unsafe_mutations)} | "
+            f"{condition.detection_rate_delta_percentage_points:+.2f} pp | "
+            f"{len(condition.newly_passing_unsafe_mutations)} | "
+            f"{condition.safe_fixture_pass_rate_delta_percentage_points:+.2f} pp"
+        )
+    typer.echo("")
+    typer.echo("Unique contribution:")
+    if result.check_contributions is None:
+        typer.echo("suppressed because the control is invalid")
+    else:
+        for contribution in result.check_contributions:
+            typer.echo(
+                f"{contribution.check}: "
+                f"{contribution.detections_uniquely_attributable} unique, "
+                f"{contribution.detections_redundantly_covered} redundant"
+            )
+    typer.echo(f"JSON report path: {result.json_report_path}")
+    typer.echo(f"Markdown report path: {result.markdown_report_path}")
+    if result.has_study_failures and not allow_study_failures:
         raise typer.Exit(1)
 
 

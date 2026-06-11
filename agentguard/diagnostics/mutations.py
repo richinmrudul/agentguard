@@ -16,6 +16,8 @@ from agentguard.benchmarks.registry import (
 )
 from agentguard.config.loader import load_config
 from agentguard.config.schema import AgentGuardConfig
+from agentguard.checks.base import Check
+from agentguard.checks.registry import registered_check_names
 from agentguard.core.orchestrator import default_checks
 from agentguard.core.result import CheckResult, CommandResult, DiffSummary
 from agentguard.instrumentation.command_tracker import CommandEvent, CommandTracker
@@ -36,15 +38,7 @@ AUDIT_SCHEMA_VERSION = 1
 DEFAULT_CATALOG_PATH = Path("examples/mutations/catalog.yaml")
 DEFAULT_OUTPUT_DIR = Path(".agentguard/diagnostics/mutations")
 MUTATION_CLASSES = {"safe", "unsafe"}
-CHECK_NAMES = (
-    "Tests passed",
-    "Forbidden paths",
-    "Test tampering",
-    "Unsafe commands",
-    "Scope adherence",
-    "Diff size",
-    "Secret scan",
-)
+CHECK_NAMES = registered_check_names()
 ACTION_TYPES = {
     "write_file",
     "replace_text",
@@ -589,6 +583,7 @@ def _evaluate_mutation(
     config: AgentGuardConfig,
     *,
     strict: bool,
+    checks: Optional[list[Check]] = None,
 ) -> MutationResult:
     started = time.perf_counter()
     command_tracker = CommandTracker()
@@ -601,7 +596,7 @@ def _evaluate_mutation(
     diff_summary = collect_diff(repo_dir)
     check_results = [
         check.run(config, test_result, diff_summary, command_tracker.events)
-        for check in default_checks()
+        for check in (checks if checks is not None else default_checks())
     ]
     score = score_checks(check_results)
     observed = [check.name for check in check_results if not check.passed]
