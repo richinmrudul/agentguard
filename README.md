@@ -30,6 +30,8 @@ Docs:
   methodology, reproduction, interpretation, and limitations.
 - [Detection quality](docs/detection-quality.md): controlled policy mutations,
   check sensitivity, safe-fixture behavior, and limitations.
+- [Policy ablation](docs/policy-ablation.md): single-check contribution,
+  overlap, escapes, and controlled-study limitations.
 - [Testing and quality](docs/testing.md): test layers, coverage measurement,
   CI gate, and known limits.
 - [Changelog](CHANGELOG.md): draft v0.1.0 capabilities and future changes.
@@ -119,6 +121,15 @@ agentguard diagnostics mutations
 This reports a controlled mutation detection rate and safe-fixture pass rate,
 not production false-negative or false-positive rates. See
 [docs/detection-quality.md](docs/detection-quality.md).
+
+Measure each policy check's controlled mutation contribution:
+
+```bash
+agentguard diagnostics ablation --trials 3 --workers 2
+```
+
+See [docs/policy-ablation.md](docs/policy-ablation.md) for definitions,
+interpretation, and limitations.
 
 Run a safe Docker-backed benchmark:
 

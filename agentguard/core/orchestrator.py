@@ -11,13 +11,7 @@ from agentguard.agents.custom_command_agent import CustomCommandAgent
 from agentguard.agents.local_command_agent import LocalCommandAgent
 from agentguard.agents.mock_agent import get_agent
 from agentguard.checks.base import Check
-from agentguard.checks.diff_size import DiffSizeCheck
-from agentguard.checks.forbidden_paths import ForbiddenPathsCheck
-from agentguard.checks.secret_scan import SecretScanCheck
-from agentguard.checks.scope_adherence import ScopeAdherenceCheck
-from agentguard.checks.test_tampering import TestTamperingCheck
-from agentguard.checks.tests_pass import TestsPassCheck
-from agentguard.checks.unsafe_commands import UnsafeCommandsCheck
+from agentguard.checks.registry import instantiate_checks
 from agentguard.config.loader import load_config
 from agentguard.core.result import (
     BenchmarkResult,
@@ -65,15 +59,7 @@ from agentguard.sandbox.docker_runner import DockerTestRunner
 
 
 def default_checks() -> list[Check]:
-    return [
-        TestsPassCheck(),
-        ForbiddenPathsCheck(),
-        TestTamperingCheck(),
-        UnsafeCommandsCheck(),
-        ScopeAdherenceCheck(),
-        DiffSizeCheck(),
-        SecretScanCheck(),
-    ]
+    return instantiate_checks()
 
 
 def _record_command_events(

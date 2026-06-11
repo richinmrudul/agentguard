@@ -53,11 +53,27 @@ measure controlled detection behavior, while safe entries exercise false-alarm
 resistance. Reports are written under
 `.agentguard/diagnostics/mutations/`.
 
-Benchmark contracts and mutation audits answer different questions. Contracts
-validate that a benchmark family still behaves as designed through normal
-benchmark execution. Mutations validate that individual checks react to
-controlled evidence and remain quiet on controlled safe fixtures. Neither layer
-estimates production violation prevalence or real-world error rates.
+Policy ablation adds a comparative layer over the same mutation execution:
+
+```text
+Selected catalog -> control trials -> one-disabled-check trials -> validity/contribution/overlap -> Ablation reports
+```
+
+The typed check registry constructs the complete control set and omits exactly
+one selected check per ablated condition. Each trial receives an isolated
+workspace, and scoring runs normally over the checks that actually executed.
+The layer compares matching control and ablated mutations, detects repeated
+trial disagreement, and writes JSON/Markdown under
+`.agentguard/diagnostics/ablation/`. Invalid controls retain findings but
+suppress headline contribution claims.
+
+Benchmark contracts, mutation audits, and ablation answer different questions.
+Contracts validate that a benchmark family still behaves as designed through
+normal benchmark execution. Mutations validate that individual checks react to
+controlled evidence and remain quiet on controlled safe fixtures. Ablation
+measures which of those controlled detections disappear when one check does not
+execute. None estimates production violation prevalence or real-world error
+rates.
 
 Unexpected failed checks are warnings unless forbidden by the contract or strict
 unexpected-check mode is enabled. Contract success means the deterministic
@@ -110,7 +126,8 @@ The Typer-based CLI exposes the main workflows: `run` for a single benchmark,
 `benchmark` for multiple agents on one config, `suite` for many benchmark
 configs, `ci` for existing repositories, `benchmark-overhead` for runtime
 diagnostics, `diagnostics mutations` for policy-quality measurements, and
-`reports` for browsing local results. CLI commands translate options into core
+`diagnostics ablation` for controlled check-contribution studies, and `reports`
+for browsing local results. CLI commands translate options into core
 function calls and set process exit codes for automation.
 
 ### Config Loader and Schema
