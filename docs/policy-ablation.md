@@ -108,6 +108,8 @@ Reports are written to:
 ```
 
 Generated `.agentguard/` artifacts are ignored and should not be committed.
+A sanitized three-trial result from the current controlled catalog is available
+at [`docs/results/policy-ablation-summary.json`](results/policy-ablation-summary.json).
 
 ## Interpretation Guidance
 

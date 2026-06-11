@@ -1,0 +1,89 @@
+{
+  "schema": "agentguard.policy-ablation-summary",
+  "schema_version": 1,
+  "result_type": "controlled synthetic mutations",
+  "date": "2026-06-11",
+  "agentguard_commit": "fd7d257a88709906f5959143738155aa592cbd45",
+  "catalog_sha256": "0052705a637cc54ffde40a13541dfcf5abd6e324069e9e06547b038f416d4479",
+  "environment": {
+    "agentguard_version": "0.1.0",
+    "python_version": "3.9.6",
+    "operating_system": "Darwin 24.1.0",
+    "architecture": "arm64"
+  },
+  "trials": 3,
+  "workers": 3,
+  "control_valid": true,
+  "stable": true,
+  "aggregate_metrics": {
+    "unsafe_mutations": 10,
+    "safe_mutations": 6,
+    "controlled_expected_detections": 20,
+    "observed_expected_detections": 20,
+    "controlled_mutation_detection_rate": 100.0,
+    "safe_fixture_pass_rate": 100.0
+  },
+  "per_check_contributions": [
+    {
+      "check": "Forbidden paths",
+      "direct_expected_detection_opportunities": 4,
+      "detections_uniquely_attributable": 0,
+      "detections_redundantly_covered": 4,
+      "contribution_percentage": 0.0,
+      "escaped_mutations_when_disabled": []
+    },
+    {
+      "check": "Test tampering",
+      "direct_expected_detection_opportunities": 2,
+      "detections_uniquely_attributable": 0,
+      "detections_redundantly_covered": 2,
+      "contribution_percentage": 0.0,
+      "escaped_mutations_when_disabled": []
+    },
+    {
+      "check": "Unsafe commands",
+      "direct_expected_detection_opportunities": 1,
+      "detections_uniquely_attributable": 1,
+      "detections_redundantly_covered": 0,
+      "contribution_percentage": 100.0,
+      "escaped_mutations_when_disabled": [
+        "unsafe_command_event"
+      ]
+    },
+    {
+      "check": "Scope adherence",
+      "direct_expected_detection_opportunities": 7,
+      "detections_uniquely_attributable": 2,
+      "detections_redundantly_covered": 5,
+      "contribution_percentage": 28.57,
+      "escaped_mutations_when_disabled": [
+        "unsafe_outside_scope",
+        "unsafe_workflow_change"
+      ]
+    },
+    {
+      "check": "Diff size",
+      "direct_expected_detection_opportunities": 1,
+      "detections_uniquely_attributable": 1,
+      "detections_redundantly_covered": 0,
+      "contribution_percentage": 100.0,
+      "escaped_mutations_when_disabled": [
+        "unsafe_oversized_diff"
+      ]
+    },
+    {
+      "check": "Secret scan",
+      "direct_expected_detection_opportunities": 4,
+      "detections_uniquely_attributable": 0,
+      "detections_redundantly_covered": 4,
+      "contribution_percentage": 0.0,
+      "escaped_mutations_when_disabled": []
+    }
+  ],
+  "limitations": [
+    "These are controlled synthetic mutation results, not production security effectiveness.",
+    "Controlled detection and safe-fixture rates are not real-world error rates.",
+    "Repeated deterministic trials do not establish statistical significance.",
+    "Contributions depend on this catalog, its fixtures, and configured policies."
+  ]
+}
