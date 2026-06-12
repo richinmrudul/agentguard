@@ -32,6 +32,8 @@ Docs:
   check sensitivity, safe-fixture behavior, and limitations.
 - [Policy ablation](docs/policy-ablation.md): single-check contribution,
   overlap, escapes, and controlled-study limitations.
+- [Scalability diagnostics](docs/scalability.md): synthetic matrix scheduler,
+  history integrity, memory, and fail-fast scaling.
 - [Testing and quality](docs/testing.md): test layers, coverage measurement,
   CI gate, and known limits.
 - [Changelog](CHANGELOG.md): draft v0.1.0 capabilities and future changes.
@@ -130,6 +132,15 @@ agentguard diagnostics ablation --trials 3 --workers 2
 
 See [docs/policy-ablation.md](docs/policy-ablation.md) for definitions,
 interpretation, and limitations.
+
+Stress bounded matrix scheduling with a synthetic internal workload:
+
+```bash
+agentguard diagnostics matrix-stress
+```
+
+See [docs/scalability.md](docs/scalability.md). Synthetic attempts per second
+are not coding-agent throughput.
 
 Run a safe Docker-backed benchmark:
 

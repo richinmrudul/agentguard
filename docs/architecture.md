@@ -75,6 +75,22 @@ measures which of those controlled detections disappear when one check does not
 execute. None estimates production violation prevalence or real-world error
 rates.
 
+Matrix stress diagnostics add a scheduler-quality layer beside normal matrix
+execution:
+
+```text
+Synthetic indexed attempts -> bounded scheduler -> ordered rows/history -> integrity/scaling aggregation -> Stress reports
+```
+
+Production matrices and the diagnostic share the bounded scheduler that limits
+in-flight work, restores stable input order, and stops replenishing after a
+failed submitted wave in fail-fast mode. The diagnostic replaces repository and
+agent work with a closed internal sleep-and-arithmetic adapter, then validates
+per-attempt SQLite history, row identity, result/reliability totals, memory, and
+planned/submitted/executed accounting. Reports are written under
+`.agentguard/diagnostics/matrix-stress/`. The resulting throughput describes
+only this synthetic scheduler/report/history workload.
+
 Unexpected failed checks are warnings unless forbidden by the contract or strict
 unexpected-check mode is enabled. Contract success means the deterministic
 fixture still behaves as designed; it does not imply that an external agent is
@@ -127,8 +143,10 @@ The Typer-based CLI exposes the main workflows: `run` for a single benchmark,
 configs, `ci` for existing repositories, `benchmark-overhead` for runtime
 diagnostics, `diagnostics mutations` for policy-quality measurements, and
 `diagnostics ablation` for controlled check-contribution studies, and `reports`
-for browsing local results. CLI commands translate options into core
-function calls and set process exit codes for automation.
+for browsing local results. `diagnostics matrix-stress` measures bounded
+scheduler, memory, history, and fail-fast behavior with an internal synthetic
+workload. CLI commands translate options into core function calls and set
+process exit codes for automation.
 
 ### Config Loader and Schema
 
