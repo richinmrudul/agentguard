@@ -34,6 +34,16 @@ from agentguard.diagnostics.mutations import (
 )
 from agentguard.diagnostics.mutations import run_mutation_audit
 from agentguard.diagnostics.ablation import run_policy_ablation
+from agentguard.diagnostics.matrix_stress import (
+    DEFAULT_ATTEMPTS as DEFAULT_STRESS_ATTEMPTS,
+)
+from agentguard.diagnostics.matrix_stress import (
+    DEFAULT_WORKERS as DEFAULT_STRESS_WORKERS,
+)
+from agentguard.diagnostics.matrix_stress import (
+    normalize_positive_int_values,
+    run_matrix_stress,
+)
 from agentguard.history.store import (
     HistoryRecord,
     HistoryStats,
@@ -396,6 +406,121 @@ def diagnostics_ablation_command(
     typer.echo(f"JSON report path: {result.json_report_path}")
     typer.echo(f"Markdown report path: {result.markdown_report_path}")
     if result.has_study_failures and not allow_study_failures:
+        raise typer.Exit(1)
+
+
+@diagnostics_app.command("matrix-stress")
+def diagnostics_matrix_stress_command(
+    attempts: Optional[list[str]] = typer.Option(
+        None,
+        "--attempts",
+        help="Attempt counts. Repeat or use commas.",
+    ),
+    workers: Optional[list[str]] = typer.Option(
+        None,
+        "--workers",
+        help="Worker counts including 1. Repeat or use commas.",
+    ),
+    task_duration_ms: int = typer.Option(
+        25,
+        "--task-duration-ms",
+        help="Synthetic task sleep duration in milliseconds.",
+    ),
+    failure_rate: float = typer.Option(
+        0.0,
+        "--failure-rate",
+        help="Deterministic synthetic failure percentage.",
+    ),
+    fail_fast: bool = typer.Option(
+        False,
+        "--fail-fast",
+        help="Stop replenishing work after a failed submitted wave.",
+    ),
+    repetitions: int = typer.Option(
+        3,
+        "--repetitions",
+        help="Repetitions per attempts/workers cell.",
+    ),
+    output_dir: Optional[Path] = typer.Option(
+        None,
+        "--output-dir",
+        help="Root directory for matrix stress artifacts.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace an existing study directory if IDs collide.",
+    ),
+    unsafe_large_run: bool = typer.Option(
+        False,
+        "--unsafe-large-run",
+        help="Allow inputs above documented safety caps.",
+    ),
+    allow_study_failures: bool = typer.Option(
+        False,
+        "--allow-study-failures",
+        help="Exit 0 while preserving integrity failures in reports.",
+    ),
+) -> None:
+    """Stress bounded matrix scheduling with a synthetic internal workload."""
+    try:
+        attempt_values = normalize_positive_int_values(
+            attempts,
+            default=DEFAULT_STRESS_ATTEMPTS,
+            option_name="attempts",
+        )
+        worker_values = normalize_positive_int_values(
+            workers,
+            default=DEFAULT_STRESS_WORKERS,
+            option_name="workers",
+        )
+        result = run_matrix_stress(
+            attempts=attempt_values,
+            workers=worker_values,
+            task_duration_ms=task_duration_ms,
+            failure_rate_percent=failure_rate,
+            fail_fast=fail_fast,
+            repetitions=repetitions,
+            output_dir=output_dir,
+            force=force,
+            unsafe_large_run=unsafe_large_run,
+        )
+    except (FileExistsError, OSError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    summary = result.scaling_summary
+    typer.echo("AgentGuard Matrix Stress Study")
+    typer.echo(
+        "Attempted sizes: " + ", ".join(str(value) for value in result.attempts)
+    )
+    typer.echo(
+        "Workers: " + ", ".join(str(value) for value in result.workers)
+    )
+    typer.echo(f"Repetitions: {result.repetitions}")
+    typer.echo(
+        "Maximum validated attempts: "
+        f"{summary['maximum_validated_attempts'] or '-'}"
+    )
+    typer.echo(
+        "Best measured speedup: "
+        f"{float(summary['best_measured_speedup']):.2f}x "
+        f"at {summary['best_speedup_workers']} workers"
+    )
+    typer.echo(
+        "Best throughput worker count: "
+        f"{summary['best_throughput_workers']}"
+    )
+    typer.echo(
+        f"Integrity status: {'PASS' if result.integrity_passed else 'FAIL'}"
+    )
+    typer.echo(
+        f"Maximum traced Python memory: "
+        f"{summary['maximum_peak_memory_bytes']} bytes"
+    )
+    typer.echo(f"JSON report path: {result.json_report_path}")
+    typer.echo(f"Markdown report path: {result.markdown_report_path}")
+    if not result.integrity_passed and not allow_study_failures:
         raise typer.Exit(1)
 
 

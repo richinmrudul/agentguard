@@ -3,7 +3,6 @@ import inspect
 import time
 import warnings
 from collections import Counter
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +24,7 @@ from agentguard.core.reliability_baseline import (
     write_matrix_reliability_baseline,
 )
 from agentguard.core.result import BenchmarkResult
+from agentguard.core.scheduler import run_bounded_schedule
 from agentguard.core.suite import (
     SuiteFilters,
     SuiteRunConfig,
@@ -360,19 +360,20 @@ def _run_serial_attempts(
         Callable[[Path, str, str], BenchmarkResult]
     ] = None,
 ) -> tuple[list[MatrixRowSummary], bool]:
-    rows = []
-    for run, trial_index in trial_runs:
-        row = _run_matrix_row(
-            run,
-            trial_index,
+    scheduled = run_bounded_schedule(
+        trial_runs,
+        workers=1,
+        fail_fast=fail_fast,
+        runner=lambda item: _run_matrix_row(
+            item[0],
+            item[1],
             trial_count,
             matrix_id,
             benchmark_runner,
-        )
-        rows.append(row)
-        if fail_fast and row.result == "FAIL":
-            break
-    return rows, len(rows) < len(trial_runs)
+        ),
+        is_failure=lambda row: row.result == "FAIL",
+    )
+    return scheduled.results, scheduled.stopped_early
 
 
 def _run_parallel_attempts(
@@ -385,60 +386,20 @@ def _run_parallel_attempts(
         Callable[[Path, str, str], BenchmarkResult]
     ] = None,
 ) -> tuple[list[MatrixRowSummary], bool]:
-    rows_by_index: dict[int, MatrixRowSummary] = {}
-    next_index = 0
-    stopped_early = False
-    executor = ThreadPoolExecutor(max_workers=workers)
-    futures: dict[Future[MatrixRowSummary], int] = {}
-
-    def submit_next() -> bool:
-        nonlocal next_index
-        if next_index >= len(trial_runs):
-            return False
-        run, trial_index = trial_runs[next_index]
-        future = executor.submit(
-            _run_matrix_row,
-            run,
-            trial_index,
+    scheduled = run_bounded_schedule(
+        trial_runs,
+        workers=workers,
+        fail_fast=fail_fast,
+        runner=lambda item: _run_matrix_row(
+            item[0],
+            item[1],
             trial_count,
             matrix_id,
             benchmark_runner,
-        )
-        futures[future] = next_index
-        next_index += 1
-        return True
-
-    try:
-        for _ in range(workers):
-            submit_next()
-
-        while futures:
-            if fail_fast:
-                # Finish the submitted wave before replenishing so a peer failure
-                # cannot race with scheduling the next attempt.
-                completed, _ = wait(futures)
-            else:
-                completed, _ = wait(futures, return_when=FIRST_COMPLETED)
-            for future in sorted(completed, key=lambda item: futures[item]):
-                index = futures.pop(future)
-                row = future.result()
-                rows_by_index[index] = row
-                if fail_fast and row.result == "FAIL":
-                    stopped_early = next_index < len(trial_runs)
-
-            if stopped_early:
-                continue
-            while len(futures) < workers and submit_next():
-                pass
-    except BaseException:
-        # Pending futures never started, so cancelling them cannot discard run artifacts.
-        executor.shutdown(wait=True, cancel_futures=True)
-        raise
-    else:
-        executor.shutdown(wait=True)
-
-    rows = [rows_by_index[index] for index in sorted(rows_by_index)]
-    return rows, stopped_early
+        ),
+        is_failure=lambda row: row.result == "FAIL",
+    )
+    return scheduled.results, scheduled.stopped_early
 
 
 def _group_summary(rows: list[MatrixRowSummary]) -> MatrixGroupSummary:
