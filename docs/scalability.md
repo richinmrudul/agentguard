@@ -109,6 +109,9 @@ The study directory also contains isolated SQLite history databases used by
 the integrity checks. Generated `.agentguard/` artifacts are ignored and should
 not be committed.
 
+A sanitized result for the bounded local study is available at
+[`docs/results/matrix-scale-summary.json`](results/matrix-scale-summary.json).
+
 ## Integrity and Exit Codes
 
 Every non-fail-fast repetition must execute all planned attempts. Every

@@ -1,0 +1,247 @@
+{
+  "schema": "agentguard.matrix-stress-summary",
+  "schema_version": 1,
+  "result_type": "synthetic scheduler/report/history workload",
+  "date": "2026-06-11",
+  "agentguard_commit": "a524ed77a069f08888b6354c3eae1391522f4b61",
+  "environment": {
+    "agentguard_version": "0.1.0",
+    "python_version": "3.9.6",
+    "operating_system": "Darwin 24.1.0",
+    "architecture": "arm64"
+  },
+  "scaling_configuration": {
+    "attempts": [
+      10,
+      50,
+      100,
+      250
+    ],
+    "workers": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "repetitions": 3,
+    "task_duration_ms": 25,
+    "failure_rate_percent": 0.0,
+    "fail_fast": false
+  },
+  "scaling_summary": {
+    "maximum_validated_attempts": 250,
+    "best_measured_speedup": 9.2897,
+    "best_speedup_workers": 8,
+    "best_speedup_attempts": 250,
+    "best_throughput_attempts_per_second": 283.14,
+    "best_throughput_workers": 8,
+    "maximum_peak_traced_python_memory_bytes": 167172,
+    "integrity_passed": true,
+    "saturation_observed_through_8_workers": false
+  },
+  "aggregates": [
+    {
+      "attempts": 10,
+      "workers": 1,
+      "median_duration_seconds": 0.284662,
+      "median_throughput_attempts_per_second": 35.13,
+      "median_speedup": 1.0,
+      "median_parallel_efficiency": 1.0,
+      "maximum_peak_memory_bytes": 20878,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 10,
+      "workers": 2,
+      "median_duration_seconds": 0.151778,
+      "median_throughput_attempts_per_second": 65.89,
+      "median_speedup": 1.9035,
+      "median_parallel_efficiency": 0.9517,
+      "maximum_peak_memory_bytes": 48967,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 10,
+      "workers": 4,
+      "median_duration_seconds": 0.090108,
+      "median_throughput_attempts_per_second": 110.98,
+      "median_speedup": 3.1929,
+      "median_parallel_efficiency": 0.7982,
+      "maximum_peak_memory_bytes": 42723,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 10,
+      "workers": 8,
+      "median_duration_seconds": 0.060043,
+      "median_throughput_attempts_per_second": 166.55,
+      "median_speedup": 4.8117,
+      "median_parallel_efficiency": 0.6015,
+      "maximum_peak_memory_bytes": 77530,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 50,
+      "workers": 1,
+      "median_duration_seconds": 1.609842,
+      "median_throughput_attempts_per_second": 31.06,
+      "median_speedup": 1.0,
+      "median_parallel_efficiency": 1.0,
+      "maximum_peak_memory_bytes": 27129,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 50,
+      "workers": 2,
+      "median_duration_seconds": 0.835185,
+      "median_throughput_attempts_per_second": 59.87,
+      "median_speedup": 1.9517,
+      "median_parallel_efficiency": 0.9759,
+      "maximum_peak_memory_bytes": 44314,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 50,
+      "workers": 4,
+      "median_duration_seconds": 0.407072,
+      "median_throughput_attempts_per_second": 122.83,
+      "median_speedup": 3.9395,
+      "median_parallel_efficiency": 0.9849,
+      "maximum_peak_memory_bytes": 56389,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 50,
+      "workers": 8,
+      "median_duration_seconds": 0.194128,
+      "median_throughput_attempts_per_second": 257.56,
+      "median_speedup": 8.2927,
+      "median_parallel_efficiency": 1.0366,
+      "maximum_peak_memory_bytes": 71861,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 100,
+      "workers": 1,
+      "median_duration_seconds": 3.290167,
+      "median_throughput_attempts_per_second": 30.39,
+      "median_speedup": 1.0,
+      "median_parallel_efficiency": 1.0,
+      "maximum_peak_memory_bytes": 49280,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 100,
+      "workers": 2,
+      "median_duration_seconds": 1.654546,
+      "median_throughput_attempts_per_second": 60.44,
+      "median_speedup": 1.9908,
+      "median_parallel_efficiency": 0.9954,
+      "maximum_peak_memory_bytes": 70873,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 100,
+      "workers": 4,
+      "median_duration_seconds": 0.785419,
+      "median_throughput_attempts_per_second": 127.32,
+      "median_speedup": 4.1379,
+      "median_parallel_efficiency": 1.0345,
+      "maximum_peak_memory_bytes": 77842,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 100,
+      "workers": 8,
+      "median_duration_seconds": 0.370237,
+      "median_throughput_attempts_per_second": 270.1,
+      "median_speedup": 8.7385,
+      "median_parallel_efficiency": 1.0923,
+      "maximum_peak_memory_bytes": 96904,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 250,
+      "workers": 1,
+      "median_duration_seconds": 8.202455,
+      "median_throughput_attempts_per_second": 30.48,
+      "median_speedup": 1.0,
+      "median_parallel_efficiency": 1.0,
+      "maximum_peak_memory_bytes": 114872,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 250,
+      "workers": 2,
+      "median_duration_seconds": 4.137058,
+      "median_throughput_attempts_per_second": 60.43,
+      "median_speedup": 1.9986,
+      "median_parallel_efficiency": 0.9993,
+      "maximum_peak_memory_bytes": 137344,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 250,
+      "workers": 4,
+      "median_duration_seconds": 1.93243,
+      "median_throughput_attempts_per_second": 129.37,
+      "median_speedup": 4.2446,
+      "median_parallel_efficiency": 1.0612,
+      "maximum_peak_memory_bytes": 147360,
+      "integrity_passed": true
+    },
+    {
+      "attempts": 250,
+      "workers": 8,
+      "median_duration_seconds": 0.882963,
+      "median_throughput_attempts_per_second": 283.14,
+      "median_speedup": 9.2897,
+      "median_parallel_efficiency": 1.1612,
+      "maximum_peak_memory_bytes": 167172,
+      "integrity_passed": true
+    }
+  ],
+  "fail_fast_configuration": {
+    "attempts": 100,
+    "workers": [
+      1,
+      4,
+      8
+    ],
+    "repetitions": 3,
+    "task_duration_ms": 25,
+    "failure_rate_percent": 10.0,
+    "fail_fast": true
+  },
+  "fail_fast_aggregates": [
+    {
+      "workers": 1,
+      "attempts_executed_per_repetition": 10,
+      "attempts_avoided_per_repetition": 90,
+      "median_estimated_time_saved_seconds": 2.50848,
+      "integrity_passed": true
+    },
+    {
+      "workers": 4,
+      "attempts_executed_per_repetition": 12,
+      "attempts_avoided_per_repetition": 88,
+      "median_estimated_time_saved_seconds": 0.664752,
+      "integrity_passed": true
+    },
+    {
+      "workers": 8,
+      "attempts_executed_per_repetition": 16,
+      "attempts_avoided_per_repetition": 84,
+      "median_estimated_time_saved_seconds": 0.356669,
+      "integrity_passed": true
+    }
+  ],
+  "limitations": [
+    "This is a synthetic scheduler/report/history workload, not an external-agent benchmark.",
+    "Attempts per second are not coding-agent throughput.",
+    "Tracemalloc reports traced Python allocations, not total process memory.",
+    "Sleep and SQLite overlap can produce measured efficiency above 100%.",
+    "Fail-fast time savings are estimates from observed median attempt duration.",
+    "Results and saturation are machine- and workload-specific."
+  ]
+}
