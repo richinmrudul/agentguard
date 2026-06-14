@@ -624,6 +624,11 @@ def evaluate_run(
         0, "--max-average-score-drop"
     ),
     force: bool = typer.Option(False, "--force"),
+    checkpoint: Optional[Path] = typer.Option(None, "--checkpoint"),
+    resume: Optional[Path] = typer.Option(None, "--resume"),
+    checkpoint_every: int = typer.Option(1, "--checkpoint-every"),
+    retry_failed: bool = typer.Option(False, "--retry-failed"),
+    force_resume: bool = typer.Option(False, "--force-resume"),
 ) -> None:
     """Run a confirmed external coding-agent evaluation through matrix mode."""
     try:
@@ -652,9 +657,21 @@ def evaluate_run(
             max_success_rate_drop=max_success_rate_drop,
             max_average_score_drop=max_average_score_drop,
             force_reliability_baseline=force,
+            checkpoint_path=checkpoint,
+            resume_path=resume,
+            checkpoint_every=checkpoint_every,
+            retry_failed=retry_failed,
+            force_resume=force_resume,
         )
     except typer.Exit:
         raise
+    except KeyboardInterrupt as error:
+        typer.echo("External agent evaluation interrupted.", err=True)
+        active_checkpoint = resume or checkpoint
+        if active_checkpoint is not None:
+            resolved = active_checkpoint.expanduser().resolve()
+            typer.echo(f"Checkpoint marked interrupted: {resolved}", err=True)
+        raise typer.Exit(130) from error
     except (OSError, ValueError, yaml.YAMLError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
@@ -662,6 +679,9 @@ def evaluate_run(
     typer.echo(f"Profile: {result.profile_name} ({result.profile_id})")
     typer.echo(f"Model: {result.profile_model or '-'}")
     typer.echo(f"Attempts: {result.attempts_executed}")
+    if result.checkpoint_path is not None:
+        typer.echo(f"Checkpoint: {result.checkpoint_path}")
+        typer.echo(f"Attempts reused: {result.attempts_reused}")
     typer.echo(
         f"Functional success: {result.functional_passed}/"
         f"{result.attempts_executed} ({result.functional_success_rate}%)"
@@ -1804,6 +1824,31 @@ def matrix_command(
         "--allow-version-mismatch",
         help="Compare against a baseline with different benchmark versions.",
     ),
+    checkpoint: Optional[Path] = typer.Option(
+        None,
+        "--checkpoint",
+        help="Create and atomically update a resumable matrix checkpoint.",
+    ),
+    resume: Optional[Path] = typer.Option(
+        None,
+        "--resume",
+        help="Resume from an existing verified matrix checkpoint.",
+    ),
+    checkpoint_every: int = typer.Option(
+        1,
+        "--checkpoint-every",
+        help="Persist the checkpoint after this many completed attempts.",
+    ),
+    retry_failed: bool = typer.Option(
+        False,
+        "--retry-failed",
+        help="Rerun verified failed attempts instead of reusing them.",
+    ),
+    force_resume: bool = typer.Option(
+        False,
+        "--force-resume",
+        help="Acknowledge listed non-artifact compatibility warnings.",
+    ),
 ) -> None:
     """Run a suite across its configured agents or an agent override matrix."""
     try:
@@ -1828,9 +1873,22 @@ def matrix_command(
             force_reliability_baseline=force,
             workers=workers,
             fail_fast=fail_fast,
+            checkpoint_path=checkpoint,
+            resume_path=resume,
+            checkpoint_every=checkpoint_every,
+            retry_failed=retry_failed,
+            force_resume=force_resume,
         )
     except KeyboardInterrupt as error:
         typer.echo("Matrix execution interrupted.", err=True)
+        active_checkpoint = resume or checkpoint
+        if active_checkpoint is not None:
+            resolved = active_checkpoint.expanduser().resolve()
+            typer.echo(f"Checkpoint marked interrupted: {resolved}", err=True)
+            typer.echo(
+                f"Resume with: agentguard matrix {suite_path} --resume {resolved}",
+                err=True,
+            )
         raise typer.Exit(130) from error
     except ValueError as error:
         typer.echo(f"Error: {error}", err=True)
@@ -1847,6 +1905,24 @@ def matrix_command(
     typer.echo(f"Execution duration: {result.duration_seconds:.3f} seconds")
     typer.echo(f"Attempts planned: {result.attempts_planned}")
     typer.echo(f"Attempts executed: {result.attempts_executed}")
+    if result.checkpoint_path is not None:
+        typer.echo(f"Checkpoint: {result.checkpoint_path}")
+        typer.echo(f"Checkpoint status: {result.checkpoint_status}")
+        typer.echo(f"Attempts reused: {result.attempts_reused}")
+        typer.echo(f"Attempts skipped: {result.attempts_skipped}")
+        typer.echo(
+            "Attempts executed this invocation: "
+            f"{result.attempts_executed_this_invocation}"
+        )
+        typer.echo(f"Failed attempts retried: {result.failed_attempts_retried}")
+        typer.echo(f"Invalidated attempts: {result.invalidated_attempts}")
+        typer.echo(f"Reuse percentage: {result.reuse_percentage}%")
+        typer.echo(
+            "Estimated recomputation avoided: "
+            f"{result.estimated_recomputation_avoided_seconds:.3f} seconds"
+        )
+        for warning in result.compatibility_warnings:
+            typer.echo(f"Compatibility warning: {warning}")
     typer.echo(f"Stopped early: {'yes' if result.stopped_early else 'no'}")
     typer.echo(f"Total runs: {result.total_runs}")
     typer.echo(f"Total attempts: {result.reliability.attempts}")

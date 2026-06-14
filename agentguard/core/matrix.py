@@ -1,5 +1,6 @@
 import json
 import inspect
+import threading
 import time
 import warnings
 from collections import Counter
@@ -12,6 +13,17 @@ from uuid import uuid4
 
 from agentguard.config.loader import load_config
 from agentguard.core.baseline import BaselineComparison, compare_suite_to_baseline
+from agentguard.core.matrix_checkpoint import (
+    CheckpointStore,
+    MatrixCheckpoint,
+    MatrixCheckpointAttempt,
+    checkpoint_id,
+    load_checkpoint,
+    stable_attempt_key,
+    upsert_reused_history,
+    utc_now_iso as checkpoint_utc_now_iso,
+    verify_completed_attempt,
+)
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.reliability_baseline import (
     ConfidenceInterval,
@@ -32,7 +44,12 @@ from agentguard.core.suite import (
     format_suite_filters,
     load_suite_config,
 )
-from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
+from agentguard.history.store import (
+    DEFAULT_HISTORY_DB_PATH,
+    HistoryRecord,
+    record_history,
+    utc_now_iso,
+)
 from agentguard.provenance.manifest import (
     ChildExecution,
     ExecutionManifest,
@@ -43,6 +60,7 @@ from agentguard.provenance.manifest import (
     host_identity,
     policy_identity,
     portable_path,
+    sha256_file,
     source_identity,
     utc_now_iso as manifest_utc_now_iso,
     write_manifest,
@@ -180,6 +198,18 @@ class MatrixResult:
     profile_id: Optional[str] = None
     profile_name: Optional[str] = None
     profile_model: Optional[str] = None
+    checkpoint_path: Optional[Path] = None
+    checkpoint_id: Optional[str] = None
+    resumed_from: Optional[Path] = None
+    checkpoint_status: Optional[str] = None
+    attempts_reused: int = 0
+    attempts_skipped: int = 0
+    attempts_executed_this_invocation: int = 0
+    failed_attempts_retried: int = 0
+    invalidated_attempts: int = 0
+    reuse_percentage: float = 0.0
+    estimated_recomputation_avoided_seconds: float = 0.0
+    compatibility_warnings: list[str] = field(default_factory=list)
 
 
 def normalize_matrix_agents(raw_agents: Optional[list[str]]) -> list[str]:
@@ -230,6 +260,114 @@ def validate_matrix_workers(workers: int) -> int:
 def _matrix_id(suite_id: str) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     return f"{suite_id}-{timestamp}-{uuid4().hex[:8]}"
+
+
+def _checkpoint_attempts(
+    trial_runs: list[tuple[SuiteRunConfig, int]],
+    *,
+    suite_sha256: str,
+    trials: int,
+    profile_id: Optional[str],
+    profile_model: Optional[str],
+    profile_identity: dict[str, object],
+) -> tuple[list[MatrixCheckpointAttempt], list[dict[str, object]]]:
+    attempts = []
+    benchmarks: dict[str, dict[str, object]] = {}
+    for ordinal, (run, trial_index) in enumerate(trial_runs):
+        loaded = load_config(run.config_path)
+        config_hash = sha256_file(loaded.config_path)
+        prompt_hash = None
+        if profile_id is not None:
+            from agentguard.evaluation.profile import load_task_prompt
+
+            prompt_hash = load_task_prompt(loaded).sha256
+        resolved_agent = profile_id or run.agent
+        attempts.append(
+            MatrixCheckpointAttempt(
+                key=stable_attempt_key(
+                    suite_sha256=suite_sha256,
+                    config=loaded,
+                    config_sha256=config_hash,
+                    agent=resolved_agent,
+                    profile_id=profile_id,
+                    profile_model=profile_model,
+                    profile_identity=profile_identity,
+                    task_prompt_sha256=prompt_hash,
+                    trial_index=trial_index,
+                ),
+                ordinal=ordinal,
+                task_id=loaded.task_id,
+                config_path=str(loaded.config_path),
+                config_sha256=config_hash,
+                benchmark_id=loaded.benchmark.id,
+                benchmark_version=loaded.benchmark.version,
+                agent=resolved_agent,
+                profile_id=profile_id,
+                profile_model=profile_model,
+                task_prompt_sha256=prompt_hash,
+                trial_index=trial_index,
+                trial_count=trials,
+            )
+        )
+        benchmarks.setdefault(
+            str(loaded.config_path),
+            {
+                "config_path": str(loaded.config_path),
+                "config_sha256": config_hash,
+                "benchmark_id": loaded.benchmark.id,
+                "benchmark_version": loaded.benchmark.version,
+            },
+        )
+    return attempts, list(benchmarks.values())
+
+
+def _checkpoint_compatibility(
+    checkpoint: MatrixCheckpoint,
+    current: MatrixCheckpoint,
+    *,
+    force_resume: bool,
+) -> list[str]:
+    incompatible = []
+    for label, stored, resolved in [
+        ("suite identity", checkpoint.suite_id, current.suite_id),
+        ("suite path", checkpoint.suite_path, current.suite_path),
+        ("suite hash", checkpoint.suite_sha256, current.suite_sha256),
+        ("filters", checkpoint.filters, current.filters),
+        ("agents", checkpoint.agents, current.agents),
+        ("trials", checkpoint.trials, current.trials),
+        ("fail-fast setting", checkpoint.fail_fast, current.fail_fast),
+        ("benchmarks", checkpoint.benchmarks, current.benchmarks),
+        ("profile identity", checkpoint.profile_identity, current.profile_identity),
+        (
+            "attempt identities",
+            [attempt.key for attempt in checkpoint.attempts],
+            [attempt.key for attempt in current.attempts],
+        ),
+    ]:
+        if stored != resolved:
+            incompatible.append(label)
+    if incompatible:
+        raise ValueError(
+            "Matrix checkpoint is incompatible with the resolved run: "
+            + ", ".join(incompatible)
+            + "."
+        )
+    warnings_found = []
+    stored_runtime = checkpoint.execution_compatibility
+    current_runtime = current.execution_compatibility
+    for label in ("agentguard_version", "agentguard_git_commit"):
+        if stored_runtime.get(label) != current_runtime.get(label):
+            warnings_found.append(
+                f"{label} changed from {stored_runtime.get(label)!r} "
+                f"to {current_runtime.get(label)!r}"
+            )
+    if warnings_found and not force_resume:
+        raise ValueError(
+            "Matrix checkpoint has compatibility warning(s): "
+            + "; ".join(warnings_found)
+            + ". Use --force-resume to acknowledge these non-artifact warnings."
+        )
+    return [f"Bypassed with --force-resume: {message}" for message in warnings_found]
 
 
 def _json_default(value: Any) -> str:
@@ -633,6 +771,37 @@ def _write_markdown_report(result: MatrixResult) -> Path:
                 f"Model: {result.profile_model or '-'}",
             ]
         )
+    if result.checkpoint_path is not None:
+        lines.extend(
+            [
+                "",
+                "## Checkpoint and Resume",
+                "",
+                f"Checkpoint: {result.checkpoint_path}",
+                f"Checkpoint ID: {result.checkpoint_id}",
+                f"Status: {result.checkpoint_status}",
+                f"Resumed from: {result.resumed_from or '-'}",
+                f"Attempts reused: {result.attempts_reused}",
+                f"Attempts skipped: {result.attempts_skipped}",
+                (
+                    "Attempts executed this invocation: "
+                    f"{result.attempts_executed_this_invocation}"
+                ),
+                f"Failed attempts retried: {result.failed_attempts_retried}",
+                f"Invalidated attempts: {result.invalidated_attempts}",
+                f"Reuse percentage: {result.reuse_percentage}%",
+                (
+                    "Estimated recomputation avoided: "
+                    f"{result.estimated_recomputation_avoided_seconds:.3f} seconds"
+                ),
+                "Compatibility warnings:",
+            ]
+        )
+        lines.extend(
+            f"- {warning}" for warning in result.compatibility_warnings
+        )
+        if not result.compatibility_warnings:
+            lines.append("- None")
     lines.extend(
         [
             "",
@@ -888,12 +1057,34 @@ def run_matrix(
     profile_id: Optional[str] = None,
     profile_name: Optional[str] = None,
     profile_model: Optional[str] = None,
+    profile_identity: Optional[dict[str, object]] = None,
     resolve_suite_config_paths: bool = False,
+    checkpoint_path: Optional[Path] = None,
+    resume_path: Optional[Path] = None,
+    checkpoint_every: int = 1,
+    retry_failed: bool = False,
+    force_resume: bool = False,
+    _interrupt_after_attempts: Optional[int] = None,
 ) -> MatrixResult:
     created_at = manifest_utc_now_iso()
     if isinstance(trials, bool) or not isinstance(trials, int) or trials <= 0:
         raise ValueError("Matrix trials must be a positive integer.")
     requested_workers = validate_matrix_workers(workers)
+    if checkpoint_path is not None and resume_path is not None:
+        raise ValueError("--checkpoint and --resume are mutually exclusive.")
+    if (
+        isinstance(checkpoint_every, bool)
+        or not isinstance(checkpoint_every, int)
+        or checkpoint_every <= 0
+    ):
+        raise ValueError("checkpoint-every must be a positive integer.")
+    if (retry_failed or force_resume) and resume_path is None:
+        raise ValueError("--retry-failed and --force-resume require --resume.")
+    if _interrupt_after_attempts is not None and (
+        isinstance(_interrupt_after_attempts, bool)
+        or _interrupt_after_attempts <= 0
+    ):
+        raise ValueError("interrupt-after-attempts must be a positive integer.")
     thresholds = reliability_thresholds(
         min_success_rate=min_success_rate,
         max_success_rate_drop=max_success_rate_drop,
@@ -903,7 +1094,12 @@ def run_matrix(
         path,
         resolve_config_paths=resolve_suite_config_paths,
     )
-    matrix_id = _matrix_id(config.suite_id)
+    loaded_checkpoint = load_checkpoint(resume_path) if resume_path is not None else None
+    matrix_id = (
+        loaded_checkpoint.matrix_id
+        if loaded_checkpoint is not None
+        else _matrix_id(config.suite_id)
+    )
     active_filters = filters or SuiteFilters()
     filtered_runs = filter_suite_runs(config.runs, active_filters)
     selected_agents = normalize_matrix_agents(agents)
@@ -914,30 +1110,266 @@ def run_matrix(
     attempts_planned = len(trial_runs)
     effective_workers = min(requested_workers, attempts_planned)
     execution_mode = "parallel" if effective_workers > 1 else "serial"
+    active_profile_identity = dict(profile_identity or {})
+    suite_hash = sha256_file(config.suite_path)
+    checkpoint_attempts, checkpoint_benchmarks = _checkpoint_attempts(
+        trial_runs,
+        suite_sha256=suite_hash,
+        trials=trials,
+        profile_id=profile_id,
+        profile_model=profile_model,
+        profile_identity=active_profile_identity,
+    )
+    identity = agentguard_identity()
+    report_dir = matrices_root / matrix_id
+    active_checkpoint_path = checkpoint_path or resume_path
+    if active_checkpoint_path is not None:
+        report_dir = report_dir.expanduser().resolve()
+    current_checkpoint = MatrixCheckpoint(
+        checkpoint_id=(
+            loaded_checkpoint.checkpoint_id
+            if loaded_checkpoint is not None
+            else checkpoint_id()
+        ),
+        created_at=(
+            loaded_checkpoint.created_at
+            if loaded_checkpoint is not None
+            else checkpoint_utc_now_iso()
+        ),
+        updated_at=checkpoint_utc_now_iso(),
+        status="running",
+        matrix_id=matrix_id,
+        suite_id=config.suite_id,
+        suite_path=str(config.suite_path),
+        suite_sha256=suite_hash,
+        filters=asdict(active_filters),
+        agents=list(
+            dict.fromkeys(
+                (profile_id or run.agent)
+                for run, _trial_index in trial_runs
+            )
+        ),
+        trials=trials,
+        requested_workers=requested_workers,
+        effective_workers=effective_workers,
+        fail_fast=fail_fast,
+        benchmarks=checkpoint_benchmarks,
+        profile_identity=active_profile_identity,
+        execution_compatibility={
+            "agentguard_version": identity.version,
+            "agentguard_git_commit": identity.git_commit,
+            "history_db_path": str(DEFAULT_HISTORY_DB_PATH.resolve()),
+        },
+        attempts_planned=attempts_planned,
+        attempts=checkpoint_attempts,
+        matrix_json_report_path=str(report_dir / "matrix.json"),
+        matrix_markdown_report_path=str(report_dir / "matrix.md"),
+        matrix_manifest_path=str(report_dir / "manifest.json"),
+        resumed_from=(
+            str(resume_path.expanduser().resolve())
+            if resume_path is not None
+            else None
+        ),
+    )
+    checkpoint_store = None
+    reused_rows: dict[int, MatrixRowSummary] = {}
+    pending_items = [
+        (ordinal, run, trial_index)
+        for ordinal, (run, trial_index) in enumerate(trial_runs)
+    ]
+    compatibility_warnings = []
+    failed_attempts_retried = 0
+    invalidated_attempts = 0
+    estimated_recomputation_avoided_seconds = 0.0
+    if active_checkpoint_path is not None:
+        if loaded_checkpoint is not None:
+            compatibility_warnings = _checkpoint_compatibility(
+                loaded_checkpoint,
+                current_checkpoint,
+                force_resume=force_resume,
+            )
+            pending_items = []
+            history_path = Path(
+                str(
+                    loaded_checkpoint.execution_compatibility.get(
+                        "history_db_path",
+                        DEFAULT_HISTORY_DB_PATH,
+                    )
+                )
+            )
+            for ordinal, (run, trial_index) in enumerate(trial_runs):
+                stored_attempt = loaded_checkpoint.attempts[ordinal]
+                verification = verify_completed_attempt(
+                    stored_attempt,
+                    history_db_path=history_path,
+                )
+                if verification.classification == "corrupted":
+                    raise ValueError(
+                        f"Checkpoint attempt {ordinal + 1} is corrupted: "
+                        + "; ".join(verification.messages)
+                    )
+                should_retry_failure = (
+                    verification.row is not None
+                    and verification.row.result == "FAIL"
+                    and retry_failed
+                )
+                if verification.classification == "reusable" and not should_retry_failure:
+                    assert verification.row is not None
+                    reused_rows[ordinal] = verification.row
+                    estimated_recomputation_avoided_seconds += (
+                        stored_attempt.duration_seconds
+                    )
+                    upsert_reused_history(verification.row, history_path)
+                else:
+                    if should_retry_failure:
+                        failed_attempts_retried += 1
+                    elif stored_attempt.status == "completed":
+                        invalidated_attempts += 1
+                    pending_items.append((ordinal, run, trial_index))
+            current_checkpoint = replace(
+                loaded_checkpoint,
+                updated_at=checkpoint_utc_now_iso(),
+                status="running",
+                requested_workers=requested_workers,
+                effective_workers=effective_workers,
+                attempts=[
+                    (
+                        replace(
+                            attempt,
+                            status="pending",
+                            started_at=None,
+                            completed_at=None,
+                            result=None,
+                            score=None,
+                            failed_checks=[],
+                            warning_checks=[],
+                            run_id=None,
+                            run_dir=None,
+                            json_report_path=None,
+                            markdown_report_path=None,
+                            manifest_path=None,
+                            json_report_sha256=None,
+                            markdown_report_sha256=None,
+                            manifest_sha256=None,
+                            duration_seconds=0.0,
+                            error=None,
+                        )
+                        if ordinal not in reused_rows
+                        else attempt
+                    )
+                    for ordinal, attempt in enumerate(loaded_checkpoint.attempts)
+                ],
+                resumed_from=str(resume_path.expanduser().resolve()),
+                compatibility_warnings=compatibility_warnings,
+            )
+            report_dir = Path(current_checkpoint.matrix_json_report_path).parent
+        checkpoint_store = CheckpointStore(
+            active_checkpoint_path,
+            current_checkpoint,
+            checkpoint_every,
+        )
+        try:
+            checkpoint_store.write()
+        except OSError as error:
+            raise ValueError(
+                f"Could not write matrix checkpoint: {error}"
+            ) from error
     started = time.monotonic()
-    if requested_workers == 1:
-        rows, stopped_early = _run_serial_attempts(
-            trial_runs,
-            trials,
-            fail_fast,
-            matrix_id,
-            benchmark_runner,
-        )
+    if checkpoint_store is None:
+        if requested_workers == 1:
+            rows, stopped_early = _run_serial_attempts(
+                trial_runs,
+                trials,
+                fail_fast,
+                matrix_id,
+                benchmark_runner,
+            )
+        else:
+            rows, stopped_early = _run_parallel_attempts(
+                trial_runs,
+                trials,
+                effective_workers,
+                fail_fast,
+                matrix_id,
+                benchmark_runner,
+            )
+        executed_this_invocation = len(rows)
     else:
-        rows, stopped_early = _run_parallel_attempts(
-            trial_runs,
-            trials,
-            effective_workers,
-            fail_fast,
-            matrix_id,
-            benchmark_runner,
-        )
+        completed_lock = threading.Lock()
+        completed_count = 0
+
+        def run_checkpointed(
+            item: tuple[int, SuiteRunConfig, int],
+        ) -> tuple[int, MatrixRowSummary]:
+            nonlocal completed_count
+            ordinal, run, trial_index = item
+            checkpoint_store.mark_running(ordinal)
+            attempt_started = time.monotonic()
+            row = _run_matrix_row(
+                run,
+                trial_index,
+                trials,
+                matrix_id,
+                benchmark_runner,
+            )
+            checkpoint_store.mark_completed(
+                ordinal,
+                row,
+                time.monotonic() - attempt_started,
+            )
+            with completed_lock:
+                completed_count += 1
+                should_interrupt = (
+                    _interrupt_after_attempts is not None
+                    and completed_count >= _interrupt_after_attempts
+                )
+            if should_interrupt:
+                raise KeyboardInterrupt
+            return ordinal, row
+
+        reused_failure = any(row.result == "FAIL" for row in reused_rows.values())
+        try:
+            if fail_fast and reused_failure and not retry_failed:
+                scheduled_results = []
+                stopped_early = bool(pending_items)
+            else:
+                scheduled = run_bounded_schedule(
+                    pending_items,
+                    workers=max(1, min(effective_workers, len(pending_items))),
+                    fail_fast=fail_fast,
+                    runner=run_checkpointed,
+                    is_failure=lambda item: item[1].result == "FAIL",
+                )
+                scheduled_results = scheduled.results
+                stopped_early = scheduled.stopped_early
+        except KeyboardInterrupt:
+            try:
+                checkpoint_store.mark_interrupted()
+            except OSError as error:
+                raise ValueError(
+                    f"Could not persist interrupted matrix checkpoint: {error}"
+                ) from error
+            raise
+        except Exception as error:
+            try:
+                checkpoint_store.mark_interrupted()
+            except Exception:
+                pass
+            raise ValueError(
+                f"Matrix checkpoint update failed; execution stopped: {error}"
+            ) from error
+        new_rows = {ordinal: row for ordinal, row in scheduled_results}
+        rows = [
+            row
+            for ordinal in range(attempts_planned)
+            if (row := reused_rows.get(ordinal, new_rows.get(ordinal))) is not None
+        ]
+        executed_this_invocation = len(new_rows)
     duration_seconds = round(time.monotonic() - started, 6)
     total_runs = len(rows)
     result_counts = dict(Counter(row.result for row in rows))
     passed = result_counts.get("PASS", 0)
     failed = result_counts.get("FAIL", 0)
-    report_dir = matrices_root / matrix_id
     combinations = _combination_summaries(rows)
     functional_passed = sum(row.functional_passed for row in rows)
     unsafe_functional_successes = sum(
@@ -986,6 +1418,38 @@ def run_matrix(
         profile_id=profile_id,
         profile_name=profile_name,
         profile_model=profile_model,
+        checkpoint_path=(
+            active_checkpoint_path.expanduser().resolve()
+            if active_checkpoint_path is not None
+            else None
+        ),
+        checkpoint_id=(
+            checkpoint_store.checkpoint.checkpoint_id
+            if checkpoint_store is not None
+            else None
+        ),
+        resumed_from=(
+            resume_path.expanduser().resolve()
+            if resume_path is not None
+            else None
+        ),
+        checkpoint_status=(
+            "completed" if checkpoint_store is not None else None
+        ),
+        attempts_reused=len(reused_rows),
+        attempts_skipped=len(reused_rows),
+        attempts_executed_this_invocation=executed_this_invocation,
+        failed_attempts_retried=failed_attempts_retried,
+        invalidated_attempts=invalidated_attempts,
+        reuse_percentage=round(
+            (len(reused_rows) / attempts_planned) * 100,
+            1,
+        ),
+        estimated_recomputation_avoided_seconds=round(
+            estimated_recomputation_avoided_seconds,
+            6,
+        ),
+        compatibility_warnings=compatibility_warnings,
     )
     if compare_baseline_path is not None:
         result = replace(
@@ -1091,10 +1555,33 @@ def run_matrix(
             "profile_id": result.profile_id,
             "profile_name": result.profile_name,
             "profile_model": result.profile_model,
+            "checkpoint_path": portable_path(result.checkpoint_path),
+            "checkpoint_id": result.checkpoint_id,
+            "resumed_from": portable_path(result.resumed_from),
+            "checkpoint_status": result.checkpoint_status,
+            "attempts_reused": result.attempts_reused,
+            "attempts_skipped": result.attempts_skipped,
+            "attempts_executed_this_invocation": (
+                result.attempts_executed_this_invocation
+            ),
+            "failed_attempts_retried": result.failed_attempts_retried,
+            "invalidated_attempts": result.invalidated_attempts,
+            "reuse_percentage": result.reuse_percentage,
+            "estimated_recomputation_avoided_seconds": (
+                result.estimated_recomputation_avoided_seconds
+            ),
+            "compatibility_warnings": result.compatibility_warnings,
         },
     )
     if result.manifest_path is not None:
         if write_manifest(manifest, result.manifest_path) is None:
             result = replace(result, manifest_path=None)
     _record_matrix_history(result)
+    if checkpoint_store is not None:
+        try:
+            checkpoint_store.mark_completed_checkpoint()
+        except OSError as error:
+            raise ValueError(
+                f"Could not finalize matrix checkpoint: {error}"
+            ) from error
     return result
