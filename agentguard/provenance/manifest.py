@@ -13,6 +13,7 @@ from typing import Any, Optional, Union
 
 from agentguard import __version__
 from agentguard.config.schema import AgentGuardConfig, ScalarMetadata
+from agentguard.io import atomic_write_text
 from agentguard.policy.command_policy import evaluate_command_policy
 
 
@@ -452,8 +453,7 @@ def serialize_manifest(manifest: ExecutionManifest) -> str:
 
 def write_manifest(manifest: ExecutionManifest, path: Path) -> Optional[Path]:
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(serialize_manifest(manifest), encoding="utf-8")
+        atomic_write_text(path, serialize_manifest(manifest))
     except (OSError, TypeError, ValueError) as error:
         warnings.warn(
             f"AgentGuard manifest write failed: {error}",

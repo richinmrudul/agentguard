@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
 from agentguard.config.loader import MAX_TASK_PROMPT_FILE_BYTES, load_config
 from agentguard.evaluation.harness import build_evaluation_plan, validate_evaluation
@@ -300,3 +301,19 @@ def test_profile_relative_executable_resolves_independently_of_cwd(
     resolved = resolve_profile_argv(profile, profile.command)
 
     assert resolved[0] == str(executable.resolve())
+
+
+def test_profile_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
+    profile = tmp_path / "duplicate.yaml"
+    profile.write_text(
+        "schema: agentguard.agent-profile\n"
+        "schema_version: 1\n"
+        "id: first\n"
+        "id: second\n"
+        "name: Duplicate\n"
+        "command: [python3, '{task_prompt}']\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(yaml.YAMLError, match="duplicate key 'id'"):
+        load_agent_profile(profile)

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from agentguard.core.result import BenchmarkResult
+from agentguard.io import atomic_write_text
 
 
 def _status(passed: bool) -> str:
@@ -156,5 +157,5 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
             "",
         ]
     )
-    report_path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(report_path, "\n".join(lines))
     return report_path

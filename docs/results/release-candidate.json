@@ -1,0 +1,148 @@
+{
+  "schema": "agentguard.release-candidate-summary",
+  "schema_version": 1,
+  "date": "2026-06-14",
+  "agentguard_version": "0.1.0",
+  "audited_base_commit": "ecae57684c7808d5cb1e6953ab963c81b8832c0a",
+  "source_state": "release-candidate-hardening working tree including Phase 27A fixes",
+  "environment": {
+    "operating_system": "Darwin 24.1.0",
+    "architecture": "arm64",
+    "python_version": "3.9.6"
+  },
+  "benchmark_corpus": {
+    "families": 6,
+    "scenarios": 12,
+    "safe_scenarios": 6,
+    "adversarial_scenarios": 6,
+    "static_contracts_passed": 12,
+    "static_contracts_failed": 0
+  },
+  "tests": {
+    "collected": 482,
+    "passed": 467,
+    "skipped_docker": 15,
+    "docker_status": "daemon unavailable locally; Docker integration remains CI-only"
+  },
+  "coverage": {
+    "scope": "non-Docker and non-package tests",
+    "statement_percent": 92.0,
+    "branch_percent": 78.99,
+    "combined_percent": 89.14,
+    "gate_percent": 88.0,
+    "gate_passed": true
+  },
+  "mutation_diagnostic": {
+    "unsafe_mutations": 10,
+    "safe_mutations": 6,
+    "controlled_expected_detections": 20,
+    "observed_expected_detections": 20,
+    "controlled_mutation_detection_rate_percent": 100.0,
+    "safe_fixture_pass_rate_percent": 100.0,
+    "missed_detections": 0,
+    "forbidden_detections": 0,
+    "unexpected_detections": 0
+  },
+  "policy_ablation": {
+    "trials": 3,
+    "workers": 3,
+    "control_valid": true,
+    "stable": true,
+    "per_check_contributions": [
+      {
+        "check": "Forbidden paths",
+        "unique_detections": 0,
+        "redundant_detections": 4,
+        "contribution_percent": 0.0
+      },
+      {
+        "check": "Test tampering",
+        "unique_detections": 0,
+        "redundant_detections": 2,
+        "contribution_percent": 0.0
+      },
+      {
+        "check": "Unsafe commands",
+        "unique_detections": 1,
+        "redundant_detections": 0,
+        "contribution_percent": 100.0
+      },
+      {
+        "check": "Scope adherence",
+        "unique_detections": 2,
+        "redundant_detections": 5,
+        "contribution_percent": 28.57
+      },
+      {
+        "check": "Diff size",
+        "unique_detections": 1,
+        "redundant_detections": 0,
+        "contribution_percent": 100.0
+      },
+      {
+        "check": "Secret scan",
+        "unique_detections": 0,
+        "redundant_detections": 4,
+        "contribution_percent": 0.0
+      }
+    ]
+  },
+  "instrumentation_overhead": {
+    "machine_specific": true,
+    "workload": "deterministic mock-safe auth fixture",
+    "measured_iterations": 5,
+    "warmups": 1,
+    "direct_median_seconds": 0.175482,
+    "agentguard_median_seconds": 0.305518,
+    "median_absolute_overhead_seconds": 0.127743,
+    "median_relative_overhead_percent": 73.51,
+    "median_slowdown_ratio": 1.735
+  },
+  "matrix_scale": {
+    "machine_specific": true,
+    "maximum_validated_attempts": 250,
+    "best_measured_speedup": 8.4343,
+    "best_speedup_workers": 8,
+    "integrity_passed": true,
+    "peak_traced_python_memory_bytes": 166402
+  },
+  "resume": {
+    "machine_specific_timing": true,
+    "planned_attempts": 4,
+    "attempts_reused": 2,
+    "reuse_percentage": 50.0,
+    "newly_executed_attempts": 2,
+    "estimated_recomputation_avoided_seconds": 0.565144,
+    "checkpoint_integrity_passed": true
+  },
+  "python_support": [
+    "3.9",
+    "3.10",
+    "3.11",
+    "3.12"
+  ],
+  "package_validation": {
+    "wheel_built": true,
+    "sdist_built": true,
+    "artifact_contents_validated": true,
+    "installed_wheel_smoke_passed": true,
+    "manifest_verification_passed": true,
+    "published": false
+  },
+  "methodology": [
+    "../benchmarks.md",
+    "../detection-quality.md",
+    "../policy-ablation.md",
+    "../performance.md",
+    "../scalability.md",
+    "../resume.md",
+    "../testing.md",
+    "../release.md"
+  ],
+  "limitations": [
+    "Docker was unavailable on the audit host, so Docker integration remains CI-only.",
+    "Timing, throughput, speedup, and memory results are machine- and workload-specific.",
+    "Controlled mutation and ablation results are synthetic and are not production security rates.",
+    "The report identifies the synced main base commit plus the Phase 27A working-tree state because a commit cannot contain its own final hash."
+  ]
+}

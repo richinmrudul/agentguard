@@ -24,7 +24,7 @@ AGENTGUARD="$VENV_DIR/bin/agentguard"
 mkdir -p "$DIST_DIR" "$WORK_DIR"
 
 section "Install build frontend"
-"$PYTHON" -m pip install build "setuptools>=68"
+"$PYTHON" -m pip install build "setuptools>=77"
 
 section "Build wheel and source distribution"
 "$PYTHON" -m build \

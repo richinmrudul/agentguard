@@ -1,4 +1,3 @@
-import json
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -25,6 +24,7 @@ from agentguard.diagnostics.mutations import (
     _select_mutations,
     load_mutation_catalog,
 )
+from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.benchmarks.registry import normalize_registry_values
 from agentguard.config.loader import load_config
 from agentguard.provenance.manifest import (
@@ -480,16 +480,11 @@ def _json_default(value: Any) -> str:
 
 
 def _write_reports(result: PolicyAblationResult) -> None:
-    result.json_report_path.parent.mkdir(parents=True, exist_ok=True)
-    result.json_report_path.write_text(
-        json.dumps(
-            asdict(result),
-            default=_json_default,
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
+    atomic_write_json(
+        result.json_report_path,
+        asdict(result),
+        default=_json_default,
+        sort_keys=True,
     )
     valid = "yes" if result.control_validity.valid else "no"
     lines = [
@@ -620,7 +615,7 @@ def _write_reports(result: PolicyAblationResult) -> None:
     )
     lines.extend(f"- {item}" for item in result.limitations)
     lines.append("")
-    result.markdown_report_path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(result.markdown_report_path, "\n".join(lines))
 
 
 def run_policy_ablation(

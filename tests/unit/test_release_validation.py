@@ -62,15 +62,16 @@ def test_project_metadata_declares_tested_python_range() -> None:
         "for AI coding agents."
     )
     assert project["dependencies"] == ["PyYAML>=6.0.0", "typer>=0.12.0"]
-    assert project["license"] == {"file": "LICENSE"}
+    assert project["license"] == "MIT"
+    assert project["license-files"] == ["LICENSE"]
     classifiers = set(project["classifiers"])
-    assert "License :: OSI Approved :: MIT License" in classifiers
+    assert "License :: OSI Approved :: MIT License" not in classifiers
     for version in SUPPORTED_PYTHON:
         assert f"Programming Language :: Python :: {version}" in classifiers
     assert "Programming Language :: Python :: 3.13" not in classifiers
     assert project["scripts"]["agentguard"] == "agentguard.cli.main:app"
     assert pyproject["build-system"] == {
-        "requires": ["setuptools>=68"],
+        "requires": ["setuptools>=77"],
         "build-backend": "setuptools.build_meta",
     }
 

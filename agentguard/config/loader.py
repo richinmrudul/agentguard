@@ -2,8 +2,6 @@ import math
 from pathlib import Path
 from typing import Any, Optional, Union
 
-import yaml
-
 from agentguard.config.schema import (
     VALID_BENCHMARK_DIFFICULTIES,
     VALID_SEVERITIES,
@@ -16,6 +14,7 @@ from agentguard.config.schema import (
     ScalarMetadata,
     TaskConfig,
 )
+from agentguard.config.yaml import load_yaml
 
 
 VALID_DOCKER_NETWORKS = {"none", "bridge"}
@@ -384,7 +383,7 @@ def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
 def load_config(config_path: Path) -> AgentGuardConfig:
     path = config_path.expanduser()
     with path.open("r", encoding="utf-8") as file:
-        data = yaml.safe_load(file) or {}
+        data = load_yaml(file) or {}
 
     if not isinstance(data, dict):
         raise ValueError("AgentGuard config must be a YAML mapping.")

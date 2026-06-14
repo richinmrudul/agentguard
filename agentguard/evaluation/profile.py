@@ -6,10 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-import yaml
-
 from agentguard.config.loader import _metadata_mapping
 from agentguard.config.schema import AgentGuardConfig, ScalarMetadata
+from agentguard.config.yaml import load_yaml
 from agentguard.provenance.manifest import SECRET_KEY_PATTERN, sanitize_arguments
 
 
@@ -88,7 +87,7 @@ def _validate_placeholders(command: list[str]) -> None:
 def load_agent_profile(path: Path) -> AgentProfile:
     profile_path = path.expanduser().resolve()
     with profile_path.open("r", encoding="utf-8") as file:
-        data = yaml.safe_load(file) or {}
+        data = load_yaml(file) or {}
     if not isinstance(data, dict):
         raise ValueError("Agent profile must be a YAML mapping.")
     if data.get("schema") != PROFILE_SCHEMA:

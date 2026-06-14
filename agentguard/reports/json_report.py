@@ -1,9 +1,9 @@
-import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from agentguard.core.result import BenchmarkResult
+from agentguard.io import atomic_write_json
 
 
 def _json_default(value: Any) -> str:
@@ -34,7 +34,5 @@ def write_json_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     data["evidence"] = [
         evidence for check in result.check_results for evidence in check.evidence
     ]
-    with report_path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, default=_json_default, indent=2)
-        file.write("\n")
+    atomic_write_json(report_path, data, default=_json_default)
     return report_path

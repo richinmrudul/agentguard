@@ -1,4 +1,3 @@
-import json
 import math
 import platform
 import shlex
@@ -20,6 +19,7 @@ from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.result import BenchmarkResult
 from agentguard.core.timing import StageTimingRecorder
 from agentguard.instrumentation.test_runner import _build_test_env
+from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.provenance.manifest import agentguard_identity, sha256_file
 from agentguard.repo.internal_artifacts import is_internal_artifact
 
@@ -350,13 +350,8 @@ def _write_reports(
         raise FileExistsError(
             f"output already exists: {joined}. Use --force to overwrite."
         )
-    paths.json.parent.mkdir(parents=True, exist_ok=True)
-    paths.markdown.parent.mkdir(parents=True, exist_ok=True)
-    paths.json.write_text(
-        json.dumps(data, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    paths.markdown.write_text(_markdown_report(data), encoding="utf-8")
+    atomic_write_json(paths.json, data, sort_keys=True)
+    atomic_write_text(paths.markdown, _markdown_report(data))
 
 
 def _format_seconds(value: object) -> str:

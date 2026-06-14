@@ -33,6 +33,15 @@ def test_demo_assets_exist_and_reference_required_commands() -> None:
     assert "docs/demo.md" in readme.read_text(encoding="utf-8")
 
 
+def test_resume_demo_selects_a_portable_python_interpreter() -> None:
+    script = _read("scripts/resume_demo.sh")
+
+    assert "AGENTGUARD_PYTHON" in script
+    assert ".venv/bin/python" in script
+    assert "PYTHON_BIN=python3" in script
+    assert '"$PYTHON_BIN" - <<' in script
+
+
 def test_readme_links_core_docs() -> None:
     readme = _read("README.md")
 

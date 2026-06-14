@@ -1,16 +1,17 @@
-import json
 import subprocess
 import warnings
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from uuid import uuid4
 
 from agentguard.config.loader import load_config
 from agentguard.core.orchestrator import default_checks
 from agentguard.core.result import CiResult, ReportPaths
 from agentguard.core.timeline import TimelineRecorder
 from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
+from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
 from agentguard.repo.git_diff import collect_diff, collect_diff_between_refs
@@ -46,20 +47,17 @@ def detect_repo_dir(start_dir: Optional[Path] = None) -> Path:
 def _run_dir(task_id: str, repo_dir: Path, ci_root: Path) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     root = ci_root if ci_root.is_absolute() else repo_dir / ci_root
-    return root / f"{task_id}-{timestamp}"
+    return root / f"{task_id}-{timestamp}-{uuid4().hex[:8]}"
 
 
 def _write_json_report(result: CiResult) -> Path:
     report_path = result.report_paths.json
-    report_path.parent.mkdir(parents=True, exist_ok=True)
     data = asdict(result)
     data["command_log_path"] = result.report_paths.command_log
     data["evidence"] = [
         evidence for check in result.check_results for evidence in check.evidence
     ]
-    with report_path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, default=_json_default, indent=2)
-        file.write("\n")
+    atomic_write_json(report_path, data, default=_json_default)
     return report_path
 
 
@@ -80,7 +78,6 @@ def _event_flags(event) -> str:
 
 def _write_markdown_report(result: CiResult) -> Path:
     report_path = result.report_paths.markdown
-    report_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# AgentGuard CI Report",
         "",
@@ -146,7 +143,7 @@ def _write_markdown_report(result: CiResult) -> Path:
             "",
         ]
     )
-    report_path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(report_path, "\n".join(lines))
     return report_path
 
 
