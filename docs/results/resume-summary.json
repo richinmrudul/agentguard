@@ -3,7 +3,7 @@
   "schema_version": 1,
   "date": "2026-06-12",
   "result_type": "deterministic local mock matrix checkpoint/resume smoke test",
-  "agentguard_commit": "a8263893c052451b08885e47b881d54c3c61bdfe",
+  "agentguard_commit": "72492f786bb38d1a36e46d7c5f9284cba73c2fb8",
   "environment": {
     "agentguard_version": "0.1.0",
     "python_version": "3.9.6",
