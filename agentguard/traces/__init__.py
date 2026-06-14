@@ -14,6 +14,14 @@ from agentguard.traces.execution import (
     verify_execution_trace,
     write_execution_trace,
 )
+from agentguard.traces.models import (
+    ReplayCheckComparison,
+    ReplayDivergence,
+    ReplayEvidence,
+    ReplayPolicySnapshot,
+    ReplayResult,
+    ReplayabilityStatus,
+)
 
 __all__ = [
     "ExecutionTrace",
@@ -28,4 +36,10 @@ __all__ = [
     "trace_summary",
     "verify_execution_trace",
     "write_execution_trace",
+    "ReplayCheckComparison",
+    "ReplayDivergence",
+    "ReplayEvidence",
+    "ReplayPolicySnapshot",
+    "ReplayResult",
+    "ReplayabilityStatus",
 ]
