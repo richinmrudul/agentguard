@@ -13,7 +13,7 @@ def test_package_smoke_script_covers_installed_cli_workflow() -> None:
         "python3 -m venv",
         'rm -rf "$ROOT_DIR/build"',
         "pip install build",
-        '"setuptools>=68"',
+        '"setuptools>=77"',
         "--no-isolation",
         "--wheel",
         "--sdist",

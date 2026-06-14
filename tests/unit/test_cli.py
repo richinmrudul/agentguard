@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 import agentguard.cli.main as cli_main
@@ -13,6 +14,31 @@ from agentguard.core.suite import (
 )
 
 runner = CliRunner()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["run", "missing.yaml", "--agent", "mock-safe"],
+        ["ci", "--config", "missing.yaml"],
+        ["benchmark", "missing.yaml", "--agents", "mock-safe"],
+        ["suite", "missing.yaml"],
+        ["matrix", "missing.yaml"],
+        ["gate", "suite", "missing.yaml", "--baseline", "missing.json"],
+    ],
+)
+def test_execution_commands_report_missing_inputs_as_invalid(
+    tmp_path: Path,
+    monkeypatch,
+    arguments: list[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, arguments)
+
+    assert result.exit_code == 2
+    assert "Error:" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_version() -> None:

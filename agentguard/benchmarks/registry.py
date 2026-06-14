@@ -4,7 +4,9 @@ from typing import Any, Optional
 
 import yaml
 
+from agentguard.config.yaml import load_yaml
 from agentguard.config.schema import VALID_BENCHMARK_DIFFICULTIES
+from agentguard.io import atomic_write_text
 
 
 DEFAULT_REGISTRY_PATH = Path("examples/benchmarks/registry.yaml")
@@ -159,7 +161,7 @@ def _load_entry(
 def load_benchmark_registry(path: Path = DEFAULT_REGISTRY_PATH) -> BenchmarkRegistry:
     registry_path = path.expanduser()
     with registry_path.open("r", encoding="utf-8") as file:
-        data = yaml.safe_load(file) or {}
+        data = load_yaml(file) or {}
 
     if not isinstance(data, dict):
         raise ValueError("Benchmark registry must be a YAML mapping.")
@@ -260,13 +262,11 @@ def write_generated_suite(
     path = output_path.expanduser()
     if path.exists() and not force:
         raise ValueError(f"output already exists: {path}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as file:
-        yaml.dump(
-            suite_data,
-            file,
-            Dumper=_IndentedSafeDumper,
-            sort_keys=False,
-            default_flow_style=False,
-        )
+    content = yaml.dump(
+        suite_data,
+        Dumper=_IndentedSafeDumper,
+        sort_keys=False,
+        default_flow_style=False,
+    )
+    atomic_write_text(path, content)
     return path

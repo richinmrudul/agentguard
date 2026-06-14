@@ -1,4 +1,3 @@
-import json
 import shutil
 import subprocess
 import time
@@ -22,6 +21,7 @@ from agentguard.core.orchestrator import default_checks
 from agentguard.core.result import CheckResult, CommandResult, DiffSummary
 from agentguard.instrumentation.command_tracker import CommandEvent, CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
+from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.provenance.manifest import (
     agentguard_identity,
     host_identity,
@@ -768,16 +768,12 @@ def _json_default(value: Any) -> str:
 
 
 def _write_reports(result: MutationAuditResult) -> None:
-    result.json_report_path.parent.mkdir(parents=True, exist_ok=True)
-    with result.json_report_path.open("w", encoding="utf-8") as file:
-        json.dump(
-            asdict(result),
-            file,
-            default=_json_default,
-            indent=2,
-            sort_keys=True,
-        )
-        file.write("\n")
+    atomic_write_json(
+        result.json_report_path,
+        asdict(result),
+        default=_json_default,
+        sort_keys=True,
+    )
 
     lines = [
         "# AgentGuard Policy Mutation Audit",
@@ -888,7 +884,7 @@ def _write_reports(result: MutationAuditResult) -> None:
     lines.extend(["## Limitations", ""])
     lines.extend(f"- {limitation}" for limitation in result.limitations)
     lines.append("")
-    result.markdown_report_path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(result.markdown_report_path, "\n".join(lines))
 
 
 def _select_mutations(

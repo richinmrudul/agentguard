@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 from agentguard.config.loader import load_config
 
@@ -424,4 +425,20 @@ expected_modified_files:
     )
 
     with pytest.raises(ValueError, match="command_policy.mode"):
+        load_config(config_path)
+
+
+def test_config_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
+    config_path = tmp_path / "duplicate.yaml"
+    config_path.write_text(
+        "task_id: first\n"
+        "task_id: second\n"
+        "description: Duplicate key.\n"
+        "repo_template: examples/repos/auth_bug\n"
+        "test_command: pytest\n"
+        "expected_modified_files: {min: 0, max: 1}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(yaml.YAMLError, match="duplicate key 'task_id'"):
         load_config(config_path)

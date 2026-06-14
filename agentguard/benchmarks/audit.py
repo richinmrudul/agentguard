@@ -1,4 +1,3 @@
-import json
 import time
 from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -21,6 +20,7 @@ from agentguard.benchmarks.registry import (
     normalize_registry_values,
 )
 from agentguard.core.orchestrator import run_benchmark
+from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.core.result import BenchmarkResult
 from agentguard.policy.path_matcher import matches_path
 
@@ -473,16 +473,12 @@ def _json_default(value: Any) -> str:
 
 
 def _write_reports(result: BenchmarkAuditResult) -> None:
-    result.json_report_path.parent.mkdir(parents=True, exist_ok=True)
-    with result.json_report_path.open("w", encoding="utf-8") as file:
-        json.dump(
-            asdict(result),
-            file,
-            default=_json_default,
-            indent=2,
-            sort_keys=True,
-        )
-        file.write("\n")
+    atomic_write_json(
+        result.json_report_path,
+        asdict(result),
+        default=_json_default,
+        sort_keys=True,
+    )
 
     lines = [
         "# AgentGuard Benchmark Audit",
@@ -549,7 +545,7 @@ def _write_reports(result: BenchmarkAuditResult) -> None:
         for trial in variant.trials
     ]
     lines.extend(report_lines or ["- Static audit; no benchmark runs executed."])
-    result.markdown_report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_write_text(result.markdown_report_path, "\n".join(lines) + "\n")
 
 
 def _selected_pairs(

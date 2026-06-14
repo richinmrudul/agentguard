@@ -1,4 +1,3 @@
-import json
 import time
 import warnings
 from collections import Counter
@@ -6,14 +5,15 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
-
-import yaml
+from uuid import uuid4
 
 from agentguard.config.loader import load_config
+from agentguard.config.yaml import load_yaml
 from agentguard.core.baseline import BaselineComparison, compare_suite_to_baseline
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.result import BenchmarkResult
 from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
+from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.provenance.manifest import (
     ChildExecution,
     ExecutionManifest,
@@ -114,7 +114,7 @@ def _json_default(value: Any) -> str:
 
 def _suite_dir(suite_id: str, suites_root: Path) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
-    return suites_root / f"{suite_id}-{timestamp}"
+    return suites_root / f"{suite_id}-{timestamp}-{uuid4().hex[:8]}"
 
 
 def _required_string(data: dict[str, Any], key: str) -> str:
@@ -161,7 +161,7 @@ def load_suite_config(
 ) -> SuiteConfig:
     suite_path = path.expanduser().resolve()
     with suite_path.open("r", encoding="utf-8") as file:
-        data = yaml.safe_load(file) or {}
+        data = load_yaml(file) or {}
 
     if not isinstance(data, dict):
         raise ValueError("Suite config must be a YAML mapping.")
@@ -307,21 +307,17 @@ def _single_value(values: list[Optional[object]]) -> Optional[object]:
 
 def _write_json_report(result: SuiteResult) -> Path:
     report_path = result.json_report_path
-    report_path.parent.mkdir(parents=True, exist_ok=True)
     data = asdict(result)
     if result.baseline_comparison is None:
         data.pop("baseline_comparison", None)
     if not result.filters.has_filters():
         data.pop("filters", None)
-    with report_path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, default=_json_default, indent=2)
-        file.write("\n")
+    atomic_write_json(report_path, data, default=_json_default)
     return report_path
 
 
 def _write_markdown_report(result: SuiteResult) -> Path:
     report_path = result.markdown_report_path
-    report_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# AgentGuard Suite Summary",
         "",
@@ -434,7 +430,7 @@ def _write_markdown_report(result: SuiteResult) -> Path:
         ]
     )
 
-    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_write_text(report_path, "\n".join(lines) + "\n")
     return report_path
 
 

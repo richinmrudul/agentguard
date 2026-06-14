@@ -1,8 +1,8 @@
-import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional, Union
 
+from agentguard.io import atomic_write_json
 
 @dataclass
 class CommandEvent:
@@ -140,7 +140,5 @@ class CommandTracker:
 
     def write_json(self, run_dir: Path) -> Path:
         path = run_dir / "command_log.json"
-        with path.open("w", encoding="utf-8") as file:
-            json.dump([asdict(event) for event in self._events], file, indent=2)
-            file.write("\n")
+        atomic_write_json(path, [asdict(event) for event in self._events])
         return path

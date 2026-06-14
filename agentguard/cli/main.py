@@ -56,6 +56,7 @@ from agentguard.history.store import (
     validate_result,
     validate_run_type,
 )
+from agentguard.io import atomic_write_text
 from agentguard.evaluation.harness import (
     build_evaluation_plan,
     format_evaluation_plan,
@@ -1339,8 +1340,7 @@ def history_export_command(
             err=True,
         )
         raise typer.Exit(2)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(content, encoding="utf-8")
+    atomic_write_text(output, content)
     typer.echo(f"History exported: {output}")
 
 
@@ -1357,7 +1357,7 @@ def run(
     """Run an AgentGuard benchmark."""
     try:
         result = run_benchmark(config_path, agent)
-    except ValueError as error:
+    except (OSError, ValueError, yaml.YAMLError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
@@ -1423,7 +1423,11 @@ def ci_command(
         )
         raise typer.Exit(2)
 
-    result = run_ci(config_path, base_ref=base_ref, head_ref=head_ref)
+    try:
+        result = run_ci(config_path, base_ref=base_ref, head_ref=head_ref)
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
     github_summary_path = None
     if github_summary:
         summary_env = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -1483,7 +1487,11 @@ def benchmark_command(
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="--agents") from error
 
-    summary = run_multi_agent_benchmark(config_path, agent_names)
+    try:
+        summary = run_multi_agent_benchmark(config_path, agent_names)
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
 
     typer.echo("AgentGuard Benchmark Summary")
     typer.echo(f"Task: {summary.task_id}")
@@ -1561,7 +1569,7 @@ def gate_suite_command(
             allow_version_mismatch=allow_version_mismatch,
             filters=filters,
         )
-    except ValueError as error:
+    except (OSError, ValueError, yaml.YAMLError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
@@ -1639,7 +1647,7 @@ def suite_command(
             allow_version_mismatch=allow_version_mismatch,
             filters=filters,
         )
-    except ValueError as error:
+    except (OSError, ValueError, yaml.YAMLError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
@@ -1890,7 +1898,7 @@ def matrix_command(
                 err=True,
             )
         raise typer.Exit(130) from error
-    except ValueError as error:
+    except (OSError, ValueError, yaml.YAMLError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 

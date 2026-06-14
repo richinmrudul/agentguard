@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from agentguard.io import atomic_write_json
 
 MATRIX_RELIABILITY_SCHEMA = "agentguard.matrix-reliability-baseline"
 MATRIX_RELIABILITY_SCHEMA_VERSION = 1
@@ -302,10 +303,7 @@ def write_matrix_reliability_baseline(
             f"Reliability baseline already exists: {output_path}. Use --force to overwrite."
         )
     baseline = baseline_from_matrix_result(result)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as file:
-        json.dump(asdict(baseline), file, indent=2)
-        file.write("\n")
+    atomic_write_json(output_path, asdict(baseline))
     return output_path
 
 

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from agentguard.io import atomic_write_json
 
 BASELINE_SCHEMA_VERSION = 1
 
@@ -117,10 +118,7 @@ def baseline_from_suite_result(result: Any, created_at: Optional[str] = None) ->
 def write_suite_baseline(result: Any, path: Path) -> Path:
     baseline = baseline_from_suite_result(result)
     output_path = path.expanduser()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as file:
-        json.dump(asdict(baseline), file, default=_json_default, indent=2)
-        file.write("\n")
+    atomic_write_json(output_path, asdict(baseline), default=_json_default)
     return output_path
 
 

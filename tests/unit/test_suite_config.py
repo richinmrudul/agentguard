@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 from agentguard.core.suite import load_suite_config
 
@@ -64,4 +65,20 @@ def test_load_suite_config_rejects_missing_run_agent(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="agent"):
+        load_suite_config(suite_path)
+
+
+def test_suite_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
+    suite_path = tmp_path / "duplicate.yaml"
+    suite_path.write_text(
+        "suite_id: first\n"
+        "suite_id: second\n"
+        "description: Duplicate key.\n"
+        "runs:\n"
+        "  - config: config.yaml\n"
+        "    agent: mock-safe\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(yaml.YAMLError, match="duplicate key 'suite_id'"):
         load_suite_config(suite_path)

@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/agentguard-resume-demo.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
+if [[ -n "${AGENTGUARD_PYTHON:-}" ]]; then
+  PYTHON_BIN=$AGENTGUARD_PYTHON
+elif [[ -x "$ROOT/.venv/bin/python" ]]; then
+  PYTHON_BIN="$ROOT/.venv/bin/python"
+else
+  PYTHON_BIN=python3
+fi
 
 cat > "$WORK/suite.yaml" <<EOF
 suite_id: resume_demo
@@ -13,7 +20,7 @@ runs:
     agent: mock-safe
 EOF
 
-WORK="$WORK" "$ROOT/.venv/bin/python" - <<'PY'
+WORK="$WORK" "$PYTHON_BIN" - <<'PY'
 import json
 import os
 from pathlib import Path

@@ -1,10 +1,11 @@
-import json
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from agentguard.core.orchestrator import run_benchmark
+from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.core.result import (
     AgentBenchmarkSummary,
     BenchmarkResult,
@@ -47,15 +48,12 @@ def _agent_summary(result: BenchmarkResult) -> AgentBenchmarkSummary:
 
 def _summary_dir(task_id: str, benchmarks_root: Path) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
-    return benchmarks_root / f"{task_id}-{timestamp}"
+    return benchmarks_root / f"{task_id}-{timestamp}-{uuid4().hex[:8]}"
 
 
 def _write_json_report(summary: MultiAgentBenchmarkSummary) -> Path:
     report_path = summary.report_paths.json
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    with report_path.open("w", encoding="utf-8") as file:
-        json.dump(asdict(summary), file, default=_json_default, indent=2)
-        file.write("\n")
+    atomic_write_json(report_path, asdict(summary), default=_json_default)
     return report_path
 
 
@@ -65,7 +63,6 @@ def _format_checks(checks: list[str]) -> str:
 
 def _write_markdown_report(summary: MultiAgentBenchmarkSummary) -> Path:
     report_path = summary.report_paths.markdown
-    report_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# AgentGuard Benchmark Summary",
         "",
@@ -92,7 +89,7 @@ def _write_markdown_report(summary: MultiAgentBenchmarkSummary) -> Path:
         lines.append(f"  - JSON: {agent.json_report_path}")
         lines.append(f"  - Markdown: {agent.markdown_report_path}")
 
-    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_write_text(report_path, "\n".join(lines) + "\n")
     return report_path
 
 

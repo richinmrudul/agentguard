@@ -1,4 +1,3 @@
-import json
 import inspect
 import threading
 import time
@@ -50,6 +49,7 @@ from agentguard.history.store import (
     record_history,
     utc_now_iso,
 )
+from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.provenance.manifest import (
     ChildExecution,
     ExecutionManifest,
@@ -687,7 +687,6 @@ def _format_checks(checks: list[str]) -> str:
 
 
 def _write_json_report(result: MatrixResult) -> Path:
-    result.json_report_path.parent.mkdir(parents=True, exist_ok=True)
     data = asdict(result)
     if result.baseline_comparison is None:
         data.pop("baseline_comparison", None)
@@ -697,9 +696,7 @@ def _write_json_report(result: MatrixResult) -> Path:
         data.pop("reliability_comparison", None)
     if not result.filters.has_filters():
         data.pop("filters", None)
-    with result.json_report_path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, default=_json_default, indent=2)
-        file.write("\n")
+    atomic_write_json(result.json_report_path, data, default=_json_default)
     return result.json_report_path
 
 
@@ -742,7 +739,6 @@ def _reliability_lines(summary: MatrixReliabilitySummary) -> list[str]:
 
 
 def _write_markdown_report(result: MatrixResult) -> Path:
-    result.markdown_report_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# AgentGuard Matrix Summary",
         "",
@@ -998,10 +994,7 @@ def _write_markdown_report(result: MatrixResult) -> Path:
         ]
     )
 
-    result.markdown_report_path.write_text(
-        "\n".join(lines) + "\n",
-        encoding="utf-8",
-    )
+    atomic_write_text(result.markdown_report_path, "\n".join(lines) + "\n")
     return result.markdown_report_path
 
 

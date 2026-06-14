@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from agentguard.benchmarks.registry import find_benchmark, load_benchmark_registry
@@ -200,3 +201,15 @@ def test_show_missing_id_exits_2(
 
     assert result.exit_code == 2
     assert "Error: benchmark not found: missing" in result.output
+
+
+def test_registry_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
+    registry_path = _write_registry(
+        tmp_path,
+        "schema_version: 1\n"
+        "benchmarks: []\n"
+        "benchmarks: []\n",
+    )
+
+    with pytest.raises(yaml.YAMLError, match="duplicate key 'benchmarks'"):
+        load_benchmark_registry(registry_path)

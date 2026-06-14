@@ -1,4 +1,3 @@
-import json
 import math
 import shutil
 import sqlite3
@@ -14,6 +13,7 @@ from uuid import uuid4
 
 from agentguard.core.scheduler import run_bounded_schedule
 from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
+from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.provenance.manifest import agentguard_identity, host_identity
 
 
@@ -647,16 +647,11 @@ def _json_default(value: Any) -> str:
 
 
 def _write_reports(result: MatrixStressResult) -> None:
-    result.json_report_path.parent.mkdir(parents=True, exist_ok=True)
-    result.json_report_path.write_text(
-        json.dumps(
-            asdict(result),
-            default=_json_default,
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
+    atomic_write_json(
+        result.json_report_path,
+        asdict(result),
+        default=_json_default,
+        sort_keys=True,
     )
     lines = [
         "# AgentGuard Matrix Stress Study",
@@ -754,7 +749,7 @@ def _write_reports(result: MatrixStressResult) -> None:
     )
     lines.extend(f"- {limitation}" for limitation in result.limitations)
     lines.append("")
-    result.markdown_report_path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write_text(result.markdown_report_path, "\n".join(lines))
 
 
 def run_matrix_stress(
