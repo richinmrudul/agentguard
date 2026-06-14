@@ -79,7 +79,7 @@ def test_init_creates_db_schema_and_version(tmp_path: Path) -> None:
         }
         user_version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert "runs" in tables
-    assert user_version == 3
+    assert user_version == 4
 
 
 def test_record_inserts_row(tmp_path: Path) -> None:

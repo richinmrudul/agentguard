@@ -1,7 +1,7 @@
 import time
 import warnings
 from contextlib import nullcontext
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import ContextManager, Optional
 
@@ -39,6 +39,7 @@ from agentguard.repo.git_diff import collect_diff
 from agentguard.repo.manager import RepoManager
 from agentguard.provenance.manifest import (
     ExecutionManifest,
+    SECRET_KEY_PATTERN,
     agent_identity,
     agentguard_identity,
     artifact_identity,
@@ -48,6 +49,7 @@ from agentguard.provenance.manifest import (
     host_identity,
     policy_identity,
     sanitize_text,
+    sha256_file,
     source_identity,
     utc_now_iso as manifest_utc_now_iso,
     write_manifest,
@@ -56,6 +58,11 @@ from agentguard.reports.json_report import write_json_report
 from agentguard.reports.markdown_report import write_markdown_report
 from agentguard.scoring.scorer import score_checks
 from agentguard.sandbox.docker_runner import DockerTestRunner
+from agentguard.traces.execution import (
+    build_execution_trace,
+    canonical_json,
+    write_execution_trace,
+)
 
 
 def default_checks() -> list[Check]:
@@ -264,6 +271,7 @@ def _record_run_history(result: BenchmarkResult) -> None:
                 markdown_report_path=result.report_paths.markdown,
                 command_log_path=result.report_paths.command_log,
                 manifest_path=result.report_paths.manifest,
+                trace_path=result.report_paths.trace,
                 category=result.benchmark.category,
                 difficulty=result.benchmark.difficulty,
                 benchmark_id=result.benchmark.id,
@@ -517,6 +525,7 @@ def run_benchmark(
             if write_manifest_enabled
             else None
         ),
+        trace=prepared.run_dir / "trace.jsonl",
     )
     timeline.add(
         "reports_written",
@@ -598,6 +607,7 @@ def run_benchmark(
             markdown=markdown_path,
             command_log=command_log_path,
             manifest=report_paths.manifest,
+            trace=report_paths.trace,
         ),
         sandbox=partial_result.sandbox,
         benchmark=partial_result.benchmark,
@@ -613,13 +623,22 @@ def run_benchmark(
         profile_name=partial_result.profile_name,
         profile_model=partial_result.profile_model,
     )
+    agentguard_details = agentguard_identity()
+    policy_details = policy_identity(config)
+    agent_details = agent_identity(
+        config,
+        agent_name,
+        detected_version,
+        version_status,
+        version_warning,
+    )
     manifest = ExecutionManifest(
         execution_id=prepared.run_id,
         execution_type="run",
         created_at=created_at,
         completed_at=manifest_utc_now_iso(),
         duration_seconds=round(time.monotonic() - started, 6),
-        agentguard=agentguard_identity(),
+        agentguard=agentguard_details,
         host=host_identity(docker_relevant=config.sandbox.type == "docker"),
         source=source_identity(config.repo_template),
         configuration=configuration_identity(
@@ -635,16 +654,15 @@ def run_benchmark(
                 "task_prompt_sha256": task_prompt_sha256,
             },
         ),
-        agent=agent_identity(
-            config,
-            agent_name,
-            detected_version,
-            version_status,
-            version_warning,
-        ),
+        agent=agent_details,
         benchmarks=[benchmark_identity(config)],
-        policies=[policy_identity(config)],
-        artifacts=artifact_identity(json_path, markdown_path, command_log_path),
+        policies=[policy_details],
+        artifacts=artifact_identity(
+            json_path,
+            markdown_path,
+            command_log_path,
+            report_paths.trace,
+        ),
         parent_execution_id=parent_execution_id,
         parent_execution_type=parent_execution_type,
     )
@@ -662,6 +680,45 @@ def run_benchmark(
         result = replace(
             result,
             report_paths=replace(result.report_paths, manifest=None),
+        )
+    try:
+        trace_path = result.report_paths.trace
+        if trace_path is None:
+            raise ValueError("Trace output path is unavailable.")
+        trace = build_execution_trace(
+            result,
+            created_at=created_at,
+            configuration_hash=sha256_file(config.config_path),
+            agentguard_version=agentguard_details.version,
+            agentguard_commit=agentguard_details.git_commit,
+            agent_version=agent_details.version,
+            policy_summary=canonical_json(asdict(policy_details)),
+            sandbox_summary=canonical_json(asdict(_sandbox_metadata(config))),
+            source_report_id=json_path.name,
+            source_manifest_id=(
+                result.report_paths.manifest.name
+                if result.report_paths.manifest is not None
+                else None
+            ),
+            sensitive_values=[
+                value for value in config.agent_environment.values() if value
+            ]
+            + [
+                str(value)
+                for key, value in config.agent_metadata.items()
+                if SECRET_KEY_PATTERN.search(key) and str(value)
+            ],
+        )
+        write_execution_trace(trace, trace_path)
+    except (OSError, TypeError, ValueError) as error:
+        warnings.warn(
+            f"AgentGuard trace write failed: {error}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        result = replace(
+            result,
+            report_paths=replace(result.report_paths, trace=None),
         )
     if record_history_enabled:
         with _measure_stage(timing_recorder, "history_writing"):

@@ -77,6 +77,13 @@ from agentguard.reports.browser import (
     validate_report_type,
 )
 from agentguard.reports.github_summary import write_github_step_summary
+from agentguard.traces.execution import (
+    TraceExportOptions,
+    export_execution_trace,
+    load_execution_trace,
+    trace_summary,
+    verify_execution_trace,
+)
 
 app = typer.Typer(
     help="Local-first safety and reliability evaluation framework for AI coding agents."
@@ -91,6 +98,8 @@ gate_app = typer.Typer(help="CI gate commands for AgentGuard suites.")
 app.add_typer(gate_app, name="gate")
 manifest_app = typer.Typer(help="Inspect and verify execution manifests.")
 app.add_typer(manifest_app, name="manifest")
+trace_app = typer.Typer(help="Export, inspect, and verify execution traces.")
+app.add_typer(trace_app, name="trace")
 evaluate_app = typer.Typer(help="Validate and run external coding-agent profiles.")
 app.add_typer(evaluate_app, name="evaluate")
 diagnostics_app = typer.Typer(help="Run deterministic AgentGuard diagnostics.")
@@ -551,6 +560,70 @@ def manifest_show(
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
     typer.echo(provenance_summary(data))
+
+
+@trace_app.command("export")
+def trace_export(
+    source: Path = typer.Argument(
+        ...,
+        help="Run directory, report.json, or manifest.json.",
+    ),
+    output: Path = typer.Option(..., "--output", help="Trace JSONL output path."),
+    include_diff: bool = typer.Option(
+        False,
+        "--include-diff",
+        help="Include bounded, sanitized unified diffs.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing trace output.",
+    ),
+) -> None:
+    """Export a portable execution trace from existing run artifacts."""
+    try:
+        path = export_execution_trace(
+            source,
+            output,
+            TraceExportOptions(include_diff=include_diff, force=force),
+        )
+    except (FileExistsError, OSError, TypeError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(f"Trace exported: {path}")
+
+
+@trace_app.command("show")
+def trace_show(
+    path: Path = typer.Argument(..., help="Path to an execution trace."),
+) -> None:
+    """Print a concise, content-safe execution trace summary."""
+    try:
+        trace = load_execution_trace(path)
+        verification = verify_execution_trace(path)
+        if verification.exit_code == 2:
+            raise ValueError(verification.messages[0])
+    except (OSError, TypeError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(trace_summary(trace))
+
+
+@trace_app.command("verify")
+def trace_verify(
+    path: Path = typer.Argument(..., help="Path to an execution trace."),
+    strict_sources: bool = typer.Option(
+        False,
+        "--strict-sources",
+        help="Fail when any referenced source artifact is unavailable.",
+    ),
+) -> None:
+    """Verify trace structure, hash chain, root hash, and source artifacts."""
+    result = verify_execution_trace(path, strict_sources=strict_sources)
+    for message in result.messages:
+        typer.echo(message)
+    if result.exit_code:
+        raise typer.Exit(result.exit_code)
 
 
 @evaluate_app.command("validate")
@@ -1383,6 +1456,7 @@ def run(
     typer.echo(f"JSON report path: {result.report_paths.json}")
     typer.echo(f"Markdown report path: {result.report_paths.markdown}")
     typer.echo(f"Manifest path: {result.report_paths.manifest or '-'}")
+    typer.echo(f"Trace path: {result.report_paths.trace or '-'}")
     if result.result == "FAIL" and not allow_fail_result:
         raise typer.Exit(1)
 

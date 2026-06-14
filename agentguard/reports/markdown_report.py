@@ -112,6 +112,7 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
                 "## Provenance",
                 f"- Execution ID: {result.execution_id or result.run_dir.name}",
                 f"- Manifest: {result.report_paths.manifest}",
+                f"- Trace: {result.report_paths.trace or '-'}",
             ]
         )
         if result.parent_execution_id is not None:
@@ -154,6 +155,7 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
             f"- JSON: {result.report_paths.json}",
             f"- Markdown: {result.report_paths.markdown}",
             f"- Manifest: {result.report_paths.manifest or '-'}",
+            f"- Trace: {result.report_paths.trace or '-'}",
             "",
         ]
     )

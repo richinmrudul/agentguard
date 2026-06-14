@@ -36,6 +36,8 @@ Docs:
   history integrity, memory, and fail-fast scaling.
 - [Resumable matrices](docs/resume.md): verified checkpoints, interruption,
   artifact validation, and deterministic reconciliation.
+- [Portable traces](docs/traces.md): sanitized evidence, hash-chain integrity,
+  export, inspection, verification, and limitations.
 - [Testing and quality](docs/testing.md): test layers, coverage measurement,
   CI gate, and known limits.
 - [Changelog](CHANGELOG.md): draft v0.1.0 capabilities and future changes.
@@ -231,6 +233,18 @@ Run an expected-failing benchmark:
 ```bash
 agentguard run examples/configs/fix_auth_bug_agent_command_cheater.yaml --agent agent-command --allow-fail-result
 ```
+
+Every benchmark run also writes a portable, sanitized trace:
+
+```bash
+agentguard trace show .agentguard/runs/<run-id>/trace.jsonl
+agentguard trace verify .agentguard/runs/<run-id>/trace.jsonl
+agentguard trace export .agentguard/runs/<run-id> --output trace.jsonl
+```
+
+Trace hashes detect modification but are not signatures. Traces omit raw
+stdout, stderr, and full file content by default; policy replay is not yet
+implemented. See [docs/traces.md](docs/traces.md).
 
 ## Suites And Gates
 

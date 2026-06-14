@@ -108,6 +108,10 @@ class ArtifactIdentity:
     json_report: Optional[str]
     markdown_report: Optional[str]
     command_log: Optional[str] = None
+    trace: Optional[str] = None
+    json_report_sha256: Optional[str] = None
+    markdown_report_sha256: Optional[str] = None
+    command_log_sha256: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -282,13 +286,23 @@ def sanitize_arguments(
             sanitized.append(sanitize_text(argument, sensitive_values))
             header_next = False
             continue
-        if lowered in {"--token", "--api-key", "--password"}:
+        secret_options = {
+            "--token",
+            "--api-key",
+            "--apikey",
+            "--password",
+            "--passwd",
+            "--client-secret",
+            "--access-token",
+            "--auth-token",
+        }
+        if lowered in secret_options:
             sanitized.append(argument)
             redact_next = True
             continue
         if any(
             lowered.startswith(f"{option}=")
-            for option in ("--token", "--api-key", "--password")
+            for option in secret_options
         ):
             sanitized.append(f"{argument.split('=', 1)[0]}=[REDACTED]")
             continue
@@ -435,11 +449,28 @@ def artifact_identity(
     json_report: Optional[Path],
     markdown_report: Optional[Path],
     command_log: Optional[Path] = None,
+    trace: Optional[Path] = None,
 ) -> ArtifactIdentity:
     return ArtifactIdentity(
         json_report=portable_path(json_report),
         markdown_report=portable_path(markdown_report),
         command_log=portable_path(command_log),
+        trace=portable_path(trace),
+        json_report_sha256=(
+            sha256_file(json_report)
+            if json_report is not None and json_report.is_file()
+            else None
+        ),
+        markdown_report_sha256=(
+            sha256_file(markdown_report)
+            if markdown_report is not None and markdown_report.is_file()
+            else None
+        ),
+        command_log_sha256=(
+            sha256_file(command_log)
+            if command_log is not None and command_log.is_file()
+            else None
+        ),
     )
 
 

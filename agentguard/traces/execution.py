@@ -1,0 +1,1469 @@
+import hashlib
+import json
+import os
+import re
+import shlex
+import stat
+import subprocess
+from collections import Counter
+from dataclasses import asdict, dataclass, field
+from pathlib import Path, PurePosixPath
+from typing import Any, Optional
+
+from agentguard.core.result import BenchmarkResult, CheckResult, CommandResult
+from agentguard.instrumentation.command_tracker import CommandEvent
+from agentguard.io import atomic_write_text
+from agentguard.provenance.manifest import (
+    sanitize_arguments,
+    sanitize_text,
+    sha256_file,
+)
+
+
+TRACE_SCHEMA = "agentguard.execution-trace"
+TRACE_SCHEMA_VERSION = 1
+HASH_ALGORITHM = "sha256"
+ZERO_HASH = "0" * 64
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+EVENT_TYPES = {
+    "execution_started",
+    "agent_command",
+    "file_change",
+    "test_result",
+    "check_result",
+    "execution_completed",
+}
+MAX_STRING_CHARS = 4096
+MAX_EVIDENCE_ITEMS = 64
+MAX_CHANGED_FILES = 4096
+MAX_DIFF_CHARS = 32768
+MAX_PATTERNS = 64
+
+
+@dataclass(frozen=True)
+class TraceIntegrity:
+    hash_algorithm: str
+    root_hash: str
+    final_event_hash: str
+
+
+@dataclass(frozen=True)
+class TraceSourceArtifact:
+    role: str
+    path: str
+    sha256: str
+    required: bool = False
+
+
+@dataclass(frozen=True)
+class TraceHeader:
+    trace_id: str
+    execution_id: str
+    created_at: str
+    source_execution_type: str
+    agentguard_version: str
+    agentguard_commit: Optional[str]
+    benchmark_id: Optional[str]
+    benchmark_version: Optional[int]
+    task_id: str
+    agent_adapter: str
+    agent_name: Optional[str]
+    agent_model: Optional[str]
+    agent_version: Optional[str]
+    configuration_hash: str
+    policy_summary: str
+    sandbox_summary: str
+    source_report_id: Optional[str]
+    source_manifest_id: Optional[str]
+    source_artifacts: list[TraceSourceArtifact]
+    event_count: int
+    integrity: TraceIntegrity
+    schema: str = TRACE_SCHEMA
+    schema_version: int = TRACE_SCHEMA_VERSION
+
+
+@dataclass(frozen=True)
+class TraceEvent:
+    sequence: int
+    event_type: str
+    payload: dict[str, object]
+    previous_event_hash: str
+    event_hash: str
+    relative_offset_seconds: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class ExecutionTrace:
+    header: TraceHeader
+    events: list[TraceEvent]
+
+
+@dataclass(frozen=True)
+class TraceSourceStatus:
+    role: str
+    path: str
+    status: str
+    message: str
+
+
+@dataclass(frozen=True)
+class TraceVerificationResult:
+    integrity_valid: bool
+    source_statuses: list[TraceSourceStatus] = field(default_factory=list)
+    messages: list[str] = field(default_factory=list)
+    malformed: bool = False
+    strict_sources: bool = False
+
+    @property
+    def exit_code(self) -> int:
+        if self.malformed or not self.integrity_valid:
+            return 2
+        mismatched = any(
+            source.status == "changed" for source in self.source_statuses
+        )
+        missing_strict = self.strict_sources and any(
+            source.status == "unavailable" for source in self.source_statuses
+        )
+        return 1 if mismatched or missing_strict else 0
+
+
+@dataclass(frozen=True)
+class TraceExportOptions:
+    include_diff: bool = False
+    force: bool = False
+
+
+def canonical_json(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _bounded_text(
+    value: str,
+    sensitive_values: Optional[list[str]] = None,
+    *,
+    limit: int = MAX_STRING_CHARS,
+) -> tuple[str, bool]:
+    sanitized = sanitize_text(value, sensitive_values)
+    if len(sanitized) <= limit:
+        return sanitized, False
+    return sanitized[:limit], True
+
+
+def _safe_evidence(
+    values: list[str],
+    sensitive_values: Optional[list[str]],
+) -> tuple[list[str], bool]:
+    truncated = len(values) > MAX_EVIDENCE_ITEMS
+    bounded = []
+    for value in values[:MAX_EVIDENCE_ITEMS]:
+        text, text_truncated = _bounded_text(value, sensitive_values)
+        bounded.append(text)
+        truncated = truncated or text_truncated
+    return bounded, truncated
+
+
+def _normalized_path(value: str) -> str:
+    candidate = value.replace("\\", "/")
+    path = PurePosixPath(candidate)
+    if (
+        not candidate
+        or candidate.startswith("/")
+        or path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise ValueError(f"Trace path must be repository-relative: {value!r}.")
+    normalized = path.as_posix()
+    if len(normalized) > MAX_STRING_CHARS:
+        raise ValueError("Trace path exceeds the maximum length.")
+    return normalized
+
+
+def _working_directory_role(cwd: str, result: BenchmarkResult) -> str:
+    if not cwd:
+        return "unspecified"
+    try:
+        resolved = Path(cwd).expanduser().resolve()
+        if resolved == result.repo_dir.expanduser().resolve():
+            return "repository"
+        if resolved == result.run_dir.expanduser().resolve():
+            return "run"
+        if resolved == result.config_path.parent.expanduser().resolve():
+            return "configuration"
+    except OSError:
+        pass
+    return "external"
+
+
+def _portable_text(value: str, result: BenchmarkResult) -> str:
+    replacements = [
+        (result.repo_dir, "${REPOSITORY_ROOT}"),
+        (result.run_dir, "${RUN_ROOT}"),
+        (result.config_path.parent, "${CONFIG_ROOT}"),
+        (Path.cwd(), "${AGENTGUARD_ROOT}"),
+    ]
+    portable = value
+    for path, role in replacements:
+        try:
+            variants = {str(path), str(path.expanduser().resolve())}
+        except OSError:
+            variants = {str(path)}
+        for variant in sorted(variants, key=len, reverse=True):
+            if variant:
+                portable = portable.replace(variant, role)
+    return portable
+
+
+def _output_identity(
+    value: str,
+    sensitive_values: Optional[list[str]],
+    truncated: bool,
+) -> dict[str, object]:
+    sanitized = sanitize_text(value, sensitive_values)
+    encoded = sanitized.encode("utf-8")
+    return {
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "bytes": len(encoded),
+        "truncated": truncated,
+    }
+
+
+def _command_payload(
+    event: CommandEvent,
+    result: BenchmarkResult,
+    sensitive_values: Optional[list[str]],
+) -> dict[str, object]:
+    argv = [
+        _portable_text(argument, result)
+        for argument in sanitize_arguments(event.command, sensitive_values)
+    ]
+    command, command_truncated = _bounded_text(
+        (
+            shlex.join(argv)
+            if argv
+            else _portable_text(event.command_text, result)
+        ),
+        sensitive_values,
+    )
+    patterns, patterns_truncated = _safe_evidence(
+        event.preflight_matched_patterns[:MAX_PATTERNS],
+        sensitive_values,
+    )
+    return {
+        "argv": argv[:128],
+        "command": command,
+        "working_directory_role": _working_directory_role(event.cwd, result),
+        "exit_code": event.exit_code,
+        "duration_seconds": event.duration_seconds,
+        "executed": event.executed,
+        "blocked": event.blocked,
+        "timed_out": event.timed_out,
+        "stdout": _output_identity(
+            event.stdout,
+            sensitive_values,
+            event.stdout_truncated,
+        ),
+        "stderr": _output_identity(
+            event.stderr,
+            sensitive_values,
+            event.stderr_truncated,
+        ),
+        "preflight": {
+            "mode": event.policy_mode,
+            "blocked": event.preflight_blocked,
+            "matched_patterns": patterns,
+        },
+        "agent": event.agent_name or result.agent,
+        "truncation": {
+            "command": command_truncated,
+            "argv": len(argv) > 128,
+            "patterns": patterns_truncated,
+        },
+    }
+
+
+def _git_bytes(repo_dir: Path, *args: str) -> Optional[bytes]:
+    try:
+        completed = subprocess.run(
+            ["git", *args],
+            cwd=repo_dir,
+            check=False,
+            capture_output=True,
+        )
+    except OSError:
+        return None
+    return completed.stdout if completed.returncode == 0 else None
+
+
+def _hash_bytes(value: Optional[bytes]) -> Optional[str]:
+    if value is None:
+        return None
+    return hashlib.sha256(value).hexdigest()
+
+
+def _mode_from_git(repo_dir: Path, path: str) -> Optional[str]:
+    output = _git_bytes(repo_dir, "ls-tree", "HEAD", "--", path)
+    if not output:
+        return None
+    first = output.decode("utf-8", errors="replace").split(maxsplit=1)[0]
+    return first if first.isdigit() else None
+
+
+def _current_file_identity(
+    repo_dir: Path,
+    path: str,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    candidate = repo_dir / path
+    try:
+        file_stat = candidate.lstat()
+    except OSError:
+        return None, None, None
+    if candidate.is_symlink():
+        target = os.readlink(candidate)
+        safe_target = "[ABSOLUTE_TARGET]" if Path(target).is_absolute() else target
+        safe_target, _ = _bounded_text(safe_target)
+        return _sha256_text(target), "120000", safe_target
+    if candidate.is_file():
+        mode = "100755" if file_stat.st_mode & stat.S_IXUSR else "100644"
+        try:
+            return sha256_file(candidate), mode, None
+        except OSError:
+            return None, mode, None
+    return None, None, None
+
+
+def _line_stats(repo_dir: Path, path: str) -> tuple[int, int]:
+    output = _git_bytes(repo_dir, "diff", "HEAD", "--numstat", "--", path)
+    if not output:
+        candidate = repo_dir / path
+        if candidate.is_file() and not candidate.is_symlink():
+            try:
+                return len(
+                    candidate.read_text(
+                        encoding="utf-8",
+                        errors="replace",
+                    ).splitlines()
+                ), 0
+            except OSError:
+                pass
+        return 0, 0
+    parts = output.decode("utf-8", errors="replace").strip().split("\t")
+    if len(parts) < 2:
+        return 0, 0
+    added = int(parts[0]) if parts[0].isdigit() else 0
+    deleted = int(parts[1]) if parts[1].isdigit() else 0
+    return added, deleted
+
+
+def _diff_for_path(
+    repo_dir: Path,
+    path: str,
+    sensitive_values: Optional[list[str]],
+) -> tuple[Optional[str], bool]:
+    output = _git_bytes(repo_dir, "diff", "HEAD", "--", path) or b""
+    if not output and (repo_dir / path).is_file():
+        try:
+            content = (repo_dir / path).read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
+        except OSError:
+            content = ""
+        output = (
+            f"--- /dev/null\n+++ b/{path}\n"
+            + "\n".join(f"+{line}" for line in content.splitlines())
+        ).encode("utf-8")
+    text, truncated = _bounded_text(
+        output.decode("utf-8", errors="replace"),
+        sensitive_values,
+        limit=MAX_DIFF_CHARS,
+    )
+    return (text or None), truncated
+
+
+def _file_payloads(
+    result: BenchmarkResult,
+    sensitive_values: Optional[list[str]],
+    include_diff: bool,
+) -> list[dict[str, object]]:
+    changes = [
+        ("modified", path) for path in result.diff_summary.modified_files
+    ]
+    changes.extend(("added", path) for path in result.diff_summary.added_files)
+    changes.extend(("deleted", path) for path in result.diff_summary.deleted_files)
+    if len(changes) > MAX_CHANGED_FILES:
+        raise ValueError("Trace has too many changed files.")
+    payloads = []
+    for change_type, raw_path in changes:
+        path = _normalized_path(raw_path)
+        old_content = _git_bytes(result.repo_dir, "show", f"HEAD:{path}")
+        new_hash, new_mode, symlink_target = _current_file_identity(
+            result.repo_dir,
+            path,
+        )
+        old_mode = _mode_from_git(result.repo_dir, path)
+        if symlink_target is not None or old_mode == "120000":
+            change_type = "symlink"
+        lines_added, lines_deleted = _line_stats(result.repo_dir, path)
+        payload: dict[str, object] = {
+            "path": path,
+            "change_type": change_type,
+            "old_content_sha256": _hash_bytes(old_content),
+            "new_content_sha256": new_hash,
+            "old_mode": old_mode,
+            "new_mode": new_mode,
+            "lines_added": lines_added,
+            "lines_deleted": lines_deleted,
+            "symlink_target": symlink_target,
+            "diff_included": include_diff,
+        }
+        if include_diff:
+            diff, truncated = _diff_for_path(
+                result.repo_dir,
+                path,
+                sensitive_values,
+            )
+            payload["unified_diff"] = diff
+            payload["diff_truncated"] = truncated
+        payloads.append(payload)
+    return payloads
+
+
+def _test_payload(
+    test_result: CommandResult,
+    result: BenchmarkResult,
+    sensitive_values: Optional[list[str]],
+) -> dict[str, object]:
+    command, command_truncated = _bounded_text(
+        _portable_text(
+            " ".join(sanitize_arguments(test_result.command, sensitive_values)),
+            result,
+        ),
+        sensitive_values,
+    )
+    return {
+        "command": command,
+        "exit_code": test_result.exit_code,
+        "duration_seconds": test_result.duration_seconds,
+        "timed_out": test_result.timed_out,
+        "functional_pass": test_result.exit_code == 0 and not test_result.timed_out,
+        "stdout": _output_identity(
+            test_result.stdout,
+            sensitive_values,
+            test_result.stdout_truncated,
+        ),
+        "stderr": _output_identity(
+            test_result.stderr,
+            sensitive_values,
+            test_result.stderr_truncated,
+        ),
+        "truncation": {"command": command_truncated},
+    }
+
+
+def _check_payload(
+    check: CheckResult,
+    sensitive_values: Optional[list[str]],
+) -> dict[str, object]:
+    message, message_truncated = _bounded_text(check.message, sensitive_values)
+    evidence, evidence_truncated = _safe_evidence(
+        check.evidence,
+        sensitive_values,
+    )
+    return {
+        "name": check.name,
+        "passed": check.passed,
+        "severity": check.severity,
+        "score_contribution": None,
+        "message": message,
+        "evidence": evidence,
+        "truncation": {
+            "message": message_truncated,
+            "evidence": evidence_truncated,
+        },
+    }
+
+
+def _source_artifact(
+    role: str,
+    path: Optional[Path],
+    *,
+    required: bool = False,
+) -> Optional[TraceSourceArtifact]:
+    if path is None or not path.is_file():
+        return None
+    stable_paths = {
+        "report": "reports/report.json",
+        "manifest": "manifest.json",
+        "command_log": "command_log.json",
+    }
+    relative = stable_paths.get(role, path.name)
+    return TraceSourceArtifact(
+        role=role,
+        path=relative,
+        sha256=sha256_file(path),
+        required=required,
+    )
+
+
+def _header_identity(header: TraceHeader) -> dict[str, object]:
+    data = asdict(header)
+    data.pop("trace_id")
+    data.pop("integrity")
+    return data
+
+
+def _event_hash(
+    sequence: int,
+    event_type: str,
+    payload: dict[str, object],
+    previous_event_hash: str,
+    relative_offset_seconds: Optional[float],
+) -> str:
+    context = {
+        "schema": TRACE_SCHEMA,
+        "schema_version": TRACE_SCHEMA_VERSION,
+        "sequence": sequence,
+        "event_type": event_type,
+        "payload": payload,
+        "previous_event_hash": previous_event_hash,
+        "relative_offset_seconds": relative_offset_seconds,
+    }
+    return _sha256_text(canonical_json(context))
+
+
+def _chain_events(
+    event_values: list[tuple[str, dict[str, object]]],
+) -> list[TraceEvent]:
+    previous = ZERO_HASH
+    events = []
+    for sequence, (event_type, payload) in enumerate(event_values, start=1):
+        event_hash = _event_hash(
+            sequence,
+            event_type,
+            payload,
+            previous,
+            None,
+        )
+        events.append(
+            TraceEvent(
+                sequence=sequence,
+                event_type=event_type,
+                payload=payload,
+                previous_event_hash=previous,
+                event_hash=event_hash,
+            )
+        )
+        previous = event_hash
+    return events
+
+
+def build_execution_trace(
+    result: BenchmarkResult,
+    *,
+    created_at: str,
+    configuration_hash: str,
+    agentguard_version: str,
+    agentguard_commit: Optional[str],
+    agent_version: Optional[str],
+    policy_summary: str,
+    sandbox_summary: str,
+    source_report_id: Optional[str],
+    source_manifest_id: Optional[str],
+    include_diff: bool = False,
+    sensitive_values: Optional[list[str]] = None,
+) -> ExecutionTrace:
+    event_values: list[tuple[str, dict[str, object]]] = [
+        (
+            "execution_started",
+            {
+                "task_id": result.task_id,
+                "execution_id": result.execution_id or result.run_dir.name,
+                "source_execution_type": "run",
+            },
+        )
+    ]
+    event_values.extend(
+        (
+            "agent_command",
+            _command_payload(event, result, sensitive_values),
+        )
+        for event in result.command_events
+    )
+    event_values.extend(
+        ("file_change", payload)
+        for payload in _file_payloads(
+            result,
+            sensitive_values,
+            include_diff,
+        )
+    )
+    event_values.append(
+        (
+            "test_result",
+            _test_payload(result.test_result, result, sensitive_values),
+        )
+    )
+    event_values.extend(
+        (
+            "check_result",
+            _check_payload(check, sensitive_values),
+        )
+        for check in result.check_results
+    )
+    failed = [check.name for check in result.check_results if not check.passed]
+    warnings = [
+        check.name
+        for check in result.check_results
+        if not check.passed and check.severity == "warning"
+    ]
+    event_values.append(
+        (
+            "execution_completed",
+            {
+                "result": result.result,
+                "score": result.score,
+                "modified_files": {
+                    "count": len(result.diff_summary.changed_files),
+                    "paths": result.diff_summary.changed_files[
+                        :MAX_CHANGED_FILES
+                    ],
+                    "truncated": (
+                        len(result.diff_summary.changed_files)
+                        > MAX_CHANGED_FILES
+                    ),
+                    "lines_added": result.diff_summary.lines_added,
+                    "lines_deleted": result.diff_summary.lines_deleted,
+                },
+                "failed_checks": failed,
+                "warning_checks": warnings,
+                "duration_seconds": sum(
+                    event.duration_seconds or 0.0
+                    for event in result.command_events
+                ),
+                "source_report_sha256": (
+                    sha256_file(result.report_paths.json)
+                    if result.report_paths.json.is_file()
+                    else None
+                ),
+                "source_manifest_sha256": (
+                    sha256_file(result.report_paths.manifest)
+                    if result.report_paths.manifest is not None
+                    and result.report_paths.manifest.is_file()
+                    else None
+                ),
+            },
+        )
+    )
+    events = _chain_events(event_values)
+    sources = [
+        source
+        for source in [
+            _source_artifact(
+                "report",
+                result.report_paths.json,
+                required=True,
+            ),
+            _source_artifact(
+                "manifest",
+                result.report_paths.manifest,
+            ),
+            _source_artifact(
+                "command_log",
+                result.report_paths.command_log,
+            ),
+        ]
+        if source is not None
+    ]
+    provisional = TraceHeader(
+        trace_id=ZERO_HASH,
+        execution_id=result.execution_id or result.run_dir.name,
+        created_at=created_at,
+        source_execution_type="run",
+        agentguard_version=agentguard_version,
+        agentguard_commit=agentguard_commit,
+        benchmark_id=result.benchmark.id,
+        benchmark_version=result.benchmark.version,
+        task_id=result.task_id,
+        agent_adapter=result.agent,
+        agent_name=result.profile_name or result.agent,
+        agent_model=result.profile_model,
+        agent_version=agent_version,
+        configuration_hash=configuration_hash,
+        policy_summary=policy_summary,
+        sandbox_summary=sandbox_summary,
+        source_report_id=source_report_id,
+        source_manifest_id=source_manifest_id,
+        source_artifacts=sources,
+        event_count=len(events),
+        integrity=TraceIntegrity(
+            hash_algorithm=HASH_ALGORITHM,
+            root_hash=ZERO_HASH,
+            final_event_hash=events[-1].event_hash,
+        ),
+    )
+    root_hash = _sha256_text(
+        canonical_json(
+            {
+                "header": _header_identity(provisional),
+                "final_event_hash": events[-1].event_hash,
+            }
+        )
+    )
+    header = TraceHeader(
+        **{
+            **asdict(provisional),
+            "trace_id": root_hash,
+            "source_artifacts": sources,
+            "integrity": TraceIntegrity(
+                hash_algorithm=HASH_ALGORITHM,
+                root_hash=root_hash,
+                final_event_hash=events[-1].event_hash,
+            ),
+        }
+    )
+    return ExecutionTrace(header=header, events=events)
+
+
+def serialize_execution_trace(trace: ExecutionTrace) -> str:
+    header = {"record_type": "header", **asdict(trace.header)}
+    lines = [canonical_json(header)]
+    lines.extend(
+        canonical_json({"record_type": "event", **asdict(event)})
+        for event in trace.events
+    )
+    return "\n".join(lines) + "\n"
+
+
+def write_execution_trace(
+    trace: ExecutionTrace,
+    path: Path,
+    *,
+    force: bool = True,
+) -> Path:
+    if path.exists() and not force:
+        raise FileExistsError(f"Trace output already exists: {path}")
+    return atomic_write_text(path, serialize_execution_trace(trace))
+
+
+def _require_exact_fields(
+    data: dict[str, Any],
+    expected: set[str],
+    label: str,
+) -> None:
+    actual = set(data)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        unknown = sorted(actual - expected)
+        details = []
+        if missing:
+            details.append(f"missing {', '.join(missing)}")
+        if unknown:
+            details.append(f"unknown {', '.join(unknown)}")
+        raise ValueError(f"Invalid {label} fields: {'; '.join(details)}.")
+
+
+def _parse_source_artifact(data: object) -> TraceSourceArtifact:
+    if not isinstance(data, dict):
+        raise ValueError("Trace source artifact must be an object.")
+    _require_exact_fields(
+        data,
+        {"role", "path", "sha256", "required"},
+        "source artifact",
+    )
+    source = TraceSourceArtifact(**data)
+    _validate_sha256(source.sha256, "source artifact hash")
+    if Path(source.path).is_absolute():
+        raise ValueError("Trace source artifact paths must be relative.")
+    return source
+
+
+def _parse_header(data: dict[str, Any]) -> TraceHeader:
+    expected = {
+        "record_type",
+        "trace_id",
+        "execution_id",
+        "created_at",
+        "source_execution_type",
+        "agentguard_version",
+        "agentguard_commit",
+        "benchmark_id",
+        "benchmark_version",
+        "task_id",
+        "agent_adapter",
+        "agent_name",
+        "agent_model",
+        "agent_version",
+        "configuration_hash",
+        "policy_summary",
+        "sandbox_summary",
+        "source_report_id",
+        "source_manifest_id",
+        "source_artifacts",
+        "event_count",
+        "integrity",
+        "schema",
+        "schema_version",
+    }
+    _require_exact_fields(data, expected, "trace header")
+    if data.pop("record_type") != "header":
+        raise ValueError("First trace record must be a header.")
+    integrity_data = data.pop("integrity")
+    source_data = data.pop("source_artifacts")
+    if not isinstance(integrity_data, dict):
+        raise ValueError("Trace integrity must be an object.")
+    _require_exact_fields(
+        integrity_data,
+        {"hash_algorithm", "root_hash", "final_event_hash"},
+        "trace integrity",
+    )
+    if not isinstance(source_data, list):
+        raise ValueError("Trace source_artifacts must be a list.")
+    return TraceHeader(
+        **data,
+        source_artifacts=[_parse_source_artifact(item) for item in source_data],
+        integrity=TraceIntegrity(**integrity_data),
+    )
+
+
+def _parse_event(data: dict[str, Any]) -> TraceEvent:
+    _require_exact_fields(
+        data,
+        {
+            "record_type",
+            "sequence",
+            "event_type",
+            "payload",
+            "previous_event_hash",
+            "event_hash",
+            "relative_offset_seconds",
+        },
+        "trace event",
+    )
+    if data.pop("record_type") != "event":
+        raise ValueError("Non-header trace records must be events.")
+    if not isinstance(data.get("payload"), dict):
+        raise ValueError("Trace event payload must be an object.")
+    return TraceEvent(**data)
+
+
+def load_execution_trace(path: Path) -> ExecutionTrace:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ValueError(f"Unable to read trace: {error}") from error
+    if not content.endswith("\n"):
+        raise ValueError("Trace is truncated: final newline is missing.")
+    lines = content.splitlines()
+    if len(lines) < 2:
+        raise ValueError("Trace must contain a header and events.")
+    records = []
+    for line_number, line in enumerate(lines, start=1):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                f"Invalid trace JSON on line {line_number}: {error}"
+            ) from error
+        if not isinstance(record, dict):
+            raise ValueError(f"Trace line {line_number} must be an object.")
+        records.append(record)
+    header = _parse_header(records[0])
+    events = [_parse_event(record) for record in records[1:]]
+    return ExecutionTrace(header=header, events=events)
+
+
+def _validate_sha256(value: object, label: str) -> None:
+    if not isinstance(value, str) or not SHA256_PATTERN.fullmatch(value):
+        raise ValueError(f"Invalid {label}.")
+
+
+def _validate_bounds(value: object, key: Optional[str] = None) -> None:
+    if isinstance(value, str):
+        limit = MAX_DIFF_CHARS if key == "unified_diff" else MAX_STRING_CHARS
+        if len(value) > limit:
+            raise ValueError(f"Trace string field {key or '<value>'} is too long.")
+        return
+    if isinstance(value, list):
+        if len(value) > MAX_CHANGED_FILES:
+            raise ValueError(f"Trace list field {key or '<value>'} is too long.")
+        for item in value:
+            _validate_bounds(item, key)
+        return
+    if isinstance(value, dict):
+        for child_key, item in value.items():
+            if not isinstance(child_key, str):
+                raise ValueError("Trace object keys must be strings.")
+            _validate_bounds(item, child_key)
+
+
+def _validate_output_identity(value: object, label: str) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"Trace {label} identity must be an object.")
+    _require_exact_fields(value, {"sha256", "bytes", "truncated"}, label)
+    _validate_sha256(value["sha256"], f"{label} hash")
+    if not isinstance(value["bytes"], int) or value["bytes"] < 0:
+        raise ValueError(f"Trace {label} byte count must be nonnegative.")
+    if not isinstance(value["truncated"], bool):
+        raise ValueError(f"Trace {label} truncation flag must be boolean.")
+
+
+def _validate_payload(event: TraceEvent) -> None:
+    expected = {
+        "execution_started": {
+            "task_id",
+            "execution_id",
+            "source_execution_type",
+        },
+        "agent_command": {
+            "argv",
+            "command",
+            "working_directory_role",
+            "exit_code",
+            "duration_seconds",
+            "executed",
+            "blocked",
+            "timed_out",
+            "stdout",
+            "stderr",
+            "preflight",
+            "agent",
+            "truncation",
+        },
+        "test_result": {
+            "command",
+            "exit_code",
+            "duration_seconds",
+            "timed_out",
+            "functional_pass",
+            "stdout",
+            "stderr",
+            "truncation",
+        },
+        "check_result": {
+            "name",
+            "passed",
+            "severity",
+            "score_contribution",
+            "message",
+            "evidence",
+            "truncation",
+        },
+        "execution_completed": {
+            "result",
+            "score",
+            "modified_files",
+            "failed_checks",
+            "warning_checks",
+            "duration_seconds",
+            "source_report_sha256",
+            "source_manifest_sha256",
+        },
+    }
+    if event.event_type == "file_change":
+        event_fields = {
+            "path",
+            "change_type",
+            "old_content_sha256",
+            "new_content_sha256",
+            "old_mode",
+            "new_mode",
+            "lines_added",
+            "lines_deleted",
+            "symlink_target",
+            "diff_included",
+        }
+        if event.payload.get("diff_included") is True:
+            event_fields = event_fields | {"unified_diff", "diff_truncated"}
+    else:
+        event_fields = expected[event.event_type]
+    _require_exact_fields(event.payload, event_fields, f"{event.event_type} payload")
+    _validate_bounds(event.payload)
+    if event.event_type == "file_change":
+        path = event.payload.get("path")
+        if not isinstance(path, str):
+            raise ValueError("File change path must be a string.")
+        _normalized_path(path)
+        if event.payload.get("change_type") not in {
+            "added",
+            "modified",
+            "deleted",
+            "symlink",
+        }:
+            raise ValueError("Invalid file change type.")
+        for hash_field in ("old_content_sha256", "new_content_sha256"):
+            value = event.payload.get(hash_field)
+            if value is not None:
+                _validate_sha256(value, hash_field)
+        for mode_field in ("old_mode", "new_mode"):
+            mode = event.payload.get(mode_field)
+            if mode is not None and mode not in {"100644", "100755", "120000"}:
+                raise ValueError(f"Invalid file mode in {mode_field}.")
+        for line_field in ("lines_added", "lines_deleted"):
+            value = event.payload.get(line_field)
+            if not isinstance(value, int) or value < 0:
+                raise ValueError(f"Invalid nonnegative {line_field}.")
+        if not isinstance(event.payload.get("diff_included"), bool):
+            raise ValueError("Trace diff_included must be boolean.")
+        if "diff_truncated" in event.payload and not isinstance(
+            event.payload["diff_truncated"],
+            bool,
+        ):
+            raise ValueError("Trace diff_truncated must be boolean.")
+    if event.event_type in {"agent_command", "test_result"}:
+        exit_code = event.payload.get("exit_code")
+        if exit_code is not None and not isinstance(exit_code, int):
+            raise ValueError("Trace exit code must be an integer.")
+        _validate_output_identity(event.payload.get("stdout"), "stdout")
+        _validate_output_identity(event.payload.get("stderr"), "stderr")
+    for key in ("duration_seconds",):
+        value = event.payload.get(key)
+        if value is not None and (
+            not isinstance(value, (int, float)) or value < 0
+        ):
+            raise ValueError(f"Invalid nonnegative {key}.")
+    if event.event_type == "execution_completed":
+        score = event.payload.get("score")
+        if not isinstance(score, (int, float)) or not 0 <= score <= 100:
+            raise ValueError("Trace score must be between 0 and 100.")
+        modified = event.payload.get("modified_files")
+        if not isinstance(modified, dict):
+            raise ValueError("Trace modified_files must be an object.")
+        _require_exact_fields(
+            modified,
+            {
+                "count",
+                "paths",
+                "truncated",
+                "lines_added",
+                "lines_deleted",
+            },
+            "modified file summary",
+        )
+        paths = modified.get("paths")
+        if not isinstance(paths, list) or any(
+            not isinstance(path, str) for path in paths
+        ):
+            raise ValueError("Trace modified file paths must be a string list.")
+        for path in paths:
+            _normalized_path(path)
+        for hash_field in (
+            "source_report_sha256",
+            "source_manifest_sha256",
+        ):
+            value = event.payload.get(hash_field)
+            if value is not None:
+                _validate_sha256(value, hash_field)
+
+
+def _validate_structure(trace: ExecutionTrace) -> None:
+    header = trace.header
+    if header.schema != TRACE_SCHEMA:
+        raise ValueError("Invalid trace schema identifier.")
+    if header.schema_version != TRACE_SCHEMA_VERSION:
+        raise ValueError("Unsupported trace schema version.")
+    if header.source_execution_type != "run":
+        raise ValueError("Unsupported trace source execution type.")
+    if header.integrity.hash_algorithm != HASH_ALGORITHM:
+        raise ValueError("Unsupported trace hash algorithm.")
+    _validate_bounds(asdict(header))
+    for value, label in [
+        (header.trace_id, "trace ID"),
+        (header.configuration_hash, "configuration hash"),
+        (header.integrity.root_hash, "root hash"),
+        (header.integrity.final_event_hash, "final event hash"),
+    ]:
+        _validate_sha256(value, label)
+    if header.event_count != len(trace.events):
+        raise ValueError("Trace event count does not match the file.")
+    if not trace.events:
+        raise ValueError("Trace must contain events.")
+    sequences = [event.sequence for event in trace.events]
+    if sequences != list(range(1, len(trace.events) + 1)):
+        raise ValueError("Trace event sequences must be contiguous from 1.")
+    types = [event.event_type for event in trace.events]
+    if any(event_type not in EVENT_TYPES for event_type in types):
+        raise ValueError("Trace contains an unsupported event type.")
+    if types[0] != "execution_started" or types[-1] != "execution_completed":
+        raise ValueError("Trace start/completion event ordering is invalid.")
+    if types.count("execution_started") != 1:
+        raise ValueError("Trace must contain one execution_started event.")
+    if types.count("test_result") != 1:
+        raise ValueError("Trace must contain one test_result event.")
+    if types.count("execution_completed") != 1:
+        raise ValueError("Trace must contain one execution_completed event.")
+    order = {
+        "execution_started": 0,
+        "agent_command": 1,
+        "file_change": 2,
+        "test_result": 3,
+        "check_result": 4,
+        "execution_completed": 5,
+    }
+    if [order[event_type] for event_type in types] != sorted(
+        order[event_type] for event_type in types
+    ):
+        raise ValueError("Trace event type ordering is invalid.")
+    for event in trace.events:
+        _validate_sha256(event.previous_event_hash, "previous event hash")
+        _validate_sha256(event.event_hash, "event hash")
+        if event.relative_offset_seconds is not None and (
+            not isinstance(event.relative_offset_seconds, (int, float))
+            or event.relative_offset_seconds < 0
+        ):
+            raise ValueError("Trace relative offsets must be nonnegative.")
+        _validate_payload(event)
+
+
+def _verify_integrity(trace: ExecutionTrace) -> None:
+    _validate_structure(trace)
+    previous = ZERO_HASH
+    for event in trace.events:
+        if event.previous_event_hash != previous:
+            raise ValueError(
+                f"Trace hash chain is broken at event {event.sequence}."
+            )
+        expected = _event_hash(
+            event.sequence,
+            event.event_type,
+            event.payload,
+            event.previous_event_hash,
+            event.relative_offset_seconds,
+        )
+        if event.event_hash != expected:
+            raise ValueError(f"Trace event {event.sequence} hash is invalid.")
+        previous = event.event_hash
+    if trace.header.integrity.final_event_hash != previous:
+        raise ValueError("Trace final event hash does not match the chain.")
+    expected_root = _sha256_text(
+        canonical_json(
+            {
+                "header": _header_identity(trace.header),
+                "final_event_hash": previous,
+            }
+        )
+    )
+    if trace.header.integrity.root_hash != expected_root:
+        raise ValueError("Trace root integrity hash is invalid.")
+    if trace.header.trace_id != expected_root:
+        raise ValueError("Trace ID does not match its content digest.")
+
+
+def _source_status(
+    trace_path: Path,
+    source: TraceSourceArtifact,
+) -> TraceSourceStatus:
+    candidate = Path(source.path)
+    resolved = (
+        candidate
+        if candidate.is_absolute()
+        else (trace_path.parent / candidate)
+    )
+    if not resolved.is_file():
+        return TraceSourceStatus(
+            role=source.role,
+            path=source.path,
+            status="unavailable",
+            message=f"MISSING {source.role}: {source.path}",
+        )
+    try:
+        actual = sha256_file(resolved)
+    except OSError:
+        return TraceSourceStatus(
+            role=source.role,
+            path=source.path,
+            status="unavailable",
+            message=f"UNAVAILABLE {source.role}: {source.path}",
+        )
+    if actual != source.sha256:
+        return TraceSourceStatus(
+            role=source.role,
+            path=source.path,
+            status="changed",
+            message=f"CHANGED {source.role}: {source.path}",
+        )
+    return TraceSourceStatus(
+        role=source.role,
+        path=source.path,
+        status="match",
+        message=f"MATCH {source.role}: {source.path}",
+    )
+
+
+def verify_execution_trace(
+    path: Path,
+    *,
+    strict_sources: bool = False,
+) -> TraceVerificationResult:
+    try:
+        trace = load_execution_trace(path)
+        _verify_integrity(trace)
+    except ValueError as error:
+        return TraceVerificationResult(
+            integrity_valid=False,
+            messages=[str(error)],
+            malformed=True,
+            strict_sources=strict_sources,
+        )
+    statuses = [
+        _source_status(path, source) for source in trace.header.source_artifacts
+    ]
+    messages = ["Trace integrity valid."]
+    if not statuses:
+        messages.append("Source artifacts unavailable: none were recorded.")
+    else:
+        messages.extend(status.message for status in statuses)
+    return TraceVerificationResult(
+        integrity_valid=True,
+        source_statuses=statuses,
+        messages=messages,
+        strict_sources=strict_sources,
+    )
+
+
+def trace_summary(trace: ExecutionTrace) -> str:
+    counts = Counter(event.event_type for event in trace.events)
+    completed = trace.events[-1].payload
+    truncated = sum(
+        1
+        for event in trace.events
+        if "truncation" in event.payload
+        and any(bool(value) for value in event.payload["truncation"].values())
+    )
+    redacted = "[REDACTED]" in serialize_execution_trace(trace)
+    lines = [
+        f"Trace: {trace.header.trace_id}",
+        f"Execution: {trace.header.execution_id}",
+        (
+            "Benchmark: "
+            f"{trace.header.benchmark_id or trace.header.task_id}"
+            f" v{trace.header.benchmark_version or '-'}"
+        ),
+        (
+            f"Agent: {trace.header.agent_name or trace.header.agent_adapter}"
+            f" / model {trace.header.agent_model or '-'}"
+        ),
+        f"Result: {completed.get('result')} / score {completed.get('score')}",
+        "Events: "
+        + ", ".join(
+            f"{event_type}={counts[event_type]}"
+            for event_type in sorted(counts)
+        ),
+        f"Truncated event payloads: {truncated}",
+        f"Redaction markers present: {'yes' if redacted else 'no'}",
+        f"Root digest: {trace.header.integrity.root_hash}",
+    ]
+    return "\n".join(lines)
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Unable to load source JSON {path}: {error}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"Source JSON must be an object: {path}")
+    return value
+
+
+def _resolve_export_source(source: Path) -> tuple[Path, Optional[Path]]:
+    if source.is_dir():
+        report = source / "reports" / "report.json"
+        manifest = source / "manifest.json"
+    elif source.name == "report.json":
+        report = source
+        manifest = source.parent.parent / "manifest.json"
+    elif source.name == "manifest.json":
+        manifest = source
+        report = source.parent / "reports" / "report.json"
+    else:
+        raise ValueError(
+            "Trace source must be a run directory, report.json, or manifest.json."
+        )
+    if not report.is_file():
+        raise ValueError(f"Required report evidence is unavailable: {report}")
+    return report, manifest if manifest.is_file() else None
+
+
+def _command_event_from_dict(data: dict[str, Any]) -> CommandEvent:
+    return CommandEvent(
+        command=list(data.get("command") or []),
+        command_text=str(data.get("command_text") or ""),
+        cwd=str(data.get("cwd") or ""),
+        exit_code=data.get("exit_code"),
+        stdout=str(data.get("stdout") or ""),
+        stderr=str(data.get("stderr") or ""),
+        duration_seconds=data.get("duration_seconds"),
+        executed=bool(data.get("executed")),
+        blocked=bool(data.get("blocked")),
+        reason=data.get("reason"),
+        timed_out=bool(data.get("timed_out")),
+        stdout_truncated=bool(data.get("stdout_truncated")),
+        stderr_truncated=bool(data.get("stderr_truncated")),
+        preflight_blocked=bool(data.get("preflight_blocked")),
+        preflight_matched_patterns=list(
+            data.get("preflight_matched_patterns") or []
+        ),
+        policy_mode=data.get("policy_mode"),
+        agent_name=data.get("agent_name"),
+    )
+
+
+def _result_from_report(
+    report_path: Path,
+    manifest_path: Optional[Path],
+) -> tuple[BenchmarkResult, dict[str, Any]]:
+    from agentguard.config.schema import BenchmarkMetadata
+    from agentguard.core.result import DiffSummary, ReportPaths, SandboxMetadata
+
+    report = _load_json(report_path)
+    required = {
+        "task_id",
+        "agent",
+        "result",
+        "score",
+        "config_path",
+        "run_dir",
+        "repo_dir",
+        "test_result",
+        "diff_summary",
+        "check_results",
+        "command_events",
+    }
+    missing = sorted(required - set(report))
+    if missing:
+        raise ValueError(
+            "Required report evidence is unavailable: " + ", ".join(missing)
+        )
+    run_dir = report_path.parent.parent
+    repo_dir = Path(str(report["repo_dir"]))
+    if not repo_dir.is_dir():
+        candidate = run_dir / "repo"
+        if candidate.is_dir():
+            repo_dir = candidate
+        else:
+            raise ValueError(
+                "Required repository evidence is unavailable for file changes."
+            )
+    command_log_path = run_dir / "command_log.json"
+    command_events = report["command_events"]
+    if command_log_path.is_file():
+        log_data = json.loads(command_log_path.read_text(encoding="utf-8"))
+        if log_data != command_events:
+            raise ValueError("Command log evidence is inconsistent with report.")
+    benchmark_data = report.get("benchmark") or {}
+    sandbox_data = report.get("sandbox")
+    test_data = report["test_result"]
+    diff_data = report["diff_summary"]
+    checks = [CheckResult(**item) for item in report["check_results"]]
+    result = BenchmarkResult(
+        task_id=str(report["task_id"]),
+        agent=str(report["agent"]),
+        result=str(report["result"]),
+        score=int(report["score"]),
+        config_path=Path(str(report["config_path"])),
+        run_dir=run_dir,
+        repo_dir=repo_dir,
+        test_result=CommandResult(**test_data),
+        diff_summary=DiffSummary(**diff_data),
+        check_results=checks,
+        report_paths=ReportPaths(
+            json=report_path,
+            markdown=report_path.with_suffix(".md"),
+            command_log=command_log_path if command_log_path.is_file() else None,
+            manifest=manifest_path,
+            trace=None,
+        ),
+        sandbox=SandboxMetadata(**sandbox_data) if sandbox_data else None,
+        benchmark=BenchmarkMetadata(**benchmark_data),
+        command_events=[
+            _command_event_from_dict(item) for item in command_events
+        ],
+        execution_id=report.get("execution_id") or run_dir.name,
+        provenance_summary=report.get("provenance") or {},
+        profile_id=report.get("profile_id"),
+        profile_name=report.get("profile_name"),
+        profile_model=report.get("profile_model"),
+    )
+    return result, report
+
+
+def _validate_manifest_artifact_hashes(
+    manifest: dict[str, Any],
+    report_path: Path,
+    manifest_path: Optional[Path],
+) -> None:
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return
+    references = [
+        ("json_report_sha256", report_path, "report"),
+        (
+            "command_log_sha256",
+            report_path.parent.parent / "command_log.json",
+            "command log",
+        ),
+    ]
+    for hash_field, path, label in references:
+        expected = artifacts.get(hash_field)
+        if expected is None:
+            continue
+        _validate_sha256(expected, f"manifest {label} hash")
+        if not path.is_file():
+            raise ValueError(
+                f"Manifest-referenced {label} evidence is unavailable: {path}"
+            )
+        if sha256_file(path) != expected:
+            raise ValueError(
+                f"Manifest-referenced {label} evidence has changed: {path}"
+            )
+    if manifest_path is not None and not manifest_path.is_file():
+        raise ValueError("Manifest source disappeared during trace export.")
+
+
+def export_execution_trace(
+    source: Path,
+    output: Path,
+    options: TraceExportOptions = TraceExportOptions(),
+) -> Path:
+    if output.exists() and not options.force:
+        raise FileExistsError(f"Trace output already exists: {output}")
+    report_path, manifest_path = _resolve_export_source(source)
+    result, report = _result_from_report(report_path, manifest_path)
+    manifest = _load_json(manifest_path) if manifest_path is not None else {}
+    _validate_manifest_artifact_hashes(manifest, report_path, manifest_path)
+    configuration_hash = (
+        manifest.get("configuration", {}).get("sha256")
+        or _sha256_text(canonical_json(report.get("config_path")))
+    )
+    agentguard = manifest.get("agentguard") or {}
+    agent = manifest.get("agent") or {}
+    policies = manifest.get("policies") or []
+    policy_summary = canonical_json(policies[0]) if policies else "unavailable"
+    sandbox_summary = (
+        canonical_json(report.get("sandbox"))
+        if report.get("sandbox")
+        else "unavailable"
+    )
+    trace = build_execution_trace(
+        result,
+        created_at=str(manifest.get("created_at") or "unavailable"),
+        configuration_hash=str(configuration_hash),
+        agentguard_version=str(agentguard.get("version") or "unknown"),
+        agentguard_commit=agentguard.get("git_commit"),
+        agent_version=agent.get("version"),
+        policy_summary=policy_summary,
+        sandbox_summary=sandbox_summary,
+        source_report_id=report_path.name,
+        source_manifest_id=manifest_path.name if manifest_path else None,
+        include_diff=options.include_diff,
+    )
+    return write_execution_trace(trace, output, force=options.force)
