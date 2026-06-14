@@ -469,6 +469,17 @@ execution explicit. Without fail-fast, one failed or crashed attempt becomes a
 structured failed row and does not cancel unrelated work. Host and Docker CPU,
 memory, and I/O capacity determine useful worker counts.
 
+The optional matrix checkpoint layer sits between deterministic attempt
+expansion and scheduling. It derives stable keys from resolved suite, config,
+benchmark, agent/profile, prompt, policy, sandbox, and trial inputs, then
+atomically persists attempt state. Resume validates those identities and the
+SHA-256 hashes and structure of child reports and manifests before admitting a
+row to reconciliation. Verified reused rows and newly executed rows are merged
+by stable ordinal before the existing reliability, baseline, report, manifest,
+and history layers run. Matrix and child history retain their execution IDs,
+providing exactly-once logical aggregation and history identity without
+claiming exactly-once external agent side effects.
+
 The matrix aggregation layer records trial indices, success rates, score
 ranges, sample standard deviation (defined as `0.0` for one sample), and whether
 each combination passed at least once or on every attempt. These values

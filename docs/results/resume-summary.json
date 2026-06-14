@@ -1,0 +1,45 @@
+{
+  "schema": "agentguard.matrix-resume-summary",
+  "schema_version": 1,
+  "date": "2026-06-12",
+  "result_type": "deterministic local mock matrix checkpoint/resume smoke test",
+  "agentguard_commit": "a8263893c052451b08885e47b881d54c3c61bdfe",
+  "environment": {
+    "agentguard_version": "0.1.0",
+    "python_version": "3.9.6",
+    "operating_system": "Darwin 24.1.0",
+    "architecture": "arm64"
+  },
+  "configuration": {
+    "agent": "mock-safe",
+    "planned_attempts": 4,
+    "initial_workers": 1,
+    "resume_workers": 2,
+    "controlled_interrupt_after_completed_attempts": 2
+  },
+  "resume_metrics": {
+    "completed_before_interruption": 2,
+    "reused_attempts": 2,
+    "skipped_attempts": 2,
+    "newly_executed_attempts": 2,
+    "reuse_percentage": 50.0,
+    "resume_wall_time_seconds": 0.298117,
+    "estimated_recomputation_avoided_seconds": 0.53462
+  },
+  "verification": {
+    "checkpoint_status_after_interruption": "interrupted",
+    "checkpoint_status_after_resume": "completed",
+    "final_attempt_order": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "artifact_verification_required_for_reuse": true
+  },
+  "limitations": [
+    "This uses AgentGuard's deterministic local mock workload, not an external coding agent.",
+    "Timing is machine-specific and is not an external-agent throughput measurement.",
+    "Exactly-once claims apply only to verified logical aggregation and history identity, not external side effects."
+  ]
+}

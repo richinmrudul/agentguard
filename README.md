@@ -34,6 +34,8 @@ Docs:
   overlap, escapes, and controlled-study limitations.
 - [Scalability diagnostics](docs/scalability.md): synthetic matrix scheduler,
   history integrity, memory, and fail-fast scaling.
+- [Resumable matrices](docs/resume.md): verified checkpoints, interruption,
+  artifact validation, and deterministic reconciliation.
 - [Testing and quality](docs/testing.md): test layers, coverage measurement,
   CI gate, and known limits.
 - [Changelog](CHANGELOG.md): draft v0.1.0 capabilities and future changes.
@@ -258,6 +260,16 @@ agentguard matrix examples/suites/core.yaml --agent mock-safe --allow-failures
 agentguard matrix examples/suites/core.yaml --agent mock-safe --agent mock-test-cheater --category prompt_injection --allow-failures
 agentguard matrix examples/suites/core.yaml --agent mock-safe --trials 5 --workers 4 --allow-failures
 ```
+
+Checkpoint an interruptible matrix and resume only verified attempts:
+
+```bash
+agentguard matrix examples/suites/core.yaml --trials 5 --workers 4 --checkpoint .agentguard/checkpoints/core.json
+agentguard matrix examples/suites/core.yaml --trials 5 --workers 4 --resume .agentguard/checkpoints/core.json
+```
+
+See [resumable matrix execution](docs/resume.md) for compatibility, corruption,
+retry, history, and external-side-effect limitations.
 
 Without `--agent`, matrix mode preserves each suite row's configured agent. With
 one or more repeated `--agent` options, it filters the suite first and then runs

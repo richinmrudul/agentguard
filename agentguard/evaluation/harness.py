@@ -23,6 +23,7 @@ from agentguard.evaluation.profile import (
     validate_profile_for_config,
     version_executable_available,
 )
+from agentguard.provenance.manifest import sha256_file
 
 
 @dataclass(frozen=True)
@@ -179,6 +180,11 @@ def run_evaluation(
     max_success_rate_drop: float = 0,
     max_average_score_drop: float = 0,
     force_reliability_baseline: bool = False,
+    checkpoint_path: Optional[Path] = None,
+    resume_path: Optional[Path] = None,
+    checkpoint_every: int = 1,
+    retry_failed: bool = False,
+    force_resume: bool = False,
 ) -> MatrixResult:
     plan = validate_evaluation(
         profile_path,
@@ -213,6 +219,12 @@ def run_evaluation(
         profile_id=profile.id,
         profile_name=profile.name,
         profile_model=profile.model,
+        profile_identity={
+            "profile_id": profile.id,
+            "profile_path": str(profile.profile_path),
+            "profile_sha256": sha256_file(profile.profile_path),
+            "model": profile.model,
+        },
         resolve_suite_config_paths=True,
         save_reliability_baseline_path=save_reliability_baseline_path,
         compare_reliability_baseline_path=compare_reliability_baseline_path,
@@ -220,4 +232,9 @@ def run_evaluation(
         max_success_rate_drop=max_success_rate_drop,
         max_average_score_drop=max_average_score_drop,
         force_reliability_baseline=force_reliability_baseline,
+        checkpoint_path=checkpoint_path,
+        resume_path=resume_path,
+        checkpoint_every=checkpoint_every,
+        retry_failed=retry_failed,
+        force_resume=force_resume,
     )
