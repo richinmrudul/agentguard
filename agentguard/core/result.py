@@ -54,6 +54,7 @@ class ReportPaths:
     markdown: Path
     command_log: Optional[Path] = None
     manifest: Optional[Path] = None
+    trace: Optional[Path] = None
 
 
 @dataclass(frozen=True)

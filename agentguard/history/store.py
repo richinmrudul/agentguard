@@ -24,6 +24,7 @@ HISTORY_CSV_COLUMNS = [
     "markdown_report_path",
     "command_log_path",
     "manifest_path",
+    "trace_path",
     "category",
     "difficulty",
     "benchmark_id",
@@ -47,6 +48,7 @@ class HistoryRecord:
     markdown_report_path: Optional[Path] = None
     command_log_path: Optional[Path] = None
     manifest_path: Optional[Path] = None
+    trace_path: Optional[Path] = None
     category: Optional[str] = None
     difficulty: Optional[str] = None
     benchmark_id: Optional[str] = None
@@ -101,6 +103,7 @@ def init_history_db(db_path: Path) -> None:
                   markdown_report_path TEXT,
                   command_log_path TEXT,
                   manifest_path TEXT,
+                  trace_path TEXT,
                   category TEXT,
                   difficulty TEXT,
                   benchmark_id TEXT,
@@ -113,6 +116,7 @@ def init_history_db(db_path: Path) -> None:
             _ensure_column(connection, "benchmark_id", "TEXT")
             _ensure_column(connection, "benchmark_version", "INTEGER")
             _ensure_column(connection, "manifest_path", "TEXT")
+            _ensure_column(connection, "trace_path", "TEXT")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_run_type ON runs(run_type)"
             )
@@ -122,7 +126,7 @@ def init_history_db(db_path: Path) -> None:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)"
             )
-            connection.execute("PRAGMA user_version = 3")
+            connection.execute("PRAGMA user_version = 4")
 
 
 def record_history(
@@ -145,6 +149,7 @@ def record_history(
               markdown_report_path,
               command_log_path,
               manifest_path,
+              trace_path,
               category,
               difficulty,
               benchmark_id,
@@ -152,7 +157,7 @@ def record_history(
               agent,
               failed_checks_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               run_type = excluded.run_type,
               name = excluded.name,
@@ -163,6 +168,7 @@ def record_history(
               markdown_report_path = excluded.markdown_report_path,
               command_log_path = excluded.command_log_path,
               manifest_path = excluded.manifest_path,
+              trace_path = excluded.trace_path,
               category = excluded.category,
               difficulty = excluded.difficulty,
               benchmark_id = excluded.benchmark_id,
@@ -181,6 +187,7 @@ def record_history(
                 _optional_path(record.markdown_report_path),
                 _optional_path(record.command_log_path),
                 _optional_path(record.manifest_path),
+                _optional_path(record.trace_path),
                 record.category,
                 record.difficulty,
                 record.benchmark_id,
@@ -228,6 +235,7 @@ def list_history(
           markdown_report_path,
           command_log_path,
           manifest_path,
+          trace_path,
           category,
           difficulty,
           benchmark_id,
@@ -345,6 +353,7 @@ def history_records_to_dicts(records: list[HistoryRecord]) -> list[dict[str, obj
             "markdown_report_path": _optional_path(record.markdown_report_path),
             "command_log_path": _optional_path(record.command_log_path),
             "manifest_path": _optional_path(record.manifest_path),
+            "trace_path": _optional_path(record.trace_path),
             "category": record.category,
             "difficulty": record.difficulty,
             "benchmark_id": record.benchmark_id,
@@ -457,10 +466,11 @@ def _record_from_row(row: tuple) -> HistoryRecord:
         markdown_report_path=_optional_path_from_value(row[7]),
         command_log_path=_optional_path_from_value(row[8]),
         manifest_path=_optional_path_from_value(row[9]),
-        category=row[10],
-        difficulty=row[11],
-        benchmark_id=row[12],
-        benchmark_version=_optional_int_from_value(row[13]),
-        agent=row[14],
-        failed_checks=json.loads(row[15]),
+        trace_path=_optional_path_from_value(row[10]),
+        category=row[11],
+        difficulty=row[12],
+        benchmark_id=row[13],
+        benchmark_version=_optional_int_from_value(row[14]),
+        agent=row[15],
+        failed_checks=json.loads(row[16]),
     )

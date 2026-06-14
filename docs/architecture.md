@@ -24,7 +24,7 @@ timelines, and reports.
 The benchmark pipeline is:
 
 ```text
-Config -> prepared repo -> agent -> sandbox/local runner -> tests -> diff/checks -> score -> reports -> manifest/history
+Config -> prepared repo -> agent -> tests -> diff/checks -> score -> reports -> manifest -> trace -> history
 ```
 
 Benchmark corpus audits add a validation layer above normal execution:
@@ -107,7 +107,10 @@ safe or capable.
    forbidden paths, unsafe commands, scope, diff size, and secret patterns.
 7. Scoring converts check results into `PASS` or `FAIL`.
 8. JSON and Markdown reports are written.
-9. A sanitized execution manifest is written, and local history is indexed.
+9. A sanitized execution manifest is written.
+10. A portable execution trace commits to policy-relevant evidence and source
+    artifact hashes.
+11. Local history is indexed with report, manifest, and trace paths.
 
 CI mode uses the same checks and scoring model, but evaluates the existing
 checkout instead of copying a benchmark template.
@@ -131,7 +134,9 @@ flowchart TD
     PolicyChecks --> Scoring[Scoring]
     Scoring --> Reports[Reports]
     Reports --> Manifest[Execution Manifest]
-    Manifest --> ExitCode[Exit Code / CI Result]
+    Manifest --> Trace[Execution Trace]
+    Trace --> History[History]
+    History --> ExitCode[Exit Code / CI Result]
 ```
 
 ## Core Components
@@ -256,6 +261,26 @@ The manifest never contains full environment variables or raw stdout/stderr.
 Agent environment names are retained without values. Secret-sensitive metadata
 keys and common credential argument forms are redacted. This is pattern-based
 sanitization and cannot recognize every possible positional or encoded secret.
+
+### Execution Trace
+
+The trace layer writes `.agentguard/runs/<run-id>/trace.jsonl` after reports and
+the optional manifest exist. Its versioned header and closed ordered event set
+capture sanitized commands, file-change identities, test outcomes, policy
+check results, completion data, and source artifact hashes. Per-event canonical
+SHA-256 hashes form a chain; the header root digest commits to the final event
+and header identity.
+
+Known roots become symbolic roles, paths are repository-relative, output is
+represented by bounded sanitized hashes, and full file content is excluded.
+Optional diffs are bounded and sanitized. Trace writing is atomic and failures
+warn without replacing the primary benchmark result. Parallel matrix children
+build independent immutable traces in their own run directories.
+
+`trace show`, `trace verify`, and `trace export` perform no agent, model, test,
+Docker, or benchmark execution. The hashes are not signatures and do not prove
+agent identity, evidence honesty, benchmark correctness, or policy
+completeness. Offline replay is intentionally deferred.
 
 ### Suite Runner
 

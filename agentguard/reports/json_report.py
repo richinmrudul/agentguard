@@ -30,6 +30,7 @@ def write_json_report(result: BenchmarkResult, reports_dir: Path) -> Path:
         }
     data["command_log_path"] = result.report_paths.command_log
     data["manifest_path"] = result.report_paths.manifest
+    data["trace_path"] = result.report_paths.trace
     data["provenance"] = result.provenance_summary
     data["evidence"] = [
         evidence for check in result.check_results for evidence in check.evidence
