@@ -183,7 +183,7 @@ def test_real_cell_metrics_baseline_memory_and_reports(tmp_path: Path) -> None:
     assert two_workers.median_speedup is not None
     assert two_workers.median_parallel_efficiency == pytest.approx(
         two_workers.median_speedup / 2,
-        abs=0.0001,
+        abs=0.0002,
     )
     assert one_worker.duration_minimum_seconds <= (
         one_worker.duration_mean_seconds

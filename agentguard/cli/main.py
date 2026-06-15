@@ -84,6 +84,11 @@ from agentguard.traces.execution import (
     trace_summary,
     verify_execution_trace,
 )
+from agentguard.traces.replay import (
+    inspect_replayability,
+    replay_trace,
+    replayability_summary,
+)
 
 app = typer.Typer(
     help="Local-first safety and reliability evaluation framework for AI coding agents."
@@ -98,7 +103,9 @@ gate_app = typer.Typer(help="CI gate commands for AgentGuard suites.")
 app.add_typer(gate_app, name="gate")
 manifest_app = typer.Typer(help="Inspect and verify execution manifests.")
 app.add_typer(manifest_app, name="manifest")
-trace_app = typer.Typer(help="Export, inspect, and verify execution traces.")
+trace_app = typer.Typer(
+    help="Export, inspect, verify, and replay execution traces."
+)
 app.add_typer(trace_app, name="trace")
 evaluate_app = typer.Typer(help="Validate and run external coding-agent profiles.")
 app.add_typer(evaluate_app, name="evaluate")
@@ -624,6 +631,90 @@ def trace_verify(
         typer.echo(message)
     if result.exit_code:
         raise typer.Exit(result.exit_code)
+
+
+@trace_app.command("replayability")
+def trace_replayability(
+    path: Path = typer.Argument(..., help="Path to an execution trace."),
+    strict_sources: bool = typer.Option(
+        False,
+        "--strict-sources",
+        help="Require all referenced source artifacts to be available.",
+    ),
+) -> None:
+    """Report whether a verified trace contains complete replay evidence."""
+    try:
+        status, _ = inspect_replayability(
+            path,
+            strict_sources=strict_sources,
+        )
+        trace = load_execution_trace(path)
+    except (OSError, TypeError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(replayability_summary(trace, status))
+    if not status.replayable:
+        raise typer.Exit(1)
+
+
+@trace_app.command("replay")
+def trace_replay(
+    path: Path = typer.Argument(..., help="Path to an execution trace."),
+    output_dir: Optional[Path] = typer.Option(
+        None,
+        "--output-dir",
+        help="Root directory for replay reports.",
+    ),
+    strict_sources: bool = typer.Option(
+        False,
+        "--strict-sources",
+        help="Require all referenced source artifacts to be available.",
+    ),
+    require_equivalence: bool = typer.Option(
+        True,
+        "--require-equivalence/--no-require-equivalence",
+        help="Exit nonzero unless replay is exactly equivalent.",
+    ),
+    allow_divergence: bool = typer.Option(
+        False,
+        "--allow-divergence",
+        help="Exit zero while retaining divergence details.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace an existing replay report directory.",
+    ),
+) -> None:
+    """Replay captured evidence through the real policy and scoring pipeline."""
+    try:
+        result = replay_trace(
+            path,
+            output_dir=output_dir,
+            strict_sources=strict_sources,
+            force=force,
+        )
+    except (FileExistsError, OSError, TypeError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo("AgentGuard Trace Replay")
+    typer.echo(f"Trace: {result.trace_id}")
+    typer.echo(f"Equivalence: {result.equivalence}")
+    typer.echo(
+        f"Recorded: {result.recorded_result} / {result.recorded_score}"
+    )
+    typer.echo(
+        f"Recomputed: {result.recomputed_result} / {result.recomputed_score}"
+    )
+    typer.echo(f"JSON report: {result.report_paths.json}")
+    typer.echo(f"Markdown report: {result.report_paths.markdown}")
+    typer.echo("External execution: none")
+    if (
+        result.equivalence != "exact"
+        and require_equivalence
+        and not allow_divergence
+    ):
+        raise typer.Exit(1)
 
 
 @evaluate_app.command("validate")

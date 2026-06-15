@@ -35,6 +35,10 @@ from agentguard.instrumentation.agent_event_reader import (
 )
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
+from agentguard.policy.evaluation import (
+    PolicyEvaluationContext,
+    evaluate_policy_checks,
+)
 from agentguard.repo.git_diff import collect_diff
 from agentguard.repo.manager import RepoManager
 from agentguard.provenance.manifest import (
@@ -60,6 +64,7 @@ from agentguard.scoring.scorer import score_checks
 from agentguard.sandbox.docker_runner import DockerTestRunner
 from agentguard.traces.execution import (
     build_execution_trace,
+    build_policy_snapshot,
     canonical_json,
     write_execution_trace,
 )
@@ -475,10 +480,14 @@ def run_benchmark(
             "deleted_files": diff_summary.deleted_files,
         },
     )
-    check_results = [
-        check.run(config, test_result, diff_summary, command_tracker.events)
-        for check in default_checks()
-    ]
+    check_results = evaluate_policy_checks(
+        PolicyEvaluationContext(
+            config=config,
+            test_result=test_result,
+            diff_summary=diff_summary,
+            command_events=command_tracker.events,
+        )
+    )
     score_result = score_checks(check_results)
     if timing_recorder is not None and policy_started is not None:
         timing_recorder.stages["policy_check_evaluation"] = (
@@ -700,6 +709,8 @@ def run_benchmark(
                 if result.report_paths.manifest is not None
                 else None
             ),
+            policy_snapshot=build_policy_snapshot(config),
+            execution_duration_seconds=manifest.duration_seconds,
             sensitive_values=[
                 value for value in config.agent_environment.values() if value
             ]

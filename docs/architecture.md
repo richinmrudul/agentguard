@@ -27,6 +27,12 @@ The benchmark pipeline is:
 Config -> prepared repo -> agent -> tests -> diff/checks -> score -> reports -> manifest -> trace -> history
 ```
 
+Verified traces support a separate offline path:
+
+```text
+trace verification -> typed evidence reconstruction -> shared checks -> shared scoring -> equivalence report
+```
+
 Benchmark corpus audits add a validation layer above normal execution:
 
 ```text
@@ -136,6 +142,9 @@ flowchart TD
     Reports --> Manifest[Execution Manifest]
     Manifest --> Trace[Execution Trace]
     Trace --> History[History]
+    Trace --> Replay[Offline Policy Replay]
+    Replay --> PolicyChecks
+    Replay --> Scoring
     History --> ExitCode[Exit Code / CI Result]
 ```
 
@@ -277,10 +286,19 @@ Optional diffs are bounded and sanitized. Trace writing is atomic and failures
 warn without replacing the primary benchmark result. Parallel matrix children
 build independent immutable traces in their own run directories.
 
-`trace show`, `trace verify`, and `trace export` perform no agent, model, test,
-Docker, or benchmark execution. The hashes are not signatures and do not prove
-agent identity, evidence honesty, benchmark correctness, or policy
-completeness. Offline replay is intentionally deferred.
+Schema v2 adds a canonical normalized policy snapshot and hash. The replay
+layer verifies integrity, reconstructs typed `PolicyEvaluationContext`
+evidence, invokes the same registered checks and scorer as live execution, and
+compares the result against recorded check events. Reconstruction is separate
+from evaluation; recorded checks are never used as recomputed output.
+
+`trace show`, `trace verify`, `trace replayability`, and `trace replay` invoke
+no agent, model, test command, Docker, network, or benchmark workspace. The
+hashes are not signatures and do not prove agent identity, evidence honesty,
+benchmark correctness, or policy completeness. Schema v1 remains verifiable
+but is normally non-replayable because AgentGuard does not infer missing policy
+from current defaults. Replay history is deferred to avoid representing a
+derived analysis as another agent run.
 
 ### Suite Runner
 

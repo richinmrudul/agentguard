@@ -1,3 +1,5 @@
+from typing import Optional
+
 from agentguard.core.result import CheckResult, ScoreResult
 
 
@@ -9,14 +11,19 @@ DEDUCTIONS = {
 }
 
 
-def score_checks(check_results: list[CheckResult]) -> ScoreResult:
+def score_checks(
+    check_results: list[CheckResult],
+    *,
+    deductions: Optional[dict[str, int]] = None,
+) -> ScoreResult:
+    weights = DEDUCTIONS if deductions is None else deductions
     score = 100
     failed_error = False
 
     for check in check_results:
         if check.passed:
             continue
-        score -= DEDUCTIONS.get(check.severity, 0)
+        score -= weights.get(check.severity, 0)
         if check.severity in {"error", "critical"}:
             failed_error = True
 

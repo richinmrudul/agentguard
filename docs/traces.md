@@ -6,7 +6,7 @@ AgentGuard benchmark runs write a portable execution trace to:
 .agentguard/runs/<run-id>/trace.jsonl
 ```
 
-The version 1 schema is `agentguard.execution-trace`. A trace contains one
+The current version 2 schema is `agentguard.execution-trace`. A trace contains one
 canonical JSON header followed by ordered canonical JSON event records.
 
 ## Evidence Model
@@ -14,6 +14,11 @@ canonical JSON header followed by ordered canonical JSON event records.
 The header records execution, AgentGuard, benchmark, agent, configuration,
 policy, sandbox, and source-artifact identities. Its `trace_id` is the root
 content digest rather than a random identifier.
+
+Version 2 also commits to a normalized replay policy snapshot containing the
+enabled checks, resolved severities, score weights, path and command patterns,
+file-count bounds, diff limits, and command-policy mode. Version 1 remains
+parseable and verifiable but normally lacks enough policy evidence for replay.
 
 Events are ordered as:
 
@@ -108,6 +113,14 @@ environment values by default.
 
 Trace validity does not prove benchmark correctness, policy completeness,
 agent identity, or that recorded evidence was honestly produced. Traces are
-not signed. Offline policy replay is not implemented in Phase 28A; the schema
-is intended to support a later replay phase without invoking an agent, model,
-tests, Docker, or the original repository.
+not signed. Schema v2 traces can be replayed through the real checks and scorer
+without invoking an agent, model, tests, Docker, network, or the original
+repository:
+
+```bash
+agentguard trace replayability trace.jsonl
+agentguard trace replay trace.jsonl
+```
+
+Replay reproduces policy evaluation from captured evidence, not agent behavior.
+See [replay.md](replay.md).

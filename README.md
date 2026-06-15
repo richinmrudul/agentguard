@@ -38,6 +38,8 @@ Docs:
   artifact validation, and deterministic reconciliation.
 - [Portable traces](docs/traces.md): sanitized evidence, hash-chain integrity,
   export, inspection, verification, and limitations.
+- [Deterministic replay](docs/replay.md): offline policy reconstruction,
+  equivalence reporting, schema compatibility, and limitations.
 - [Testing and quality](docs/testing.md): test layers, coverage measurement,
   CI gate, and known limits.
 - [Changelog](CHANGELOG.md): draft v0.1.0 capabilities and future changes.
@@ -239,12 +241,15 @@ Every benchmark run also writes a portable, sanitized trace:
 ```bash
 agentguard trace show .agentguard/runs/<run-id>/trace.jsonl
 agentguard trace verify .agentguard/runs/<run-id>/trace.jsonl
+agentguard trace replayability .agentguard/runs/<run-id>/trace.jsonl
+agentguard trace replay .agentguard/runs/<run-id>/trace.jsonl
 agentguard trace export .agentguard/runs/<run-id> --output trace.jsonl
 ```
 
 Trace hashes detect modification but are not signatures. Traces omit raw
-stdout, stderr, and full file content by default; policy replay is not yet
-implemented. See [docs/traces.md](docs/traces.md).
+stdout, stderr, and full file content by default. Replay executes the captured
+policy evaluation, not the agent or tests. See [docs/traces.md](docs/traces.md)
+and [docs/replay.md](docs/replay.md).
 
 ## Suites And Gates
 

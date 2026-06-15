@@ -10,18 +10,24 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 
+from agentguard.checks.registry import registered_checks
+from agentguard.config.schema import VALID_SEVERITIES, AgentGuardConfig
 from agentguard.core.result import BenchmarkResult, CheckResult, CommandResult
 from agentguard.instrumentation.command_tracker import CommandEvent
 from agentguard.io import atomic_write_text
 from agentguard.provenance.manifest import (
+    SECRET_KEY_PATTERN,
     sanitize_arguments,
     sanitize_text,
     sha256_file,
 )
+from agentguard.scoring.scorer import DEDUCTIONS
+from agentguard.traces.models import ReplayPolicySnapshot
 
 
 TRACE_SCHEMA = "agentguard.execution-trace"
-TRACE_SCHEMA_VERSION = 1
+TRACE_SCHEMA_VERSION = 2
+SUPPORTED_TRACE_SCHEMA_VERSIONS = {1, 2}
 HASH_ALGORITHM = "sha256"
 ZERO_HASH = "0" * 64
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -78,6 +84,8 @@ class TraceHeader:
     source_artifacts: list[TraceSourceArtifact]
     event_count: int
     integrity: TraceIntegrity
+    policy_snapshot: Optional[ReplayPolicySnapshot] = None
+    policy_snapshot_hash: Optional[str] = None
     schema: str = TRACE_SCHEMA
     schema_version: int = TRACE_SCHEMA_VERSION
 
@@ -144,6 +152,85 @@ def canonical_json(value: object) -> str:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def build_policy_snapshot(config: AgentGuardConfig) -> ReplayPolicySnapshot:
+    default_severities = {
+        "tests-passed": "error",
+        "forbidden-paths": "critical",
+        "test-tampering": "error",
+        "unsafe-commands": "critical",
+        "scope-adherence": "warning",
+        "diff-size": "warning",
+        "secret-scan": "critical",
+    }
+    config_keys = {
+        "tests-passed": "tests_pass",
+        "forbidden-paths": "forbidden_paths",
+        "test-tampering": "test_tampering",
+        "unsafe-commands": "unsafe_commands",
+        "scope-adherence": "scope_adherence",
+        "diff-size": "diff_size",
+        "secret-scan": "secret_scan",
+    }
+    enabled = [registration.identifier for registration in registered_checks()]
+    sensitive_values = [
+        value for value in config.agent_environment.values() if value
+    ] + [
+        str(value)
+        for key, value in config.agent_metadata.items()
+        if SECRET_KEY_PATTERN.search(key) and str(value)
+    ]
+    redacted_inputs = []
+
+    def sanitized_patterns(values: list[str], field_name: str) -> list[str]:
+        sanitized = [
+            sanitize_text(value, sensitive_values) for value in values
+        ]
+        if sanitized != values:
+            redacted_inputs.append(field_name)
+        return sanitized
+
+    return ReplayPolicySnapshot(
+        enabled_checks=enabled,
+        severities={
+            identifier: config.severity_for(
+                config_keys[identifier],
+                default_severities[identifier],
+            )
+            for identifier in enabled
+        },
+        score_weights=dict(DEDUCTIONS),
+        forbidden_paths=sanitized_patterns(
+            config.forbidden_paths,
+            "forbidden_paths",
+        ),
+        allowed_paths=sanitized_patterns(config.allowed_paths, "allowed_paths"),
+        test_paths=sanitized_patterns(config.test_paths, "test_paths"),
+        unsafe_commands=sanitized_patterns(
+            config.unsafe_commands,
+            "unsafe_commands",
+        ),
+        secret_patterns=sanitized_patterns(
+            config.secret_patterns,
+            "secret_patterns",
+        ),
+        expected_modified_files_min=config.expected_modified_files.min,
+        expected_modified_files_max=config.expected_modified_files.max,
+        max_files_changed=config.diff_limits.max_files_changed,
+        max_lines_added=config.diff_limits.max_lines_added,
+        max_lines_deleted=config.diff_limits.max_lines_deleted,
+        command_policy_mode=config.command_policy.mode,
+        command_policy_patterns=sanitized_patterns(
+            config.unsafe_commands,
+            "command_policy_patterns",
+        ),
+        redacted_inputs=redacted_inputs,
+    )
+
+
+def policy_snapshot_hash(snapshot: ReplayPolicySnapshot) -> str:
+    return _sha256_text(canonical_json(asdict(snapshot)))
 
 
 def _bounded_text(
@@ -246,11 +333,9 @@ def _command_payload(
         for argument in sanitize_arguments(event.command, sensitive_values)
     ]
     command, command_truncated = _bounded_text(
-        (
-            shlex.join(argv)
-            if argv
-            else _portable_text(event.command_text, result)
-        ),
+        _portable_text(event.command_text, result)
+        if event.command_text
+        else shlex.join(argv),
         sensitive_values,
     )
     patterns, patterns_truncated = _safe_evidence(
@@ -471,18 +556,24 @@ def _test_payload(
 
 def _check_payload(
     check: CheckResult,
+    result: BenchmarkResult,
     sensitive_values: Optional[list[str]],
 ) -> dict[str, object]:
-    message, message_truncated = _bounded_text(check.message, sensitive_values)
+    message, message_truncated = _bounded_text(
+        _portable_text(check.message, result),
+        sensitive_values,
+    )
     evidence, evidence_truncated = _safe_evidence(
-        check.evidence,
+        [_portable_text(item, result) for item in check.evidence],
         sensitive_values,
     )
     return {
         "name": check.name,
         "passed": check.passed,
         "severity": check.severity,
-        "score_contribution": None,
+        "score_contribution": (
+            0 if check.passed else -DEDUCTIONS.get(check.severity, 0)
+        ),
         "message": message,
         "evidence": evidence,
         "truncation": {
@@ -518,6 +609,9 @@ def _header_identity(header: TraceHeader) -> dict[str, object]:
     data = asdict(header)
     data.pop("trace_id")
     data.pop("integrity")
+    if header.schema_version == 1:
+        data.pop("policy_snapshot")
+        data.pop("policy_snapshot_hash")
     return data
 
 
@@ -527,10 +621,11 @@ def _event_hash(
     payload: dict[str, object],
     previous_event_hash: str,
     relative_offset_seconds: Optional[float],
+    schema_version: int = TRACE_SCHEMA_VERSION,
 ) -> str:
     context = {
         "schema": TRACE_SCHEMA,
-        "schema_version": TRACE_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "sequence": sequence,
         "event_type": event_type,
         "payload": payload,
@@ -542,6 +637,8 @@ def _event_hash(
 
 def _chain_events(
     event_values: list[tuple[str, dict[str, object]]],
+    *,
+    schema_version: int = TRACE_SCHEMA_VERSION,
 ) -> list[TraceEvent]:
     previous = ZERO_HASH
     events = []
@@ -552,6 +649,7 @@ def _chain_events(
             payload,
             previous,
             None,
+            schema_version,
         )
         events.append(
             TraceEvent(
@@ -566,6 +664,66 @@ def _chain_events(
     return events
 
 
+def rehash_execution_trace(trace: ExecutionTrace) -> ExecutionTrace:
+    previous = ZERO_HASH
+    events = []
+    for event in trace.events:
+        event_hash = _event_hash(
+            event.sequence,
+            event.event_type,
+            event.payload,
+            previous,
+            event.relative_offset_seconds,
+            trace.header.schema_version,
+        )
+        events.append(
+            TraceEvent(
+                sequence=event.sequence,
+                event_type=event.event_type,
+                payload=event.payload,
+                previous_event_hash=previous,
+                event_hash=event_hash,
+                relative_offset_seconds=event.relative_offset_seconds,
+            )
+        )
+        previous = event_hash
+    provisional = TraceHeader(
+        **{
+            **asdict(trace.header),
+            "trace_id": ZERO_HASH,
+            "source_artifacts": trace.header.source_artifacts,
+            "policy_snapshot": trace.header.policy_snapshot,
+            "integrity": TraceIntegrity(
+                hash_algorithm=HASH_ALGORITHM,
+                root_hash=ZERO_HASH,
+                final_event_hash=previous,
+            ),
+        }
+    )
+    root_hash = _sha256_text(
+        canonical_json(
+            {
+                "header": _header_identity(provisional),
+                "final_event_hash": previous,
+            }
+        )
+    )
+    header = TraceHeader(
+        **{
+            **asdict(provisional),
+            "trace_id": root_hash,
+            "source_artifacts": provisional.source_artifacts,
+            "policy_snapshot": provisional.policy_snapshot,
+            "integrity": TraceIntegrity(
+                hash_algorithm=HASH_ALGORITHM,
+                root_hash=root_hash,
+                final_event_hash=previous,
+            ),
+        }
+    )
+    return ExecutionTrace(header=header, events=events)
+
+
 def build_execution_trace(
     result: BenchmarkResult,
     *,
@@ -578,6 +736,8 @@ def build_execution_trace(
     sandbox_summary: str,
     source_report_id: Optional[str],
     source_manifest_id: Optional[str],
+    policy_snapshot: ReplayPolicySnapshot,
+    execution_duration_seconds: Optional[float] = None,
     include_diff: bool = False,
     sensitive_values: Optional[list[str]] = None,
 ) -> ExecutionTrace:
@@ -615,7 +775,7 @@ def build_execution_trace(
     event_values.extend(
         (
             "check_result",
-            _check_payload(check, sensitive_values),
+            _check_payload(check, result, sensitive_values),
         )
         for check in result.check_results
     )
@@ -645,9 +805,13 @@ def build_execution_trace(
                 },
                 "failed_checks": failed,
                 "warning_checks": warnings,
-                "duration_seconds": sum(
-                    event.duration_seconds or 0.0
-                    for event in result.command_events
+                "duration_seconds": (
+                    execution_duration_seconds
+                    if execution_duration_seconds is not None
+                    else sum(
+                        event.duration_seconds or 0.0
+                        for event in result.command_events
+                    )
                 ),
                 "source_report_sha256": (
                     sha256_file(result.report_paths.json)
@@ -704,6 +868,8 @@ def build_execution_trace(
         source_manifest_id=source_manifest_id,
         source_artifacts=sources,
         event_count=len(events),
+        policy_snapshot=policy_snapshot,
+        policy_snapshot_hash=policy_snapshot_hash(policy_snapshot),
         integrity=TraceIntegrity(
             hash_algorithm=HASH_ALGORITHM,
             root_hash=ZERO_HASH,
@@ -723,6 +889,7 @@ def build_execution_trace(
             **asdict(provisional),
             "trace_id": root_hash,
             "source_artifacts": sources,
+            "policy_snapshot": provisional.policy_snapshot,
             "integrity": TraceIntegrity(
                 hash_algorithm=HASH_ALGORITHM,
                 root_hash=root_hash,
@@ -734,7 +901,11 @@ def build_execution_trace(
 
 
 def serialize_execution_trace(trace: ExecutionTrace) -> str:
-    header = {"record_type": "header", **asdict(trace.header)}
+    header_data = asdict(trace.header)
+    if trace.header.schema_version == 1:
+        header_data.pop("policy_snapshot")
+        header_data.pop("policy_snapshot_hash")
+    header = {"record_type": "header", **header_data}
     lines = [canonical_json(header)]
     lines.extend(
         canonical_json({"record_type": "event", **asdict(event)})
@@ -787,7 +958,7 @@ def _parse_source_artifact(data: object) -> TraceSourceArtifact:
 
 
 def _parse_header(data: dict[str, Any]) -> TraceHeader:
-    expected = {
+    base_expected = {
         "record_type",
         "trace_id",
         "execution_id",
@@ -813,11 +984,17 @@ def _parse_header(data: dict[str, Any]) -> TraceHeader:
         "schema",
         "schema_version",
     }
+    schema_version = data.get("schema_version")
+    expected = set(base_expected)
+    if schema_version == 2:
+        expected.update({"policy_snapshot", "policy_snapshot_hash"})
     _require_exact_fields(data, expected, "trace header")
     if data.pop("record_type") != "header":
         raise ValueError("First trace record must be a header.")
     integrity_data = data.pop("integrity")
     source_data = data.pop("source_artifacts")
+    snapshot_data = data.pop("policy_snapshot", None)
+    snapshot_hash = data.pop("policy_snapshot_hash", None)
     if not isinstance(integrity_data, dict):
         raise ValueError("Trace integrity must be an object.")
     _require_exact_fields(
@@ -827,10 +1004,42 @@ def _parse_header(data: dict[str, Any]) -> TraceHeader:
     )
     if not isinstance(source_data, list):
         raise ValueError("Trace source_artifacts must be a list.")
+    snapshot = None
+    if snapshot_data is not None:
+        if not isinstance(snapshot_data, dict):
+            raise ValueError("Trace policy snapshot must be an object.")
+        _require_exact_fields(
+            snapshot_data,
+            {
+                "enabled_checks",
+                "severities",
+                "score_weights",
+                "forbidden_paths",
+                "allowed_paths",
+                "test_paths",
+                "unsafe_commands",
+                "secret_patterns",
+                "expected_modified_files_min",
+                "expected_modified_files_max",
+                "max_files_changed",
+                "max_lines_added",
+                "max_lines_deleted",
+                "command_policy_mode",
+                "command_policy_patterns",
+                "redacted_inputs",
+            },
+            "trace policy snapshot",
+        )
+        try:
+            snapshot = ReplayPolicySnapshot(**snapshot_data)
+        except TypeError as error:
+            raise ValueError(f"Invalid trace policy snapshot: {error}") from error
     return TraceHeader(
         **data,
         source_artifacts=[_parse_source_artifact(item) for item in source_data],
         integrity=TraceIntegrity(**integrity_data),
+        policy_snapshot=snapshot,
+        policy_snapshot_hash=snapshot_hash,
     )
 
 
@@ -914,6 +1123,63 @@ def _validate_output_identity(value: object, label: str) -> None:
         raise ValueError(f"Trace {label} byte count must be nonnegative.")
     if not isinstance(value["truncated"], bool):
         raise ValueError(f"Trace {label} truncation flag must be boolean.")
+
+
+def _validate_policy_snapshot(snapshot: ReplayPolicySnapshot) -> None:
+    string_lists = [
+        snapshot.enabled_checks,
+        snapshot.forbidden_paths,
+        snapshot.allowed_paths,
+        snapshot.test_paths,
+        snapshot.unsafe_commands,
+        snapshot.secret_patterns,
+        snapshot.command_policy_patterns,
+        snapshot.redacted_inputs,
+    ]
+    if any(
+        not isinstance(values, list)
+        or any(not isinstance(value, str) for value in values)
+        for values in string_lists
+    ):
+        raise ValueError("Trace policy snapshot lists must contain strings.")
+    if not isinstance(snapshot.severities, dict) or any(
+        not isinstance(key, str)
+        or not isinstance(value, str)
+        or value not in VALID_SEVERITIES
+        for key, value in snapshot.severities.items()
+    ):
+        raise ValueError("Trace policy severities are invalid.")
+    if not isinstance(snapshot.score_weights, dict) or any(
+        not isinstance(key, str)
+        or not isinstance(value, int)
+        or isinstance(value, bool)
+        or value < 0
+        for key, value in snapshot.score_weights.items()
+    ):
+        raise ValueError("Trace score weights must be nonnegative integers.")
+    if (
+        not isinstance(snapshot.expected_modified_files_min, int)
+        or not isinstance(snapshot.expected_modified_files_max, int)
+        or isinstance(snapshot.expected_modified_files_min, bool)
+        or isinstance(snapshot.expected_modified_files_max, bool)
+        or snapshot.expected_modified_files_min < 0
+        or snapshot.expected_modified_files_max
+        < snapshot.expected_modified_files_min
+    ):
+        raise ValueError("Trace expected modified-file bounds are invalid.")
+    for value in (
+        snapshot.max_files_changed,
+        snapshot.max_lines_added,
+        snapshot.max_lines_deleted,
+    ):
+        if value is not None and (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < 0
+        ):
+            raise ValueError("Trace diff thresholds must be nonnegative integers.")
+    if snapshot.command_policy_mode not in {"audit", "enforce"}:
+        raise ValueError("Trace command policy mode is invalid.")
 
 
 def _validate_payload(event: TraceEvent) -> None:
@@ -1068,13 +1334,27 @@ def _validate_structure(trace: ExecutionTrace) -> None:
     header = trace.header
     if header.schema != TRACE_SCHEMA:
         raise ValueError("Invalid trace schema identifier.")
-    if header.schema_version != TRACE_SCHEMA_VERSION:
+    if header.schema_version not in SUPPORTED_TRACE_SCHEMA_VERSIONS:
         raise ValueError("Unsupported trace schema version.")
     if header.source_execution_type != "run":
         raise ValueError("Unsupported trace source execution type.")
     if header.integrity.hash_algorithm != HASH_ALGORITHM:
         raise ValueError("Unsupported trace hash algorithm.")
     _validate_bounds(asdict(header))
+    if header.schema_version == 1:
+        if (
+            header.policy_snapshot is not None
+            or header.policy_snapshot_hash is not None
+        ):
+            raise ValueError("Trace v1 cannot contain a policy snapshot.")
+    else:
+        if header.policy_snapshot is None:
+            raise ValueError("Trace v2 requires a policy snapshot.")
+        _validate_policy_snapshot(header.policy_snapshot)
+        _validate_sha256(header.policy_snapshot_hash, "policy snapshot hash")
+        expected_snapshot_hash = policy_snapshot_hash(header.policy_snapshot)
+        if header.policy_snapshot_hash != expected_snapshot_hash:
+            raise ValueError("Trace policy snapshot hash is invalid.")
     for value, label in [
         (header.trace_id, "trace ID"),
         (header.configuration_hash, "configuration hash"),
@@ -1137,6 +1417,7 @@ def _verify_integrity(trace: ExecutionTrace) -> None:
             event.payload,
             event.previous_event_hash,
             event.relative_offset_seconds,
+            trace.header.schema_version,
         )
         if event.event_hash != expected:
             raise ValueError(f"Trace event {event.sequence} hash is invalid.")
@@ -1438,6 +1719,14 @@ def export_execution_trace(
         raise FileExistsError(f"Trace output already exists: {output}")
     report_path, manifest_path = _resolve_export_source(source)
     result, report = _result_from_report(report_path, manifest_path)
+    from agentguard.config.loader import load_config
+
+    if not result.config_path.is_file():
+        raise ValueError(
+            "Required policy configuration is unavailable for trace export: "
+            f"{result.config_path}"
+        )
+    config = load_config(result.config_path)
     manifest = _load_json(manifest_path) if manifest_path is not None else {}
     _validate_manifest_artifact_hashes(manifest, report_path, manifest_path)
     configuration_hash = (
@@ -1464,6 +1753,8 @@ def export_execution_trace(
         sandbox_summary=sandbox_summary,
         source_report_id=report_path.name,
         source_manifest_id=manifest_path.name if manifest_path else None,
+        policy_snapshot=build_policy_snapshot(config),
+        execution_duration_seconds=manifest.get("duration_seconds"),
         include_diff=options.include_diff,
     )
     return write_execution_trace(trace, output, force=options.force)
