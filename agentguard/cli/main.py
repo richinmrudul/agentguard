@@ -76,6 +76,11 @@ from agentguard.reports.browser import (
     load_report,
     validate_report_type,
 )
+from agentguard.reports.exports import (
+    UnsupportedExportInput,
+    export_junit,
+    export_sarif,
+)
 from agentguard.reports.github_summary import write_github_step_summary
 from agentguard.traces.execution import (
     TraceExportOptions,
@@ -1335,6 +1340,104 @@ def reports_show(
         raise typer.Exit(1)
 
     typer.echo(format_report_summary(report))
+
+
+@reports_app.command("export-sarif")
+def reports_export_sarif(
+    input_path: Path = typer.Argument(
+        ...,
+        help="Report JSON file or directory containing AgentGuard reports.",
+    ),
+    output: Path = typer.Option(..., "--output", help="SARIF output path."),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing output file.",
+    ),
+    tool_name: str = typer.Option(
+        "AgentGuard",
+        "--tool-name",
+        help="SARIF tool driver name.",
+    ),
+    base_uri: Optional[str] = typer.Option(
+        None,
+        "--base-uri",
+        help="Optional SARIF originalUriBaseIds repository URI.",
+    ),
+    include_passed: bool = typer.Option(
+        False,
+        "--include-passed",
+        help="Include passed checks as informational SARIF pass results.",
+    ),
+) -> None:
+    """Export AgentGuard policy findings as SARIF 2.1.0."""
+    try:
+        result = export_sarif(
+            input_path,
+            output,
+            force=force,
+            tool_name=tool_name,
+            base_uri=base_uri,
+            include_passed=include_passed,
+        )
+    except (FileExistsError, OSError, UnsupportedExportInput, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    typer.echo(f"SARIF exported: {result.output_path}")
+    typer.echo(
+        "Reports: "
+        f"{result.reports}; rules: {result.rules}; results: {result.results}; "
+        f"failed findings: {result.findings}; passed included: "
+        f"{result.included_passed}"
+    )
+    if result.unsupported_files:
+        typer.echo(f"Unsupported files skipped: {result.unsupported_files}")
+
+
+@reports_app.command("export-junit")
+def reports_export_junit(
+    input_path: Path = typer.Argument(
+        ...,
+        help="Report JSON file or directory containing AgentGuard reports.",
+    ),
+    output: Path = typer.Option(..., "--output", help="JUnit XML output path."),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing output file.",
+    ),
+    tool_name: str = typer.Option(
+        "AgentGuard",
+        "--tool-name",
+        help="JUnit producer name used in system-out.",
+    ),
+    suite_name: Optional[str] = typer.Option(
+        None,
+        "--suite-name",
+        help="Optional JUnit testsuite name.",
+    ),
+) -> None:
+    """Export AgentGuard run and aggregate outcomes as JUnit XML."""
+    try:
+        result = export_junit(
+            input_path,
+            output,
+            force=force,
+            tool_name=tool_name,
+            suite_name=suite_name,
+        )
+    except (FileExistsError, OSError, UnsupportedExportInput, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    typer.echo(f"JUnit exported: {result.output_path}")
+    typer.echo(
+        f"Reports: {result.reports}; tests: {result.tests}; "
+        f"failures: {result.failures}"
+    )
+    if result.unsupported_files:
+        typer.echo(f"Unsupported files skipped: {result.unsupported_files}")
 
 
 @history_app.command("list")

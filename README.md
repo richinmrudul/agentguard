@@ -382,6 +382,19 @@ agentguard reports list
 agentguard reports show --latest --type suite
 ```
 
+Export reports for CI/security tools:
+
+```bash
+# GitHub Code Scanning accepts SARIF 2.1.0.
+agentguard reports export-sarif .agentguard/ci/latest/report.json --output agentguard.sarif --force
+
+# CI test-report viewers accept JUnit XML.
+agentguard reports export-junit .agentguard/suites/core/suite.json --output agentguard-junit.xml --suite-name "AgentGuard"
+```
+
+See [docs/ci-exports.md](docs/ci-exports.md) for supported inputs, mappings,
+and a GitHub Actions example.
+
 Inspect history:
 
 ```bash

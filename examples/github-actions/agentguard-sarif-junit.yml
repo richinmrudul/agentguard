@@ -1,0 +1,54 @@
+name: AgentGuard SARIF and JUnit Example
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  # Required only when uploading SARIF to GitHub Code Scanning.
+  security-events: write
+
+jobs:
+  agentguard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # AgentGuard CI mode needs base/head history for diffs.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install AgentGuard
+        run: python -m pip install -e .
+
+      - name: Run AgentGuard
+        run: |
+          agentguard ci \
+            --config agentguard.yaml \
+            --base origin/main \
+            --head HEAD \
+            --allow-failures
+
+      - name: Export SARIF and JUnit
+        run: |
+          agentguard reports export-sarif .agentguard/ci \
+            --output agentguard.sarif \
+            --force
+          agentguard reports export-junit .agentguard/ci \
+            --output agentguard-junit.xml \
+            --suite-name "AgentGuard CI" \
+            --force
+
+      - name: Upload SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: agentguard.sarif
+
+      - name: Upload JUnit report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentguard-junit
+          path: agentguard-junit.xml
