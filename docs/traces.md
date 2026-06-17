@@ -105,6 +105,18 @@ Export refuses incomplete required evidence and refuses overwrite without
 source roles; source files may be unavailable after relocation while trace
 integrity remains verifiable.
 
+Run metamorphic replay robustness checks:
+
+```bash
+agentguard trace metamorphic .agentguard/runs/<run-id>/trace.jsonl
+agentguard trace metamorphic .agentguard/runs --transform timestamp_variation,add_test_file
+```
+
+Metamorphic testing rewrites typed trace models, recomputes integrity hashes,
+and replays transformed traces. Preserving transforms should keep outcomes
+stable; changing transforms should produce expected policy deltas; invalid
+transforms should be rejected.
+
 ## Portability And Limitations
 
 Traces capture policy-relevant evidence, not repository snapshots. They omit

@@ -101,6 +101,11 @@ verified trace data in memory and writes replay reports.
 This is faster than original execution because model and test work is absent.
 It is not equivalent to rerunning nondeterministic external behavior.
 
+Metamorphic trace testing builds on this same offline replay path. It applies
+deterministic preserving, changing, and invalid transformations to trace models,
+recomputes integrity for valid transformed traces, and checks whether replayed
+outcomes match the transform contract.
+
 ## Integrity And Security Limits
 
 Trace hashes are not signatures. They detect unauthenticated modification but

@@ -243,13 +243,16 @@ agentguard trace show .agentguard/runs/<run-id>/trace.jsonl
 agentguard trace verify .agentguard/runs/<run-id>/trace.jsonl
 agentguard trace replayability .agentguard/runs/<run-id>/trace.jsonl
 agentguard trace replay .agentguard/runs/<run-id>/trace.jsonl
+agentguard trace metamorphic .agentguard/runs/<run-id>/trace.jsonl
 agentguard trace export .agentguard/runs/<run-id> --output trace.jsonl
 ```
 
 Trace hashes detect modification but are not signatures. Traces omit raw
 stdout, stderr, and full file content by default. Replay executes the captured
-policy evaluation, not the agent or tests. See [docs/traces.md](docs/traces.md)
-and [docs/replay.md](docs/replay.md).
+policy evaluation, not the agent or tests. Metamorphic trace testing mutates
+verified traces to measure replay/check robustness without rerunning external
+work. See [docs/traces.md](docs/traces.md), [docs/replay.md](docs/replay.md),
+and [docs/metamorphic-traces.md](docs/metamorphic-traces.md).
 
 ## Suites And Gates
 

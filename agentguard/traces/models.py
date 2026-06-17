@@ -94,3 +94,76 @@ class ReplayResult:
     speedup_ratio: Optional[float]
     no_external_execution: bool
     report_paths: ReplayReportPaths
+
+
+@dataclass(frozen=True)
+class MetamorphicTransformDefinition:
+    name: str
+    transform_class: str
+    description: str
+    supported_event_types: list[str]
+    expected_effect: str
+    deterministic_parameters: dict[str, object] = field(default_factory=dict)
+    safety_constraints: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class MetamorphicOutcome:
+    result: str
+    score: int
+    failed_checks: list[str]
+    warning_checks: list[str]
+    check_statuses: dict[str, bool]
+    check_evidence: dict[str, list[str]]
+
+
+@dataclass(frozen=True)
+class MetamorphicCaseResult:
+    source_trace: Path
+    source_trace_id: Optional[str]
+    transform_name: str
+    transform_class: str
+    trial: int
+    transformed_trace_path: Optional[Path]
+    transformed_trace_id: Optional[str]
+    transformed_root_hash: Optional[str]
+    original_outcome: Optional[MetamorphicOutcome]
+    transformed_outcome: Optional[MetamorphicOutcome]
+    expected_effect: str
+    observed_effect: str
+    robustness_passed: bool
+    replayable: bool
+    verification_messages: list[str] = field(default_factory=list)
+    failure_reason: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class MetamorphicMetrics:
+    traces_tested: int
+    transformations_applied: int
+    preserving_passed: int
+    preserving_failed: int
+    changing_detected: int
+    changing_failed: int
+    invalid_rejected: int
+    invalid_failed: int
+    per_check_robustness: dict[str, dict[str, int]]
+    outcome_stability_rate: Optional[float]
+    expected_delta_detection_rate: Optional[float]
+
+
+@dataclass(frozen=True)
+class MetamorphicReportPaths:
+    json: Path
+    markdown: Path
+
+
+@dataclass(frozen=True)
+class MetamorphicStudyResult:
+    study_id: str
+    transforms: list[MetamorphicTransformDefinition]
+    cases: list[MetamorphicCaseResult]
+    metrics: MetamorphicMetrics
+    duration_seconds: float
+    no_external_execution: bool
+    report_paths: MetamorphicReportPaths
