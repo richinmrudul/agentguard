@@ -248,7 +248,7 @@ Scoring starts at 100 and deducts points for failed checks by severity. Warnings
 
 ### Reports
 
-Report writers produce machine-readable JSON and human-readable Markdown. Reports include task identity, score, check results, diff summary, command events, sandbox metadata, benchmark metadata, and timeline events.
+Report writers produce machine-readable JSON and human-readable Markdown. Reports include task identity, score, check results, diff summary, command events, sandbox metadata, benchmark metadata, and timeline events. A separate standards export layer normalizes run, suite, matrix, and diagnostic reports into bounded internal export models before rendering SARIF 2.1.0 for policy findings or JUnit XML for CI test-report consumers.
 
 ### Execution Manifest
 
@@ -484,6 +484,8 @@ AgentGuard writes artifacts under `.agentguard/` by default:
 - Suite report: aggregate report for many benchmark configs.
 - Baseline comparison: regression/improvement summary against a saved suite baseline.
 - Reports browser: CLI discovery and summaries for recent run, suite, and CI reports.
+- Standards exports: SARIF 2.1.0 for policy findings and JUnit XML for
+  run/suite/matrix/diagnostic outcomes.
 - Mutation audit: controlled check detections, misses, unexpected detections,
   safe-fixture outcomes, and per-check/per-category metrics.
 
