@@ -15,6 +15,11 @@ from agentguard.traces.execution import (
     write_execution_trace,
 )
 from agentguard.traces.models import (
+    MetamorphicCaseResult,
+    MetamorphicMetrics,
+    MetamorphicOutcome,
+    MetamorphicStudyResult,
+    MetamorphicTransformDefinition,
     ReplayCheckComparison,
     ReplayDivergence,
     ReplayEvidence,
@@ -36,6 +41,11 @@ __all__ = [
     "trace_summary",
     "verify_execution_trace",
     "write_execution_trace",
+    "MetamorphicCaseResult",
+    "MetamorphicMetrics",
+    "MetamorphicOutcome",
+    "MetamorphicStudyResult",
+    "MetamorphicTransformDefinition",
     "ReplayCheckComparison",
     "ReplayDivergence",
     "ReplayEvidence",

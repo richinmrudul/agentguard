@@ -84,6 +84,11 @@ from agentguard.traces.execution import (
     trace_summary,
     verify_execution_trace,
 )
+from agentguard.traces.metamorphic import (
+    metamorphic_summary,
+    parse_transform_selection,
+    run_metamorphic_study,
+)
 from agentguard.traces.replay import (
     inspect_replayability,
     replay_trace,
@@ -714,6 +719,62 @@ def trace_replay(
         and require_equivalence
         and not allow_divergence
     ):
+        raise typer.Exit(1)
+
+
+@trace_app.command("metamorphic")
+def trace_metamorphic(
+    source: Path = typer.Argument(..., help="Trace path or directory."),
+    transforms: Optional[list[str]] = typer.Option(
+        None,
+        "--transform",
+        help="Transform name, repeatable or comma-separated. Defaults to all.",
+    ),
+    output_dir: Optional[Path] = typer.Option(
+        None,
+        "--output-dir",
+        help="Root directory for metamorphic study reports.",
+    ),
+    trials: int = typer.Option(
+        1,
+        "--trials",
+        help="Deterministic trials per transform.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace an existing metamorphic study directory.",
+    ),
+    strict_sources: bool = typer.Option(
+        False,
+        "--strict-sources",
+        help="Require referenced source artifacts to be available.",
+    ),
+    allow_robustness_failures: bool = typer.Option(
+        False,
+        "--allow-robustness-failures",
+        help="Exit zero while preserving robustness findings.",
+    ),
+) -> None:
+    """Run deterministic metamorphic trace replay transformations."""
+    try:
+        selected = parse_transform_selection(transforms)
+        result = run_metamorphic_study(
+            source,
+            transform_names=selected,
+            output_dir=output_dir,
+            trials=trials,
+            force=force,
+            strict_sources=strict_sources,
+        )
+    except (FileExistsError, FileNotFoundError, OSError, TypeError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(metamorphic_summary(result))
+    failures = [
+        case for case in result.cases if not case.robustness_passed
+    ]
+    if failures and not allow_robustness_failures:
         raise typer.Exit(1)
 
 

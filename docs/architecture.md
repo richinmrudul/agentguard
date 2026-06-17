@@ -300,6 +300,14 @@ but is normally non-replayable because AgentGuard does not infer missing policy
 from current defaults. Replay history is deferred to avoid representing a
 derived analysis as another agent run.
 
+`trace metamorphic` applies deterministic transformations to typed trace
+models, rebuilds integrity for valid transformed traces, verifies them, and
+replays them through the same checks. Preserving transforms measure outcome
+stability; changing transforms measure expected policy-delta detection; invalid
+transforms verify structural rejection. Reports are written under
+`.agentguard/replays/metamorphic/` and generated transformed traces remain local
+artifacts.
+
 ### Suite Runner
 
 The suite runner executes multiple benchmark configs and aggregates pass rate, average score, failed-check counts, warning-check counts, best/worst runs, metadata, and individual report paths. Suites can be filtered by benchmark category, difficulty, and tags.

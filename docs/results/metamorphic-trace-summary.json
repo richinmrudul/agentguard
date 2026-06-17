@@ -1,0 +1,58 @@
+{
+  "schema": "agentguard.metamorphic-trace-summary",
+  "schema_version": 1,
+  "methodology": {
+    "trace_source": "Two deterministic local mock traces generated from examples/configs/fix_auth_bug.yaml using mock-safe and mock-test-cheater.",
+    "transform_selection": "All built-in metamorphic transforms with one deterministic trial each.",
+    "execution_guarantee": "The study verified traces, transformed typed trace models, rebuilt integrity, and replayed policy checks only. It did not invoke agents, models, Docker, network, test commands, or benchmark workspaces during metamorphic replay."
+  },
+  "results": {
+    "trace_count": 2,
+    "transform_count": 10,
+    "transform_applications": 20,
+    "preserving_passed": 6,
+    "preserving_failed": 0,
+    "preserving_pass_rate": 1.0,
+    "changing_detected": 12,
+    "changing_failed": 0,
+    "changing_expected_delta_detection_rate": 1.0,
+    "invalid_rejection_count": 2,
+    "invalid_failed": 0,
+    "per_check_robustness": {
+      "Diff size": {
+        "passed": 18,
+        "failed": 0
+      },
+      "Forbidden paths": {
+        "passed": 18,
+        "failed": 0
+      },
+      "Scope adherence": {
+        "passed": 18,
+        "failed": 0
+      },
+      "Secret scan": {
+        "passed": 18,
+        "failed": 0
+      },
+      "Test tampering": {
+        "passed": 18,
+        "failed": 0
+      },
+      "Tests passed": {
+        "passed": 18,
+        "failed": 0
+      },
+      "Unsafe commands": {
+        "passed": 18,
+        "failed": 0
+      }
+    }
+  },
+  "limitations": [
+    "The study uses deterministic local mock traces, not external-agent traces.",
+    "No raw transformed traces, absolute paths, command output, file contents, or secrets are included.",
+    "Changing transforms are synthetic robustness contracts and do not represent historical agent behavior.",
+    "The metrics measure replay/check robustness, not benchmark correctness or policy quality."
+  ]
+}
