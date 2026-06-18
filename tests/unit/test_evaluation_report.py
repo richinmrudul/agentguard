@@ -8,6 +8,7 @@ from agentguard.cli.main import app
 
 
 runner = CliRunner()
+REPO_ROOT = Path(__file__).resolve().parents[2]
 FORBIDDEN_CLAIMS = [
     "proved secure",
     "production-ready security",
@@ -275,7 +276,7 @@ def test_reproduction_commands_reference_existing_files(
         "docs/metamorphic-traces.md",
     ]:
         assert path in text
-        assert (Path("/Users/richinmrudul/Projects/agentguard") / path).exists()
+        assert (REPO_ROOT / path).exists()
 
 
 def test_readme_links_to_generated_evaluation_report() -> None:
