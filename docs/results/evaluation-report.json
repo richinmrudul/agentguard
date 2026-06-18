@@ -1,0 +1,334 @@
+{
+  "agentguard_commit": "fdb45bc13e456d212d257c5779abd162ba894951",
+  "agentguard_version": "0.1.0",
+  "generated_at": "2026-06-18T00:11:17+00:00",
+  "include_machine_specific": false,
+  "missing_sections": [
+    "counterfactual"
+  ],
+  "omitted_sections": [
+    "overhead",
+    "resume",
+    "scale"
+  ],
+  "schema": "agentguard.evaluation-report",
+  "schema_version": 1,
+  "selected_metrics": {
+    "ablation": {
+      "aggregate_metrics": {
+        "controlled_expected_detections": 20,
+        "controlled_mutation_detection_rate": 100.0,
+        "observed_expected_detections": 20,
+        "safe_fixture_pass_rate": 100.0,
+        "safe_mutations": 6,
+        "unsafe_mutations": 10
+      },
+      "control_valid": true,
+      "per_check_contributions": [
+        {
+          "check": "Forbidden paths",
+          "contribution_percentage": 0.0,
+          "detections_redundantly_covered": 4,
+          "detections_uniquely_attributable": 0,
+          "direct_expected_detection_opportunities": 4,
+          "escaped_mutations_when_disabled": []
+        },
+        {
+          "check": "Test tampering",
+          "contribution_percentage": 0.0,
+          "detections_redundantly_covered": 2,
+          "detections_uniquely_attributable": 0,
+          "direct_expected_detection_opportunities": 2,
+          "escaped_mutations_when_disabled": []
+        },
+        {
+          "check": "Unsafe commands",
+          "contribution_percentage": 100.0,
+          "detections_redundantly_covered": 0,
+          "detections_uniquely_attributable": 1,
+          "direct_expected_detection_opportunities": 1,
+          "escaped_mutations_when_disabled": [
+            "unsafe_command_event"
+          ]
+        },
+        {
+          "check": "Scope adherence",
+          "contribution_percentage": 28.57,
+          "detections_redundantly_covered": 5,
+          "detections_uniquely_attributable": 2,
+          "direct_expected_detection_opportunities": 7,
+          "escaped_mutations_when_disabled": [
+            "unsafe_outside_scope",
+            "unsafe_workflow_change"
+          ]
+        },
+        {
+          "check": "Diff size",
+          "contribution_percentage": 100.0,
+          "detections_redundantly_covered": 0,
+          "detections_uniquely_attributable": 1,
+          "direct_expected_detection_opportunities": 1,
+          "escaped_mutations_when_disabled": [
+            "unsafe_oversized_diff"
+          ]
+        },
+        {
+          "check": "Secret scan",
+          "contribution_percentage": 0.0,
+          "detections_redundantly_covered": 4,
+          "detections_uniquely_attributable": 0,
+          "direct_expected_detection_opportunities": 4,
+          "escaped_mutations_when_disabled": []
+        }
+      ],
+      "result_type": "controlled synthetic mutations",
+      "stable": true,
+      "trials": 3,
+      "workers": 3
+    },
+    "benchmark_corpus": {
+      "adversarial_scenarios": 6,
+      "families": 6,
+      "safe_scenarios": 6,
+      "scenarios": 12,
+      "static_contracts_failed": 0,
+      "static_contracts_passed": 12
+    },
+    "coverage": {
+      "branch_percent": 78.99,
+      "combined_percent": 89.14,
+      "gate_passed": true,
+      "gate_percent": 88.0,
+      "scope": "non-Docker and non-package tests",
+      "statement_percent": 92.0
+    },
+    "metamorphic": {
+      "methodology": {
+        "execution_guarantee": "The study verified traces, transformed typed trace models, rebuilt integrity, and replayed policy checks only. It did not invoke agents, models, Docker, network, test commands, or benchmark workspaces during metamorphic replay.",
+        "trace_source": "Two deterministic local mock traces generated from examples/configs/fix_auth_bug.yaml using mock-safe and mock-test-cheater.",
+        "transform_selection": "All built-in metamorphic transforms with one deterministic trial each."
+      },
+      "results": {
+        "changing_detected": 12,
+        "changing_expected_delta_detection_rate": 1.0,
+        "changing_failed": 0,
+        "invalid_failed": 0,
+        "invalid_rejection_count": 2,
+        "per_check_robustness": {
+          "Diff size": {
+            "failed": 0,
+            "passed": 18
+          },
+          "Forbidden paths": {
+            "failed": 0,
+            "passed": 18
+          },
+          "Scope adherence": {
+            "failed": 0,
+            "passed": 18
+          },
+          "Secret scan": {
+            "failed": 0,
+            "passed": 18
+          },
+          "Test tampering": {
+            "failed": 0,
+            "passed": 18
+          },
+          "Tests passed": {
+            "failed": 0,
+            "passed": 18
+          },
+          "Unsafe commands": {
+            "failed": 0,
+            "passed": 18
+          }
+        },
+        "preserving_failed": 0,
+        "preserving_pass_rate": 1.0,
+        "preserving_passed": 6,
+        "trace_count": 2,
+        "transform_applications": 20,
+        "transform_count": 10
+      }
+    },
+    "mutation": {
+      "controlled_expected_detections": 20,
+      "controlled_mutation_detection_rate_percent": 100.0,
+      "forbidden_detections": 0,
+      "missed_detections": 0,
+      "observed_expected_detections": 20,
+      "safe_fixture_pass_rate_percent": 100.0,
+      "safe_mutations": 6,
+      "unexpected_detections": 0,
+      "unsafe_mutations": 10
+    },
+    "overhead": {
+      "agentguard_median_seconds": 0.305518,
+      "direct_median_seconds": 0.175482,
+      "machine_specific": true,
+      "measured_iterations": 5,
+      "median_absolute_overhead_seconds": 0.127743,
+      "median_relative_overhead_percent": 73.51,
+      "median_slowdown_ratio": 1.735,
+      "warmups": 1,
+      "workload": "deterministic mock-safe auth fixture"
+    },
+    "release_readiness": {
+      "package_validation": {
+        "artifact_contents_validated": true,
+        "installed_wheel_smoke_passed": true,
+        "manifest_verification_passed": true,
+        "published": false,
+        "sdist_built": true,
+        "wheel_built": true
+      },
+      "python_support": [
+        "3.9",
+        "3.10",
+        "3.11",
+        "3.12"
+      ],
+      "tests": {
+        "collected": 482,
+        "docker_status": "daemon unavailable locally; Docker integration remains CI-only",
+        "passed": 467,
+        "skipped_docker": 15
+      }
+    },
+    "replay": {
+      "aggregates": {
+        "exact_check_equivalence_count": 12,
+        "exact_final_result_equivalence_count": 12,
+        "exact_score_equivalence_count": 12,
+        "median_measured_speedup_ratio": 123.62,
+        "non_replayable_traces": 0,
+        "total_recorded_execution_duration_seconds": 1.842004,
+        "total_replay_duration_seconds": 0.015239,
+        "traces_attempted": 12,
+        "traces_replayable": 12
+      },
+      "methodology": {
+        "benchmark_families": 6,
+        "execution": "Docker settings were replaced in temporary configs with the local agent-command adapter; replay then consumed only trace evidence and invoked no agent, test command, Docker, network, or benchmark workspace.",
+        "registry": "examples/benchmarks/registry.yaml",
+        "scenarios_per_family": [
+          "safe",
+          "adversarial"
+        ],
+        "symlink_adversary": "The adversarial symlink scenario used synthetic in-workspace forbidden-path evidence to avoid following a host-facing link."
+      }
+    },
+    "resume": {
+      "configuration": {
+        "agent": "mock-safe",
+        "controlled_interrupt_after_completed_attempts": 2,
+        "initial_workers": 1,
+        "planned_attempts": 4,
+        "resume_workers": 2
+      },
+      "machine_specific_timing": true,
+      "result_type": "deterministic local mock matrix checkpoint/resume smoke test",
+      "resume_metrics": {
+        "completed_before_interruption": 2,
+        "estimated_recomputation_avoided_seconds": 0.53462,
+        "newly_executed_attempts": 2,
+        "resume_wall_time_seconds": 0.298117,
+        "reuse_percentage": 50.0,
+        "reused_attempts": 2,
+        "skipped_attempts": 2
+      },
+      "verification": {
+        "artifact_verification_required_for_reuse": true,
+        "checkpoint_status_after_interruption": "interrupted",
+        "checkpoint_status_after_resume": "completed",
+        "final_attempt_order": [
+          1,
+          2,
+          3,
+          4
+        ]
+      }
+    },
+    "scale": {
+      "fail_fast": [
+        {
+          "attempts_avoided_per_repetition": 90,
+          "attempts_executed_per_repetition": 10,
+          "integrity_passed": true,
+          "median_estimated_time_saved_seconds": 2.50848,
+          "workers": 1
+        },
+        {
+          "attempts_avoided_per_repetition": 88,
+          "attempts_executed_per_repetition": 12,
+          "integrity_passed": true,
+          "median_estimated_time_saved_seconds": 0.664752,
+          "workers": 4
+        },
+        {
+          "attempts_avoided_per_repetition": 84,
+          "attempts_executed_per_repetition": 16,
+          "integrity_passed": true,
+          "median_estimated_time_saved_seconds": 0.356669,
+          "workers": 8
+        }
+      ],
+      "machine_specific": true,
+      "result_type": "synthetic scheduler/report/history workload",
+      "scaling_summary": {
+        "best_measured_speedup": 9.2897,
+        "best_speedup_attempts": 250,
+        "best_speedup_workers": 8,
+        "best_throughput_attempts_per_second": 283.14,
+        "integrity_passed": true,
+        "maximum_peak_traced_python_memory_bytes": 167172,
+        "maximum_validated_attempts": 250
+      }
+    }
+  },
+  "source_files": [
+    {
+      "path": "docs/results/policy-ablation-summary.json",
+      "schema": "agentguard.policy-ablation-summary",
+      "schema_version": 1,
+      "section": "ablation",
+      "sha256": "8c735f58207f5e72f6d812ef608e8f7cc04d27d3acfa76386662d454ee1f5c4c"
+    },
+    {
+      "path": "docs/results/metamorphic-trace-summary.json",
+      "schema": "agentguard.metamorphic-trace-summary",
+      "schema_version": 1,
+      "section": "metamorphic",
+      "sha256": "b8697cb5e7417175c8274cc8e4c3b63c17e8d0203442c0fe56f05cbd8be0838a"
+    },
+    {
+      "path": "docs/results/release-candidate.json",
+      "schema": "agentguard.release-candidate-summary",
+      "schema_version": 1,
+      "section": "release_candidate",
+      "sha256": "da41003b0bd25b9692fb5e13a619a1a8eb1db3390563db83c65371e09e29aac6"
+    },
+    {
+      "path": "docs/results/trace-replay-equivalence.json",
+      "schema": "agentguard.trace-replay-equivalence",
+      "schema_version": 1,
+      "section": "replay",
+      "sha256": "107926d7cc3eb77aab02aebce487b7095b9a1904743b050e408db0fc11a4c4b0"
+    },
+    {
+      "path": "docs/results/resume-summary.json",
+      "schema": "agentguard.matrix-resume-summary",
+      "schema_version": 1,
+      "section": "resume",
+      "sha256": "fe121bf92647c214bfd695b853778b33ec41307887aadd05a72a0beefa466286"
+    },
+    {
+      "path": "docs/results/matrix-scale-summary.json",
+      "schema": "agentguard.matrix-stress-summary",
+      "schema_version": 1,
+      "section": "scale",
+      "sha256": "2970f56202bf8eb211cbef0e126b1acc7b97076d7452e0f1e613554c82702e85"
+    }
+  ]
+}

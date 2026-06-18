@@ -63,6 +63,12 @@ from agentguard.evaluation.harness import (
     run_evaluation,
     validate_evaluation,
 )
+from agentguard.evaluation.report import (
+    DEFAULT_OUTPUT_PATH as DEFAULT_EVALUATION_REPORT_PATH,
+    EvaluationReportError,
+    EvaluationReportOptions,
+    generate_evaluation_report,
+)
 from agentguard.provenance.manifest import (
     load_manifest,
     provenance_summary,
@@ -119,6 +125,7 @@ trace_app = typer.Typer(
 app.add_typer(trace_app, name="trace")
 evaluate_app = typer.Typer(help="Validate and run external coding-agent profiles.")
 app.add_typer(evaluate_app, name="evaluate")
+app.add_typer(evaluate_app, name="evaluation")
 diagnostics_app = typer.Typer(help="Run deterministic AgentGuard diagnostics.")
 app.add_typer(diagnostics_app, name="diagnostics")
 
@@ -798,6 +805,119 @@ def evaluate_validate(
         f"Valid evaluation: {plan.profile.name} / {plan.suite_id} / "
         f"{len(plan.runs)} benchmark(s)"
     )
+
+
+@evaluate_app.command("report")
+def evaluation_report(
+    output: Path = typer.Option(
+        DEFAULT_EVALUATION_REPORT_PATH,
+        "--output",
+        help="Markdown evaluation report output path.",
+    ),
+    summary_json: Optional[Path] = typer.Option(
+        None,
+        "--summary-json",
+        help="Machine-readable summary JSON path. Defaults next to --output.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite existing report outputs.",
+    ),
+    include_machine_specific: bool = typer.Option(
+        False,
+        "--include-machine-specific",
+        help="Include host-specific timing, speed, and memory metrics.",
+    ),
+    release_candidate: Optional[Path] = typer.Option(
+        None,
+        "--release-candidate",
+        help="Release-candidate summary JSON input.",
+    ),
+    mutation: Optional[Path] = typer.Option(
+        None,
+        "--mutation",
+        help="Mutation detection summary JSON input.",
+    ),
+    ablation: Optional[Path] = typer.Option(
+        None,
+        "--ablation",
+        help="Policy ablation summary JSON input.",
+    ),
+    overhead: Optional[Path] = typer.Option(
+        None,
+        "--overhead",
+        help="Overhead summary JSON input.",
+    ),
+    scale: Optional[Path] = typer.Option(
+        None,
+        "--scale",
+        help="Matrix scale/stress summary JSON input.",
+    ),
+    resume: Optional[Path] = typer.Option(
+        None,
+        "--resume",
+        help="Resume/recovery summary JSON input.",
+    ),
+    replay: Optional[Path] = typer.Option(
+        None,
+        "--replay",
+        help="Trace replay equivalence summary JSON input.",
+    ),
+    counterfactual: Optional[Path] = typer.Option(
+        None,
+        "--counterfactual",
+        help="Counterfactual policy comparison summary JSON input.",
+    ),
+    metamorphic: Optional[Path] = typer.Option(
+        None,
+        "--metamorphic",
+        help="Metamorphic testing summary JSON input.",
+    ),
+    coverage: Optional[Path] = typer.Option(
+        None,
+        "--coverage",
+        help="Coverage summary JSON input.",
+    ),
+) -> None:
+    """Generate a consolidated evaluation report from existing summaries."""
+    overrides = {
+        key: value
+        for key, value in {
+            "release_candidate": release_candidate,
+            "mutation": mutation,
+            "ablation": ablation,
+            "overhead": overhead,
+            "scale": scale,
+            "resume": resume,
+            "replay": replay,
+            "counterfactual": counterfactual,
+            "metamorphic": metamorphic,
+            "coverage": coverage,
+        }.items()
+        if value is not None
+    }
+    try:
+        result = generate_evaluation_report(
+            EvaluationReportOptions(
+                output_path=output,
+                summary_json_path=summary_json,
+                force=force,
+                include_machine_specific=include_machine_specific,
+                input_overrides=overrides,
+            )
+        )
+    except (FileExistsError, OSError, EvaluationReportError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    typer.echo(f"Evaluation report: {result.markdown_path}")
+    typer.echo(f"Summary JSON: {result.summary_json_path}")
+    typer.echo(f"Sources: {len(result.sources)}")
+    if result.missing_sections:
+        typer.echo("Unavailable: " + ", ".join(result.missing_sections))
+    if result.omitted_sections:
+        typer.echo("Omitted: " + ", ".join(result.omitted_sections))
 
 
 @evaluate_app.command("dry-run")
