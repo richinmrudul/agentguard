@@ -26,6 +26,8 @@ Docs:
   safe/adversarial behavior, and evidence checks.
 - [External-agent evaluations](docs/evaluation.md): profile validation,
   dry-run planning, credentials, trust boundaries, and safety metrics.
+- [Evaluation Results](docs/results/evaluation-report.md): consolidated
+  release, coverage, detection, scale, replay, and limitations summary.
 - [Performance diagnostics](docs/performance.md): deterministic overhead
   methodology, reproduction, interpretation, and limitations.
 - [Detection quality](docs/detection-quality.md): controlled policy mutations,
