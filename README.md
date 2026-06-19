@@ -163,6 +163,12 @@ This reports controlled detection coverage and safe-variant pass rate across
 path, secret, command, diff-size, scope, traversal, and test-tampering
 boundaries. See [docs/benchmark-fuzzing.md](docs/benchmark-fuzzing.md).
 
+Minimize any fuzz failures and write reviewable regression promotion packages:
+
+```bash
+agentguard benchmarks fuzz --minimize-failures --promote-failures /tmp/agentguard-fuzz-promotions --allow-fuzz-failures --force
+```
+
 Run a safe Docker-backed benchmark:
 
 ```bash

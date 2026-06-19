@@ -24,6 +24,7 @@ FUZZ_SCHEMA = "agentguard.benchmark-fuzz"
 FUZZ_SCHEMA_VERSION = 1
 DEFAULT_SEED = "agentguard"
 DEFAULT_OUTPUT_DIR = Path(".agentguard/fuzz")
+PROMOTION_FORMATS = {"fixture", "patch"}
 
 CHECK_ID_TO_NAME = {
     registration.identifier: registration.name
@@ -88,6 +89,47 @@ class FuzzRunResult:
 
 
 @dataclass(frozen=True)
+class FuzzComplexity:
+    file_count: int
+    modified_path_count: int
+    command_count: int
+    total_path_length: int
+    diff_line_count: int
+    evidence_item_count: int
+    weighted_sum: int
+
+
+@dataclass(frozen=True)
+class FuzzMinimizationResult:
+    variant_id: str
+    trial: int
+    reproduced: bool
+    failure_preserved: bool
+    original_complexity: FuzzComplexity
+    minimized_complexity: FuzzComplexity
+    reduction_percentage: float
+    steps_attempted: int
+    steps_accepted: int
+    original_variant: FuzzVariant
+    minimized_variant: FuzzVariant
+    original_expected_checks: list[str]
+    original_observed_checks: list[str]
+    final_expected_checks: list[str]
+    final_observed_checks: list[str]
+    failure_reason: list[str]
+    runtime_error: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class FuzzPromotionResult:
+    variant_id: str
+    format: str
+    path: Path
+    files: list[Path]
+    reproduction_command: str
+
+
+@dataclass(frozen=True)
 class CheckOpportunitySummary:
     check: str
     expected_opportunities: int
@@ -119,6 +161,9 @@ class FuzzStudyResult:
     forbidden_unexpected_detections: int
     safe_false_alarms: int
     unexpected_detections: int
+    minimized_failures: list[FuzzMinimizationResult]
+    promotion_paths: list[Path]
+    non_minimizable_failures: list[str]
     boundary_cases: dict[str, list[str]]
     runs: list[FuzzRunResult]
     duration_seconds: float
@@ -247,12 +292,24 @@ def run_fuzz_study(
     workers: int = 1,
     static_only: bool = False,
     force: bool = False,
+    minimize_failures: bool = False,
+    promote_failures: Optional[Path] = None,
+    max_minimize_steps: int = 50,
+    promotion_format: str = "fixture",
+    promotion_prefix: str = "fuzz_regression",
 ) -> FuzzStudyResult:
     selected = parse_dimension_values(dimensions)
     if trials <= 0:
         raise ValueError("--trials must be positive.")
     if workers <= 0:
         raise ValueError("--workers must be positive.")
+    if max_minimize_steps <= 0:
+        raise ValueError("--max-minimize-steps must be positive.")
+    if promotion_format not in PROMOTION_FORMATS:
+        valid = ", ".join(sorted(PROMOTION_FORMATS))
+        raise ValueError(f"--promotion-format must be one of: {valid}.")
+    if not promotion_prefix.strip():
+        raise ValueError("--promotion-prefix must be non-empty.")
     variants = generate_fuzz_variants(
         seed=seed,
         dimensions=selected,
@@ -286,6 +343,28 @@ def run_fuzz_study(
             materialized = _materialize_variant(variant, workspaces_dir, trial)
             runs.append(_execute_variant(materialized, trial, checks))
 
+    failed_runs = [run for run in runs if not run.passed]
+    minimized_failures: list[FuzzMinimizationResult] = []
+    if minimize_failures or promote_failures is not None:
+        for run in failed_runs:
+            minimized_failures.append(
+                minimize_fuzz_failure(
+                    run,
+                    max_steps=max_minimize_steps,
+                    checks=checks,
+                )
+            )
+
+    promotions: list[FuzzPromotionResult] = []
+    if promote_failures is not None:
+        promotions = promote_minimized_failures(
+            minimized_failures,
+            promote_failures,
+            promotion_format=promotion_format,
+            promotion_prefix=promotion_prefix,
+            force=force,
+        )
+
     duration = time.perf_counter() - started
     result = _build_study_result(
         study_id=study_id,
@@ -296,6 +375,8 @@ def run_fuzz_study(
         static_only=static_only,
         variants=variants,
         runs=runs,
+        minimized_failures=minimized_failures,
+        promotions=promotions,
         duration_seconds=duration,
         study_dir=study_dir,
     )
@@ -828,6 +909,481 @@ def _command_log_for_variant(variant: FuzzVariant) -> list[CommandEvent]:
     ]
 
 
+def fuzz_complexity(variant: FuzzVariant, run: Optional[FuzzRunResult] = None) -> FuzzComplexity:
+    paths = _changed_files(variant)
+    command_count = 1 if isinstance(variant.inputs.get("command_event"), str) else 0
+    diff_line_count = int(variant.inputs.get("lines_added", 0)) + int(
+        variant.inputs.get("lines_deleted", 0)
+    )
+    evidence_item_count = 0
+    if run is not None:
+        evidence_item_count = sum(len(check.evidence) for check in run.check_results)
+    file_count = len(set(paths))
+    modified_path_count = len(paths)
+    total_path_length = sum(len(path) for path in paths)
+    weighted_sum = (
+        file_count * 10
+        + modified_path_count * 8
+        + command_count * 6
+        + total_path_length
+        + diff_line_count * 2
+        + evidence_item_count * 3
+    )
+    return FuzzComplexity(
+        file_count=file_count,
+        modified_path_count=modified_path_count,
+        command_count=command_count,
+        total_path_length=total_path_length,
+        diff_line_count=diff_line_count,
+        evidence_item_count=evidence_item_count,
+        weighted_sum=weighted_sum,
+    )
+
+
+def minimize_fuzz_failure(
+    run: FuzzRunResult,
+    *,
+    max_steps: int = 50,
+    checks: Optional[list[Any]] = None,
+) -> FuzzMinimizationResult:
+    if max_steps <= 0:
+        raise ValueError("max_steps must be positive.")
+    active_checks = checks if checks is not None else instantiate_checks()
+    original_variant = run.variant
+    original_reproduction = _execute_variant(original_variant, run.trial, active_checks)
+    target_signature = _failure_signature(run)
+    reproduced = (
+        not original_reproduction.passed
+        and _failure_signature(original_reproduction) == target_signature
+    )
+    original_complexity = fuzz_complexity(original_variant, run)
+    if not reproduced:
+        return FuzzMinimizationResult(
+            variant_id=original_variant.id,
+            trial=run.trial,
+            reproduced=False,
+            failure_preserved=False,
+            original_complexity=original_complexity,
+            minimized_complexity=original_complexity,
+            reduction_percentage=0.0,
+            steps_attempted=0,
+            steps_accepted=0,
+            original_variant=original_variant,
+            minimized_variant=original_variant,
+            original_expected_checks=list(run.expected_checks),
+            original_observed_checks=list(run.observed_checks),
+            final_expected_checks=list(original_reproduction.expected_checks),
+            final_observed_checks=list(original_reproduction.observed_checks),
+            failure_reason=_failure_reason(run),
+            runtime_error="Original failure did not reproduce.",
+        )
+
+    current = original_variant
+    current_run = original_reproduction
+    steps_attempted = 0
+    steps_accepted = 0
+    changed = True
+    while changed and steps_attempted < max_steps:
+        changed = False
+        for candidate in _simplification_candidates(current):
+            if steps_attempted >= max_steps:
+                break
+            steps_attempted += 1
+            if fuzz_complexity(candidate).weighted_sum >= fuzz_complexity(current).weighted_sum:
+                continue
+            candidate_run = _execute_variant(candidate, run.trial, active_checks)
+            if (
+                not candidate_run.passed
+                and _failure_signature(candidate_run) == target_signature
+            ):
+                current = candidate
+                current_run = candidate_run
+                steps_accepted += 1
+                changed = True
+                break
+
+    minimized_complexity = fuzz_complexity(current, current_run)
+    reduction = _percentage(
+        original_complexity.weighted_sum - minimized_complexity.weighted_sum,
+        original_complexity.weighted_sum,
+    )
+    return FuzzMinimizationResult(
+        variant_id=original_variant.id,
+        trial=run.trial,
+        reproduced=True,
+        failure_preserved=_failure_signature(current_run) == target_signature,
+        original_complexity=original_complexity,
+        minimized_complexity=minimized_complexity,
+        reduction_percentage=max(0.0, reduction),
+        steps_attempted=steps_attempted,
+        steps_accepted=steps_accepted,
+        original_variant=original_variant,
+        minimized_variant=current,
+        original_expected_checks=list(run.expected_checks),
+        original_observed_checks=list(run.observed_checks),
+        final_expected_checks=list(current_run.expected_checks),
+        final_observed_checks=list(current_run.observed_checks),
+        failure_reason=_failure_reason(run),
+    )
+
+
+def promote_minimized_failures(
+    minimized_failures: list[FuzzMinimizationResult],
+    output_path: Path,
+    *,
+    promotion_format: str = "fixture",
+    promotion_prefix: str = "fuzz_regression",
+    force: bool = False,
+) -> list[FuzzPromotionResult]:
+    if promotion_format not in PROMOTION_FORMATS:
+        valid = ", ".join(sorted(PROMOTION_FORMATS))
+        raise ValueError(f"promotion_format must be one of: {valid}.")
+    root = output_path.expanduser()
+    if root.exists() and any(root.iterdir()) and not force:
+        raise FileExistsError(f"Promotion output already exists: {root}. Use --force.")
+    root.mkdir(parents=True, exist_ok=True)
+    promoted: list[FuzzPromotionResult] = []
+    for index, item in enumerate(minimized_failures, start=1):
+        if not item.failure_preserved:
+            continue
+        slug = _promotion_slug(promotion_prefix, item.variant_id, index)
+        case_dir = root / slug
+        if case_dir.exists() and force:
+            shutil.rmtree(case_dir)
+        case_dir.mkdir(parents=True, exist_ok=True)
+        if promotion_format == "fixture":
+            promoted.append(_write_fixture_promotion(item, case_dir))
+        else:
+            promoted.append(_write_patch_promotion(item, case_dir))
+    return promoted
+
+
+def _failure_signature(run: FuzzRunResult) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], Optional[str]]:
+    runtime = run.runtime_error.split(":", 1)[0] if run.runtime_error else None
+    return (
+        tuple(run.missed_expected_detections),
+        tuple(run.forbidden_unexpected_detections),
+        tuple(run.safe_false_alarms),
+        runtime,
+    )
+
+
+def _failure_reason(run: FuzzRunResult) -> list[str]:
+    reasons = []
+    reasons.extend(f"missed expected detection: {item}" for item in run.missed_expected_detections)
+    reasons.extend(f"forbidden unexpected detection: {item}" for item in run.forbidden_unexpected_detections)
+    reasons.extend(f"safe false alarm: {item}" for item in run.safe_false_alarms)
+    if run.runtime_error:
+        reasons.append(f"runtime error: {run.runtime_error}")
+    return reasons or ["variant expectation failed"]
+
+
+def _simplification_candidates(variant: FuzzVariant) -> list[FuzzVariant]:
+    candidates: list[FuzzVariant] = []
+    candidates.extend(_remove_unrelated_file_candidates(variant))
+    candidates.extend(_single_violation_candidates(variant))
+    candidates.extend(_path_simplification_candidates(variant))
+    candidates.extend(_diff_simplification_candidates(variant))
+    candidates.extend(_command_simplification_candidates(variant))
+    normalized = replace(
+        variant,
+        description=f"Minimized {variant.dimension} fuzz variant.",
+    )
+    if normalized.description != variant.description:
+        candidates.append(normalized)
+    return _dedupe_variants(candidates)
+
+
+def _remove_unrelated_file_candidates(variant: FuzzVariant) -> list[FuzzVariant]:
+    changed = list(variant.inputs.get("changed_files", []))
+    if len(changed) <= 1:
+        return []
+    required = set(variant.expectation.required_checks)
+    candidates = []
+    for index, path in enumerate(changed):
+        if _path_expected_checks(path, variant.inputs).isdisjoint(required):
+            reduced = changed[:index] + changed[index + 1 :]
+            inputs = dict(variant.inputs)
+            inputs["changed_files"] = reduced
+            candidates.append(replace(variant, inputs=inputs))
+    return candidates
+
+
+def _single_violation_candidates(variant: FuzzVariant) -> list[FuzzVariant]:
+    changed = list(variant.inputs.get("changed_files", []))
+    if len(changed) <= 1:
+        return []
+    required = set(variant.expectation.required_checks)
+    candidates = []
+    for path in changed:
+        if required.issubset(_path_expected_checks(path, variant.inputs)):
+            inputs = dict(variant.inputs)
+            inputs["changed_files"] = [path]
+            candidates.append(replace(variant, inputs=inputs))
+    return candidates
+
+
+def _path_simplification_candidates(variant: FuzzVariant) -> list[FuzzVariant]:
+    candidates = []
+    for key in ("changed_files", "deleted_files"):
+        paths = list(variant.inputs.get(key, []))
+        for index, path in enumerate(paths):
+            for shorter in _shorter_paths(path, variant.expectation.required_checks):
+                new_paths = list(paths)
+                new_paths[index] = shorter
+                inputs = dict(variant.inputs)
+                inputs[key] = new_paths
+                if key == "changed_files":
+                    candidates.append(replace(variant, inputs=inputs))
+    return candidates
+
+
+def _diff_simplification_candidates(variant: FuzzVariant) -> list[FuzzVariant]:
+    inputs = dict(variant.inputs)
+    candidates = []
+    lines_added = int(inputs.get("lines_added", 0))
+    max_added = int(inputs.get("max_lines_added", 5))
+    if lines_added > max_added + 1:
+        reduced = dict(inputs)
+        reduced["lines_added"] = max_added + 1
+        candidates.append(replace(variant, inputs=reduced))
+    elif lines_added > 1 and "diff-size" not in variant.expectation.required_checks:
+        reduced = dict(inputs)
+        reduced["lines_added"] = 1
+        candidates.append(replace(variant, inputs=reduced))
+    lines_deleted = int(inputs.get("lines_deleted", 0))
+    if lines_deleted > 1:
+        reduced = dict(inputs)
+        reduced["lines_deleted"] = 1
+        candidates.append(replace(variant, inputs=reduced))
+    return candidates
+
+
+def _command_simplification_candidates(variant: FuzzVariant) -> list[FuzzVariant]:
+    command = variant.inputs.get("command_event")
+    if not isinstance(command, str):
+        return []
+    candidates = []
+    for simplified in _shorter_commands(command):
+        inputs = dict(variant.inputs)
+        inputs["command_event"] = simplified
+        candidates.append(replace(variant, inputs=inputs))
+    return candidates
+
+
+def _path_expected_checks(path: str, inputs: dict[str, Any]) -> set[str]:
+    checks: set[str] = set()
+    if path.startswith("tests/"):
+        checks.update({"test-tampering", "scope-adherence"})
+    if not path.startswith("src/"):
+        checks.add("scope-adherence")
+    if path in {".env", ".npmrc"} or "secrets/" in path or "api_key" in path or path.endswith(".key"):
+        checks.update({"secret-scan", "forbidden-paths"})
+    if path.startswith("private/") or "/private/" in path:
+        checks.add("forbidden-paths")
+    if path.startswith("../") or "/../" in path:
+        checks.add("forbidden-paths")
+    max_added = int(inputs.get("max_lines_added", 5))
+    if int(inputs.get("lines_added", 0)) > max_added:
+        checks.add("diff-size")
+    return checks
+
+
+def _shorter_paths(path: str, required_checks: list[str]) -> list[str]:
+    required = set(required_checks)
+    if "secret-scan" in required and "forbidden-paths" in required:
+        if "api_key" in path:
+            return ["api_key.txt"]
+        if path.endswith(".key") or "secrets/" in path:
+            return ["a.key"]
+        if ".npmrc" in path:
+            return [".npmrc"]
+        return [".env"]
+    if "test-tampering" in required:
+        return ["tests/t.py"]
+    if "scope-adherence" in required and "forbidden-paths" in required:
+        return ["private/x"]
+    if "scope-adherence" in required:
+        return ["x"]
+    parts = [part for part in path.replace("\\", "/").split("/") if part and part != ".."]
+    if len(parts) > 1:
+        return [parts[-1]]
+    return []
+
+
+def _shorter_commands(command: str) -> list[str]:
+    if "rm -rf" in command:
+        return ["rm -rf"]
+    parts = command.split()
+    if len(parts) > 1:
+        return [parts[0]]
+    return []
+
+
+def _dedupe_variants(candidates: list[FuzzVariant]) -> list[FuzzVariant]:
+    seen = set()
+    deduped = []
+    for candidate in candidates:
+        key = _jsonable(asdict(candidate))
+        marker = repr(key)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        deduped.append(candidate)
+    return deduped
+
+
+def _promotion_slug(prefix: str, variant_id: str, index: int) -> str:
+    clean = "".join(
+        char if char.isalnum() or char in {"-", "_"} else "_"
+        for char in variant_id.lower()
+    ).strip("_")
+    return f"{prefix}_{index:03d}_{clean}"
+
+
+def _write_fixture_promotion(
+    item: FuzzMinimizationResult,
+    case_dir: Path,
+) -> FuzzPromotionResult:
+    variant = item.minimized_variant
+    repo_dir = case_dir / "repo"
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    for path in _changed_files(variant):
+        materialized = repo_dir / _materialized_relative(path)
+        materialized.parent.mkdir(parents=True, exist_ok=True)
+        materialized.write_text(
+            str(variant.inputs.get("content", f"fuzz regression {variant.id}\n")),
+            encoding="utf-8",
+        )
+    metadata_path = atomic_write_json(
+        case_dir / "variant.json",
+        _promotion_metadata(item, "fixture"),
+        sort_keys=True,
+    )
+    contract_path = atomic_write_text(
+        case_dir / "contract-fragment.yaml",
+        _contract_fragment(item),
+    )
+    readme_path = atomic_write_text(case_dir / "README.md", _promotion_readme(item, "fixture"))
+    return FuzzPromotionResult(
+        variant_id=item.variant_id,
+        format="fixture",
+        path=case_dir,
+        files=[metadata_path, contract_path, readme_path],
+        reproduction_command=_reproduction_command(item),
+    )
+
+
+def _write_patch_promotion(
+    item: FuzzMinimizationResult,
+    case_dir: Path,
+) -> FuzzPromotionResult:
+    metadata_path = atomic_write_json(
+        case_dir / "variant.json",
+        _promotion_metadata(item, "patch"),
+        sort_keys=True,
+    )
+    patch_path = atomic_write_text(case_dir / "regression.patch", _variant_patch(item.minimized_variant))
+    readme_path = atomic_write_text(case_dir / "README.md", _promotion_readme(item, "patch"))
+    return FuzzPromotionResult(
+        variant_id=item.variant_id,
+        format="patch",
+        path=case_dir,
+        files=[metadata_path, patch_path, readme_path],
+        reproduction_command=_reproduction_command(item),
+    )
+
+
+def _promotion_metadata(item: FuzzMinimizationResult, promotion_format: str) -> dict[str, Any]:
+    return {
+        "schema": "agentguard.fuzz-promotion",
+        "schema_version": 1,
+        "format": promotion_format,
+        "variant_id": item.variant_id,
+        "dimension": item.minimized_variant.dimension,
+        "description": item.minimized_variant.description,
+        "inputs": item.minimized_variant.inputs,
+        "expectation": asdict(item.minimized_variant.expectation),
+        "complexity": {
+            "original": asdict(item.original_complexity),
+            "minimized": asdict(item.minimized_complexity),
+            "reduction_percentage": item.reduction_percentage,
+        },
+        "failure_reason": item.failure_reason,
+        "expected_checks": item.final_expected_checks,
+        "observed_checks": item.final_observed_checks,
+        "reproduction_command": _reproduction_command(item),
+    }
+
+
+def _contract_fragment(item: FuzzMinimizationResult) -> str:
+    checks = ", ".join(CHECK_ID_TO_NAME[check] for check in item.final_expected_checks)
+    return "\n".join(
+        [
+            "variants:",
+            "  regression:",
+            "    expected:",
+            "      result: FAIL",
+            "      functional_tests: PASS",
+            "      failed_checks:",
+            f"        required: [{checks}]",
+            "        forbidden: []",
+            "",
+        ]
+    )
+
+
+def _promotion_readme(item: FuzzMinimizationResult, promotion_format: str) -> str:
+    return "\n".join(
+        [
+            "# Fuzz Regression Promotion",
+            "",
+            f"- Variant: `{item.variant_id}`",
+            f"- Dimension: `{item.minimized_variant.dimension}`",
+            f"- Format: `{promotion_format}`",
+            f"- Reproduced: {'yes' if item.reproduced else 'no'}",
+            f"- Failure preserved: {'yes' if item.failure_preserved else 'no'}",
+            f"- Reduction: {item.reduction_percentage:.2f}%",
+            "",
+            "## Reproduction",
+            "",
+            "```bash",
+            _reproduction_command(item),
+            "```",
+            "",
+            "Review this package manually before editing benchmark registry or core suites.",
+            "",
+        ]
+    )
+
+
+def _variant_patch(variant: FuzzVariant) -> str:
+    lines = []
+    for path in _changed_files(variant):
+        materialized = _materialized_relative(path).as_posix()
+        content = str(variant.inputs.get("content", f"fuzz regression {variant.id}\n"))
+        lines.extend(
+            [
+                f"diff --git a/{materialized} b/{materialized}",
+                "new file mode 100644",
+                "index 0000000..0000000",
+                "--- /dev/null",
+                f"+++ b/{materialized}",
+            ]
+        )
+        for line in content.splitlines() or [""]:
+            lines.append(f"+{line}")
+    return "\n".join(lines) + "\n"
+
+
+def _reproduction_command(item: FuzzMinimizationResult) -> str:
+    return (
+        "agentguard benchmarks fuzz "
+        f"--dimension {item.minimized_variant.dimension} "
+        "--minimize-failures --allow-fuzz-failures"
+    )
+
+
 def _build_study_result(
     *,
     study_id: str,
@@ -838,6 +1394,8 @@ def _build_study_result(
     static_only: bool,
     variants: list[FuzzVariant],
     runs: list[FuzzRunResult],
+    minimized_failures: list[FuzzMinimizationResult],
+    promotions: list[FuzzPromotionResult],
     duration_seconds: float,
     study_dir: Path,
 ) -> FuzzStudyResult:
@@ -929,6 +1487,11 @@ def _build_study_result(
         ),
         safe_false_alarms=sum(len(run.safe_false_alarms) for run in runs),
         unexpected_detections=sum(len(run.unexpected_detections) for run in runs),
+        minimized_failures=minimized_failures,
+        promotion_paths=[promotion.path for promotion in promotions],
+        non_minimizable_failures=[
+            item.variant_id for item in minimized_failures if not item.failure_preserved
+        ],
         boundary_cases={
             name: DIMENSIONS[name].boundary_cases
             for name in dimensions
@@ -1012,6 +1575,40 @@ def _render_markdown(result: FuzzStudyResult) -> str:
             f"- Forbidden unexpected detections: {result.forbidden_unexpected_detections}",
             f"- Safe false alarms: {result.safe_false_alarms}",
             f"- Unexpected detections: {result.unexpected_detections}",
+            "",
+            "## Minimization",
+            "",
+        ]
+    )
+    if result.minimized_failures:
+        lines.extend(
+            [
+                "| Variant | Reproduced | Preserved | Original | Minimized | Reduction | Steps |",
+                "| --- | --- | --- | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for item in result.minimized_failures:
+            lines.append(
+                f"| {item.variant_id} | {'yes' if item.reproduced else 'no'} | "
+                f"{'yes' if item.failure_preserved else 'no'} | "
+                f"{item.original_complexity.weighted_sum} | "
+                f"{item.minimized_complexity.weighted_sum} | "
+                f"{item.reduction_percentage:.2f}% | "
+                f"{item.steps_accepted}/{item.steps_attempted} |"
+            )
+    else:
+        lines.append("No failed variants were minimized.")
+    if result.non_minimizable_failures:
+        lines.append("")
+        lines.append(
+            "Non-minimizable failures: "
+            + ", ".join(result.non_minimizable_failures)
+        )
+    if result.promotion_paths:
+        lines.extend(["", "Promotion paths:"])
+        lines.extend(f"- {path}" for path in result.promotion_paths)
+    lines.extend(
+        [
             "",
             "## Boundary Cases",
             "",

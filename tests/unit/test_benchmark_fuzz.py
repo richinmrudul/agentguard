@@ -8,13 +8,23 @@ from agentguard.benchmarks.fuzz import (
     FUZZ_DIMENSION_NAMES,
     FUZZ_SCHEMA,
     FUZZ_SCHEMA_VERSION,
+    FuzzExpectation,
+    FuzzRunResult,
+    FuzzVariant,
+    _execute_variant,
+    fuzz_complexity,
     generate_fuzz_variants,
+    minimize_fuzz_failure,
+    promote_minimized_failures,
     run_fuzz_study,
 )
+from agentguard.checks.registry import instantiate_checks
+from agentguard.core.result import CheckResult
 from agentguard.cli.main import app
 
 
 runner = CliRunner()
+CHECKS = instantiate_checks()
 
 
 def _ids(seed: str, *, limit: Optional[int] = None) -> list[str]:
@@ -247,3 +257,296 @@ def test_no_docker_network_or_external_agent_required(tmp_path: Path) -> None:
 
     assert result.total_variants == 10
     assert all("docker" not in run.observed_result.lower() for run in result.runs)
+
+
+def _safe_false_alarm_variant(**inputs) -> FuzzVariant:
+    merged = {
+        "changed_files": ["src/deep/keep.py", "docs/deep/unrelated/path/notes.md"],
+        "lines_added": 1,
+    }
+    merged.update(inputs)
+    return FuzzVariant(
+        id="test:safe-false-alarm",
+        dimension="scope-boundaries",
+        description="Noisy safe false alarm.",
+        inputs=merged,
+        expectation=FuzzExpectation(
+            required_checks=[],
+            forbidden_checks=["scope-adherence"],
+            expected_result="PASS",
+            unsafe=False,
+        ),
+    )
+
+
+def _failed_run(variant: FuzzVariant) -> FuzzRunResult:
+    run = _execute_variant(variant, 1, CHECKS)
+    assert not run.passed
+    return run
+
+
+def test_minimizer_preserves_failure_and_reduces_path_length() -> None:
+    run = _failed_run(_safe_false_alarm_variant())
+
+    minimized = minimize_fuzz_failure(run, checks=CHECKS)
+
+    assert minimized.reproduced is True
+    assert minimized.failure_preserved is True
+    assert minimized.minimized_complexity.total_path_length < (
+        minimized.original_complexity.total_path_length
+    )
+    assert minimized.final_observed_checks == ["scope-adherence"]
+
+
+def test_minimizer_reduces_diff_size() -> None:
+    variant = _safe_false_alarm_variant(
+        changed_files=["src/agentguard/example.py"],
+        lines_added=10,
+        max_lines_added=5,
+    )
+    variant = FuzzVariant(
+        id=variant.id,
+        dimension="diff-size-boundaries",
+        description=variant.description,
+        inputs=variant.inputs,
+        expectation=FuzzExpectation(
+            required_checks=[],
+            forbidden_checks=["diff-size"],
+            expected_result="PASS",
+            unsafe=False,
+        ),
+    )
+    run = _failed_run(variant)
+
+    minimized = minimize_fuzz_failure(run, checks=CHECKS)
+
+    assert minimized.failure_preserved is True
+    assert minimized.minimized_variant.inputs["lines_added"] == 6
+    assert minimized.minimized_complexity.diff_line_count < (
+        minimized.original_complexity.diff_line_count
+    )
+
+
+def test_minimizer_removes_unrelated_files() -> None:
+    run = _failed_run(_safe_false_alarm_variant())
+
+    minimized = minimize_fuzz_failure(run, checks=CHECKS)
+
+    assert minimized.failure_preserved is True
+    assert len(minimized.minimized_variant.inputs["changed_files"]) == 1
+    assert minimized.minimized_variant.inputs["changed_files"][0] != "src/deep/keep.py"
+
+
+def test_minimizer_stops_at_fixed_point() -> None:
+    run = _failed_run(_safe_false_alarm_variant(changed_files=["x"]))
+
+    first = minimize_fuzz_failure(run, checks=CHECKS)
+    second_run = _failed_run(first.minimized_variant)
+    second = minimize_fuzz_failure(second_run, checks=CHECKS)
+
+    assert first.minimized_complexity == second.minimized_complexity
+    assert second.steps_accepted == 0
+
+
+def test_max_step_limit_honored() -> None:
+    run = _failed_run(_safe_false_alarm_variant())
+
+    minimized = minimize_fuzz_failure(run, max_steps=1, checks=CHECKS)
+
+    assert minimized.steps_attempted <= 1
+
+
+def test_non_reproducible_failure_reported() -> None:
+    variant = _safe_false_alarm_variant(changed_files=["src/agentguard/example.py"])
+    fake = FuzzRunResult(
+        variant=variant,
+        trial=1,
+        passed=False,
+        expected_checks=[],
+        forbidden_checks=["scope-adherence"],
+        observed_checks=["scope-adherence"],
+        missed_expected_detections=[],
+        forbidden_unexpected_detections=["scope-adherence"],
+        safe_false_alarms=["scope-adherence"],
+        unexpected_detections=[],
+        expected_result="PASS",
+        observed_result="FAIL",
+        score=0,
+        check_results=[
+            CheckResult(
+                name="Scope adherence",
+                passed=False,
+                severity="error",
+                message="synthetic",
+                evidence=["synthetic"],
+            )
+        ],
+        duration_seconds=0.0,
+    )
+
+    minimized = minimize_fuzz_failure(fake, checks=CHECKS)
+
+    assert minimized.reproduced is False
+    assert minimized.failure_preserved is False
+    assert minimized.runtime_error == "Original failure did not reproduce."
+
+
+def test_complexity_metric_deterministic() -> None:
+    variant = _safe_false_alarm_variant()
+
+    assert fuzz_complexity(variant) == fuzz_complexity(variant)
+
+
+def test_promotion_fixture_contains_required_files(tmp_path: Path) -> None:
+    minimized = minimize_fuzz_failure(_failed_run(_safe_false_alarm_variant()), checks=CHECKS)
+
+    promotions = promote_minimized_failures(
+        [minimized],
+        tmp_path / "promotions",
+        promotion_format="fixture",
+        force=True,
+    )
+
+    case_dir = promotions[0].path
+    assert (case_dir / "variant.json").is_file()
+    assert (case_dir / "contract-fragment.yaml").is_file()
+    assert (case_dir / "README.md").is_file()
+    assert (case_dir / "repo").is_dir()
+
+
+def test_promotion_patch_contains_metadata_and_patch(tmp_path: Path) -> None:
+    minimized = minimize_fuzz_failure(_failed_run(_safe_false_alarm_variant()), checks=CHECKS)
+
+    promotions = promote_minimized_failures(
+        [minimized],
+        tmp_path / "promotions",
+        promotion_format="patch",
+        force=True,
+    )
+
+    case_dir = promotions[0].path
+    assert (case_dir / "variant.json").is_file()
+    assert "diff --git" in (case_dir / "regression.patch").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_promotion_has_no_absolute_paths(tmp_path: Path) -> None:
+    minimized = minimize_fuzz_failure(_failed_run(_safe_false_alarm_variant()), checks=CHECKS)
+
+    promotions = promote_minimized_failures(
+        [minimized],
+        tmp_path / "promotions",
+        promotion_format="fixture",
+        force=True,
+    )
+
+    combined = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in promotions[0].path.rglob("*")
+        if path.is_file()
+    )
+    assert str(tmp_path) not in combined
+    assert "/Users/" not in combined
+
+
+def test_promotion_does_not_edit_registry_or_core_suite(tmp_path: Path) -> None:
+    registry = Path("examples/benchmarks/registry.yaml")
+    core_suite = Path("examples/suites/core.yaml")
+    before_registry = registry.read_text(encoding="utf-8")
+    before_suite = core_suite.read_text(encoding="utf-8")
+    minimized = minimize_fuzz_failure(_failed_run(_safe_false_alarm_variant()), checks=CHECKS)
+
+    promote_minimized_failures([minimized], tmp_path / "promotions", force=True)
+
+    assert registry.read_text(encoding="utf-8") == before_registry
+    assert core_suite.read_text(encoding="utf-8") == before_suite
+
+
+def test_cli_minimization_options_and_exit_codes(tmp_path: Path, monkeypatch) -> None:
+    from agentguard.benchmarks import fuzz as fuzz_module
+
+    def fake_run_fuzz_study(**kwargs):
+        calls.append(kwargs)
+        run = _failed_run(_safe_false_alarm_variant())
+        return fuzz_module._build_study_result(
+            study_id="fake",
+            seed="agentguard",
+            dimensions=["scope-boundaries"],
+            trials=1,
+            workers=1,
+            static_only=False,
+            variants=[run.variant],
+            runs=[run],
+            minimized_failures=[],
+            promotions=[],
+            duration_seconds=0.0,
+            study_dir=tmp_path,
+        )
+
+    calls = []
+    monkeypatch.setattr(fuzz_module, "run_fuzz_study", fake_run_fuzz_study)
+    monkeypatch.setattr("agentguard.cli.main.run_fuzz_study", fake_run_fuzz_study)
+
+    failing = runner.invoke(
+        app,
+        [
+            "benchmarks",
+            "fuzz",
+            "--minimize-failures",
+            "--promote-failures",
+            str(tmp_path / "promote"),
+            "--max-minimize-steps",
+            "7",
+        ],
+    )
+    allowed = runner.invoke(
+        app,
+        ["benchmarks", "fuzz", "--allow-fuzz-failures"],
+    )
+
+    assert failing.exit_code == 1
+    assert allowed.exit_code == 0
+    assert calls[0]["minimize_failures"] is True
+    assert calls[0]["promote_failures"] == tmp_path / "promote"
+    assert calls[0]["max_minimize_steps"] == 7
+
+
+def test_fuzz_report_includes_minimization_data(tmp_path: Path) -> None:
+    run = _failed_run(_safe_false_alarm_variant())
+    minimized = minimize_fuzz_failure(run, checks=CHECKS)
+    result = run_fuzz_study(
+        dimensions=["scope-boundaries"],
+        output_dir=tmp_path,
+        force=True,
+    )
+    enriched = result.__class__(
+        **{
+            **result.__dict__,
+            "minimized_failures": [minimized],
+            "promotion_paths": [tmp_path / "promotion"],
+            "non_minimizable_failures": [],
+        }
+    )
+    markdown = Path(result.markdown_report_path)
+    markdown.write_text(
+        __import__("agentguard.benchmarks.fuzz").benchmarks.fuzz._render_markdown(
+            enriched
+        ),
+        encoding="utf-8",
+    )
+    text = markdown.read_text(encoding="utf-8")
+
+    assert "## Minimization" in text
+    assert run.variant.id in text
+    assert "Promotion paths" in text
+
+
+def test_minimization_deterministic_for_same_seed() -> None:
+    run = _failed_run(_safe_false_alarm_variant())
+
+    first = minimize_fuzz_failure(run, checks=CHECKS)
+    second = minimize_fuzz_failure(run, checks=CHECKS)
+
+    assert first.minimized_variant.inputs == second.minimized_variant.inputs
+    assert first.minimized_complexity == second.minimized_complexity
