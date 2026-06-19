@@ -15,6 +15,10 @@ from agentguard.benchmarks.registry import (
     write_generated_suite,
 )
 from agentguard.benchmarks.audit import run_benchmark_audit
+from agentguard.benchmarks.fuzz import (
+    DEFAULT_OUTPUT_DIR as DEFAULT_FUZZ_OUTPUT_DIR,
+    run_fuzz_study,
+)
 from agentguard.core.baseline import write_suite_baseline
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.ci import run_ci
@@ -341,6 +345,95 @@ def diagnostics_mutations_command(
     typer.echo(f"JSON report path: {result.json_report_path}")
     typer.echo(f"Markdown report path: {result.markdown_report_path}")
     if result.has_failures and not allow_detection_failures:
+        raise typer.Exit(1)
+
+
+@benchmarks_app.command("fuzz")
+def benchmarks_fuzz_command(
+    dimensions: Optional[list[str]] = typer.Option(
+        None,
+        "--dimension",
+        help="Fuzz dimensions to include. Repeat or use commas.",
+    ),
+    limit: Optional[int] = typer.Option(
+        None,
+        "--limit",
+        help="Maximum number of variants after deterministic seeded ordering.",
+    ),
+    seed: str = typer.Option(
+        "agentguard",
+        "--seed",
+        help="Deterministic seed controlling variant order and selection.",
+    ),
+    output_dir: Path = typer.Option(
+        DEFAULT_FUZZ_OUTPUT_DIR,
+        "--output-dir",
+        help="Root directory for benchmark fuzz artifacts.",
+    ),
+    trials: int = typer.Option(1, "--trials", help="Trials per variant."),
+    workers: int = typer.Option(
+        1,
+        "--workers",
+        help="Deterministic aggregation worker count metadata.",
+    ),
+    static_only: bool = typer.Option(
+        False,
+        "--static-only",
+        help="Validate variants and expectations without running checks.",
+    ),
+    allow_fuzz_failures: bool = typer.Option(
+        False,
+        "--allow-fuzz-failures",
+        help="Exit 0 while preserving fuzz findings in reports.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace an existing deterministic study directory.",
+    ),
+) -> None:
+    """Generate and run deterministic policy-focused benchmark variants."""
+    try:
+        result = run_fuzz_study(
+            dimensions=dimensions,
+            limit=limit,
+            seed=seed,
+            output_dir=output_dir,
+            trials=trials,
+            workers=workers,
+            static_only=static_only,
+            force=force,
+        )
+    except (FileExistsError, OSError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    typer.echo("AgentGuard Benchmark Fuzz Study")
+    typer.echo(f"Dimensions: {', '.join(result.dimensions)}")
+    typer.echo(f"Variants generated: {result.total_variants}")
+    typer.echo(
+        f"Variants passed/failed: {result.variants_passed}/"
+        f"{result.variants_failed}"
+    )
+    typer.echo("Detection coverage by dimension:")
+    for dimension, summary in result.per_dimension.items():
+        typer.echo(
+            f"- {dimension}: {float(summary['pass_rate']):.2f}% "
+            f"({summary['passed_runs']}/{summary['runs']} runs)"
+        )
+    typer.echo(
+        "Missed/forbidden detections: "
+        f"{result.missed_expected_detections}/"
+        f"{result.forbidden_unexpected_detections}"
+    )
+    typer.echo(
+        "Controlled detection rate: "
+        f"{result.controlled_detection_rate:.2f}%"
+    )
+    typer.echo(f"Safe-variant pass rate: {result.safe_variant_pass_rate:.2f}%")
+    typer.echo(f"JSON report path: {result.json_report_path}")
+    typer.echo(f"Markdown report path: {result.markdown_report_path}")
+    if result.has_failures and not allow_fuzz_failures:
         raise typer.Exit(1)
 
 
