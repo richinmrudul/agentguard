@@ -57,6 +57,8 @@ Reports include:
 - missed expected detections
 - forbidden unexpected detections
 - safe false alarms
+- minimized failures and reduction metrics
+- promotion package paths
 - boundary cases and limitations
 
 JSON and Markdown reports are written to:
@@ -97,6 +99,80 @@ agentguard benchmarks fuzz \
 reports. Without it, any expectation failure exits 1. Invalid options,
 dimensions, output paths, or schema problems exit 2 without a raw traceback.
 
+## Minimization
+
+When a fuzz variant fails its expectation, minimization can reduce it to a
+smaller reproducible case:
+
+```bash
+agentguard benchmarks fuzz \
+  --minimize-failures \
+  --max-minimize-steps 50 \
+  --allow-fuzz-failures \
+  --force
+```
+
+The minimizer first reproduces the original failure signature. It then tries
+deterministic simplification passes and accepts only changes that preserve the
+same expectation failure. Passes include removing unrelated modified files,
+reducing to a single violation, shortening paths while preserving triggering
+patterns, reducing diff size while preserving threshold crossings, simplifying
+commands, and normalizing descriptions.
+
+Complexity is deterministic and combines:
+
+- file count
+- modified path count
+- command count
+- total path length
+- diff line count
+- evidence item count
+- weighted sum
+
+Reports include original and minimized complexity, reduction percentage, steps
+attempted, steps accepted, reproduced yes/no, failure preserved yes/no, and the
+final expected/observed checks. Non-reproducible failures are kept as structured
+findings instead of raw tracebacks.
+
+## Promotion Workflow
+
+Promotion writes reviewable files for maintainers. It does not edit the
+benchmark registry, benchmark contracts, or core suites.
+
+Fixture package:
+
+```bash
+agentguard benchmarks fuzz \
+  --minimize-failures \
+  --promote-failures /tmp/agentguard-fuzz-promotions \
+  --promotion-format fixture \
+  --allow-fuzz-failures \
+  --force
+```
+
+Patch package:
+
+```bash
+agentguard benchmarks fuzz \
+  --minimize-failures \
+  --promote-failures /tmp/agentguard-fuzz-promotions \
+  --promotion-format patch \
+  --allow-fuzz-failures \
+  --force
+```
+
+Promotion packages include minimized variant metadata, a minimal fixture repo or
+unified patch, an expected contract fragment, a reproduction command, and a
+README explaining the failure. Packages avoid raw `.agentguard` artifacts,
+absolute local paths, and secrets.
+
+Review promoted regressions manually before copying them into permanent
+benchmarks. Maintainers should inspect the reduced inputs, confirm the expected
+check behavior, choose stable benchmark names and config paths, add or update a
+contract, and only then edit the registry or suites in a normal code review.
+Promotion is manual so transient check quirks or overly narrow synthetic cases
+do not silently become permanent corpus commitments.
+
 ## Limitations
 
 - Variants synthesize check evidence and do not execute external agents.
@@ -106,6 +182,9 @@ dimensions, output paths, or schema problems exit 2 without a raw traceback.
   materialized with sanitized names so the command never writes outside the
   output directory.
 - Safe near misses are small templates, not a complete false-positive corpus.
+- Minimization preserves the same expectation failure; it is not a semantic
+  proof that the smallest possible real-world benchmark has been found.
+- Promotion packages are review aids, not automatically registered benchmarks.
 
 ## Related Diagnostics
 

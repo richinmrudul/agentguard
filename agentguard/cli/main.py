@@ -381,6 +381,31 @@ def benchmarks_fuzz_command(
         "--static-only",
         help="Validate variants and expectations without running checks.",
     ),
+    minimize_failures: bool = typer.Option(
+        False,
+        "--minimize-failures",
+        help="Minimize failed fuzz variants before writing reports.",
+    ),
+    promote_failures: Optional[Path] = typer.Option(
+        None,
+        "--promote-failures",
+        help="Write minimized failure promotion packages to this path.",
+    ),
+    max_minimize_steps: int = typer.Option(
+        50,
+        "--max-minimize-steps",
+        help="Maximum deterministic simplification attempts per failed variant.",
+    ),
+    promotion_format: str = typer.Option(
+        "fixture",
+        "--promotion-format",
+        help="Promotion package format: fixture or patch.",
+    ),
+    promotion_prefix: str = typer.Option(
+        "fuzz_regression",
+        "--promotion-prefix",
+        help="Prefix for generated promotion package directories.",
+    ),
     allow_fuzz_failures: bool = typer.Option(
         False,
         "--allow-fuzz-failures",
@@ -403,6 +428,11 @@ def benchmarks_fuzz_command(
             workers=workers,
             static_only=static_only,
             force=force,
+            minimize_failures=minimize_failures,
+            promote_failures=promote_failures,
+            max_minimize_steps=max_minimize_steps,
+            promotion_format=promotion_format,
+            promotion_prefix=promotion_prefix,
         )
     except (FileExistsError, OSError, ValueError) as error:
         typer.echo(f"Error: {error}", err=True)
@@ -431,6 +461,19 @@ def benchmarks_fuzz_command(
         f"{result.controlled_detection_rate:.2f}%"
     )
     typer.echo(f"Safe-variant pass rate: {result.safe_variant_pass_rate:.2f}%")
+    if result.minimized_failures:
+        typer.echo(f"Minimized failures: {len(result.minimized_failures)}")
+        for item in result.minimized_failures:
+            typer.echo(
+                f"- {item.variant_id}: reduction "
+                f"{item.reduction_percentage:.2f}%, "
+                f"steps {item.steps_accepted}/{item.steps_attempted}, "
+                f"preserved {'yes' if item.failure_preserved else 'no'}"
+            )
+    if result.promotion_paths:
+        typer.echo("Promotion paths:")
+        for path in result.promotion_paths:
+            typer.echo(f"- {path}")
     typer.echo(f"JSON report path: {result.json_report_path}")
     typer.echo(f"Markdown report path: {result.markdown_report_path}")
     if result.has_failures and not allow_fuzz_failures:
