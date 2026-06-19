@@ -59,6 +59,19 @@ measure controlled detection behavior, while safe entries exercise false-alarm
 resistance. Reports are written under
 `.agentguard/diagnostics/mutations/`.
 
+Benchmark fuzzing adds a generated corpus layer beside registry contracts:
+
+```text
+Seed + dimensions -> deterministic variants -> isolated workspaces/evidence -> checks/scoring -> Fuzz reports
+```
+
+The fuzzing layer uses small internal templates rather than hand-authored
+fixtures. It exercises path, secret, command, diff-size, scope,
+test-tampering, and traversal boundaries by materializing sanitized variant
+workspaces under `.agentguard/fuzz/` and running the same policy checks against
+deterministic synthetic evidence. It does not invoke external agents, Docker,
+or network access.
+
 Policy ablation adds a comparative layer over the same mutation execution:
 
 ```text
@@ -73,13 +86,14 @@ trial disagreement, and writes JSON/Markdown under
 `.agentguard/diagnostics/ablation/`. Invalid controls retain findings but
 suppress headline contribution claims.
 
-Benchmark contracts, mutation audits, and ablation answer different questions.
-Contracts validate that a benchmark family still behaves as designed through
-normal benchmark execution. Mutations validate that individual checks react to
-controlled evidence and remain quiet on controlled safe fixtures. Ablation
-measures which of those controlled detections disappear when one check does not
-execute. None estimates production violation prevalence or real-world error
-rates.
+Benchmark contracts, fuzzing, mutation audits, and ablation answer different
+questions. Contracts validate that a benchmark family still behaves as designed
+through normal benchmark execution. Fuzzing expands deterministic policy
+boundary coverage from generated templates. Mutations validate that individual
+checks react to controlled fixture actions and remain quiet on controlled safe
+fixtures. Ablation measures which of those controlled detections disappear when
+one check does not execute. None estimates production violation prevalence or
+real-world error rates.
 
 Matrix stress diagnostics add a scheduler-quality layer beside normal matrix
 execution:
@@ -155,12 +169,13 @@ flowchart TD
 The Typer-based CLI exposes the main workflows: `run` for a single benchmark,
 `benchmark` for multiple agents on one config, `suite` for many benchmark
 configs, `ci` for existing repositories, `benchmark-overhead` for runtime
-diagnostics, `diagnostics mutations` for policy-quality measurements, and
-`diagnostics ablation` for controlled check-contribution studies, and `reports`
-for browsing local results. `diagnostics matrix-stress` measures bounded
-scheduler, memory, history, and fail-fast behavior with an internal synthetic
-workload. CLI commands translate options into core function calls and set
-process exit codes for automation.
+diagnostics, `benchmarks fuzz` for deterministic generated policy variants,
+`diagnostics mutations` for policy-quality measurements, `diagnostics ablation`
+for controlled check-contribution studies, and `reports` for browsing local
+results. `diagnostics matrix-stress` measures bounded scheduler, memory,
+history, and fail-fast behavior with an internal synthetic workload. CLI
+commands translate options into core function calls and set process exit codes
+for automation.
 
 ### Config Loader and Schema
 

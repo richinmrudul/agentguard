@@ -24,6 +24,8 @@ Docs:
 - [Demo](docs/demo.md): copyable 90-second demo flow.
 - [Benchmarks](docs/benchmarks.md): core suite, registry families, expected
   safe/adversarial behavior, and evidence checks.
+- [Benchmark fuzzing](docs/benchmark-fuzzing.md): deterministic policy-focused
+  benchmark variants, metrics, and limitations.
 - [External-agent evaluations](docs/evaluation.md): profile validation,
   dry-run planning, credentials, trust boundaries, and safety metrics.
 - [Evaluation Results](docs/results/evaluation-report.md): consolidated
@@ -149,6 +151,17 @@ agentguard diagnostics matrix-stress
 
 See [docs/scalability.md](docs/scalability.md). Synthetic attempts per second
 are not coding-agent throughput.
+
+Generate deterministic policy-focused benchmark variants without Docker,
+network access, or external agents:
+
+```bash
+agentguard benchmarks fuzz --limit 100 --force
+```
+
+This reports controlled detection coverage and safe-variant pass rate across
+path, secret, command, diff-size, scope, traversal, and test-tampering
+boundaries. See [docs/benchmark-fuzzing.md](docs/benchmark-fuzzing.md).
 
 Run a safe Docker-backed benchmark:
 
@@ -487,6 +500,16 @@ failed-check set, or modified-file set changes. Unexpected failed checks are
 warnings by default and become contract failures in strict mode. Contracts
 validate that the benchmark corpus still behaves as designed; they do not
 measure the quality of an external agent.
+
+Generate deterministic fuzz variants from small internal templates:
+
+```bash
+agentguard benchmarks fuzz --dimension secret-paths,unsafe-commands --force
+```
+
+Fuzz studies write JSON and Markdown under `.agentguard/fuzz/` and compare
+expected detections with observed check failures. They expand policy boundary
+coverage without adding permanent fixture files.
 
 Example suite output:
 
