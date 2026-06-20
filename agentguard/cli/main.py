@@ -27,6 +27,16 @@ from agentguard.benchmarks.packs import (
     inspect_benchmark_pack,
     verify_benchmark_pack,
 )
+from agentguard.benchmarks.signing import (
+    BenchmarkPackSignatureError,
+    add_trusted_key,
+    generate_hmac_keypair,
+    init_trust_policy,
+    sign_benchmark_pack,
+    trust_policy_summary,
+    verify_benchmark_pack_signature,
+    verify_trust_policy,
+)
 from agentguard.core.baseline import write_suite_baseline
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.ci import run_ci
@@ -129,6 +139,8 @@ benchmarks_app = typer.Typer(help="List and inspect registered AgentGuard benchm
 app.add_typer(benchmarks_app, name="benchmarks")
 benchmark_pack_app = typer.Typer(help="Export, inspect, verify, and import benchmark packs.")
 benchmarks_app.add_typer(benchmark_pack_app, name="pack")
+benchmark_pack_trust_app = typer.Typer(help="Manage local benchmark pack trust policies.")
+benchmark_pack_app.add_typer(benchmark_pack_trust_app, name="trust")
 gate_app = typer.Typer(help="CI gate commands for AgentGuard suites.")
 app.add_typer(gate_app, name="gate")
 manifest_app = typer.Typer(help="Inspect and verify execution manifests.")
@@ -1554,6 +1566,164 @@ def benchmarks_pack_verify(
     typer.echo(f"Root digest: {result.root_digest}")
 
 
+@benchmark_pack_app.command("keygen")
+def benchmarks_pack_keygen(
+    output_dir: Path = typer.Option(
+        ...,
+        "--output-dir",
+        help="Directory for generated HMAC signing key files.",
+    ),
+    name: str = typer.Option(
+        ...,
+        "--name",
+        help="Human-readable signer name.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite existing key files.",
+    ),
+) -> None:
+    """Generate local HMAC signing and verification key files."""
+    try:
+        result = generate_hmac_keypair(output_dir, name, force=force)
+    except (FileExistsError, OSError, ValueError, BenchmarkPackError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(f"Key ID: {result.key_id}")
+    typer.echo(f"Private key: {result.private_key_path}")
+    typer.echo(f"Verification key: {result.public_key_path}")
+    typer.echo("Warning: HMAC keys are shared secrets. Do not commit private keys.")
+    typer.echo(
+        "Warning: the verification key also contains HMAC secret material; "
+        "commit it only for intentionally shared local CI trust."
+    )
+
+
+@benchmark_pack_app.command("sign")
+def benchmarks_pack_sign(
+    pack: Path = typer.Argument(..., help="Benchmark pack .zip path."),
+    key: Path = typer.Option(..., "--key", help="Private HMAC key JSON path."),
+    output: Path = typer.Option(..., "--output", help="Detached signature JSON path."),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing signature output.",
+    ),
+) -> None:
+    """Sign a verified benchmark pack root digest."""
+    try:
+        signature = sign_benchmark_pack(pack, key, output, force=force)
+    except (FileExistsError, OSError, BenchmarkPackError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(f"Signature written: {output}")
+    typer.echo(f"Pack ID: {signature['pack_id']}")
+    typer.echo(f"Root digest: {signature['pack_root_digest']}")
+    typer.echo(f"Key ID: {signature['key_id']}")
+    typer.echo(f"Algorithm: {signature['algorithm']}")
+
+
+@benchmark_pack_app.command("verify-signature")
+def benchmarks_pack_verify_signature(
+    pack: Path = typer.Argument(..., help="Benchmark pack .zip path."),
+    signature: Path = typer.Option(..., "--signature", help="Detached signature JSON path."),
+    key: Path = typer.Option(..., "--key", help="Verification key JSON path."),
+) -> None:
+    """Verify a detached benchmark pack signature."""
+    try:
+        result = verify_benchmark_pack_signature(pack, signature, key)
+    except BenchmarkPackIntegrityError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1) from error
+    except (OSError, BenchmarkPackError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(result.message)
+    typer.echo(f"Status: {result.status}")
+    if result.key_id is not None:
+        typer.echo(f"Key ID: {result.key_id}")
+    if not result.valid:
+        raise typer.Exit(1)
+
+
+@benchmark_pack_trust_app.command("init")
+def benchmarks_pack_trust_init(
+    path: Path = typer.Argument(..., help="Trust policy YAML path."),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing policy file.",
+    ),
+) -> None:
+    """Initialize a local benchmark pack trust policy."""
+    try:
+        init_trust_policy(path, force=force)
+    except (FileExistsError, OSError, BenchmarkPackError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(f"Trust policy initialized: {path}")
+
+
+@benchmark_pack_trust_app.command("add-key")
+def benchmarks_pack_trust_add_key(
+    policy: Path = typer.Argument(..., help="Trust policy YAML path."),
+    public_key: Path = typer.Argument(..., help="Verification key JSON path."),
+) -> None:
+    """Add a verification key to a local trust policy."""
+    try:
+        updated = add_trusted_key(policy, public_key)
+    except (OSError, ValueError, BenchmarkPackError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    key = updated["trusted_keys"][-1]
+    typer.echo(f"Trusted key added: {key['key_id']} {key['name']}")
+
+
+@benchmark_pack_trust_app.command("list")
+def benchmarks_pack_trust_list(
+    policy: Path = typer.Argument(..., help="Trust policy YAML path."),
+) -> None:
+    """List trusted keys in a local trust policy."""
+    try:
+        lines = trust_policy_summary(policy)
+    except (OSError, BenchmarkPackError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    for line in lines:
+        typer.echo(line)
+
+
+@benchmark_pack_trust_app.command("verify")
+def benchmarks_pack_trust_verify(
+    pack: Path = typer.Argument(..., help="Benchmark pack .zip path."),
+    policy: Path = typer.Option(..., "--policy", help="Trust policy YAML path."),
+    signatures: Optional[list[Path]] = typer.Option(
+        None,
+        "--signature",
+        help="Detached signature JSON path. Repeat for multiple signatures.",
+    ),
+) -> None:
+    """Verify a benchmark pack against a local trust policy."""
+    try:
+        result = verify_trust_policy(pack, policy, signatures or [])
+    except BenchmarkPackIntegrityError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1) from error
+    except (OSError, BenchmarkPackError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(f"Trust status: {result.status}")
+    typer.echo(
+        f"Trusted signatures: {result.trusted_signatures}/"
+        f"{result.required_signatures}"
+    )
+    for message in result.messages:
+        typer.echo(f"- {message}")
+    if not result.valid:
+        raise typer.Exit(1)
+
+
 @benchmark_pack_app.command("import")
 def benchmarks_pack_import(
     pack: Path = typer.Option(..., "--pack", help="Benchmark pack .zip path."),
@@ -1571,6 +1741,16 @@ def benchmarks_pack_import(
         None,
         "--suite-out",
         help="Optional path to write a generated safe/adversarial suite.",
+    ),
+    trust_policy: Optional[Path] = typer.Option(
+        None,
+        "--trust-policy",
+        help="Local trust policy required before import.",
+    ),
+    signatures: Optional[list[Path]] = typer.Option(
+        None,
+        "--signature",
+        help="Detached signature JSON path. Repeat for multiple signatures.",
     ),
     dry_run: bool = typer.Option(
         False,
@@ -1590,10 +1770,15 @@ def benchmarks_pack_import(
             dest_path=dest,
             registry_out=registry_out,
             suite_out=suite_out,
+            trust_policy=trust_policy,
+            signatures=signatures or [],
             dry_run=dry_run,
             force=force,
         )
     except BenchmarkPackIntegrityError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1) from error
+    except BenchmarkPackSignatureError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from error
     except (FileExistsError, OSError, ValueError, BenchmarkPackError, yaml.YAMLError) as error:
@@ -1602,6 +1787,8 @@ def benchmarks_pack_import(
     typer.echo("Benchmark pack import plan" if dry_run else "Benchmark pack imported")
     typer.echo(f"Destination: {dest}")
     typer.echo(f"Files: {len(plan.files)}")
+    if plan.trust_status is not None:
+        typer.echo(f"Trust status: {plan.trust_status}")
     if plan.collisions:
         typer.echo("Collisions:")
         for path in plan.collisions:

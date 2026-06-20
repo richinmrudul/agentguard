@@ -59,6 +59,10 @@ Verify schema, hashes, paths, and registry/config/contract consistency:
 agentguard benchmarks pack verify /tmp/agentguard-benchmarks.zip
 ```
 
+Optionally sign packs and enforce local trust policies before import. See
+[Benchmark Pack Signing](benchmark-pack-signing.md) for key generation,
+detached signatures, trust policy verification, CI usage, and limitations.
+
 Import into a review directory:
 
 ```bash

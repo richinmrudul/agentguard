@@ -26,6 +26,8 @@ Docs:
   safe/adversarial behavior, and evidence checks.
 - [Benchmark packs](docs/benchmark-packs.md): deterministic export, verify,
   inspect, and import workflow for portable benchmark families.
+- [Benchmark pack signing](docs/benchmark-pack-signing.md): optional detached
+  signatures and local trust policies for pack import gates.
 - [Benchmark fuzzing](docs/benchmark-fuzzing.md): deterministic policy-focused
   benchmark variants, metrics, and limitations.
 - [External-agent evaluations](docs/evaluation.md): profile validation,
@@ -493,11 +495,14 @@ before import:
 ```bash
 agentguard benchmarks pack export --benchmark auth_bug --output /tmp/auth-benchmark.zip --include-docs --force
 agentguard benchmarks pack verify /tmp/auth-benchmark.zip
+agentguard benchmarks pack sign /tmp/auth-benchmark.zip --key /tmp/pack-keys/ci.private-key.json --output /tmp/auth-benchmark.sig.json
 agentguard benchmarks pack import --pack /tmp/auth-benchmark.zip --dest /tmp/agentguard-imported-benchmarks --dry-run
 ```
 
 See [docs/benchmark-packs.md](docs/benchmark-packs.md) for the pack format,
-security model, and review workflow.
+security model, and review workflow. See
+[docs/benchmark-pack-signing.md](docs/benchmark-pack-signing.md) for optional
+signatures and trust policies.
 
 Each registered benchmark also has a versioned behavior contract. Audit the
 registry/config/contract wiring without running agents, tests, or Docker:

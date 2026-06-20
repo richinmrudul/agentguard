@@ -86,6 +86,18 @@ registry/config/contract consistency. Import extracts only verified regular
 files and safe relative symlinks, writes registry or suite outputs only when
 requested, and never executes imported benchmark code.
 
+Pack signing adds an optional local authenticity gate:
+
+```text
+verified pack root digest -> detached signature -> local trust policy -> import gate
+```
+
+The current signing implementation uses HMAC-SHA256 as a standard-library
+local-CI trust mode. Trust policies are explicit local YAML files that list
+trusted key IDs and required signature counts. They do not contact a remote
+registry, and a trusted signature means only that a trusted shared key signed
+the pack digest; it does not make imported benchmark code safe to execute.
+
 Policy ablation adds a comparative layer over the same mutation execution:
 
 ```text
