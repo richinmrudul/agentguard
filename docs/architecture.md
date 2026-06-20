@@ -72,6 +72,20 @@ workspaces under `.agentguard/fuzz/` and running the same policy checks against
 deterministic synthetic evidence. It does not invoke external agents, Docker,
 or network access.
 
+Benchmark packs add a distribution layer above the registry:
+
+```text
+Registry selection -> contract/config validation -> normalized zip + manifest -> verify/import -> optional registry/suite outputs
+```
+
+The pack layer rewrites selected registry, contract, and config references into
+pack-local paths, hashes every file, and stores fixtures under normalized
+`repos/` directories. Verification reads the zip without extraction, rejects
+unsafe paths and special files, recomputes hashes, and validates
+registry/config/contract consistency. Import extracts only verified regular
+files and safe relative symlinks, writes registry or suite outputs only when
+requested, and never executes imported benchmark code.
+
 Policy ablation adds a comparative layer over the same mutation execution:
 
 ```text
