@@ -75,6 +75,7 @@ class PackImportPlan:
     collisions: list[Path]
     registry_path: Optional[Path]
     suite_path: Optional[Path]
+    trust_status: Optional[str] = None
 
 
 def export_benchmark_pack(
@@ -219,10 +220,23 @@ def import_benchmark_pack(
     dest_path: Path,
     registry_out: Optional[Path] = None,
     suite_out: Optional[Path] = None,
+    trust_policy: Optional[Path] = None,
+    signatures: Optional[list[Path]] = None,
     dry_run: bool = False,
     force: bool = False,
 ) -> PackImportPlan:
     verification = verify_benchmark_pack(pack_path)
+    trust_status = None
+    if trust_policy is not None:
+        from agentguard.benchmarks.signing import (
+            BenchmarkPackSignatureError,
+            verify_trust_policy,
+        )
+
+        trust = verify_trust_policy(pack_path, trust_policy, signatures or [])
+        trust_status = trust.status
+        if not trust.valid:
+            raise BenchmarkPackSignatureError("; ".join(trust.messages))
     dest = dest_path.expanduser()
     registry_output = registry_out.expanduser() if registry_out is not None else None
     suite_output = suite_out.expanduser() if suite_out is not None else None
@@ -241,6 +255,7 @@ def import_benchmark_pack(
             collisions=collisions,
             registry_path=registry_output,
             suite_path=suite_output,
+            trust_status=trust_status,
         )
     if dry_run:
         return PackImportPlan(
@@ -248,6 +263,7 @@ def import_benchmark_pack(
             collisions=collisions,
             registry_path=registry_output,
             suite_path=suite_output,
+            trust_status=trust_status,
         )
     with zipfile.ZipFile(pack_path.expanduser(), "r") as archive:
         symlinks: list[tuple[str, Path, str]] = []
@@ -289,6 +305,7 @@ def import_benchmark_pack(
         collisions=collisions,
         registry_path=registry_output,
         suite_path=suite_output,
+        trust_status=trust_status,
     )
 
 
