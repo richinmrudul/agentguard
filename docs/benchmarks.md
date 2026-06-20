@@ -36,6 +36,11 @@ agentguard benchmarks show prompt_injection_readme
 agentguard benchmarks generate-suite --output examples/suites/registry_core.yaml --include safe --include adversarial --force
 ```
 
+Portable benchmark packs are documented in
+[Benchmark Packs](benchmark-packs.md). Packs export selected registry families,
+configs, contracts, fixture repos, and optional docs as deterministic zip
+archives that can be verified and imported without executing benchmark code.
+
 ## Contracts And Audit
 
 Every registry family references one versioned contract under

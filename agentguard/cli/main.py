@@ -19,6 +19,14 @@ from agentguard.benchmarks.fuzz import (
     DEFAULT_OUTPUT_DIR as DEFAULT_FUZZ_OUTPUT_DIR,
     run_fuzz_study,
 )
+from agentguard.benchmarks.packs import (
+    BenchmarkPackError,
+    BenchmarkPackIntegrityError,
+    export_benchmark_pack,
+    import_benchmark_pack,
+    inspect_benchmark_pack,
+    verify_benchmark_pack,
+)
 from agentguard.core.baseline import write_suite_baseline
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.ci import run_ci
@@ -119,6 +127,8 @@ history_app = typer.Typer(help="List and summarize local AgentGuard run history.
 app.add_typer(history_app, name="history")
 benchmarks_app = typer.Typer(help="List and inspect registered AgentGuard benchmarks.")
 app.add_typer(benchmarks_app, name="benchmarks")
+benchmark_pack_app = typer.Typer(help="Export, inspect, verify, and import benchmark packs.")
+benchmarks_app.add_typer(benchmark_pack_app, name="pack")
 gate_app = typer.Typer(help="CI gate commands for AgentGuard suites.")
 app.add_typer(gate_app, name="gate")
 manifest_app = typer.Typer(help="Inspect and verify execution manifests.")
@@ -1442,6 +1452,168 @@ def benchmarks_generate_suite(
 
     typer.echo(f"Generated suite: {written_path}")
     typer.echo(f"Runs: {len(suite_data['runs'])}")
+
+
+@benchmark_pack_app.command("export")
+def benchmarks_pack_export(
+    benchmark_ids: Optional[list[str]] = typer.Option(
+        None,
+        "--benchmark",
+        help="Benchmark IDs to export. Repeat or use commas.",
+    ),
+    registry: Path = typer.Option(
+        DEFAULT_REGISTRY_PATH,
+        "--registry",
+        help="Path to the benchmark registry YAML file.",
+    ),
+    output: Path = typer.Option(
+        ...,
+        "--output",
+        help="Path for the deterministic .zip benchmark pack.",
+    ),
+    include_docs: bool = typer.Option(
+        False,
+        "--include-docs",
+        help="Include benchmark documentation files.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing pack output.",
+    ),
+) -> None:
+    """Export registered benchmarks as a portable deterministic pack."""
+    try:
+        result = export_benchmark_pack(
+            registry_path=registry,
+            output_path=output,
+            benchmark_values=benchmark_ids,
+            include_docs=include_docs,
+            force=force,
+        )
+    except (FileExistsError, OSError, ValueError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(f"Pack exported: {result['path']}")
+    typer.echo(f"Pack ID: {result['pack_id']}")
+    typer.echo(f"Benchmarks: {result['benchmark_count']}")
+    typer.echo(f"Files: {result['file_count']}")
+    typer.echo(f"Root digest: {result['root_digest']}")
+
+
+@benchmark_pack_app.command("inspect")
+def benchmarks_pack_inspect(
+    pack: Path = typer.Argument(..., help="Benchmark pack .zip path."),
+) -> None:
+    """Inspect a benchmark pack without extracting it."""
+    try:
+        result = inspect_benchmark_pack(pack)
+    except BenchmarkPackIntegrityError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1) from error
+    except (OSError, BenchmarkPackError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo("AgentGuard Benchmark Pack")
+    typer.echo(f"Pack ID: {result['pack_id']}")
+    typer.echo(f"Pack version: {result['pack_version']}")
+    typer.echo(f"Root digest: {result['root_digest']}")
+    typer.echo("Benchmarks:")
+    for benchmark in result["benchmarks"]:
+        typer.echo(f"- {benchmark['id']}@{benchmark['version']}")
+    typer.echo("Files:")
+    for file in result["files"]:
+        typer.echo(f"- {file['path']} {file['sha256']} {file['size']} bytes")
+    typer.echo("Docs:")
+    docs = result["docs"]
+    if docs:
+        for doc in docs:
+            typer.echo(f"- {doc}")
+    else:
+        typer.echo("- none")
+    typer.echo(f"Contracts: {result['contract_status']}")
+
+
+@benchmark_pack_app.command("verify")
+def benchmarks_pack_verify(
+    pack: Path = typer.Argument(..., help="Benchmark pack .zip path."),
+) -> None:
+    """Verify pack schema, hashes, paths, and registry/contract/config consistency."""
+    try:
+        result = verify_benchmark_pack(pack)
+    except BenchmarkPackIntegrityError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1) from error
+    except (OSError, BenchmarkPackError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo("Benchmark pack verification: PASS")
+    typer.echo(f"Pack ID: {result.manifest['pack_id']}")
+    typer.echo(f"Benchmarks: {len(result.manifest['benchmarks'])}")
+    typer.echo(f"Files: {len(result.files)}")
+    typer.echo(f"Root digest: {result.root_digest}")
+
+
+@benchmark_pack_app.command("import")
+def benchmarks_pack_import(
+    pack: Path = typer.Option(..., "--pack", help="Benchmark pack .zip path."),
+    dest: Path = typer.Option(
+        Path("examples/imported-benchmarks"),
+        "--dest",
+        help="Destination directory for imported pack files.",
+    ),
+    registry_out: Optional[Path] = typer.Option(
+        None,
+        "--registry-out",
+        help="Optional path to write a registry fragment copy.",
+    ),
+    suite_out: Optional[Path] = typer.Option(
+        None,
+        "--suite-out",
+        help="Optional path to write a generated safe/adversarial suite.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print planned writes and collisions without writing files.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite destination collisions.",
+    ),
+) -> None:
+    """Verify and import a benchmark pack without executing benchmark code."""
+    try:
+        plan = import_benchmark_pack(
+            pack_path=pack,
+            dest_path=dest,
+            registry_out=registry_out,
+            suite_out=suite_out,
+            dry_run=dry_run,
+            force=force,
+        )
+    except BenchmarkPackIntegrityError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1) from error
+    except (FileExistsError, OSError, ValueError, BenchmarkPackError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo("Benchmark pack import plan" if dry_run else "Benchmark pack imported")
+    typer.echo(f"Destination: {dest}")
+    typer.echo(f"Files: {len(plan.files)}")
+    if plan.collisions:
+        typer.echo("Collisions:")
+        for path in plan.collisions:
+            typer.echo(f"- {path}")
+        if not force:
+            raise typer.Exit(2)
+    for relative_path, target in plan.files:
+        typer.echo(f"- {relative_path} -> {target}")
+    if plan.registry_path is not None:
+        typer.echo(f"Registry output: {plan.registry_path}")
+    if plan.suite_path is not None:
+        typer.echo(f"Suite output: {plan.suite_path}")
 
 
 @benchmarks_app.command("audit")

@@ -24,6 +24,8 @@ Docs:
 - [Demo](docs/demo.md): copyable 90-second demo flow.
 - [Benchmarks](docs/benchmarks.md): core suite, registry families, expected
   safe/adversarial behavior, and evidence checks.
+- [Benchmark packs](docs/benchmark-packs.md): deterministic export, verify,
+  inspect, and import workflow for portable benchmark families.
 - [Benchmark fuzzing](docs/benchmark-fuzzing.md): deterministic policy-focused
   benchmark variants, metrics, and limitations.
 - [External-agent evaluations](docs/evaluation.md): profile validation,
@@ -484,6 +486,18 @@ agentguard benchmarks generate-suite --output examples/suites/registry_core.yaml
 
 Generated suites are ordinary suite YAML files, so they can be filtered,
 baselined, and run with the existing `agentguard suite` command.
+
+Export selected benchmarks as a deterministic portable pack and verify it
+before import:
+
+```bash
+agentguard benchmarks pack export --benchmark auth_bug --output /tmp/auth-benchmark.zip --include-docs --force
+agentguard benchmarks pack verify /tmp/auth-benchmark.zip
+agentguard benchmarks pack import --pack /tmp/auth-benchmark.zip --dest /tmp/agentguard-imported-benchmarks --dry-run
+```
+
+See [docs/benchmark-packs.md](docs/benchmark-packs.md) for the pack format,
+security model, and review workflow.
 
 Each registered benchmark also has a versioned behavior contract. Audit the
 registry/config/contract wiring without running agents, tests, or Docker:
