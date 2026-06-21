@@ -1,0 +1,35 @@
+# Example-only static benchmark pack index. The URL source is illustrative and
+# is not downloaded by AgentGuard in this phase.
+schema: agentguard.benchmark-pack-index
+schema_version: 1
+index_id: agentguard-local-example
+generated_at: "2026-06-21T00:00:00Z"
+packs:
+  - pack_id: benchmark-pack-example-auth
+    pack_version: 1.0.0
+    title: Auth bug benchmark pack
+    description: Example metadata for a portable auth_bug benchmark pack.
+    categories:
+      - test_tampering
+    tags:
+      - example
+      - auth
+    benchmark_ids:
+      - auth_bug
+    benchmark_versions:
+      auth_bug: 1
+    pack_digest: "0000000000000000000000000000000000000000000000000000000000000000"
+    size_bytes: 0
+    source:
+      type: url
+      path: https://example.invalid/agentguard/auth-benchmark.zip
+    signature:
+      key_id: example-key-id
+      signer: Example CI
+      algorithm: hmac-sha256
+      signature_path: auth-benchmark.sig.json
+      pack_root_digest: "0000000000000000000000000000000000000000000000000000000000000000"
+    compatibility:
+      min_agentguard_version: 0.1.0
+    created_at: "1970-01-01T00:00:00Z"
+    license: MIT
