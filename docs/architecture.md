@@ -98,6 +98,18 @@ trusted key IDs and required signature counts. They do not contact a remote
 registry, and a trusted signature means only that a trusted shared key signed
 the pack digest; it does not make imported benchmark code safe to execute.
 
+Pack indexes add a static catalog layer above signed packs:
+
+```text
+local index -> pack metadata + archive digest + optional signature -> verify/install
+```
+
+The index layer is a serverless YAML/JSON catalog for curated local pack
+directories. It verifies schema, strict semver versions, local file paths, raw
+archive digests, pack internals, and optional trust policies before delegating
+to pack import. URL entries are metadata only in this phase; AgentGuard does
+not download remote packs from an index.
+
 Policy ablation adds a comparative layer over the same mutation execution:
 
 ```text

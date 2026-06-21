@@ -27,6 +27,13 @@ from agentguard.benchmarks.packs import (
     inspect_benchmark_pack,
     verify_benchmark_pack,
 )
+from agentguard.benchmarks.index import (
+    create_pack_index,
+    install_index_pack,
+    list_pack_index,
+    resolve_index_pack,
+    verify_pack_index,
+)
 from agentguard.benchmarks.signing import (
     BenchmarkPackSignatureError,
     add_trusted_key,
@@ -141,6 +148,8 @@ benchmark_pack_app = typer.Typer(help="Export, inspect, verify, and import bench
 benchmarks_app.add_typer(benchmark_pack_app, name="pack")
 benchmark_pack_trust_app = typer.Typer(help="Manage local benchmark pack trust policies.")
 benchmark_pack_app.add_typer(benchmark_pack_trust_app, name="trust")
+benchmark_pack_index_app = typer.Typer(help="Create, list, verify, and install pack indexes.")
+benchmark_pack_app.add_typer(benchmark_pack_index_app, name="index")
 gate_app = typer.Typer(help="CI gate commands for AgentGuard suites.")
 app.add_typer(gate_app, name="gate")
 manifest_app = typer.Typer(help="Inspect and verify execution manifests.")
@@ -1785,6 +1794,218 @@ def benchmarks_pack_import(
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
     typer.echo("Benchmark pack import plan" if dry_run else "Benchmark pack imported")
+    typer.echo(f"Destination: {dest}")
+    typer.echo(f"Files: {len(plan.files)}")
+    if plan.trust_status is not None:
+        typer.echo(f"Trust status: {plan.trust_status}")
+    if plan.collisions:
+        typer.echo("Collisions:")
+        for path in plan.collisions:
+            typer.echo(f"- {path}")
+        if not force:
+            raise typer.Exit(2)
+    for relative_path, target in plan.files:
+        typer.echo(f"- {relative_path} -> {target}")
+    if plan.registry_path is not None:
+        typer.echo(f"Registry output: {plan.registry_path}")
+    if plan.suite_path is not None:
+        typer.echo(f"Suite output: {plan.suite_path}")
+
+
+@benchmark_pack_index_app.command("create")
+def benchmarks_pack_index_create(
+    packs: list[Path] = typer.Option(
+        ...,
+        "--pack",
+        help="Local benchmark pack .zip path. Repeat for multiple packs.",
+    ),
+    output: Path = typer.Option(
+        ...,
+        "--output",
+        help="Output benchmark pack index YAML path.",
+    ),
+    signatures: Optional[list[Path]] = typer.Option(
+        None,
+        "--signature",
+        help="Detached signature JSON path to reference in the index.",
+    ),
+    base_dir: Optional[Path] = typer.Option(
+        None,
+        "--base-dir",
+        help="Base directory for relative pack and signature paths.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing index output.",
+    ),
+) -> None:
+    """Create a static local benchmark pack index."""
+    try:
+        index = create_pack_index(
+            pack_paths=packs,
+            output_path=output,
+            signature_paths=signatures or [],
+            base_dir=base_dir,
+            force=force,
+        )
+    except (FileExistsError, OSError, ValueError, BenchmarkPackError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(f"Benchmark pack index written: {output}")
+    typer.echo(f"Index ID: {index['index_id']}")
+    typer.echo(f"Packs: {len(index['packs'])}")
+
+
+@benchmark_pack_index_app.command("list")
+def benchmarks_pack_index_list(
+    index: Path = typer.Argument(..., help="Benchmark pack index YAML/JSON path."),
+    trust_policy: Optional[Path] = typer.Option(
+        None,
+        "--trust-policy",
+        help="Optional local trust policy for trust status.",
+    ),
+) -> None:
+    """List packs in a static benchmark pack index."""
+    try:
+        lines = list_pack_index(index, trust_policy=trust_policy)
+    except BenchmarkPackIntegrityError as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1) from error
+    except (OSError, BenchmarkPackError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    for line in lines:
+        typer.echo(line)
+
+
+@benchmark_pack_index_app.command("verify")
+def benchmarks_pack_index_verify(
+    index: Path = typer.Argument(..., help="Benchmark pack index YAML/JSON path."),
+    trust_policy: Optional[Path] = typer.Option(
+        None,
+        "--trust-policy",
+        help="Optional local trust policy to enforce indexed signatures.",
+    ),
+) -> None:
+    """Verify an index and all referenced local packs."""
+    try:
+        result = verify_pack_index(index, trust_policy=trust_policy)
+    except (BenchmarkPackIntegrityError, BenchmarkPackSignatureError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1) from error
+    except (OSError, BenchmarkPackError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo("Benchmark pack index verification: PASS")
+    typer.echo(f"Index ID: {result.index['index_id']}")
+    typer.echo(f"Packs: {len(result.entries)}")
+    for message in result.messages:
+        typer.echo(f"- {message}")
+
+
+@benchmark_pack_index_app.command("show")
+def benchmarks_pack_index_show(
+    index: Path = typer.Argument(..., help="Benchmark pack index YAML/JSON path."),
+    pack_id: str = typer.Option(..., "--pack", help="Pack ID to show."),
+    version: Optional[str] = typer.Option(
+        None,
+        "--version",
+        help="Specific strict-semver pack version.",
+    ),
+) -> None:
+    """Show detailed metadata for a selected indexed pack."""
+    try:
+        resolution = resolve_index_pack(index, pack_id=pack_id, version=version)
+    except (OSError, BenchmarkPackError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    entry = resolution.entry
+    typer.echo(f"Pack ID: {entry['pack_id']}")
+    typer.echo(f"Version: {entry['pack_version']}")
+    typer.echo(f"Title: {entry['title']}")
+    typer.echo(f"Description: {entry['description']}")
+    typer.echo(f"Digest: {entry['pack_digest']}")
+    typer.echo(f"Size: {entry['size_bytes']} bytes")
+    typer.echo(f"Source: {entry['source']['type']}:{entry['source']['path']}")
+    typer.echo("Benchmarks:")
+    for benchmark_id in entry["benchmark_ids"]:
+        version_value = entry["benchmark_versions"].get(benchmark_id)
+        typer.echo(f"- {benchmark_id}@{version_value}")
+    typer.echo("Signature:")
+    if entry.get("signature"):
+        signature = entry["signature"]
+        typer.echo(f"- key_id={signature['key_id']} path={signature.get('signature_path', 'inline')}")
+    else:
+        typer.echo("- none")
+
+
+@benchmark_pack_index_app.command("install")
+def benchmarks_pack_index_install(
+    index: Path = typer.Argument(..., help="Benchmark pack index YAML/JSON path."),
+    pack_id: str = typer.Option(..., "--pack", help="Pack ID to install."),
+    version: Optional[str] = typer.Option(
+        None,
+        "--version",
+        help="Specific strict-semver pack version. Defaults to latest.",
+    ),
+    dest: Path = typer.Option(
+        Path("examples/imported-benchmarks"),
+        "--dest",
+        help="Destination directory for imported pack files.",
+    ),
+    registry_out: Optional[Path] = typer.Option(
+        None,
+        "--registry-out",
+        help="Optional path to write a registry fragment copy.",
+    ),
+    suite_out: Optional[Path] = typer.Option(
+        None,
+        "--suite-out",
+        help="Optional path to write a generated safe/adversarial suite.",
+    ),
+    trust_policy: Optional[Path] = typer.Option(
+        None,
+        "--trust-policy",
+        help="Optional local trust policy required before import.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print planned writes and collisions without writing files.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite destination collisions.",
+    ),
+) -> None:
+    """Verify and import a selected pack from a local static index."""
+    try:
+        resolution, plan = install_index_pack(
+            index,
+            pack_id=pack_id,
+            version=version,
+            dest_path=dest,
+            registry_out=registry_out,
+            suite_out=suite_out,
+            trust_policy=trust_policy,
+            dry_run=dry_run,
+            force=force,
+        )
+    except (BenchmarkPackIntegrityError, BenchmarkPackSignatureError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1) from error
+    except (FileExistsError, OSError, ValueError, BenchmarkPackError, yaml.YAMLError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    entry = resolution.entry
+    typer.echo(
+        "Benchmark pack index install plan"
+        if dry_run
+        else "Benchmark pack installed from index"
+    )
+    typer.echo(f"Pack: {entry['pack_id']}@{entry['pack_version']}")
     typer.echo(f"Destination: {dest}")
     typer.echo(f"Files: {len(plan.files)}")
     if plan.trust_status is not None:

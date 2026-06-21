@@ -62,6 +62,10 @@ agentguard benchmarks pack verify /tmp/agentguard-benchmarks.zip
 Optionally sign packs and enforce local trust policies before import. See
 [Benchmark Pack Signing](benchmark-pack-signing.md) for key generation,
 detached signatures, trust policy verification, CI usage, and limitations.
+Curated local directories can also publish a static
+[Benchmark Pack Index](benchmark-pack-index.md) that lists pack metadata,
+archive digests, signature paths, and install targets without requiring a
+server.
 
 Import into a review directory:
 
@@ -75,6 +79,21 @@ agentguard benchmarks pack import \
 
 Use `--dry-run` first to see planned writes and collisions. Existing files are
 never overwritten unless `--force` is supplied.
+
+Create and consume a local index:
+
+```bash
+agentguard benchmarks pack index create \
+  --pack /tmp/agentguard-benchmarks.zip \
+  --signature /tmp/agentguard-benchmarks.sig.json \
+  --base-dir /tmp \
+  --output /tmp/pack-index.yaml
+agentguard benchmarks pack index verify /tmp/pack-index.yaml --trust-policy /tmp/trust.yaml
+agentguard benchmarks pack index install /tmp/pack-index.yaml \
+  --pack benchmark-pack-... \
+  --dest /tmp/imported-benchmarks \
+  --dry-run
+```
 
 ## Security Model
 
