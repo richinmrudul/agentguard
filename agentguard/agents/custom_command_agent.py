@@ -4,6 +4,7 @@ from typing import Optional
 
 from agentguard.agents.base import Agent
 from agentguard.config.schema import AgentGuardConfig
+from agentguard.guard.filesystem import ProcessController
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.policy.command_policy import evaluate_command_policy
 from agentguard.sandbox.docker_runner import DockerCommandRunner
@@ -19,6 +20,7 @@ class CustomCommandAgent(Agent):
         self,
         repo_dir: Path,
         command_tracker: Optional[CommandTracker] = None,
+        process_controller: Optional[ProcessController] = None,
     ) -> None:
         if not self.config.agent_command:
             raise ValueError(

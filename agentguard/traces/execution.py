@@ -758,6 +758,37 @@ def build_execution_trace(
         )
         for event in result.command_events
     )
+    if result.guard_summary.mode != "off":
+        event_values.append(
+            (
+                "guard_summary",
+                {
+                    "mode": result.guard_summary.mode,
+                    "triggered": result.guard_summary.triggered,
+                    "terminated_agent": result.guard_summary.terminated_agent,
+                    "kill_required": result.guard_summary.kill_required,
+                    "files_observed": result.guard_summary.files_observed,
+                    "scan_count": result.guard_summary.scan_count,
+                    "monitor_duration_seconds": (
+                        result.guard_summary.monitor_duration_seconds
+                    ),
+                    "violations": [
+                        {
+                            "violation_type": violation.violation_type,
+                            "path": _normalized_path(violation.path)
+                            if violation.path != "(workspace)"
+                            else violation.path,
+                            "message": sanitize_text(
+                                violation.message,
+                                sensitive_values,
+                            ),
+                            "action": violation.action,
+                        }
+                        for violation in result.guard_summary.violations
+                    ],
+                },
+            )
+        )
     event_values.extend(
         ("file_change", payload)
         for payload in _file_payloads(
@@ -1598,6 +1629,43 @@ def _command_event_from_dict(data: dict[str, Any]) -> CommandEvent:
     )
 
 
+def _guard_summary_from_dict(data: object):
+    from agentguard.guard.filesystem import LiveGuardSummary, LiveGuardViolation
+
+    if not isinstance(data, dict):
+        return LiveGuardSummary()
+    first_violation = data.get("first_violation_time")
+    try:
+        first_violation_time = (
+            float(first_violation) if first_violation is not None else None
+        )
+    except (TypeError, ValueError):
+        first_violation_time = None
+    violations = [
+        LiveGuardViolation(
+            violation_type=str(item.get("violation_type") or ""),
+            path=str(item.get("path") or ""),
+            message=str(item.get("message") or ""),
+            action=str(item.get("action") or "recorded"),
+            observed_at=float(item.get("observed_at") or 0.0),
+        )
+        for item in data.get("violations", [])
+        if isinstance(item, dict)
+    ]
+    return LiveGuardSummary(
+        mode=str(data.get("mode") or "off"),
+        triggered=bool(data.get("triggered")),
+        first_violation_time=first_violation_time,
+        violations=violations,
+        files_observed=int(data.get("files_observed") or 0),
+        scan_count=int(data.get("scan_count") or 0),
+        monitor_duration_seconds=float(data.get("monitor_duration_seconds") or 0.0),
+        terminated_agent=bool(data.get("terminated_agent")),
+        kill_required=bool(data.get("kill_required")),
+        graceful_timeout_seconds=float(data.get("graceful_timeout_seconds") or 0.0),
+    )
+
+
 def _result_from_report(
     report_path: Path,
     manifest_path: Optional[Path],
@@ -1673,6 +1741,7 @@ def _result_from_report(
         profile_id=report.get("profile_id"),
         profile_name=report.get("profile_name"),
         profile_model=report.get("profile_model"),
+        guard_summary=_guard_summary_from_dict(report.get("guard_summary")),
     )
     return result, report
 

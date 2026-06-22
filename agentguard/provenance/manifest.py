@@ -143,6 +143,7 @@ class ExecutionManifest:
     parent_execution_type: Optional[str] = None
     child_executions: list[ChildExecution] = field(default_factory=list)
     matrix: Optional[dict[str, object]] = None
+    guard: Optional[dict[str, object]] = None
     schema: str = MANIFEST_SCHEMA
     schema_version: int = MANIFEST_SCHEMA_VERSION
 

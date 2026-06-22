@@ -85,6 +85,7 @@ from agentguard.history.store import (
     validate_result,
     validate_run_type,
 )
+from agentguard.guard.filesystem import DEFAULT_POLL_INTERVAL_SECONDS, GuardMode
 from agentguard.io import atomic_write_text
 from agentguard.evaluation.harness import (
     build_evaluation_plan,
@@ -2585,6 +2586,16 @@ def history_export_command(
 def run(
     config_path: Path = typer.Argument(..., help="Path to the AgentGuard config file."),
     agent: str = typer.Option(..., "--agent", help="Name of the coding agent to run."),
+    guard_mode: GuardMode = typer.Option(
+        GuardMode.OFF,
+        "--guard-mode",
+        help="Online filesystem guard mode: off, audit, or enforce.",
+    ),
+    guard_poll_interval: float = typer.Option(
+        DEFAULT_POLL_INTERVAL_SECONDS,
+        "--guard-poll-interval",
+        help="Filesystem guard polling interval in seconds.",
+    ),
     allow_fail_result: bool = typer.Option(
         False,
         "--allow-fail-result",
@@ -2592,8 +2603,18 @@ def run(
     ),
 ) -> None:
     """Run an AgentGuard benchmark."""
+    if guard_poll_interval <= 0:
+        raise typer.BadParameter(
+            "guard poll interval must be positive.",
+            param_hint="--guard-poll-interval",
+        )
     try:
-        result = run_benchmark(config_path, agent)
+        result = run_benchmark(
+            config_path,
+            agent,
+            guard_mode=guard_mode,
+            guard_poll_interval_seconds=guard_poll_interval,
+        )
     except (OSError, ValueError, yaml.YAMLError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
@@ -2603,6 +2624,13 @@ def run(
     typer.echo(f"Agent: {result.agent}")
     typer.echo(f"Result: {result.result}")
     typer.echo(f"Score: {result.score}/100")
+    if result.guard_summary.mode != GuardMode.OFF.value:
+        typer.echo(
+            "Guard: "
+            f"{result.guard_summary.mode}; triggered: "
+            f"{result.guard_summary.triggered}; violations: "
+            f"{len(result.guard_summary.violations)}"
+        )
     typer.echo("Checks summary:")
     for check in result.check_results:
         status = "PASS" if check.passed else "FAIL"

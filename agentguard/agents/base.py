@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
 
+from agentguard.guard.filesystem import ProcessController
 from agentguard.instrumentation.command_tracker import CommandTracker
 
 
@@ -13,5 +14,6 @@ class Agent(ABC):
         self,
         repo_dir: Path,
         command_tracker: Optional[CommandTracker] = None,
+        process_controller: Optional[ProcessController] = None,
     ) -> None:
         """Modify the copied benchmark repository."""
