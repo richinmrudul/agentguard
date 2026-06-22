@@ -416,6 +416,16 @@ regression gates.
 
 The report browser discovers local reports under `.agentguard/`, loads JSON reports, infers report type, and formats concise summaries for recent run, suite, and CI reports.
 
+### Static Report Site
+
+The static site exporter builds a no-server HTML/CSS report browser from the
+local history index, known report locations, matrix summaries, optional
+diagnostics, optional trace metadata summaries, and optional committed
+`docs/results` summaries. It writes only local assets, escapes every rendered
+field, redacts common secret-like values, avoids raw stdout/stderr and full
+diff/trace payloads, and rejects output paths inside the reports root to avoid
+recursive captures.
+
 ### Run History
 
 The local SQLite history index at `.agentguard/history.db` stores normalized

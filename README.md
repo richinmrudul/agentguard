@@ -422,6 +422,18 @@ agentguard reports export-junit .agentguard/suites/core/suite.json --output agen
 See [docs/ci-exports.md](docs/ci-exports.md) for supported inputs, mappings,
 and a GitHub Actions example.
 
+Generate a local static report site:
+
+```bash
+agentguard reports site --output /tmp/agentguard-site --include-results-docs --force
+```
+
+The static site is self-contained HTML/CSS with optional local JavaScript for
+filtering. It summarizes known safe report data without copying raw command
+output, full diffs, or full trace payloads by default. See
+[docs/static-site.md](docs/static-site.md) for usage, publishing notes, and
+sanitization limits.
+
 Inspect history:
 
 ```bash
