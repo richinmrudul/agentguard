@@ -7,6 +7,7 @@ from typing import Optional
 from agentguard.agents.base import Agent
 from agentguard.config.schema import AgentGuardConfig
 from agentguard.core.result import CommandResult
+from agentguard.guard.filesystem import ProcessController
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.output_limits import limit_output
 from agentguard.instrumentation.test_runner import _build_test_env
@@ -23,6 +24,7 @@ class LocalCommandAgent(Agent):
         self,
         repo_dir: Path,
         command_tracker: Optional[CommandTracker] = None,
+        process_controller: Optional[ProcessController] = None,
     ) -> None:
         if not self.config.agent_command:
             raise ValueError(
@@ -59,6 +61,7 @@ class LocalCommandAgent(Agent):
             command_tracker=command_tracker,
             preflight_matched_patterns=decision.matched_patterns,
             policy_mode=decision.mode if decision.matched_patterns else None,
+            process_controller=process_controller,
         )
 
     def _run_argv(
@@ -69,22 +72,44 @@ class LocalCommandAgent(Agent):
         command_tracker: CommandTracker,
         preflight_matched_patterns: list[str],
         policy_mode: Optional[str],
+        process_controller: Optional[ProcessController] = None,
     ) -> CommandResult:
         started = time.monotonic()
         timed_out = False
+        process: Optional[subprocess.Popen] = None
         try:
-            completed = subprocess.run(
-                argv,
-                cwd=repo_dir,
-                check=False,
-                capture_output=True,
-                text=True,
-                env=_build_test_env(repo_dir),
-                timeout=self.config.command_timeout_seconds,
-            )
-            exit_code = completed.returncode
-            stdout = completed.stdout
-            stderr = completed.stderr
+            if process_controller is None:
+                completed = subprocess.run(
+                    argv,
+                    cwd=repo_dir,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=_build_test_env(repo_dir),
+                    timeout=self.config.command_timeout_seconds,
+                )
+                exit_code = completed.returncode
+                stdout = completed.stdout
+                stderr = completed.stderr
+            else:
+                process = subprocess.Popen(
+                    argv,
+                    cwd=repo_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=_build_test_env(repo_dir),
+                )
+                process_controller.attach(process)
+                stdout, stderr = process.communicate(
+                    timeout=self.config.command_timeout_seconds
+                )
+                exit_code = process.returncode
+                if process_controller.termination_requested:
+                    stderr = (
+                        f"{stderr}\nAgent terminated by online filesystem guard: "
+                        f"{process_controller.termination_reason or 'policy violation'}"
+                    ).strip()
         except FileNotFoundError as error:
             exit_code = 127
             stdout = ""
@@ -92,8 +117,12 @@ class LocalCommandAgent(Agent):
         except subprocess.TimeoutExpired as error:
             timed_out = True
             exit_code = 124
-            stdout = error.stdout or ""
-            stderr = error.stderr or ""
+            if process is not None and process.poll() is None:
+                process.kill()
+                stdout, stderr = process.communicate()
+            else:
+                stdout = error.stdout or ""
+                stderr = error.stderr or ""
             if isinstance(stdout, bytes):
                 stdout = stdout.decode(errors="replace")
             if isinstance(stderr, bytes):

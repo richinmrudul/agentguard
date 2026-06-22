@@ -295,6 +295,16 @@ The diff collector summarizes changed files, added files, modified files, delete
 
 Checks inspect the deterministic evidence produced by the run. The default set verifies test status, forbidden path changes, test tampering, unsafe commands, scope adherence, diff size, and path-based secret patterns. Each check returns a pass/fail result, severity, message, and evidence.
 
+### Online Filesystem Guard
+
+The online guard is an optional runtime enforcement layer around agent
+execution. In audit or enforce mode it snapshots the prepared benchmark
+workspace, polls the file tree without following symlinks, and records live
+policy violations for forbidden paths, test tampering, out-of-scope paths,
+secret-like paths, file-count diff limits, deletions, and symlink escapes. In
+enforce mode, direct local agent subprocesses are terminated before the normal
+post-hoc diff/check/report pipeline continues.
+
 ### Scoring
 
 Scoring starts at 100 and deducts points for failed checks by severity. Warnings reduce score but do not fail the run by themselves. Failed `error` or `critical` checks make the final result `FAIL`.

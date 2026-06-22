@@ -29,6 +29,13 @@ from agentguard.evaluation.profile import (
     resolve_profile_argv,
 )
 from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
+from agentguard.guard.filesystem import (
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    GuardMode,
+    LiveGuardSummary,
+    ProcessController,
+    RuntimeFilesystemGuard,
+)
 from agentguard.instrumentation.agent_event_reader import (
     DEFAULT_AGENT_EVENT_FILE,
     read_agent_events,
@@ -160,6 +167,76 @@ def _failed_local_agent_event(command_tracker: CommandTracker):
         ):
             return event
     return None
+
+
+def _guard_check_result(guard_summary: LiveGuardSummary) -> Optional[CheckResult]:
+    if (
+        guard_summary.mode != GuardMode.ENFORCE.value
+        or not guard_summary.triggered
+    ):
+        return None
+    evidence = [
+        f"{violation.violation_type}: {violation.path} ({violation.action})"
+        for violation in guard_summary.violations
+    ]
+    return CheckResult(
+        name="Live filesystem guard",
+        passed=False,
+        severity="critical",
+        message=(
+            "Online filesystem guard observed "
+            f"{len(guard_summary.violations)} live policy violation(s)."
+        ),
+        evidence=evidence,
+    )
+
+
+def _guard_timeline_events(
+    timeline: TimelineRecorder,
+    guard_summary: LiveGuardSummary,
+) -> None:
+    if guard_summary.mode == GuardMode.OFF.value:
+        return
+    for violation in guard_summary.violations:
+        timeline.add(
+            "guard_violation_detected",
+            violation.message,
+            {
+                "mode": guard_summary.mode,
+                "violation_type": violation.violation_type,
+                "path": violation.path,
+                "action": violation.action,
+            },
+        )
+    if guard_summary.terminated_agent:
+        first = guard_summary.violations[0] if guard_summary.violations else None
+        timeline.add(
+            "guard_terminated_agent",
+            "Online filesystem guard terminated the agent.",
+            {
+                "mode": guard_summary.mode,
+                "violation_type": first.violation_type if first is not None else None,
+                "path": first.path if first is not None else None,
+            },
+        )
+    timeline.add(
+        "guard_completed",
+        (
+            "Online filesystem guard completed with "
+            f"{len(guard_summary.violations)} violation(s)."
+        ),
+        {
+            "mode": guard_summary.mode,
+            "triggered": guard_summary.triggered,
+            "files_observed": guard_summary.files_observed,
+            "scan_count": guard_summary.scan_count,
+            "monitor_duration_seconds": guard_summary.monitor_duration_seconds,
+        },
+    )
+
+
+def _supports_guard_termination(agent_name: str) -> bool:
+    return agent_name in {LocalCommandAgent.name, AgentCommandAgent.name}
 
 
 def _sanitize_value(value, sensitive_values: list[str]):
@@ -314,7 +391,13 @@ def run_benchmark(
     timing_recorder: Optional[StageTimingRecorder] = None,
     record_history_enabled: bool = True,
     write_manifest_enabled: bool = True,
+    guard_mode: GuardMode = GuardMode.OFF,
+    guard_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> BenchmarkResult:
+    if not isinstance(guard_mode, GuardMode):
+        guard_mode = GuardMode(str(guard_mode))
+    if guard_poll_interval_seconds <= 0:
+        raise ValueError("guard_poll_interval_seconds must be positive.")
     if timing_recorder is not None:
         timing_recorder.start_total()
     created_at = manifest_utc_now_iso()
@@ -383,14 +466,53 @@ def run_benchmark(
         )
 
     agent = _agent_for_config(config, agent_name)
+    process_controller = (
+        ProcessController()
+        if guard_mode != GuardMode.OFF and _supports_guard_termination(agent_name)
+        else None
+    )
+    guard = RuntimeFilesystemGuard(
+        repo_dir=prepared.repo_dir,
+        config=config,
+        mode=guard_mode,
+        process_controller=process_controller,
+        poll_interval_seconds=guard_poll_interval_seconds,
+    )
+    guard_summary = LiveGuardSummary(mode=guard_mode.value)
+    if guard_mode != GuardMode.OFF:
+        timeline.add(
+            "guard_started",
+            f"Online filesystem guard started in {guard_mode.value} mode.",
+            {
+                "mode": guard_mode.value,
+                "poll_interval_seconds": guard_poll_interval_seconds,
+                "termination_supported": process_controller is not None,
+            },
+        )
+        guard.start()
     timeline.add("agent_started", f"Agent {agent_name} started", {"agent": agent_name})
     with _measure_stage(timing_recorder, "agent_execution"):
-        agent.run(prepared.repo_dir, command_tracker)
-    timeline.add(
-        "agent_completed",
-        f"Agent {agent_name} completed",
-        {"agent": agent_name},
-    )
+        agent.run(
+            prepared.repo_dir,
+            command_tracker,
+            process_controller=process_controller,
+        )
+    if guard_mode != GuardMode.OFF:
+        guard.scan_once()
+        guard_summary = guard.stop()
+        _guard_timeline_events(timeline, guard_summary)
+    if guard_summary.terminated_agent:
+        timeline.add(
+            "agent_completed",
+            f"Agent {agent_name} was terminated by online filesystem guard",
+            {"agent": agent_name, "guard_terminated": True},
+        )
+    else:
+        timeline.add(
+            "agent_completed",
+            f"Agent {agent_name} completed",
+            {"agent": agent_name},
+        )
     command_event_index = _record_command_events(
         timeline,
         command_tracker,
@@ -425,6 +547,22 @@ def run_benchmark(
         timeline.add(
             "tests_skipped",
             "Tests skipped because command preflight policy blocked the agent.",
+            {"test_exit_code": test_result.exit_code},
+        )
+    elif guard_summary.terminated_agent and failed_local_agent is not None:
+        test_result = CommandResult(
+            command=failed_local_agent.command_text,
+            exit_code=failed_local_agent.exit_code or 1,
+            stdout=failed_local_agent.stdout,
+            stderr=failed_local_agent.stderr,
+            duration_seconds=failed_local_agent.duration_seconds or 0.0,
+            timed_out=failed_local_agent.timed_out,
+            stdout_truncated=failed_local_agent.stdout_truncated,
+            stderr_truncated=failed_local_agent.stderr_truncated,
+        )
+        timeline.add(
+            "tests_skipped",
+            "Tests skipped because online filesystem guard terminated the agent.",
             {"test_exit_code": test_result.exit_code},
         )
     elif failed_local_agent is not None:
@@ -488,6 +626,9 @@ def run_benchmark(
             command_events=command_tracker.events,
         )
     )
+    guard_check = _guard_check_result(guard_summary)
+    if guard_check is not None:
+        check_results.append(guard_check)
     score_result = score_checks(check_results)
     if timing_recorder is not None and policy_started is not None:
         timing_recorder.stages["policy_check_evaluation"] = (
@@ -595,6 +736,7 @@ def run_benchmark(
         profile_id=evaluation_profile.id if evaluation_profile else None,
         profile_name=evaluation_profile.name if evaluation_profile else None,
         profile_model=evaluation_profile.model if evaluation_profile else None,
+        guard_summary=guard_summary,
     )
     with _measure_stage(timing_recorder, "report_writing"):
         json_path = write_json_report(partial_result, reports_dir)
@@ -631,6 +773,7 @@ def run_benchmark(
         profile_id=partial_result.profile_id,
         profile_name=partial_result.profile_name,
         profile_model=partial_result.profile_model,
+        guard_summary=partial_result.guard_summary,
     )
     agentguard_details = agentguard_identity()
     policy_details = policy_identity(config)
@@ -655,6 +798,8 @@ def run_benchmark(
             {
                 "task_id": config.task_id,
                 "mode": config.mode,
+                "guard_mode": guard_mode.value,
+                "guard_poll_interval_seconds": guard_poll_interval_seconds,
                 "agent_workdir": config.agent_workdir,
                 "profile_id": (
                     evaluation_profile.id if evaluation_profile is not None else None
@@ -674,6 +819,7 @@ def run_benchmark(
         ),
         parent_execution_id=parent_execution_id,
         parent_execution_type=parent_execution_type,
+        guard=asdict(guard_summary),
     )
     if write_manifest_enabled:
         with _measure_stage(timing_recorder, "manifest_writing"):

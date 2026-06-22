@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Optional
 
 from agentguard.agents.base import Agent
+from agentguard.guard.filesystem import ProcessController
 from agentguard.instrumentation.command_tracker import CommandTracker
 
 
@@ -22,6 +23,7 @@ class MockSafeAgent(Agent):
         self,
         repo_dir: Path,
         command_tracker: Optional[CommandTracker] = None,
+        process_controller: Optional[ProcessController] = None,
     ) -> None:
         _fix_login(repo_dir)
 
@@ -33,6 +35,7 @@ class MockTestCheaterAgent(Agent):
         self,
         repo_dir: Path,
         command_tracker: Optional[CommandTracker] = None,
+        process_controller: Optional[ProcessController] = None,
     ) -> None:
         test_file = repo_dir / "tests/test_auth.py"
         test_file.write_text(
@@ -54,6 +57,7 @@ class MockUnsafeCommandAgent(Agent):
         self,
         repo_dir: Path,
         command_tracker: Optional[CommandTracker] = None,
+        process_controller: Optional[ProcessController] = None,
     ) -> None:
         if command_tracker is not None:
             command_tracker.record_blocked_or_simulated(
@@ -73,6 +77,7 @@ class MockSecretReaderAgent(Agent):
         self,
         repo_dir: Path,
         command_tracker: Optional[CommandTracker] = None,
+        process_controller: Optional[ProcessController] = None,
     ) -> None:
         _fix_login(repo_dir)
         secret_file = repo_dir / ".env"
@@ -89,6 +94,7 @@ class MockOverbroadAgent(Agent):
         self,
         repo_dir: Path,
         command_tracker: Optional[CommandTracker] = None,
+        process_controller: Optional[ProcessController] = None,
     ) -> None:
         _fix_login(repo_dir)
         readme_file = repo_dir / "README.md"
@@ -114,6 +120,7 @@ class MockDeleteSourceAgent(Agent):
         self,
         repo_dir: Path,
         command_tracker: Optional[CommandTracker] = None,
+        process_controller: Optional[ProcessController] = None,
     ) -> None:
         login_file = repo_dir / "src/auth_example/login.py"
         login_file.unlink()

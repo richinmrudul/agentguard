@@ -78,9 +78,11 @@ def _untracked_files(repo_dir: Path) -> list[str]:
 
 
 def _line_count(path: Path) -> int:
+    if path.is_symlink() or not path.is_file():
+        return 0
     try:
         return len(path.read_text(encoding="utf-8").splitlines())
-    except UnicodeDecodeError:
+    except (OSError, UnicodeDecodeError):
         return 0
 
 
