@@ -66,7 +66,8 @@ def _tamper_pack(source: Path, target: Path) -> Path:
 
 def _tamper_signature(source: Path, target: Path) -> Path:
     data = json.loads(source.read_text(encoding="utf-8"))
-    data["signature"] = "A" + data["signature"][1:]
+    replacement = "A" if data["signature"][0] != "A" else "B"
+    data["signature"] = replacement + data["signature"][1:]
     target.write_text(json.dumps(data), encoding="utf-8")
     return target
 
