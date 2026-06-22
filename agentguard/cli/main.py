@@ -117,6 +117,12 @@ from agentguard.reports.exports import (
     export_sarif,
 )
 from agentguard.reports.github_summary import write_github_step_summary
+from agentguard.reports.site import (
+    DEFAULT_HISTORY_DB_PATH as DEFAULT_SITE_HISTORY_DB_PATH,
+    DEFAULT_REPORTS_ROOT as DEFAULT_SITE_REPORTS_ROOT,
+    StaticSiteOptions,
+    generate_static_report_site,
+)
 from agentguard.traces.execution import (
     TraceExportOptions,
     export_execution_trace,
@@ -2274,6 +2280,73 @@ def reports_export_junit(
     )
     if result.unsupported_files:
         typer.echo(f"Unsupported files skipped: {result.unsupported_files}")
+
+
+@reports_app.command("site")
+def reports_site(
+    output: Path = typer.Option(..., "--output", help="Static site output path."),
+    history_db: Path = typer.Option(
+        DEFAULT_SITE_HISTORY_DB_PATH,
+        "--history-db",
+        help="SQLite history database path.",
+    ),
+    reports_root: Path = typer.Option(
+        DEFAULT_SITE_REPORTS_ROOT,
+        "--reports-root",
+        help="AgentGuard artifact root to scan.",
+    ),
+    include_traces: bool = typer.Option(
+        False,
+        "--include-traces",
+        help="Include bounded execution trace summaries.",
+    ),
+    include_diagnostics: bool = typer.Option(
+        False,
+        "--include-diagnostics",
+        help="Include diagnostic report summaries.",
+    ),
+    include_results_docs: bool = typer.Option(
+        False,
+        "--include-results-docs",
+        help="Include committed docs/results summary pages.",
+    ),
+    title: str = typer.Option(
+        "AgentGuard Report Site",
+        "--title",
+        help="Site title.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing output directory.",
+    ),
+) -> None:
+    """Generate a self-contained static HTML report site."""
+    try:
+        result = generate_static_report_site(
+            StaticSiteOptions(
+                output=output,
+                history_db=history_db,
+                reports_root=reports_root,
+                include_traces=include_traces,
+                include_diagnostics=include_diagnostics,
+                include_results_docs=include_results_docs,
+                title=title,
+                force=force,
+            )
+        )
+    except (FileExistsError, OSError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    typer.echo(f"Static report site: {result.output_path}")
+    typer.echo(
+        "Pages: "
+        f"{result.page_count}; reports: {result.reports}; "
+        f"matrices: {result.matrices}; diagnostics: {result.diagnostics}; "
+        f"traces: {result.traces}; results docs: {result.results_docs}; "
+        f"unavailable: {result.unavailable}"
+    )
 
 
 @history_app.command("list")
