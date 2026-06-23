@@ -192,7 +192,9 @@ class RuntimeFilesystemGuard:
             ):
                 terminated = True
                 first_violation = new_violations[0]
-                self.process_controller.request_termination(first_violation.message)
+                self.process_controller.request_termination(
+                    f"Online filesystem guard: {first_violation.message}"
+                )
             duration = self._elapsed_seconds()
             self._summary = LiveGuardSummary(
                 mode=self.mode.value,

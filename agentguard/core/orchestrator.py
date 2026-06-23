@@ -29,6 +29,10 @@ from agentguard.evaluation.profile import (
     resolve_profile_argv,
 )
 from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
+from agentguard.guard.command import (
+    CommandGuardSummary,
+    RuntimeCommandGuard,
+)
 from agentguard.guard.filesystem import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     GuardMode,
@@ -191,6 +195,33 @@ def _guard_check_result(guard_summary: LiveGuardSummary) -> Optional[CheckResult
     )
 
 
+def _command_guard_check_result(
+    command_guard_summary: CommandGuardSummary,
+) -> Optional[CheckResult]:
+    if (
+        command_guard_summary.mode != GuardMode.ENFORCE.value
+        or not command_guard_summary.triggered
+    ):
+        return None
+    evidence = [
+        (
+            f"{violation.violation_type}: {violation.command_text} "
+            f"({', '.join(violation.matched_patterns)}; {violation.action})"
+        )
+        for violation in command_guard_summary.violations
+    ]
+    return CheckResult(
+        name="Live command guard",
+        passed=False,
+        severity="critical",
+        message=(
+            "Online command guard observed "
+            f"{len(command_guard_summary.violations)} live policy violation(s)."
+        ),
+        evidence=evidence,
+    )
+
+
 def _guard_timeline_events(
     timeline: TimelineRecorder,
     guard_summary: LiveGuardSummary,
@@ -231,6 +262,59 @@ def _guard_timeline_events(
             "files_observed": guard_summary.files_observed,
             "scan_count": guard_summary.scan_count,
             "monitor_duration_seconds": guard_summary.monitor_duration_seconds,
+        },
+    )
+
+
+def _command_guard_timeline_events(
+    timeline: TimelineRecorder,
+    command_guard_summary: CommandGuardSummary,
+) -> None:
+    if command_guard_summary.mode == GuardMode.OFF.value:
+        return
+    for violation in command_guard_summary.violations:
+        timeline.add(
+            "command_guard_violation_detected",
+            violation.message,
+            {
+                "mode": command_guard_summary.mode,
+                "violation_type": violation.violation_type,
+                "command_text": violation.command_text,
+                "matched_patterns": violation.matched_patterns,
+                "action": violation.action,
+            },
+        )
+    if command_guard_summary.terminated_agent:
+        first = (
+            command_guard_summary.violations[0]
+            if command_guard_summary.violations
+            else None
+        )
+        timeline.add(
+            "command_guard_terminated_agent",
+            "Online command guard terminated the agent.",
+            {
+                "mode": command_guard_summary.mode,
+                "violation_type": (
+                    first.violation_type if first is not None else None
+                ),
+                "command_text": first.command_text if first is not None else None,
+            },
+        )
+    timeline.add(
+        "command_guard_completed",
+        (
+            "Online command guard completed with "
+            f"{len(command_guard_summary.violations)} violation(s)."
+        ),
+        {
+            "mode": command_guard_summary.mode,
+            "triggered": command_guard_summary.triggered,
+            "events_observed": command_guard_summary.events_observed,
+            "scan_count": command_guard_summary.scan_count,
+            "monitor_duration_seconds": (
+                command_guard_summary.monitor_duration_seconds
+            ),
         },
     )
 
@@ -478,7 +562,15 @@ def run_benchmark(
         process_controller=process_controller,
         poll_interval_seconds=guard_poll_interval_seconds,
     )
+    command_guard = RuntimeCommandGuard(
+        repo_dir=prepared.repo_dir,
+        config=config,
+        mode=guard_mode,
+        process_controller=process_controller,
+        poll_interval_seconds=guard_poll_interval_seconds,
+    )
     guard_summary = LiveGuardSummary(mode=guard_mode.value)
+    command_guard_summary = CommandGuardSummary(mode=guard_mode.value)
     if guard_mode != GuardMode.OFF:
         timeline.add(
             "guard_started",
@@ -490,6 +582,17 @@ def run_benchmark(
             },
         )
         guard.start()
+        timeline.add(
+            "command_guard_started",
+            f"Online command guard started in {guard_mode.value} mode.",
+            {
+                "mode": guard_mode.value,
+                "poll_interval_seconds": guard_poll_interval_seconds,
+                "termination_supported": process_controller is not None,
+                "event_file": DEFAULT_AGENT_EVENT_FILE,
+            },
+        )
+        command_guard.start()
     timeline.add("agent_started", f"Agent {agent_name} started", {"agent": agent_name})
     with _measure_stage(timing_recorder, "agent_execution"):
         agent.run(
@@ -500,12 +603,25 @@ def run_benchmark(
     if guard_mode != GuardMode.OFF:
         guard.scan_once()
         guard_summary = guard.stop()
+        command_guard.scan_once()
+        command_guard_summary = command_guard.stop()
         _guard_timeline_events(timeline, guard_summary)
-    if guard_summary.terminated_agent:
+        _command_guard_timeline_events(timeline, command_guard_summary)
+    guard_terminated_agent = (
+        guard_summary.terminated_agent
+        or command_guard_summary.terminated_agent
+    )
+    if guard_terminated_agent:
         timeline.add(
             "agent_completed",
-            f"Agent {agent_name} was terminated by online filesystem guard",
-            {"agent": agent_name, "guard_terminated": True},
+            f"Agent {agent_name} was terminated by online guard",
+            {
+                "agent": agent_name,
+                "filesystem_guard_terminated": guard_summary.terminated_agent,
+                "command_guard_terminated": (
+                    command_guard_summary.terminated_agent
+                ),
+            },
         )
     else:
         timeline.add(
@@ -549,7 +665,7 @@ def run_benchmark(
             "Tests skipped because command preflight policy blocked the agent.",
             {"test_exit_code": test_result.exit_code},
         )
-    elif guard_summary.terminated_agent and failed_local_agent is not None:
+    elif guard_terminated_agent and failed_local_agent is not None:
         test_result = CommandResult(
             command=failed_local_agent.command_text,
             exit_code=failed_local_agent.exit_code or 1,
@@ -562,7 +678,7 @@ def run_benchmark(
         )
         timeline.add(
             "tests_skipped",
-            "Tests skipped because online filesystem guard terminated the agent.",
+            "Tests skipped because online guard terminated the agent.",
             {"test_exit_code": test_result.exit_code},
         )
     elif failed_local_agent is not None:
@@ -629,6 +745,9 @@ def run_benchmark(
     guard_check = _guard_check_result(guard_summary)
     if guard_check is not None:
         check_results.append(guard_check)
+    command_guard_check = _command_guard_check_result(command_guard_summary)
+    if command_guard_check is not None:
+        check_results.append(command_guard_check)
     score_result = score_checks(check_results)
     if timing_recorder is not None and policy_started is not None:
         timing_recorder.stages["policy_check_evaluation"] = (
@@ -737,6 +856,7 @@ def run_benchmark(
         profile_name=evaluation_profile.name if evaluation_profile else None,
         profile_model=evaluation_profile.model if evaluation_profile else None,
         guard_summary=guard_summary,
+        command_guard_summary=command_guard_summary,
     )
     with _measure_stage(timing_recorder, "report_writing"):
         json_path = write_json_report(partial_result, reports_dir)
@@ -774,6 +894,7 @@ def run_benchmark(
         profile_name=partial_result.profile_name,
         profile_model=partial_result.profile_model,
         guard_summary=partial_result.guard_summary,
+        command_guard_summary=partial_result.command_guard_summary,
     )
     agentguard_details = agentguard_identity()
     policy_details = policy_identity(config)
@@ -820,6 +941,7 @@ def run_benchmark(
         parent_execution_id=parent_execution_id,
         parent_execution_type=parent_execution_type,
         guard=asdict(guard_summary),
+        command_guard=asdict(command_guard_summary),
     )
     if write_manifest_enabled:
         with _measure_stage(timing_recorder, "manifest_writing"):
