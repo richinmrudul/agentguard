@@ -789,6 +789,47 @@ def build_execution_trace(
                 },
             )
         )
+    if result.command_guard_summary.mode != "off":
+        event_values.append(
+            (
+                "command_guard_summary",
+                {
+                    "mode": result.command_guard_summary.mode,
+                    "triggered": result.command_guard_summary.triggered,
+                    "terminated_agent": (
+                        result.command_guard_summary.terminated_agent
+                    ),
+                    "kill_required": result.command_guard_summary.kill_required,
+                    "events_observed": (
+                        result.command_guard_summary.events_observed
+                    ),
+                    "scan_count": result.command_guard_summary.scan_count,
+                    "monitor_duration_seconds": (
+                        result.command_guard_summary.monitor_duration_seconds
+                    ),
+                    "event_file": result.command_guard_summary.event_file,
+                    "violations": [
+                        {
+                            "violation_type": violation.violation_type,
+                            "command_text": sanitize_text(
+                                violation.command_text,
+                                sensitive_values,
+                            ),
+                            "matched_patterns": [
+                                sanitize_text(pattern, sensitive_values)
+                                for pattern in violation.matched_patterns
+                            ],
+                            "message": sanitize_text(
+                                violation.message,
+                                sensitive_values,
+                            ),
+                            "action": violation.action,
+                        }
+                        for violation in result.command_guard_summary.violations
+                    ],
+                },
+            )
+        )
     event_values.extend(
         ("file_change", payload)
         for payload in _file_payloads(
@@ -1666,6 +1707,48 @@ def _guard_summary_from_dict(data: object):
     )
 
 
+def _command_guard_summary_from_dict(data: object):
+    from agentguard.guard.command import CommandGuardSummary, CommandGuardViolation
+
+    if not isinstance(data, dict):
+        return CommandGuardSummary()
+    first_violation = data.get("first_violation_time")
+    try:
+        first_violation_time = (
+            float(first_violation) if first_violation is not None else None
+        )
+    except (TypeError, ValueError):
+        first_violation_time = None
+    violations = [
+        CommandGuardViolation(
+            violation_type=str(item.get("violation_type") or ""),
+            command_text=str(item.get("command_text") or ""),
+            matched_patterns=[
+                str(pattern)
+                for pattern in item.get("matched_patterns", [])
+            ],
+            message=str(item.get("message") or ""),
+            action=str(item.get("action") or "recorded"),
+            observed_at=float(item.get("observed_at") or 0.0),
+        )
+        for item in data.get("violations", [])
+        if isinstance(item, dict)
+    ]
+    return CommandGuardSummary(
+        mode=str(data.get("mode") or "off"),
+        triggered=bool(data.get("triggered")),
+        first_violation_time=first_violation_time,
+        violations=violations,
+        events_observed=int(data.get("events_observed") or 0),
+        scan_count=int(data.get("scan_count") or 0),
+        monitor_duration_seconds=float(data.get("monitor_duration_seconds") or 0.0),
+        terminated_agent=bool(data.get("terminated_agent")),
+        kill_required=bool(data.get("kill_required")),
+        graceful_timeout_seconds=float(data.get("graceful_timeout_seconds") or 0.0),
+        event_file=str(data.get("event_file") or ".agentguard_agent_events.jsonl"),
+    )
+
+
 def _result_from_report(
     report_path: Path,
     manifest_path: Optional[Path],
@@ -1742,6 +1825,9 @@ def _result_from_report(
         profile_name=report.get("profile_name"),
         profile_model=report.get("profile_model"),
         guard_summary=_guard_summary_from_dict(report.get("guard_summary")),
+        command_guard_summary=_command_guard_summary_from_dict(
+            report.get("command_guard_summary")
+        ),
     )
     return result, report
 

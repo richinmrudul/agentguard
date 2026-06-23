@@ -409,15 +409,17 @@ agentguard reports list
 agentguard reports show --latest --type suite
 ```
 
-Run with online filesystem guard enforcement:
+Run with online guard enforcement:
 
 ```bash
 agentguard run examples/configs/fix_auth_bug_local_command_safe.yaml --agent local-command --guard-mode enforce
 ```
 
-`--guard-mode audit` records live filesystem policy violations without stopping
-the agent. `--guard-mode enforce` terminates supported local agent processes
-when a live violation is detected. See [docs/online-guard.md](docs/online-guard.md).
+`--guard-mode audit` records live filesystem and instrumented command-policy
+violations without stopping the agent. `--guard-mode enforce` terminates
+supported local agent processes when a live violation is detected. Command guard
+enforcement is based on AgentGuard command/event logs, not kernel-level syscall
+interception. See [docs/online-guard.md](docs/online-guard.md).
 
 Export reports for CI/security tools:
 

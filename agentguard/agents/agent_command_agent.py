@@ -177,9 +177,17 @@ class AgentCommandAgent(Agent):
                 )
                 exit_code = process.returncode
                 if process_controller.termination_requested:
+                    reason = (
+                        process_controller.termination_reason
+                        or "policy violation"
+                    )
+                    label = (
+                        "online filesystem guard"
+                        if "filesystem" in reason
+                        else "online guard"
+                    )
                     stderr = (
-                        f"{stderr}\nAgent terminated by online filesystem guard: "
-                        f"{process_controller.termination_reason or 'policy violation'}"
+                        f"{stderr}\nAgent terminated by {label}: {reason}"
                     ).strip()
         except FileNotFoundError as error:
             exit_code = 127

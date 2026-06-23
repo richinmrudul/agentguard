@@ -27,6 +27,17 @@ The benchmark pipeline is:
 Config -> prepared repo -> agent -> tests -> diff/checks -> score -> reports -> manifest -> trace -> history
 ```
 
+Online guard mode inserts runtime monitors around the agent phase:
+
+```text
+prepared repo -> filesystem poller + command event poller -> agent -> post-hoc checks
+```
+
+The filesystem guard observes workspace changes using portable polling. The
+command guard observes AgentGuard command-attempt events appended by
+instrumented agents or fixtures. Both reuse normal policy evidence and report
+paths; neither is an OS-level sandbox or syscall monitor.
+
 Verified traces support a separate offline path:
 
 ```text

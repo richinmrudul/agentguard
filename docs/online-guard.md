@@ -1,7 +1,7 @@
-# Online Filesystem Guard
+# Online Guard
 
-`agentguard run` can monitor the benchmark workspace while a local agent is
-running:
+`agentguard run` can monitor the benchmark workspace and cooperative command
+events while a local agent is running:
 
 ```bash
 agentguard run examples/configs/fix_auth_bug_local_command_safe.yaml \
@@ -9,13 +9,14 @@ agentguard run examples/configs/fix_auth_bug_local_command_safe.yaml \
   --guard-mode enforce
 ```
 
-The guard is runtime enforcement. It observes filesystem changes during the
-agent phase, records live violations, and in enforce mode terminates supported
-agent processes before normal post-hoc scoring.
+The guard is runtime enforcement. It observes filesystem changes and
+instrumented command-attempt events during the agent phase, records live
+violations, and in enforce mode terminates supported agent processes before
+normal post-hoc scoring.
 
 ## Modes
 
-- `off`: default existing behavior. No live filesystem monitor runs.
+- `off`: default existing behavior. No live monitor runs.
 - `audit`: monitor and record live violations, but do not terminate the agent.
   Normal post-hoc checks still decide the result.
 - `enforce`: monitor and terminate supported agent processes after the first
@@ -28,9 +29,10 @@ The polling interval defaults to 0.2 seconds and can be adjusted:
 agentguard run CONFIG --agent local-command --guard-mode audit --guard-poll-interval 0.1
 ```
 
-## Live Policies
+## Live Filesystem Policies
 
-The guard compares each scan against the pre-agent snapshot and detects:
+The filesystem guard compares each scan against the pre-agent snapshot and
+detects:
 
 - forbidden path creation or modification
 - test file modification
@@ -42,6 +44,27 @@ The guard compares each scan against the pre-agent snapshot and detects:
 
 Secret content scanning remains a post-hoc policy check. The online guard only
 uses path, metadata, deletion, and symlink evidence.
+
+## Live Command Policies
+
+The command guard watches `.agentguard_agent_events.jsonl` while the agent is
+running. Agents and benchmark fixtures can append JSONL command-attempt events
+such as:
+
+```json
+{"type":"command_attempt","command_text":"rm -rf important_data"}
+```
+
+AgentGuard applies the same unsafe-command substring policy used by post-hoc
+checks and command preflight matching. In `audit` mode, matching command events
+are recorded while the agent continues. In `enforce` mode, the first matching
+event terminates supported local agent processes.
+
+This is event/log based enforcement. It is not syscall interception, shell
+auditing, or a kernel sandbox. Commands that an agent executes without
+instrumentation and without writing an AgentGuard command event cannot be
+blocked by the online command guard, though post-hoc filesystem, command-log,
+Docker, CI, and review gates may still catch other evidence.
 
 ## Filesystem Polling Model
 
@@ -90,21 +113,26 @@ Timeline events include:
 - `guard_violation_detected`
 - `guard_terminated_agent`
 - `guard_completed`
+- `command_guard_started`
+- `command_guard_violation_detected`
+- `command_guard_terminated_agent`
+- `command_guard_completed`
 
 ## Reports And Evidence
 
-JSON reports include `guard_summary`. Markdown reports include an
-`Online Filesystem Guard` section. Manifests include the guard summary, and
-execution traces include a compact `guard_summary` event.
+JSON reports include `guard_summary` and `command_guard_summary`. Markdown
+reports include `Online Filesystem Guard` and `Online Command Guard` sections.
+Manifests include both guard summaries, and execution traces include compact
+`guard_summary` and `command_guard_summary` events.
 
 ## Difference From Post-Hoc Checks
 
 Post-hoc checks evaluate the final workspace after the agent exits. They are
 still the source of truth for scoring in `off` and `audit` modes.
 
-The online guard observes changes during execution. In `enforce` mode it can
-stop supported agents before they continue modifying the workspace after a
-violation.
+The online guard observes changes and cooperative command events during
+execution. In `enforce` mode it can stop supported agents before they continue
+after a violation.
 
 ## Limitations
 
@@ -115,5 +143,8 @@ violation.
 - Live diff-size enforcement currently covers changed file count, not live
   line-added or line-deleted thresholds.
 - Secret content scanning remains post-hoc.
+- Command guard enforcement only sees command events appended to the
+  AgentGuard event log. It does not observe uninstrumented subprocesses at the
+  operating-system level.
 - Docker custom-command termination is deferred.
 - Ignore handling is limited to built-in AgentGuard/cache paths in this phase.

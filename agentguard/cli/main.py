@@ -2631,6 +2631,13 @@ def run(
             f"{result.guard_summary.triggered}; violations: "
             f"{len(result.guard_summary.violations)}"
         )
+    if result.command_guard_summary.mode != GuardMode.OFF.value:
+        typer.echo(
+            "Command guard: "
+            f"{result.command_guard_summary.mode}; triggered: "
+            f"{result.command_guard_summary.triggered}; violations: "
+            f"{len(result.command_guard_summary.violations)}"
+        )
     typer.echo("Checks summary:")
     for check in result.check_results:
         status = "PASS" if check.passed else "FAIL"

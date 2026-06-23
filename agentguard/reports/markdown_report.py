@@ -98,6 +98,36 @@ def _guard_lines(result: BenchmarkResult) -> list[str]:
     return lines
 
 
+def _command_guard_lines(result: BenchmarkResult) -> list[str]:
+    summary = result.command_guard_summary
+    if summary.mode == "off":
+        return []
+    lines = [
+        "",
+        "## Online Command Guard",
+        f"- Mode: {summary.mode}",
+        f"- Triggered: {summary.triggered}",
+        f"- Terminated agent: {summary.terminated_agent}",
+        f"- Kill required: {summary.kill_required}",
+        f"- Events observed: {summary.events_observed}",
+        f"- Scans: {summary.scan_count}",
+        f"- Duration: {summary.monitor_duration_seconds:.3f}s",
+        f"- Event file: {summary.event_file}",
+    ]
+    if summary.first_violation_time is not None:
+        lines.append(f"- First violation time: {summary.first_violation_time:.6f}")
+    if summary.violations:
+        lines.append("- Violations:")
+        lines.extend(
+            "  - "
+            f"{violation.violation_type}: {violation.command_text} "
+            f"({', '.join(violation.matched_patterns)}; {violation.action}) "
+            f"- {violation.message}"
+            for violation in summary.violations
+        )
+    return lines
+
+
 def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / "report.md"
@@ -123,6 +153,7 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     lines.extend(_benchmark_lines(result))
     lines.extend(_sandbox_lines(result))
     lines.extend(_guard_lines(result))
+    lines.extend(_command_guard_lines(result))
     if result.profile_id is not None:
         lines.extend(
             [

@@ -1,3 +1,8 @@
+from agentguard.guard.command import (
+    CommandGuardSummary,
+    CommandGuardViolation,
+    RuntimeCommandGuard,
+)
 from agentguard.guard.filesystem import (
     GuardMode,
     LiveGuardSummary,
@@ -7,9 +12,12 @@ from agentguard.guard.filesystem import (
 )
 
 __all__ = [
+    "CommandGuardSummary",
+    "CommandGuardViolation",
     "GuardMode",
     "LiveGuardSummary",
     "LiveGuardViolation",
     "ProcessController",
+    "RuntimeCommandGuard",
     "RuntimeFilesystemGuard",
 ]

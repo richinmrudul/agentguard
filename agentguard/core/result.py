@@ -4,6 +4,7 @@ from typing import Optional
 
 from agentguard.config.schema import BenchmarkMetadata
 from agentguard.core.timeline import TimelineEvent
+from agentguard.guard.command import CommandGuardSummary
 from agentguard.guard.filesystem import LiveGuardSummary
 from agentguard.instrumentation.command_tracker import CommandEvent
 
@@ -96,6 +97,9 @@ class BenchmarkResult:
     profile_name: Optional[str] = None
     profile_model: Optional[str] = None
     guard_summary: LiveGuardSummary = field(default_factory=LiveGuardSummary)
+    command_guard_summary: CommandGuardSummary = field(
+        default_factory=CommandGuardSummary
+    )
 
 
 @dataclass(frozen=True)
