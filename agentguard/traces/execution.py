@@ -34,6 +34,9 @@ SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 EVENT_TYPES = {
     "execution_started",
     "agent_command",
+    "guard_summary",
+    "command_guard_summary",
+    "guard_metrics",
     "file_change",
     "test_result",
     "check_result",
@@ -830,6 +833,8 @@ def build_execution_trace(
                 },
             )
         )
+    if int(result.guard_metrics.get("guard_violations_total") or 0) > 0:
+        event_values.append(("guard_metrics", dict(result.guard_metrics)))
     event_values.extend(
         ("file_change", payload)
         for payload in _file_payloads(
@@ -915,6 +920,14 @@ def build_execution_trace(
             _source_artifact(
                 "command_log",
                 result.report_paths.command_log,
+            ),
+            _source_artifact(
+                "guard_incident",
+                result.report_paths.guard_incident_json,
+            ),
+            _source_artifact(
+                "guard_incident_markdown",
+                result.report_paths.guard_incident_markdown,
             ),
         ]
         if source is not None
@@ -1276,6 +1289,35 @@ def _validate_payload(event: TraceEvent) -> None:
             "agent",
             "truncation",
         },
+        "guard_summary": {
+            "mode",
+            "triggered",
+            "terminated_agent",
+            "kill_required",
+            "files_observed",
+            "scan_count",
+            "monitor_duration_seconds",
+            "violations",
+        },
+        "command_guard_summary": {
+            "mode",
+            "triggered",
+            "terminated_agent",
+            "kill_required",
+            "events_observed",
+            "scan_count",
+            "monitor_duration_seconds",
+            "event_file",
+            "violations",
+        },
+        "guard_metrics": {
+            "guard_violations_total",
+            "guard_blocked",
+            "time_to_first_violation_ms",
+            "time_to_block_ms",
+            "filesystem_guard_violations",
+            "command_guard_violations",
+        },
         "test_result": {
             "command",
             "exit_code",
@@ -1455,10 +1497,13 @@ def _validate_structure(trace: ExecutionTrace) -> None:
     order = {
         "execution_started": 0,
         "agent_command": 1,
-        "file_change": 2,
-        "test_result": 3,
-        "check_result": 4,
-        "execution_completed": 5,
+        "guard_summary": 2,
+        "command_guard_summary": 2,
+        "guard_metrics": 2,
+        "file_change": 3,
+        "test_result": 4,
+        "check_result": 5,
+        "execution_completed": 6,
     }
     if [order[event_type] for event_type in types] != sorted(
         order[event_type] for event_type in types
@@ -1749,6 +1794,13 @@ def _command_guard_summary_from_dict(data: object):
     )
 
 
+def _optional_report_path(data: object, key: str) -> Optional[Path]:
+    if not isinstance(data, dict):
+        return None
+    value = data.get(key)
+    return Path(str(value)) if value else None
+
+
 def _result_from_report(
     report_path: Path,
     manifest_path: Optional[Path],
@@ -1813,6 +1865,14 @@ def _result_from_report(
             command_log=command_log_path if command_log_path.is_file() else None,
             manifest=manifest_path,
             trace=None,
+            guard_incident_json=_optional_report_path(
+                report.get("report_paths"),
+                "guard_incident_json",
+            ),
+            guard_incident_markdown=_optional_report_path(
+                report.get("report_paths"),
+                "guard_incident_markdown",
+            ),
         ),
         sandbox=SandboxMetadata(**sandbox_data) if sandbox_data else None,
         benchmark=BenchmarkMetadata(**benchmark_data),
@@ -1827,6 +1887,11 @@ def _result_from_report(
         guard_summary=_guard_summary_from_dict(report.get("guard_summary")),
         command_guard_summary=_command_guard_summary_from_dict(
             report.get("command_guard_summary")
+        ),
+        guard_metrics=(
+            report.get("guard_metrics")
+            if isinstance(report.get("guard_metrics"), dict)
+            else {}
         ),
     )
     return result, report

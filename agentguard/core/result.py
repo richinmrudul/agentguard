@@ -57,6 +57,8 @@ class ReportPaths:
     command_log: Optional[Path] = None
     manifest: Optional[Path] = None
     trace: Optional[Path] = None
+    guard_incident_json: Optional[Path] = None
+    guard_incident_markdown: Optional[Path] = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +102,7 @@ class BenchmarkResult:
     command_guard_summary: CommandGuardSummary = field(
         default_factory=CommandGuardSummary
     )
+    guard_metrics: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

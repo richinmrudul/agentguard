@@ -145,6 +145,8 @@ class ExecutionManifest:
     matrix: Optional[dict[str, object]] = None
     guard: Optional[dict[str, object]] = None
     command_guard: Optional[dict[str, object]] = None
+    guard_metrics: Optional[dict[str, object]] = None
+    guard_incident: Optional[dict[str, object]] = None
     schema: str = MANIFEST_SCHEMA
     schema_version: int = MANIFEST_SCHEMA_VERSION
 

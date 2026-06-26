@@ -31,6 +31,10 @@ HISTORY_CSV_COLUMNS = [
     "benchmark_version",
     "agent",
     "failed_checks",
+    "guard_blocked",
+    "guard_violations_total",
+    "guard_incident_path",
+    "time_to_first_violation_ms",
 ]
 _SCHEMA_LOCK = threading.Lock()
 _SQLITE_TIMEOUT_SECONDS = 30
@@ -55,6 +59,10 @@ class HistoryRecord:
     benchmark_version: Optional[int] = None
     agent: Optional[str] = None
     failed_checks: list[str] = field(default_factory=list)
+    guard_blocked: bool = False
+    guard_violations_total: int = 0
+    guard_incident_path: Optional[Path] = None
+    time_to_first_violation_ms: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +125,14 @@ def init_history_db(db_path: Path) -> None:
             _ensure_column(connection, "benchmark_version", "INTEGER")
             _ensure_column(connection, "manifest_path", "TEXT")
             _ensure_column(connection, "trace_path", "TEXT")
+            _ensure_column(connection, "guard_blocked", "INTEGER DEFAULT 0")
+            _ensure_column(
+                connection,
+                "guard_violations_total",
+                "INTEGER DEFAULT 0",
+            )
+            _ensure_column(connection, "guard_incident_path", "TEXT")
+            _ensure_column(connection, "time_to_first_violation_ms", "INTEGER")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_run_type ON runs(run_type)"
             )
@@ -155,9 +171,13 @@ def record_history(
               benchmark_id,
               benchmark_version,
               agent,
-              failed_checks_json
+              failed_checks_json,
+              guard_blocked,
+              guard_violations_total,
+              guard_incident_path,
+              time_to_first_violation_ms
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               run_type = excluded.run_type,
               name = excluded.name,
@@ -174,7 +194,11 @@ def record_history(
               benchmark_id = excluded.benchmark_id,
               benchmark_version = excluded.benchmark_version,
               agent = excluded.agent,
-              failed_checks_json = excluded.failed_checks_json
+              failed_checks_json = excluded.failed_checks_json,
+              guard_blocked = excluded.guard_blocked,
+              guard_violations_total = excluded.guard_violations_total,
+              guard_incident_path = excluded.guard_incident_path,
+              time_to_first_violation_ms = excluded.time_to_first_violation_ms
             """,
             (
                 record.id,
@@ -194,6 +218,10 @@ def record_history(
                 record.benchmark_version,
                 record.agent,
                 json.dumps(record.failed_checks),
+                1 if record.guard_blocked else 0,
+                record.guard_violations_total,
+                _optional_path(record.guard_incident_path),
+                record.time_to_first_violation_ms,
             ),
         )
 
@@ -213,6 +241,7 @@ def list_history(
     validate_result(result)
     if not db_path.exists():
         return []
+    init_history_db(db_path)
 
     where, params = _history_where_clause(
         run_type=run_type,
@@ -241,7 +270,11 @@ def list_history(
           benchmark_id,
           benchmark_version,
           agent,
-          failed_checks_json
+          failed_checks_json,
+          guard_blocked,
+          guard_violations_total,
+          guard_incident_path,
+          time_to_first_violation_ms
         FROM runs
         {where}
         ORDER BY created_at DESC, id DESC
@@ -267,6 +300,7 @@ def history_stats(
     validate_result(result)
     if not db_path.exists():
         return HistoryStats()
+    init_history_db(db_path)
 
     where, params = _history_where_clause(
         run_type=run_type,
@@ -360,6 +394,10 @@ def history_records_to_dicts(records: list[HistoryRecord]) -> list[dict[str, obj
             "benchmark_version": record.benchmark_version,
             "agent": record.agent,
             "failed_checks": record.failed_checks,
+            "guard_blocked": record.guard_blocked,
+            "guard_violations_total": record.guard_violations_total,
+            "guard_incident_path": _optional_path(record.guard_incident_path),
+            "time_to_first_violation_ms": record.time_to_first_violation_ms,
         }
         for record in records
     ]
@@ -473,4 +511,8 @@ def _record_from_row(row: tuple) -> HistoryRecord:
         benchmark_version=_optional_int_from_value(row[14]),
         agent=row[15],
         failed_checks=json.loads(row[16]),
+        guard_blocked=bool(row[17]),
+        guard_violations_total=int(row[18] or 0),
+        guard_incident_path=_optional_path_from_value(row[19]),
+        time_to_first_violation_ms=_optional_int_from_value(row[20]),
     )

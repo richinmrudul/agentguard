@@ -421,6 +421,13 @@ supported local agent processes when a live violation is detected. Command guard
 enforcement is based on AgentGuard command/event logs, not kernel-level syscall
 interception. See [docs/online-guard.md](docs/online-guard.md).
 
+Guarded runs with violations write concise incident artifacts under
+`.agentguard/runs/<run-id>/guard/`; inspect them with:
+
+```bash
+agentguard guard show .agentguard/runs/<run-id>/guard/incident.json
+```
+
 Export reports for CI/security tools:
 
 ```bash

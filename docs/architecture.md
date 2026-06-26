@@ -36,7 +36,10 @@ prepared repo -> filesystem poller + command event poller -> agent -> post-hoc c
 The filesystem guard observes workspace changes using portable polling. The
 command guard observes AgentGuard command-attempt events appended by
 instrumented agents or fixtures. Both reuse normal policy evidence and report
-paths; neither is an OS-level sandbox or syscall monitor.
+paths; neither is an OS-level sandbox or syscall monitor. Runs with guard
+violations also write a concise incident bundle under
+`.agentguard/runs/<run-id>/guard/` with sanitized evidence, artifact links, and
+time-to-detection metrics.
 
 Verified traces support a separate offline path:
 
