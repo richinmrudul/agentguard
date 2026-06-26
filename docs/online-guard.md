@@ -125,6 +125,27 @@ reports include `Online Filesystem Guard` and `Online Command Guard` sections.
 Manifests include both guard summaries, and execution traces include compact
 `guard_summary` and `command_guard_summary` events.
 
+When a guarded run records live violations, AgentGuard also writes first-class
+incident artifacts:
+
+```text
+.agentguard/runs/<run-id>/guard/incident.json
+.agentguard/runs/<run-id>/guard/incident.md
+```
+
+The incident includes all audit-mode violations, or the blocking violation plus
+any prior observed violations in enforce mode. It records aggregate metrics
+such as total guard violations, whether the run was blocked, filesystem versus
+command violation counts, time to first violation, and time to block.
+
+You can print a compact incident summary with:
+
+```bash
+agentguard guard show .agentguard/runs/<run-id>/guard/incident.json
+```
+
+`agentguard guard list --limit N` lists recent incidents recorded in history.
+
 ## Difference From Post-Hoc Checks
 
 Post-hoc checks evaluate the final workspace after the agent exits. They are
@@ -146,5 +167,9 @@ after a violation.
 - Command guard enforcement only sees command events appended to the
   AgentGuard event log. It does not observe uninstrumented subprocesses at the
   operating-system level.
+- Incident evidence is concise and sanitized; it is not a replacement for the
+  full JSON report, manifest, trace, command log, or workspace review.
+- Guard incident metrics are written for individual runs and history entries;
+  matrix/evaluation aggregate incident rollups are deferred.
 - Docker custom-command termination is deferred.
 - Ignore handling is limited to built-in AgentGuard/cache paths in this phase.

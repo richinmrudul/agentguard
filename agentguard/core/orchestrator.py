@@ -40,6 +40,11 @@ from agentguard.guard.filesystem import (
     ProcessController,
     RuntimeFilesystemGuard,
 )
+from agentguard.guard.incident import (
+    build_guard_incident,
+    guard_metrics,
+    write_guard_incident,
+)
 from agentguard.instrumentation.agent_event_reader import (
     DEFAULT_AGENT_EVENT_FILE,
     read_agent_events,
@@ -446,6 +451,16 @@ def _record_run_history(result: BenchmarkResult) -> None:
                 failed_checks=[
                     check.name for check in result.check_results if not check.passed
                 ],
+                guard_blocked=bool(
+                    result.guard_metrics.get("guard_blocked", False)
+                ),
+                guard_violations_total=int(
+                    result.guard_metrics.get("guard_violations_total", 0)
+                ),
+                guard_incident_path=result.report_paths.guard_incident_json,
+                time_to_first_violation_ms=(
+                    result.guard_metrics.get("time_to_first_violation_ms")
+                ),
             )
         )
     except Exception as error:
@@ -785,6 +800,17 @@ def run_benchmark(
         command_log_path = command_tracker.write_json(prepared.run_dir)
 
     reports_dir = prepared.run_dir / "reports"
+    metrics = guard_metrics(guard_summary, command_guard_summary)
+    incident_json_path = (
+        prepared.run_dir / "guard" / "incident.json"
+        if metrics.guard_violations_total
+        else None
+    )
+    incident_markdown_path = (
+        prepared.run_dir / "guard" / "incident.md"
+        if metrics.guard_violations_total
+        else None
+    )
     report_paths = ReportPaths(
         json=reports_dir / "report.json",
         markdown=reports_dir / "report.md",
@@ -795,6 +821,8 @@ def run_benchmark(
             else None
         ),
         trace=prepared.run_dir / "trace.jsonl",
+        guard_incident_json=incident_json_path,
+        guard_incident_markdown=incident_markdown_path,
     )
     timeline.add(
         "reports_written",
@@ -857,10 +885,47 @@ def run_benchmark(
         profile_model=evaluation_profile.model if evaluation_profile else None,
         guard_summary=guard_summary,
         command_guard_summary=command_guard_summary,
+        guard_metrics=asdict(metrics),
     )
     with _measure_stage(timing_recorder, "report_writing"):
         json_path = write_json_report(partial_result, reports_dir)
         markdown_path = write_markdown_report(partial_result, reports_dir)
+        incident = build_guard_incident(
+            run_id=prepared.run_id,
+            task_id=config.task_id,
+            agent=partial_result.agent,
+            guard_mode=guard_mode.value,
+            result=score_result.result,
+            started_at=created_at,
+            completed_at=manifest_utc_now_iso(),
+            filesystem=guard_summary,
+            command=command_guard_summary,
+            report_paths=replace(
+                report_paths,
+                json=json_path,
+                markdown=markdown_path,
+            ),
+            sensitive_values=[
+                value for value in config.agent_environment.values() if value
+            ]
+            + [
+                str(value)
+                for key, value in config.agent_metadata.items()
+                if SECRET_KEY_PATTERN.search(key) and str(value)
+            ],
+        )
+        if incident is not None:
+            incident_paths = write_guard_incident(incident, prepared.run_dir)
+            report_paths = replace(
+                report_paths,
+                json=json_path,
+                markdown=markdown_path,
+                guard_incident_json=incident_paths.json,
+                guard_incident_markdown=incident_paths.markdown,
+            )
+            partial_result = replace(partial_result, report_paths=report_paths)
+            json_path = write_json_report(partial_result, reports_dir)
+            markdown_path = write_markdown_report(partial_result, reports_dir)
 
     result = BenchmarkResult(
         task_id=partial_result.task_id,
@@ -879,6 +944,8 @@ def run_benchmark(
             command_log=command_log_path,
             manifest=report_paths.manifest,
             trace=report_paths.trace,
+            guard_incident_json=report_paths.guard_incident_json,
+            guard_incident_markdown=report_paths.guard_incident_markdown,
         ),
         sandbox=partial_result.sandbox,
         benchmark=partial_result.benchmark,
@@ -895,6 +962,7 @@ def run_benchmark(
         profile_model=partial_result.profile_model,
         guard_summary=partial_result.guard_summary,
         command_guard_summary=partial_result.command_guard_summary,
+        guard_metrics=partial_result.guard_metrics,
     )
     agentguard_details = agentguard_identity()
     policy_details = policy_identity(config)
@@ -942,6 +1010,15 @@ def run_benchmark(
         parent_execution_type=parent_execution_type,
         guard=asdict(guard_summary),
         command_guard=asdict(command_guard_summary),
+        guard_metrics=asdict(metrics),
+        guard_incident=(
+            {
+                "json": str(result.report_paths.guard_incident_json),
+                "markdown": str(result.report_paths.guard_incident_markdown),
+            }
+            if result.report_paths.guard_incident_json is not None
+            else None
+        ),
     )
     if write_manifest_enabled:
         with _measure_stage(timing_recorder, "manifest_writing"):

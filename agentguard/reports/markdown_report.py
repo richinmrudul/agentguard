@@ -128,6 +128,39 @@ def _command_guard_lines(result: BenchmarkResult) -> list[str]:
     return lines
 
 
+def _guard_metric_lines(result: BenchmarkResult) -> list[str]:
+    if not result.guard_metrics:
+        return []
+    metrics = result.guard_metrics
+    lines = [
+        "",
+        "## Guard Metrics",
+        f"- Violations total: {metrics.get('guard_violations_total', 0)}",
+        f"- Blocked: {metrics.get('guard_blocked', False)}",
+        "- Time to first violation: "
+        f"{_fmt_metric_ms(metrics.get('time_to_first_violation_ms'))}",
+        f"- Time to block: {_fmt_metric_ms(metrics.get('time_to_block_ms'))}",
+        "- Filesystem guard violations: "
+        f"{metrics.get('filesystem_guard_violations', 0)}",
+        f"- Command guard violations: {metrics.get('command_guard_violations', 0)}",
+    ]
+    if result.report_paths.guard_incident_json is not None:
+        lines.extend(
+            [
+                f"- Incident JSON: {result.report_paths.guard_incident_json}",
+                (
+                    "- Incident Markdown: "
+                    f"{result.report_paths.guard_incident_markdown or '-'}"
+                ),
+            ]
+        )
+    return lines
+
+
+def _fmt_metric_ms(value: object) -> str:
+    return f"{value} ms" if isinstance(value, int) else "-"
+
+
 def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / "report.md"
@@ -154,6 +187,7 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     lines.extend(_sandbox_lines(result))
     lines.extend(_guard_lines(result))
     lines.extend(_command_guard_lines(result))
+    lines.extend(_guard_metric_lines(result))
     if result.profile_id is not None:
         lines.extend(
             [

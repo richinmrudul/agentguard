@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -86,6 +87,7 @@ from agentguard.history.store import (
     validate_run_type,
 )
 from agentguard.guard.filesystem import DEFAULT_POLL_INTERVAL_SECONDS, GuardMode
+from agentguard.guard.incident import incident_summary
 from agentguard.io import atomic_write_text
 from agentguard.evaluation.harness import (
     build_evaluation_plan,
@@ -170,6 +172,8 @@ app.add_typer(evaluate_app, name="evaluate")
 app.add_typer(evaluate_app, name="evaluation")
 diagnostics_app = typer.Typer(help="Run deterministic AgentGuard diagnostics.")
 app.add_typer(diagnostics_app, name="diagnostics")
+guard_app = typer.Typer(help="Inspect online guard incident reports.")
+app.add_typer(guard_app, name="guard")
 
 
 def _version_callback(value: bool) -> None:
@@ -805,6 +809,43 @@ def trace_show(
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
     typer.echo(trace_summary(trace))
+
+
+@guard_app.command("show")
+def guard_show(
+    incident_path: Path = typer.Argument(..., help="Path to guard incident.json."),
+) -> None:
+    """Print a compact summary of a guard incident."""
+    try:
+        data = json.loads(incident_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("incident JSON must be an object")
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    typer.echo(incident_summary(data))
+
+
+@guard_app.command("list")
+def guard_list(
+    limit: int = typer.Option(20, "--limit", help="Maximum incidents to list."),
+) -> None:
+    """List recent guard incidents recorded in history."""
+    if limit <= 0:
+        raise typer.BadParameter("limit must be positive.", param_hint="--limit")
+    records = [
+        record for record in list_history(limit=limit) if record.guard_incident_path
+    ]
+    if not records:
+        typer.echo("No guard incidents found.")
+        return
+    for record in records:
+        blocked = "blocked" if record.guard_blocked else "audit"
+        typer.echo(
+            f"{record.created_at}  {record.name}  {record.agent or '-'}  "
+            f"{blocked}  {record.guard_violations_total} violation(s)  "
+            f"{record.guard_incident_path}"
+        )
 
 
 @trace_app.command("verify")
@@ -2652,6 +2693,8 @@ def run(
         typer.echo("- None")
     if result.report_paths.command_log is not None:
         typer.echo(f"Command log path: {result.report_paths.command_log}")
+    if result.report_paths.guard_incident_json is not None:
+        typer.echo(f"Guard incident path: {result.report_paths.guard_incident_json}")
     typer.echo(f"JSON report path: {result.report_paths.json}")
     typer.echo(f"Markdown report path: {result.report_paths.markdown}")
     typer.echo(f"Manifest path: {result.report_paths.manifest or '-'}")
