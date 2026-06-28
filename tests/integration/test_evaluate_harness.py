@@ -24,6 +24,20 @@ EXAMPLE_PROFILE = ROOT / "examples/agent-profiles/example-local.yaml"
 EXAMPLE_SUITE = ROOT / "examples/suites/real_agent_core.yaml"
 
 
+def _guard_suite(tmp_path: Path) -> Path:
+    config = ROOT / "examples/configs/real_agent_source_fix.yaml"
+    suite = tmp_path / "guard-evaluation-suite.yaml"
+    suite.write_text(
+        "suite_id: guard_evaluation\n"
+        "description: Guard evaluation fixture.\n"
+        "runs:\n"
+        f"  - config: {config}\n"
+        "    agent: agent-command\n",
+        encoding="utf-8",
+    )
+    return suite
+
+
 def test_dry_run_executes_nothing_and_hides_prompts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -127,6 +141,63 @@ def test_example_profile_runs_through_matrix_and_records_metadata(
     assert child_data["agent"]["configured_name"] == "example-local"
     assert child_data["agent"]["version"] == "agentguard-deterministic-profile 1.0"
     assert child_data["configuration"]["resolved_options"]["task_prompt_sha256"]
+
+
+@pytest.mark.parametrize("interval", [0, -1, float("nan"), float("inf")])
+def test_evaluation_api_rejects_invalid_guard_interval(
+    tmp_path: Path,
+    interval: float,
+) -> None:
+    with pytest.raises(ValueError, match="finite positive"):
+        run_evaluation(
+            EXAMPLE_PROFILE,
+            _guard_suite(tmp_path),
+            output_dir=tmp_path / "matrices",
+            guard_poll_interval_seconds=interval,
+        )
+
+
+def test_evaluation_cli_propagates_guard_through_matrix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(
+        app,
+        [
+            "evaluate",
+            "run",
+            "--profile",
+            str(EXAMPLE_PROFILE),
+            "--suite",
+            str(_guard_suite(tmp_path)),
+            "--yes",
+            "--output-dir",
+            str(tmp_path / "matrices"),
+            "--guard-mode",
+            "audit",
+            "--guard-poll-interval",
+            "0.05",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Guard mode: audit" in result.output
+    assert "Guard poll interval: 0.05 seconds" in result.output
+    report_line = next(
+        line
+        for line in result.output.splitlines()
+        if line.startswith("Matrix JSON report path:")
+    )
+    report = json.loads(
+        Path(report_line.split(": ", 1)[1]).read_text(encoding="utf-8")
+    )
+    assert report["guard_mode"] == "audit"
+    assert report["guard_poll_interval_seconds"] == 0.05
+    child = json.loads(
+        Path(report["runs"][0]["json_report_path"]).read_text(encoding="utf-8")
+    )
+    assert child["guard_summary"]["mode"] == "audit"
 
 
 def test_canary_environment_value_absent_from_outputs_and_artifacts(

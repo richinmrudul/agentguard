@@ -13,6 +13,10 @@ from uuid import uuid4
 
 from agentguard.config.schema import AgentGuardConfig
 from agentguard.history.store import HistoryRecord, list_history, record_history
+from agentguard.guard.filesystem import (
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    GuardMode,
+)
 from agentguard.provenance.manifest import (
     policy_identity,
     sha256_file,
@@ -96,6 +100,8 @@ class MatrixCheckpoint:
     compatibility_warnings: list[str] = field(default_factory=list)
     schema: str = CHECKPOINT_SCHEMA
     schema_version: int = CHECKPOINT_SCHEMA_VERSION
+    guard_mode: str = GuardMode.OFF.value
+    guard_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS
 
 
 @dataclass(frozen=True)
@@ -299,6 +305,13 @@ def load_checkpoint(path: Path) -> MatrixCheckpoint:
             matrix_json_report_path=str(data["matrix_json_report_path"]),
             matrix_markdown_report_path=str(data["matrix_markdown_report_path"]),
             matrix_manifest_path=str(data["matrix_manifest_path"]),
+            guard_mode=str(data.get("guard_mode", GuardMode.OFF.value)),
+            guard_poll_interval_seconds=float(
+                data.get(
+                    "guard_poll_interval_seconds",
+                    DEFAULT_POLL_INTERVAL_SECONDS,
+                )
+            ),
             resumed_from=data.get("resumed_from"),
             compatibility_warnings=list(data.get("compatibility_warnings", [])),
         )

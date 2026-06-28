@@ -8,6 +8,7 @@ from agentguard.cli.main import app
 from agentguard.core.matrix import run_matrix
 from agentguard.core.matrix_checkpoint import load_checkpoint
 from agentguard.history.store import list_history
+from agentguard.guard.filesystem import GuardMode
 
 
 runner = CliRunner()
@@ -235,3 +236,73 @@ def test_fail_fast_resume_does_not_schedule_past_reused_failure(
     assert resumed.attempts_executed_this_invocation == 0
     assert resumed.attempts_executed == 1
     assert resumed.stopped_early
+
+
+def test_resume_guard_configuration_must_match(tmp_path: Path) -> None:
+    suite = _suite(tmp_path)
+    checkpoint = tmp_path / "guard-checkpoint.json"
+    first = run_matrix(
+        suite,
+        matrices_root=tmp_path / "matrices",
+        checkpoint_path=checkpoint,
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.05,
+    )
+    resumed = run_matrix(
+        suite,
+        matrices_root=tmp_path / "matrices",
+        resume_path=checkpoint,
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.05,
+    )
+    assert resumed.attempts_reused == first.attempts_executed
+
+    with pytest.raises(ValueError, match="guard mode"):
+        run_matrix(
+            suite,
+            matrices_root=tmp_path / "matrices",
+            resume_path=checkpoint,
+            guard_mode=GuardMode.ENFORCE,
+            guard_poll_interval_seconds=0.05,
+        )
+    with pytest.raises(ValueError, match="guard polling interval"):
+        run_matrix(
+            suite,
+            matrices_root=tmp_path / "matrices",
+            resume_path=checkpoint,
+            guard_mode=GuardMode.AUDIT,
+            guard_poll_interval_seconds=0.1,
+        )
+
+
+def test_legacy_checkpoint_uses_only_legacy_guard_defaults(tmp_path: Path) -> None:
+    suite = _suite(tmp_path)
+    checkpoint = tmp_path / "legacy-checkpoint.json"
+    run_matrix(
+        suite,
+        matrices_root=tmp_path / "matrices",
+        checkpoint_path=checkpoint,
+    )
+    data = json.loads(checkpoint.read_text(encoding="utf-8"))
+    data.pop("guard_mode")
+    data.pop("guard_poll_interval_seconds")
+    checkpoint.write_text(json.dumps(data), encoding="utf-8")
+
+    resumed = run_matrix(
+        suite,
+        matrices_root=tmp_path / "matrices",
+        resume_path=checkpoint,
+    )
+    assert resumed.attempts_reused == 1
+
+    data = json.loads(checkpoint.read_text(encoding="utf-8"))
+    data.pop("guard_mode")
+    data.pop("guard_poll_interval_seconds")
+    checkpoint.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="guard mode"):
+        run_matrix(
+            suite,
+            matrices_root=tmp_path / "matrices",
+            resume_path=checkpoint,
+            guard_mode=GuardMode.AUDIT,
+        )

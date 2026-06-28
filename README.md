@@ -310,6 +310,17 @@ agentguard matrix examples/suites/core.yaml --agent mock-safe --agent mock-test-
 agentguard matrix examples/suites/core.yaml --agent mock-safe --trials 5 --workers 4 --allow-failures
 ```
 
+Enable the same online guard configuration for every selected suite run or
+matrix attempt:
+
+```bash
+agentguard suite examples/suites/core.yaml --guard-mode audit --guard-poll-interval 0.1 --allow-failures
+agentguard matrix examples/suites/core.yaml --workers 4 --guard-mode enforce --guard-poll-interval 0.1 --allow-failures
+```
+
+Batch guard mode defaults to `off`. Batch JSON, Markdown, manifests, and matrix
+checkpoints record the requested mode and finite positive polling interval.
+
 Checkpoint an interruptible matrix and resume only verified attempts:
 
 ```bash
@@ -419,7 +430,8 @@ agentguard run examples/configs/fix_auth_bug_local_command_safe.yaml --agent loc
 violations without stopping the agent. `--guard-mode enforce` terminates
 supported local agent processes when a live violation is detected. Command guard
 enforcement is based on AgentGuard command/event logs, not kernel-level syscall
-interception. See [docs/online-guard.md](docs/online-guard.md).
+interception; filesystem monitoring uses polling. Docker `custom-command`
+termination remains limited. See [docs/online-guard.md](docs/online-guard.md).
 
 Guarded runs with violations write concise incident artifacts under
 `.agentguard/runs/<run-id>/guard/`; inspect them with:

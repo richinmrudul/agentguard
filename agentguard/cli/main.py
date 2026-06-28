@@ -86,7 +86,11 @@ from agentguard.history.store import (
     validate_result,
     validate_run_type,
 )
-from agentguard.guard.filesystem import DEFAULT_POLL_INTERVAL_SECONDS, GuardMode
+from agentguard.guard.filesystem import (
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    GuardMode,
+    validate_guard_configuration,
+)
 from agentguard.guard.incident import incident_summary
 from agentguard.io import atomic_write_text
 from agentguard.evaluation.harness import (
@@ -1195,9 +1199,20 @@ def evaluate_run(
     checkpoint_every: int = typer.Option(1, "--checkpoint-every"),
     retry_failed: bool = typer.Option(False, "--retry-failed"),
     force_resume: bool = typer.Option(False, "--force-resume"),
+    guard_mode: GuardMode = typer.Option(
+        GuardMode.OFF,
+        "--guard-mode",
+        help="Online guard mode for every evaluation attempt: off, audit, or enforce.",
+    ),
+    guard_poll_interval: float = typer.Option(
+        DEFAULT_POLL_INTERVAL_SECONDS,
+        "--guard-poll-interval",
+        help="Guard polling interval in seconds for every evaluation attempt.",
+    ),
 ) -> None:
     """Run a confirmed external coding-agent evaluation through matrix mode."""
     try:
+        _validate_guard_poll_interval(guard_poll_interval)
         filters = suite_filters_from_values(category, difficulty, tags)
         plan = build_evaluation_plan(
             profile,
@@ -1228,6 +1243,8 @@ def evaluate_run(
             checkpoint_every=checkpoint_every,
             retry_failed=retry_failed,
             force_resume=force_resume,
+            guard_mode=guard_mode,
+            guard_poll_interval_seconds=guard_poll_interval,
         )
     except typer.Exit:
         raise
@@ -1244,6 +1261,10 @@ def evaluate_run(
     typer.echo("AgentGuard External Agent Evaluation")
     typer.echo(f"Profile: {result.profile_name} ({result.profile_id})")
     typer.echo(f"Model: {result.profile_model or '-'}")
+    typer.echo(f"Guard mode: {result.guard_mode}")
+    typer.echo(
+        f"Guard poll interval: {result.guard_poll_interval_seconds} seconds"
+    )
     typer.echo(f"Attempts: {result.attempts_executed}")
     if result.checkpoint_path is not None:
         typer.echo(f"Checkpoint: {result.checkpoint_path}")
@@ -2623,6 +2644,16 @@ def history_export_command(
     typer.echo(f"History exported: {output}")
 
 
+def _validate_guard_poll_interval(guard_poll_interval: float) -> None:
+    try:
+        validate_guard_configuration(GuardMode.OFF, guard_poll_interval)
+    except ValueError as error:
+        raise typer.BadParameter(
+            "guard poll interval must be a finite positive number.",
+            param_hint="--guard-poll-interval",
+        ) from error
+
+
 @app.command()
 def run(
     config_path: Path = typer.Argument(..., help="Path to the AgentGuard config file."),
@@ -2644,11 +2675,7 @@ def run(
     ),
 ) -> None:
     """Run an AgentGuard benchmark."""
-    if guard_poll_interval <= 0:
-        raise typer.BadParameter(
-            "guard poll interval must be positive.",
-            param_hint="--guard-poll-interval",
-        )
+    _validate_guard_poll_interval(guard_poll_interval)
     try:
         result = run_benchmark(
             config_path,
@@ -2949,9 +2976,20 @@ def suite_command(
         "--allow-version-mismatch",
         help="Compare against a baseline with different benchmark versions.",
     ),
+    guard_mode: GuardMode = typer.Option(
+        GuardMode.OFF,
+        "--guard-mode",
+        help="Online guard mode for every suite run: off, audit, or enforce.",
+    ),
+    guard_poll_interval: float = typer.Option(
+        DEFAULT_POLL_INTERVAL_SECONDS,
+        "--guard-poll-interval",
+        help="Guard polling interval in seconds for every suite run.",
+    ),
 ) -> None:
     """Run multiple AgentGuard benchmark configs as one suite."""
     try:
+        _validate_guard_poll_interval(guard_poll_interval)
         filters = suite_filters_from_values(
             category=category,
             difficulty=difficulty,
@@ -2962,6 +3000,8 @@ def suite_command(
             compare_baseline_path=compare_baseline,
             allow_version_mismatch=allow_version_mismatch,
             filters=filters,
+            guard_mode=guard_mode,
+            guard_poll_interval_seconds=guard_poll_interval,
         )
     except (OSError, ValueError, yaml.YAMLError) as error:
         typer.echo(f"Error: {error}", err=True)
@@ -2969,6 +3009,10 @@ def suite_command(
 
     typer.echo("AgentGuard Suite Summary")
     typer.echo(f"Suite: {result.suite_id}")
+    typer.echo(f"Guard mode: {result.guard_mode}")
+    typer.echo(
+        f"Guard poll interval: {result.guard_poll_interval_seconds} seconds"
+    )
     if result.filters.has_filters():
         typer.echo(f"Filters: {format_suite_filters(result.filters)}")
     typer.echo(f"Runs: {result.total_runs}")
@@ -3173,9 +3217,20 @@ def matrix_command(
         "--force-resume",
         help="Acknowledge listed non-artifact compatibility warnings.",
     ),
+    guard_mode: GuardMode = typer.Option(
+        GuardMode.OFF,
+        "--guard-mode",
+        help="Online guard mode for every matrix attempt: off, audit, or enforce.",
+    ),
+    guard_poll_interval: float = typer.Option(
+        DEFAULT_POLL_INTERVAL_SECONDS,
+        "--guard-poll-interval",
+        help="Guard polling interval in seconds for every matrix attempt.",
+    ),
 ) -> None:
     """Run a suite across its configured agents or an agent override matrix."""
     try:
+        _validate_guard_poll_interval(guard_poll_interval)
         filters = suite_filters_from_values(
             category=category,
             difficulty=difficulty,
@@ -3202,6 +3257,8 @@ def matrix_command(
             checkpoint_every=checkpoint_every,
             retry_failed=retry_failed,
             force_resume=force_resume,
+            guard_mode=guard_mode,
+            guard_poll_interval_seconds=guard_poll_interval,
         )
     except KeyboardInterrupt as error:
         typer.echo("Matrix execution interrupted.", err=True)
@@ -3221,6 +3278,10 @@ def matrix_command(
     typer.echo("AgentGuard Matrix Summary")
     typer.echo(f"Suite: {result.suite_id}")
     typer.echo(f"Agents: {', '.join(result.agents)}")
+    typer.echo(f"Guard mode: {result.guard_mode}")
+    typer.echo(
+        f"Guard poll interval: {result.guard_poll_interval_seconds} seconds"
+    )
     if result.filters.has_filters():
         typer.echo(f"Filters: {format_suite_filters(result.filters)}")
     typer.echo(f"Trials per combination: {result.trials}")

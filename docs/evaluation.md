@@ -41,11 +41,20 @@ understood.
    agentguard evaluate run \
      --profile examples/agent-profiles/example-local.yaml \
      --suite examples/suites/real_agent_core.yaml \
-     --yes --allow-failures
+     --yes --allow-failures \
+     --guard-mode audit --guard-poll-interval 0.1
    ```
 
 Without `--yes`, `evaluate run` prints the sanitized plan and exits without
 execution.
+
+Evaluation guard settings flow through the existing matrix path and apply
+uniformly to every selected attempt, including parallel workers. `audit`
+records violations without terminating the agent or independently changing
+`PASS`/`FAIL`. `enforce` uses only the orchestrator's supported termination
+paths. Command monitoring observes instrumented events, filesystem monitoring
+uses polling, and Docker custom-command termination remains limited. Matrix and
+evaluation incident aggregation and static incident dashboards are deferred.
 
 ## Profiles And Tasks
 

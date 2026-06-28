@@ -29,6 +29,29 @@ The polling interval defaults to 0.2 seconds and can be adjusted:
 agentguard run CONFIG --agent local-command --guard-mode audit --guard-poll-interval 0.1
 ```
 
+## Batch Execution
+
+Suites, matrices, and external evaluations accept the same options:
+
+```bash
+agentguard suite SUITE --guard-mode audit --guard-poll-interval 0.1
+agentguard matrix SUITE --guard-mode enforce --guard-poll-interval 0.1
+agentguard evaluation run --profile PROFILE --suite SUITE --yes \
+  --guard-mode audit --guard-poll-interval 0.1
+```
+
+The selected immutable configuration applies uniformly to every selected child
+attempt, including parallel matrix workers. Batch result objects, JSON and
+Markdown reports, and manifests record the requested mode and interval.
+External evaluations inherit these fields from `MatrixResult`.
+
+Audit incidents do not independently change batch `PASS`/`FAIL`; normal
+post-hoc checks remain authoritative. Enforce mode uses the existing supported
+orchestrator termination paths and is never downgraded to audit. Matrix
+checkpoints require an identical mode and polling interval on resume. Legacy
+checkpoints without these fields are compatible only with `off` and the
+default interval.
+
 ## Live Filesystem Policies
 
 The filesystem guard compares each scan against the pre-agent snapshot and
@@ -171,5 +194,9 @@ after a violation.
   full JSON report, manifest, trace, command log, or workspace review.
 - Guard incident metrics are written for individual runs and history entries;
   matrix/evaluation aggregate incident rollups are deferred.
+- Static incident dashboards and filters and history query enhancements are
+  deferred.
 - Docker custom-command termination is deferred.
+- Native filesystem watcher backends, incremental live added/deleted-line
+  enforcement, and live secret-content scanning are deferred.
 - Ignore handling is limited to built-in AgentGuard/cache paths in this phase.

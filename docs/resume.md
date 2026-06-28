@@ -35,8 +35,15 @@ random run IDs, and worker count.
 
 Resume rejects changes to the suite, filters, selected agents, trials,
 fail-fast setting, benchmark/config identities, profile identity, or attempt
-plan. Worker count may change because it affects scheduling, not attempt
-meaning.
+plan. It also rejects a changed online guard mode or polling interval because
+either changes execution semantics. Worker count may change because it affects
+scheduling, not attempt meaning.
+
+Checkpoints written before batch guard fields existed are interpreted as the
+legacy defaults (`off` and 0.2 seconds). They resume under those defaults
+without unnecessary invalidation, but cannot resume under `audit`, `enforce`,
+or a different interval without compatible recorded evidence. Guard-setting
+mismatches are hard errors and `--force-resume` does not bypass them.
 
 AgentGuard version or commit changes are explicit compatibility warnings.
 `--force-resume` can acknowledge those warnings, and every bypass is recorded.

@@ -12,6 +12,11 @@ from agentguard.config.yaml import load_yaml
 from agentguard.core.baseline import BaselineComparison, compare_suite_to_baseline
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.result import BenchmarkResult
+from agentguard.guard.filesystem import (
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    GuardMode,
+    validate_guard_configuration,
+)
 from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
 from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.provenance.manifest import (
@@ -104,6 +109,8 @@ class SuiteResult:
     manifest_path: Optional[Path] = None
     filters: SuiteFilters = field(default_factory=SuiteFilters)
     baseline_comparison: Optional[BaselineComparison] = None
+    guard_mode: str = GuardMode.OFF.value
+    guard_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS
 
 
 def _json_default(value: Any) -> str:
@@ -331,6 +338,8 @@ def _write_markdown_report(result: SuiteResult) -> Path:
         f"Failed: {result.failed}",
         f"Pass rate: {result.pass_rate}%",
         f"Average score: {result.average_score}",
+        f"Guard mode: {result.guard_mode}",
+        f"Guard poll interval: {result.guard_poll_interval_seconds} seconds",
     ]
     if result.filters.has_filters():
         lines.append(f"Filters: {format_suite_filters(result.filters)}")
@@ -479,7 +488,13 @@ def run_suite(
     compare_baseline_path: Optional[Path] = None,
     allow_version_mismatch: bool = False,
     filters: Optional[SuiteFilters] = None,
+    guard_mode: GuardMode = GuardMode.OFF,
+    guard_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> SuiteResult:
+    guard_mode, guard_poll_interval_seconds = validate_guard_configuration(
+        guard_mode,
+        guard_poll_interval_seconds,
+    )
     created_at = manifest_utc_now_iso()
     started = time.monotonic()
     config = load_suite_config(path)
@@ -493,6 +508,8 @@ def run_suite(
             run.agent,
             parent_execution_id=execution_id,
             parent_execution_type="suite",
+            guard_mode=guard_mode,
+            guard_poll_interval_seconds=guard_poll_interval_seconds,
         )
         for run in suite_runs
     ]
@@ -521,6 +538,8 @@ def run_suite(
         runs=runs,
         json_report_path=summary_dir / "suite.json",
         markdown_report_path=summary_dir / "suite.md",
+        guard_mode=guard_mode.value,
+        guard_poll_interval_seconds=guard_poll_interval_seconds,
         manifest_path=summary_dir / "manifest.json",
         filters=active_filters,
     )
@@ -559,6 +578,8 @@ def run_suite(
                 "suite_id": config.suite_id,
                 "filters": asdict(active_filters),
                 "agents": [run.agent for run in suite_runs],
+                "guard_mode": guard_mode.value,
+                "guard_poll_interval_seconds": guard_poll_interval_seconds,
             },
         ),
         agent=None,
@@ -586,6 +607,10 @@ def run_suite(
             )
             for run in result.runs
         ],
+        guard={
+            "guard_mode": guard_mode.value,
+            "guard_poll_interval_seconds": guard_poll_interval_seconds,
+        },
     )
     if result.manifest_path is not None:
         written_manifest = write_manifest(manifest, result.manifest_path)

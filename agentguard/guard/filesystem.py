@@ -1,3 +1,4 @@
+import math
 import os
 import subprocess
 import threading
@@ -33,6 +34,24 @@ class GuardMode(str, Enum):
     OFF = "off"
     AUDIT = "audit"
     ENFORCE = "enforce"
+
+
+def validate_guard_configuration(
+    guard_mode: GuardMode,
+    guard_poll_interval_seconds: float,
+) -> tuple[GuardMode, float]:
+    if not isinstance(guard_mode, GuardMode):
+        guard_mode = GuardMode(str(guard_mode))
+    if (
+        isinstance(guard_poll_interval_seconds, bool)
+        or not isinstance(guard_poll_interval_seconds, (int, float))
+        or not math.isfinite(guard_poll_interval_seconds)
+        or guard_poll_interval_seconds <= 0
+    ):
+        raise ValueError(
+            "guard_poll_interval_seconds must be a finite positive number."
+        )
+    return guard_mode, float(guard_poll_interval_seconds)
 
 
 @dataclass(frozen=True)
