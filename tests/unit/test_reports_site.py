@@ -246,6 +246,181 @@ def test_secret_canary_is_redacted(tmp_path: Path, monkeypatch) -> None:
     assert "[REDACTED]" in html
 
 
+def test_matrix_detail_renders_guard_incident_summary(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_matrix(
+        tmp_path,
+        {
+            "runs_evaluated": 8,
+            "incident_runs": 3,
+            "blocked_runs": 1,
+            "audit_only_runs": 2,
+            "violations_total": 7,
+            "filesystem_violations": 5,
+            "command_violations": 2,
+            "time_to_first_violation": {"median_ms": 12.5, "p95_ms": 40},
+            "time_to_block": {"median_ms": 18, "p95_ms": 31},
+            "by_guard_type": {
+                "filesystem": {
+                    "incident_runs": 3,
+                    "blocked_runs": 1,
+                    "violations_total": 5,
+                },
+                "command": {
+                    "incident_runs": 1,
+                    "blocked_runs": 0,
+                    "violations_total": 2,
+                },
+            },
+        },
+    )
+
+    detail = _generate_matrix_detail(tmp_path)
+
+    assert "<h2>Guard Incidents</h2>" in detail
+    for label, value in [
+        ("Runs evaluated", "8"),
+        ("Incident runs", "3"),
+        ("Blocked runs", "1"),
+        ("Audit-only runs", "2"),
+        ("Total violations", "7"),
+        ("Filesystem violations", "5"),
+        ("Command violations", "2"),
+    ]:
+        assert f"<span>{label}</span><strong>{value}</strong>" in detail
+    assert "12.5 ms" in detail
+    assert "40 ms" in detail
+    assert "18 ms" in detail
+    assert "31 ms" in detail
+    assert "<h3>By guard type</h3>" in detail
+    assert "<td>filesystem</td>" in detail
+    assert "<td>command</td>" in detail
+
+
+def test_matrix_detail_renders_zero_guard_incidents(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_matrix(
+        tmp_path,
+        {
+            "runs_evaluated": 4,
+            "incident_runs": 0,
+            "blocked_runs": 0,
+            "audit_only_runs": 0,
+            "violations_total": 0,
+            "filesystem_violations": 0,
+            "command_violations": 0,
+            "time_to_first_violation": {
+                "median_ms": None,
+                "p95_ms": None,
+            },
+            "time_to_block": {"median_ms": None, "p95_ms": None},
+            "by_guard_type": {},
+        },
+    )
+
+    detail = _generate_matrix_detail(tmp_path)
+
+    assert "<h2>Guard Incidents</h2>" in detail
+    assert "<span>Runs evaluated</span><strong>4</strong>" in detail
+    assert detail.count("<strong>0</strong>") == 6
+    assert "<h3>By guard type</h3>" not in detail
+
+
+def test_matrix_without_guard_summary_renders_normally(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_matrix(tmp_path)
+
+    detail = _generate_matrix_detail(tmp_path)
+
+    assert "matrix detail" in detail
+    assert "<h2>Summary</h2>" in detail
+    assert "<h2>Guard Incidents</h2>" not in detail
+
+
+def test_partial_and_malformed_guard_summary_is_safe(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_matrix(
+        tmp_path,
+        {
+            "runs_evaluated": "not-a-count",
+            "incident_runs": 2,
+            "blocked_runs": True,
+            "time_to_first_violation": "not-a-distribution",
+            "time_to_block": {"median_ms": float("nan"), "p95_ms": -1},
+            "by_guard_type": {
+                "filesystem": "not-counts",
+                "command": {"violations_total": 2},
+            },
+        },
+    )
+
+    detail = _generate_matrix_detail(tmp_path)
+
+    assert "<h2>Guard Incidents</h2>" in detail
+    assert "<span>Runs evaluated</span><strong>-</strong>" in detail
+    assert "<span>Incident runs</span><strong>2</strong>" in detail
+    assert "<span>Blocked runs</span><strong>-</strong>" in detail
+    assert "<td>command</td>" in detail
+    assert "<td>filesystem</td>" not in detail
+    assert "nan" not in detail.lower()
+
+
+def test_guard_type_keys_are_escaped_and_raw_incident_data_is_omitted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    absolute_path = str(tmp_path / "private/incident.json")
+    _write_matrix(
+        tmp_path,
+        {
+            "runs_evaluated": 1,
+            "incident_runs": 1,
+            "by_guard_type": {
+                "<script>alert('guard')</script>": {
+                    "incident_runs": 1,
+                    "blocked_runs": 0,
+                    "violations_total": 1,
+                },
+                absolute_path: {
+                    "incident_runs": 1,
+                    "blocked_runs": 0,
+                    "violations_total": 1,
+                },
+            },
+            "incidents": [
+                {
+                    "command": "RAW_COMMAND_SHOULD_NOT_RENDER",
+                    "evidence": "RAW_EVIDENCE_SHOULD_NOT_RENDER",
+                    "incident_json": absolute_path,
+                }
+            ],
+        },
+    )
+
+    detail = _generate_matrix_detail(tmp_path)
+
+    assert "<script>alert" not in detail
+    assert "&lt;script&gt;alert" in detail
+    assert "RAW_COMMAND_SHOULD_NOT_RENDER" not in detail
+    assert "RAW_EVIDENCE_SHOULD_NOT_RENDER" not in detail
+    assert str(tmp_path) not in detail
+    assert "http://" not in detail
+    assert "https://" not in detail
+
+
 def _record(
     db_path: Path,
     record_id: str,
@@ -281,6 +456,33 @@ def _record(
 def _write_json(path: Path, data: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _write_matrix(
+    tmp_path: Path,
+    guard_summary: object = None,
+) -> None:
+    data: dict[str, object] = {
+        "matrix_id": "guard-matrix",
+        "failed": 0,
+        "average_score": 100,
+        "total_runs": 1,
+    }
+    if guard_summary is not None:
+        data["guard_summary"] = guard_summary
+    _write_json(
+        tmp_path / ".agentguard/matrices/matrix-guard/matrix.json",
+        data,
+    )
+
+
+def _generate_matrix_detail(tmp_path: Path) -> str:
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", force=True)
+    )
+    return (
+        tmp_path / "site/details/matrix-matrix-guard.html"
+    ).read_text(encoding="utf-8")
 
 
 def _all_html(site: Path) -> str:

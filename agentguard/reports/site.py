@@ -1,4 +1,5 @@
 import json
+import math
 import re
 import shutil
 from collections import Counter
@@ -204,7 +205,10 @@ def _history_records(db_path: Path) -> list[SiteRecord]:
 
 
 def _record_from_history(record: HistoryRecord) -> SiteRecord:
-    data = _load_json_if_available(record.json_report_path)
+    data = _load_json_if_available(
+        record.json_report_path,
+        kind=record.run_type,
+    )
     return SiteRecord(
         id=sanitize_text(record.id),
         kind=sanitize_text(record.run_type),
@@ -282,6 +286,7 @@ def _record_from_report(
     data: dict[str, Any],
     base: Path,
 ) -> SiteRecord:
+    sanitized_data = _sanitize_report_data(data, kind)
     return SiteRecord(
         id=sanitize_text(_report_id(path, kind)),
         kind=kind,
@@ -290,7 +295,7 @@ def _record_from_report(
         score=_number(data.get("average_score") if kind == "suite" else data.get("score")),
         created_at=sanitize_text(str(data.get("created_at") or data.get("started_at") or "")),
         path=_relative_or_name(path, base),
-        data=sanitize_data(data),
+        data=sanitized_data,
         source="report",
         category=sanitize_optional(data.get("category")),
         difficulty=sanitize_optional(data.get("difficulty")),
@@ -457,6 +462,15 @@ def _render_detail_page(
         sections.append(_section("Availability", _empty(record.unavailable_reason)))
     if record.failed_checks:
         sections.append(_section("Failed checks", _list(record.failed_checks)))
+    if record.kind == "matrix":
+        guard_summary = record.data.get("guard_summary")
+        if isinstance(guard_summary, dict):
+            sections.append(
+                _section(
+                    "Guard Incidents",
+                    _render_matrix_guard_summary(guard_summary),
+                )
+            )
     sections.append(_section("Summary", _data_summary(record.data)))
     return _page(
         options,
@@ -588,6 +602,142 @@ def _data_summary(data: dict[str, Any]) -> str:
             f"<tr><th>{html(str(key))}</th><td>{html(_compact_value(value))}</td></tr>"
         )
     return f'<table class="facts"><tbody>{"".join(rows)}</tbody></table>'
+
+
+def _render_matrix_guard_summary(summary: dict[str, Any]) -> str:
+    count_metrics = [
+        ("Runs evaluated", "runs_evaluated"),
+        ("Incident runs", "incident_runs"),
+        ("Blocked runs", "blocked_runs"),
+        ("Audit-only runs", "audit_only_runs"),
+        ("Total violations", "violations_total"),
+        ("Filesystem violations", "filesystem_violations"),
+        ("Command violations", "command_violations"),
+    ]
+    content = [
+        '<div class="metrics">',
+        *[
+            _metric(label, _format_guard_count(summary.get(key)))
+            for label, key in count_metrics
+        ],
+        "</div>",
+        _facts_table(
+            {
+                "Time to first violation median": _guard_timing_value(
+                    summary,
+                    "time_to_first_violation",
+                    "median_ms",
+                ),
+                "Time to first violation p95": _guard_timing_value(
+                    summary,
+                    "time_to_first_violation",
+                    "p95_ms",
+                ),
+                "Time to block median": _guard_timing_value(
+                    summary,
+                    "time_to_block",
+                    "median_ms",
+                ),
+                "Time to block p95": _guard_timing_value(
+                    summary,
+                    "time_to_block",
+                    "p95_ms",
+                ),
+            }
+        ),
+    ]
+    guard_types = summary.get("by_guard_type")
+    if isinstance(guard_types, dict):
+        rows = []
+        for guard_type, values in list(guard_types.items())[:MAX_DETAIL_ITEMS]:
+            if not isinstance(values, dict):
+                continue
+            rows.append(
+                "<tr>"
+                f"<td>{html(guard_type)}</td>"
+                f"<td>{html(_format_guard_count(values.get('incident_runs')))}</td>"
+                f"<td>{html(_format_guard_count(values.get('blocked_runs')))}</td>"
+                f"<td>{html(_format_guard_count(values.get('violations_total')))}</td>"
+                "</tr>"
+            )
+        if rows:
+            content.extend(
+                [
+                    "<h3>By guard type</h3>",
+                    '<table class="data"><thead><tr><th>Guard</th>'
+                    "<th>Incident runs</th><th>Blocked runs</th>"
+                    "<th>Violations</th></tr></thead>"
+                    f"<tbody>{''.join(rows)}</tbody></table>",
+                ]
+            )
+    return "".join(content)
+
+
+def _sanitize_matrix_guard_summary(value: Any) -> Optional[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    summary: dict[str, Any] = {}
+    for key in (
+        "runs_evaluated",
+        "incident_runs",
+        "blocked_runs",
+        "audit_only_runs",
+        "violations_total",
+        "filesystem_violations",
+        "command_violations",
+    ):
+        if key in value:
+            summary[key] = value[key]
+    for key in ("time_to_first_violation", "time_to_block"):
+        timing = value.get(key)
+        if isinstance(timing, dict):
+            summary[key] = {
+                field: timing[field]
+                for field in ("median_ms", "p95_ms")
+                if field in timing
+            }
+    guard_types = value.get("by_guard_type")
+    if isinstance(guard_types, dict):
+        sanitized_types: dict[str, Any] = {}
+        for guard_type, counts in list(guard_types.items())[:MAX_DETAIL_ITEMS]:
+            if not isinstance(counts, dict):
+                continue
+            sanitized_types[sanitize_text(guard_type)] = {
+                field: counts[field]
+                for field in (
+                    "incident_runs",
+                    "blocked_runs",
+                    "violations_total",
+                )
+                if field in counts
+            }
+        summary["by_guard_type"] = sanitized_types
+    return summary
+
+
+def _format_guard_count(value: Any) -> str:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return str(value)
+    return "-"
+
+
+def _guard_timing_value(
+    summary: dict[str, Any],
+    distribution_key: str,
+    statistic_key: str,
+) -> str:
+    distribution = summary.get(distribution_key)
+    if not isinstance(distribution, dict):
+        return "-"
+    value = distribution.get(statistic_key)
+    if (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value >= 0
+    ):
+        return f"{_format_score(float(value))} ms"
+    return "-"
 
 
 def _compact_value(value: Any) -> str:
@@ -735,11 +885,22 @@ def _trace_summary(path: Path) -> dict[str, Any]:
     return {"events": max(len(lines) - 1, 0), "header": header}
 
 
-def _load_json_if_available(path: Path) -> Any:
+def _load_json_if_available(path: Path, *, kind: Optional[str] = None) -> Any:
     try:
-        return sanitize_data(json.loads(path.read_text(encoding="utf-8")))
+        loaded = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return None
+    if isinstance(loaded, dict):
+        return _sanitize_report_data(loaded, kind)
+    return sanitize_data(loaded)
+
+
+def _sanitize_report_data(data: dict[str, Any], kind: Optional[str]) -> dict[str, Any]:
+    sanitized_data = sanitize_data(data)
+    guard_summary = _sanitize_matrix_guard_summary(data.get("guard_summary"))
+    if kind == "matrix" and guard_summary is not None:
+        sanitized_data["guard_summary"] = guard_summary
+    return sanitized_data
 
 
 def _record_sort_key(record: SiteRecord) -> str:
