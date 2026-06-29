@@ -36,6 +36,7 @@ from agentguard.guard.command import (
 from agentguard.guard.filesystem import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     GuardMode,
+    validate_guard_configuration,
     LiveGuardSummary,
     ProcessController,
     RuntimeFilesystemGuard,
@@ -493,10 +494,10 @@ def run_benchmark(
     guard_mode: GuardMode = GuardMode.OFF,
     guard_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> BenchmarkResult:
-    if not isinstance(guard_mode, GuardMode):
-        guard_mode = GuardMode(str(guard_mode))
-    if guard_poll_interval_seconds <= 0:
-        raise ValueError("guard_poll_interval_seconds must be positive.")
+    guard_mode, guard_poll_interval_seconds = validate_guard_configuration(
+        guard_mode,
+        guard_poll_interval_seconds,
+    )
     if timing_recorder is not None:
         timing_recorder.start_total()
     created_at = manifest_utc_now_iso()

@@ -23,6 +23,11 @@ from agentguard.evaluation.profile import (
     validate_profile_for_config,
     version_executable_available,
 )
+from agentguard.guard.filesystem import (
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    GuardMode,
+    validate_guard_configuration,
+)
 from agentguard.provenance.manifest import sha256_file
 
 
@@ -185,7 +190,13 @@ def run_evaluation(
     checkpoint_every: int = 1,
     retry_failed: bool = False,
     force_resume: bool = False,
+    guard_mode: GuardMode = GuardMode.OFF,
+    guard_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> MatrixResult:
+    guard_mode, guard_poll_interval_seconds = validate_guard_configuration(
+        guard_mode,
+        guard_poll_interval_seconds,
+    )
     plan = validate_evaluation(
         profile_path,
         suite_path,
@@ -206,6 +217,8 @@ def run_evaluation(
             parent_execution_id=matrix_id,
             parent_execution_type="matrix",
             evaluation_profile=profile,
+            guard_mode=guard_mode,
+            guard_poll_interval_seconds=guard_poll_interval_seconds,
         )
 
     return run_matrix(
@@ -237,4 +250,6 @@ def run_evaluation(
         checkpoint_every=checkpoint_every,
         retry_failed=retry_failed,
         force_resume=force_resume,
+        guard_mode=guard_mode,
+        guard_poll_interval_seconds=guard_poll_interval_seconds,
     )

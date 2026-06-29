@@ -49,6 +49,11 @@ from agentguard.history.store import (
     record_history,
     utc_now_iso,
 )
+from agentguard.guard.filesystem import (
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    GuardMode,
+    validate_guard_configuration,
+)
 from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.provenance.manifest import (
     ChildExecution,
@@ -210,6 +215,8 @@ class MatrixResult:
     reuse_percentage: float = 0.0
     estimated_recomputation_avoided_seconds: float = 0.0
     compatibility_warnings: list[str] = field(default_factory=list)
+    guard_mode: str = GuardMode.OFF.value
+    guard_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS
 
 
 def normalize_matrix_agents(raw_agents: Optional[list[str]]) -> list[str]:
@@ -336,6 +343,12 @@ def _checkpoint_compatibility(
         ("agents", checkpoint.agents, current.agents),
         ("trials", checkpoint.trials, current.trials),
         ("fail-fast setting", checkpoint.fail_fast, current.fail_fast),
+        ("guard mode", checkpoint.guard_mode, current.guard_mode),
+        (
+            "guard polling interval",
+            checkpoint.guard_poll_interval_seconds,
+            current.guard_poll_interval_seconds,
+        ),
         ("benchmarks", checkpoint.benchmarks, current.benchmarks),
         ("profile identity", checkpoint.profile_identity, current.profile_identity),
         (
@@ -458,10 +471,18 @@ def _run_matrix_row(
     benchmark_runner: Optional[
         Callable[[Path, str, str], BenchmarkResult]
     ] = None,
+    guard_mode: GuardMode = GuardMode.OFF,
+    guard_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> MatrixRowSummary:
     try:
         return _row_from_result(
-            _invoke_run_benchmark(run, matrix_id, benchmark_runner),
+            _invoke_run_benchmark(
+                run,
+                matrix_id,
+                benchmark_runner,
+                guard_mode,
+                guard_poll_interval_seconds,
+            ),
             trial_index,
             trial_count,
         )
@@ -475,18 +496,28 @@ def _invoke_run_benchmark(
     run: SuiteRunConfig,
     matrix_id: str,
     benchmark_runner: Optional[Callable[[Path, str, str], BenchmarkResult]],
+    guard_mode: GuardMode,
+    guard_poll_interval_seconds: float,
 ) -> BenchmarkResult:
     if benchmark_runner is not None:
         return benchmark_runner(run.config_path, run.agent, matrix_id)
     parameters = inspect.signature(run_benchmark).parameters
-    if "parent_execution_id" not in parameters:
-        return run_benchmark(run.config_path, run.agent)
-    return run_benchmark(
-        run.config_path,
-        run.agent,
-        parent_execution_id=matrix_id,
-        parent_execution_type="matrix",
+    accepts_keywords = any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
     )
+    keyword_arguments: dict[str, object] = {}
+    if "parent_execution_id" in parameters or accepts_keywords:
+        keyword_arguments.update(
+            parent_execution_id=matrix_id,
+            parent_execution_type="matrix",
+        )
+    if "guard_mode" in parameters or accepts_keywords:
+        keyword_arguments.update(
+            guard_mode=guard_mode,
+            guard_poll_interval_seconds=guard_poll_interval_seconds,
+        )
+    return run_benchmark(run.config_path, run.agent, **keyword_arguments)
 
 
 def _run_serial_attempts(
@@ -497,6 +528,8 @@ def _run_serial_attempts(
     benchmark_runner: Optional[
         Callable[[Path, str, str], BenchmarkResult]
     ] = None,
+    guard_mode: GuardMode = GuardMode.OFF,
+    guard_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> tuple[list[MatrixRowSummary], bool]:
     scheduled = run_bounded_schedule(
         trial_runs,
@@ -508,6 +541,8 @@ def _run_serial_attempts(
             trial_count,
             matrix_id,
             benchmark_runner,
+            guard_mode,
+            guard_poll_interval_seconds,
         ),
         is_failure=lambda row: row.result == "FAIL",
     )
@@ -523,6 +558,8 @@ def _run_parallel_attempts(
     benchmark_runner: Optional[
         Callable[[Path, str, str], BenchmarkResult]
     ] = None,
+    guard_mode: GuardMode = GuardMode.OFF,
+    guard_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
 ) -> tuple[list[MatrixRowSummary], bool]:
     scheduled = run_bounded_schedule(
         trial_runs,
@@ -534,6 +571,8 @@ def _run_parallel_attempts(
             trial_count,
             matrix_id,
             benchmark_runner,
+            guard_mode,
+            guard_poll_interval_seconds,
         ),
         is_failure=lambda row: row.result == "FAIL",
     )
@@ -759,6 +798,8 @@ def _write_markdown_report(result: MatrixResult) -> Path:
         f"Failed: {result.failed}",
         f"Pass rate: {result.pass_rate}%",
         f"Average score: {result.average_score}",
+        f"Guard mode: {result.guard_mode}",
+        f"Guard poll interval: {result.guard_poll_interval_seconds} seconds",
     ]
     if result.profile_id is not None:
         lines.extend(
@@ -1057,8 +1098,14 @@ def run_matrix(
     checkpoint_every: int = 1,
     retry_failed: bool = False,
     force_resume: bool = False,
+    guard_mode: GuardMode = GuardMode.OFF,
+    guard_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
     _interrupt_after_attempts: Optional[int] = None,
 ) -> MatrixResult:
+    guard_mode, guard_poll_interval_seconds = validate_guard_configuration(
+        guard_mode,
+        guard_poll_interval_seconds,
+    )
     created_at = manifest_utc_now_iso()
     if isinstance(trials, bool) or not isinstance(trials, int) or trials <= 0:
         raise ValueError("Matrix trials must be a positive integer.")
@@ -1158,6 +1205,8 @@ def run_matrix(
         matrix_json_report_path=str(report_dir / "matrix.json"),
         matrix_markdown_report_path=str(report_dir / "matrix.md"),
         matrix_manifest_path=str(report_dir / "manifest.json"),
+        guard_mode=guard_mode.value,
+        guard_poll_interval_seconds=guard_poll_interval_seconds,
         resumed_from=(
             str(resume_path.expanduser().resolve())
             if resume_path is not None
@@ -1276,6 +1325,8 @@ def run_matrix(
                 fail_fast,
                 matrix_id,
                 benchmark_runner,
+                guard_mode,
+                guard_poll_interval_seconds,
             )
         else:
             rows, stopped_early = _run_parallel_attempts(
@@ -1285,6 +1336,8 @@ def run_matrix(
                 fail_fast,
                 matrix_id,
                 benchmark_runner,
+                guard_mode,
+                guard_poll_interval_seconds,
             )
         executed_this_invocation = len(rows)
     else:
@@ -1304,6 +1357,8 @@ def run_matrix(
                 trials,
                 matrix_id,
                 benchmark_runner,
+                guard_mode,
+                guard_poll_interval_seconds,
             )
             checkpoint_store.mark_completed(
                 ordinal,
@@ -1389,6 +1444,8 @@ def run_matrix(
         ),
         json_report_path=report_dir / "matrix.json",
         markdown_report_path=report_dir / "matrix.md",
+        guard_mode=guard_mode.value,
+        guard_poll_interval_seconds=guard_poll_interval_seconds,
         manifest_path=report_dir / "manifest.json",
         requested_workers=requested_workers,
         effective_workers=effective_workers,
@@ -1504,6 +1561,8 @@ def run_matrix(
                 "suite_id": config.suite_id,
                 "filters": asdict(active_filters),
                 "agents": selected_agents or [run.agent for run in filtered_runs],
+                "guard_mode": guard_mode.value,
+                "guard_poll_interval_seconds": guard_poll_interval_seconds,
             },
         ),
         agent=None,
@@ -1564,6 +1623,14 @@ def run_matrix(
                 result.estimated_recomputation_avoided_seconds
             ),
             "compatibility_warnings": result.compatibility_warnings,
+            "guard_mode": result.guard_mode,
+            "guard_poll_interval_seconds": (
+                result.guard_poll_interval_seconds
+            ),
+        },
+        guard={
+            "guard_mode": result.guard_mode,
+            "guard_poll_interval_seconds": result.guard_poll_interval_seconds,
         },
     )
     if result.manifest_path is not None:

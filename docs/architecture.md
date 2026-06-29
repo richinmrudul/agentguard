@@ -293,6 +293,14 @@ returned zero) and policy-compliant success (the AgentGuard result is `PASS`).
 It also counts unsafe functional successes where tests passed but policy checks
 failed.
 
+Suite, matrix, and evaluation entry points validate one guard mode and finite
+positive polling interval, then pass that immutable configuration into every
+selected child. The default matrix runner forwards it directly to the
+orchestrator; the evaluation-specific runner captures it while preserving the
+public three-argument injectable runner contract. Batch reports and manifests
+record the requested settings. Incident aggregation and static incident
+dashboards remain separate deferred layers.
+
 ### Docker Sandbox / Command Runner
 
 The Docker runner executes configured commands inside a container using a mounted repository workspace, working directory, environment, network mode, optional memory and CPU limits, timeout handling, and output limits. It also records executed command events through the command tracker.
@@ -318,6 +326,11 @@ policy violations for forbidden paths, test tampering, out-of-scope paths,
 secret-like paths, file-count diff limits, deletions, and symlink escapes. In
 enforce mode, direct local agent subprocesses are terminated before the normal
 post-hoc diff/check/report pipeline continues.
+
+Command monitoring observes instrumented AgentGuard events rather than kernel
+or syscall activity. Filesystem monitoring uses portable polling rather than a
+native watcher. Docker `custom-command` does not expose the same supported
+local-process termination path, so enforcement remains limited there.
 
 ### Scoring
 
@@ -619,6 +632,11 @@ by stable ordinal before the existing reliability, baseline, report, manifest,
 and history layers run. Matrix and child history retain their execution IDs,
 providing exactly-once logical aggregation and history identity without
 claiming exactly-once external agent side effects.
+
+Checkpoint compatibility also compares guard mode and polling interval because
+they change execution semantics. Pre-guard batch checkpoints are interpreted as
+`off` with the default interval only; changing either setting is a hard
+compatibility error and cannot be acknowledged with `--force-resume`.
 
 The matrix aggregation layer records trial indices, success rates, score
 ranges, sample standard deviation (defined as `0.0` for one sample), and whether
