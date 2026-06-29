@@ -1,9 +1,11 @@
+import hashlib
 import json
 import math
 import re
 import shutil
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from html import escape
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional
@@ -18,6 +20,9 @@ DEFAULT_REPORTS_ROOT = Path(".agentguard")
 SAFE_RESULT_DOC_EXTENSIONS = {".json", ".md"}
 MAX_DETAIL_ITEMS = 12
 MAX_TEXT_CHARS = 600
+MAX_INCIDENT_JSON_BYTES = 1024 * 1024
+MAX_RENDERED_INCIDENT_VIOLATIONS = 50
+SUPPORTED_INCIDENT_SCHEMA_VERSION = 1
 ABSOLUTE_PATH_PATTERN = re.compile(
     r"(?<![\w.-])(?:/[^\s,;:'\")\]}<>]+|[A-Za-z]:\\[^\s,;:'\")\]}<>]+)"
 )
@@ -46,6 +51,7 @@ class StaticSiteResult:
     traces: int
     results_docs: int
     unavailable: int
+    incidents: int = 0
 
 
 @dataclass(frozen=True)
@@ -65,6 +71,46 @@ class SiteRecord:
     benchmark_id: Optional[str] = None
     agent: Optional[str] = None
     failed_checks: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SiteIncidentViolation:
+    guard_type: str = "-"
+    policy: str = "-"
+    severity: str = "-"
+    action: str = "-"
+    detected_at: str = "-"
+    elapsed_ms: Optional[int] = None
+    evidence_summary: str = "-"
+
+
+@dataclass(frozen=True)
+class SiteIncident:
+    id: str
+    run_id: str
+    task_id: str
+    agent: str
+    guard_mode: str
+    result: str
+    blocked: bool
+    blocking_guard: str
+    started_at: str
+    detected_at: str
+    completed_at: str
+    time_to_first_violation_ms: Optional[int]
+    time_to_block_ms: Optional[int]
+    violations: list[SiteIncidentViolation]
+    violation_count: int
+    guard_type_counts: dict[str, int]
+    filter_guard_types: frozenset[str]
+    filter_policies: frozenset[str]
+    source_path: Path
+    unavailable_reason: Optional[str] = None
+    benchmark_id: Optional[str] = None
+    category: Optional[str] = None
+    run_detail_href: Optional[str] = None
+    detail_filename: Optional[str] = None
+    redaction_applied: Optional[bool] = None
 
 
 def generate_static_report_site(options: StaticSiteOptions) -> StaticSiteResult:
@@ -95,6 +141,7 @@ def generate_static_report_site(options: StaticSiteOptions) -> StaticSiteResult:
     pages[Path("diagnostics.html")] = _render_records_page(
         options, context, "Diagnostics", context.diagnostics
     )
+    pages[Path("incidents.html")] = _render_incidents_page(options, context)
     if options.include_traces:
         pages[Path("traces.html")] = _render_records_page(
             options, context, "Traces", context.traces
@@ -110,6 +157,11 @@ def generate_static_report_site(options: StaticSiteOptions) -> StaticSiteResult:
         pages[Path("details") / f"result-{_slug(result_doc.id)}.html"] = (
             _render_result_doc_detail(options, context, result_doc)
         )
+    for incident in context.incidents:
+        if incident.unavailable_reason is None and incident.detail_filename is not None:
+            pages[Path("details") / incident.detail_filename] = (
+                _render_incident_detail(options, context, incident)
+            )
 
     pages[Path("assets/site.css")] = _site_css()
     pages[Path("assets/site.js")] = _site_js()
@@ -127,6 +179,9 @@ def generate_static_report_site(options: StaticSiteOptions) -> StaticSiteResult:
         traces=len(context.traces),
         results_docs=len(context.results_docs),
         unavailable=context.unavailable_count,
+        incidents=sum(
+            incident.unavailable_reason is None for incident in context.incidents
+        ),
     )
 
 
@@ -147,6 +202,7 @@ class SiteContext:
     results_docs: list[ResultDoc]
     unavailable_count: int
     history_record_count: int
+    incidents: list[SiteIncident] = field(default_factory=list)
 
 
 def _load_context(options: StaticSiteOptions) -> SiteContext:
@@ -158,6 +214,16 @@ def _load_context(options: StaticSiteOptions) -> SiteContext:
     keyed = {(record.kind, record.id): record for record in records}
     for record in report_records:
         keyed.setdefault((record.kind, record.id), record)
+    resolved_records = sorted(
+        keyed.values(),
+        key=_record_sort_key,
+        reverse=True,
+    )
+    incidents = _discover_incidents(
+        options.reports_root,
+        base,
+        resolved_records,
+    )
 
     matrices, unavailable_matrices = _discover_pattern_reports(
         options.reports_root,
@@ -183,7 +249,7 @@ def _load_context(options: StaticSiteOptions) -> SiteContext:
 
     history_unavailable = sum(1 for record in records if record.unavailable_reason)
     return SiteContext(
-        records=sorted(keyed.values(), key=_record_sort_key, reverse=True),
+        records=resolved_records,
         matrices=sorted(matrices, key=_record_sort_key, reverse=True),
         diagnostics=sorted(diagnostics, key=_record_sort_key, reverse=True),
         traces=sorted(traces, key=_record_sort_key, reverse=True),
@@ -191,8 +257,12 @@ def _load_context(options: StaticSiteOptions) -> SiteContext:
         unavailable_count=history_unavailable
         + unavailable_reports
         + unavailable_matrices
-        + unavailable_diagnostics,
+        + unavailable_diagnostics
+        + sum(
+            incident.unavailable_reason is not None for incident in incidents
+        ),
         history_record_count=len(records),
+        incidents=incidents,
     )
 
 
@@ -303,6 +373,211 @@ def _record_from_report(
         agent=sanitize_optional(data.get("agent")),
         failed_checks=_failed_checks_from_data(data),
     )
+
+
+def _discover_incidents(
+    root: Path,
+    base: Path,
+    records: list[SiteRecord],
+) -> list[SiteIncident]:
+    report_root = _resolve_under_base(root, base)
+    if not report_root.exists():
+        return []
+    run_records = {
+        record.id: record
+        for record in records
+        if record.kind == "run"
+    }
+    incidents = []
+    for path in sorted(report_root.glob("runs/*/guard/incident.json")):
+        if _path_has_symlink(path, report_root):
+            continue
+        run_id = path.parent.parent.name
+        incident = _load_site_incident(path, run_id)
+        record = run_records.get(sanitize_text(run_id))
+        if record is not None:
+            incident = replace(
+                incident,
+                benchmark_id=record.benchmark_id,
+                category=record.category,
+                run_detail_href=f"run-{_slug(record.id)}.html",
+            )
+        incidents.append(incident)
+    ordered = sorted(incidents, key=_incident_sort_key, reverse=True)
+    return _assign_incident_filenames(ordered)
+
+
+def _load_site_incident(path: Path, fallback_run_id: str) -> SiteIncident:
+    unavailable = _unavailable_incident(path, fallback_run_id)
+    try:
+        if not path.is_file():
+            return unavailable
+        if path.stat().st_size > MAX_INCIDENT_JSON_BYTES:
+            return replace(
+                unavailable,
+                unavailable_reason="incident artifact exceeds the size limit",
+            )
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return unavailable
+    if not isinstance(data, dict):
+        return unavailable
+    schema_version = data.get("schema_version")
+    if (
+        schema_version is not None
+        and (
+            not isinstance(schema_version, int)
+            or isinstance(schema_version, bool)
+            or schema_version != SUPPORTED_INCIDENT_SCHEMA_VERSION
+        )
+    ):
+        return replace(
+            unavailable,
+            unavailable_reason="unsupported incident schema version",
+        )
+    raw_violations = data.get("violations")
+    violation_items = raw_violations if isinstance(raw_violations, list) else []
+    structured_violations = [
+        item for item in violation_items if isinstance(item, dict)
+    ]
+    violations = [
+        _site_incident_violation(item)
+        for item in structured_violations[:MAX_RENDERED_INCIDENT_VIOLATIONS]
+    ]
+    guard_type_counts = Counter(
+        _incident_text(item.get("guard_type"))
+        for item in structured_violations
+    )
+    redaction = data.get("redaction")
+    redaction_applied = (
+        redaction.get("applied")
+        if isinstance(redaction, dict)
+        and isinstance(redaction.get("applied"), bool)
+        else None
+    )
+    return SiteIncident(
+        id=sanitize_text(fallback_run_id),
+        run_id=_incident_text(data.get("run_id"), fallback_run_id),
+        task_id=_incident_text(data.get("task_id")),
+        agent=_incident_text(data.get("agent")),
+        guard_mode=_incident_text(data.get("guard_mode")),
+        result=_incident_text(data.get("result")),
+        blocked=data.get("blocked") is True,
+        blocking_guard=_incident_text(data.get("blocking_guard")),
+        started_at=_incident_text(data.get("started_at")),
+        detected_at=_incident_text(data.get("detected_at")),
+        completed_at=_incident_text(data.get("completed_at")),
+        time_to_first_violation_ms=_nonnegative_int(
+            data.get("time_to_first_violation_ms")
+        ),
+        time_to_block_ms=_nonnegative_int(data.get("time_to_block_ms")),
+        violations=violations,
+        violation_count=len(violation_items),
+        guard_type_counts=dict(guard_type_counts),
+        filter_guard_types=frozenset(guard_type_counts),
+        filter_policies=frozenset(
+            _incident_text(item.get("policy"))
+            for item in structured_violations
+        ),
+        source_path=path,
+        redaction_applied=redaction_applied,
+    )
+
+
+def _unavailable_incident(path: Path, run_id: str) -> SiteIncident:
+    safe_id = sanitize_text(run_id)
+    return SiteIncident(
+        id=safe_id,
+        run_id=safe_id,
+        task_id="-",
+        agent="-",
+        guard_mode="-",
+        result="-",
+        blocked=False,
+        blocking_guard="-",
+        started_at="-",
+        detected_at="-",
+        completed_at="-",
+        time_to_first_violation_ms=None,
+        time_to_block_ms=None,
+        violations=[],
+        violation_count=0,
+        guard_type_counts={},
+        filter_guard_types=frozenset(),
+        filter_policies=frozenset(),
+        source_path=path,
+        unavailable_reason="incident artifact is unavailable or malformed",
+    )
+
+
+def _site_incident_violation(data: dict[str, Any]) -> SiteIncidentViolation:
+    guard_type = _incident_text(data.get("guard_type"))
+    return SiteIncidentViolation(
+        guard_type=guard_type,
+        policy=_incident_text(data.get("policy")),
+        severity=_incident_text(data.get("severity")),
+        action=_incident_text(data.get("action")),
+        detected_at=_incident_text(data.get("detected_at")),
+        elapsed_ms=_nonnegative_int(data.get("elapsed_ms")),
+        evidence_summary=(
+            "Command policy violation detected"
+            if guard_type == "command"
+            else _incident_text(data.get("evidence_summary"))
+        ),
+    )
+
+
+def _incident_text(value: Any, fallback: str = "-") -> str:
+    return sanitize_text(value) if isinstance(value, str) and value else fallback
+
+
+def _path_has_symlink(path: Path, root: Path) -> bool:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return True
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
+
+
+def _incident_sort_key(incident: SiteIncident) -> tuple[float, str]:
+    for value in (
+        incident.detected_at,
+        incident.completed_at,
+        incident.started_at,
+    ):
+        try:
+            return datetime.fromisoformat(value).timestamp(), incident.id
+        except (TypeError, ValueError):
+            continue
+    return float("-inf"), incident.id
+
+
+def _assign_incident_filenames(
+    incidents: list[SiteIncident],
+) -> list[SiteIncident]:
+    used: set[str] = set()
+    assigned = []
+    for incident in incidents:
+        if incident.unavailable_reason is not None:
+            assigned.append(incident)
+            continue
+        base = f"incident-{_slug(incident.id)}"
+        filename = f"{base}.html"
+        if filename in used:
+            suffix = hashlib.sha256(incident.id.encode("utf-8")).hexdigest()[:10]
+            filename = f"{base}-{suffix}.html"
+            counter = 2
+            while filename in used:
+                filename = f"{base}-{suffix}-{counter}.html"
+                counter += 1
+        used.add(filename)
+        assigned.append(replace(incident, detail_filename=filename))
+    return assigned
 
 
 def _discover_traces(root: Path, base: Path) -> list[SiteRecord]:
@@ -416,6 +691,252 @@ def _render_records_page(
     return _page(options, context, heading, body)
 
 
+def _render_incidents_page(
+    options: StaticSiteOptions,
+    context: SiteContext,
+) -> str:
+    available = [
+        incident
+        for incident in context.incidents
+        if incident.unavailable_reason is None
+    ]
+    unavailable = [
+        incident
+        for incident in context.incidents
+        if incident.unavailable_reason is not None
+    ]
+    violation_types: Counter[str] = Counter()
+    for incident in available:
+        violation_types.update(incident.guard_type_counts)
+    body = [
+        _hero("Guard Incidents", f"{len(available)} available incident(s)"),
+        '<section class="metrics">',
+        _metric("Total incidents", str(len(available))),
+        _metric("Blocked incidents", str(sum(item.blocked for item in available))),
+        _metric(
+            "Audit-only incidents",
+            str(sum(not item.blocked for item in available)),
+        ),
+        _metric(
+            "Total violations",
+            str(sum(item.violation_count for item in available)),
+        ),
+        _metric("Filesystem violations", str(violation_types["filesystem"])),
+        _metric("Command violations", str(violation_types["command"])),
+        "</section>",
+        _incident_filter_controls(available),
+        _incident_table(available),
+    ]
+    if unavailable:
+        body.append(
+            _section(
+                "Unavailable incidents",
+                _unavailable_incident_table(unavailable),
+            )
+        )
+    return _page(options, context, "Guard Incidents", "".join(body))
+
+
+def _incident_filter_controls(incidents: list[SiteIncident]) -> str:
+    dimensions = [
+        ("status", ["blocked", "audit-only"]),
+        ("mode", [item.guard_mode for item in incidents]),
+        (
+            "guard-type",
+            [
+                guard_type
+                for item in incidents
+                for guard_type in item.filter_guard_types
+            ],
+        ),
+        (
+            "policy",
+            [
+                violation
+                for item in incidents
+                for violation in item.filter_policies
+            ],
+        ),
+        ("agent", [item.agent for item in incidents]),
+        (
+            "benchmark",
+            [
+                item.benchmark_id or item.task_id
+                for item in incidents
+            ],
+        ),
+    ]
+    controls = [
+        '<div class="incident-filters">',
+        '<label>Search <input data-incident-filter="search" type="search" '
+        'placeholder="task, benchmark, agent, policy"></label>',
+    ]
+    for dimension, values in dimensions:
+        displays = sorted(
+            {value for value in values if value and value != "-"}
+        )
+        options = ['<option value="">All</option>']
+        options.extend(
+            f'<option value="{_filter_token(value)}">{html(value)}</option>'
+            for value in displays
+        )
+        label = dimension.replace("-", " ").title()
+        controls.append(
+            f'<label>{html(label)} <select data-incident-filter="{dimension}">'
+            f'{"".join(options)}</select></label>'
+        )
+    controls.append("</div>")
+    return "".join(controls)
+
+
+def _incident_table(incidents: list[SiteIncident]) -> str:
+    if not incidents:
+        return _empty("No guard incidents found.")
+    rows = []
+    for incident in incidents:
+        guard_types = set(incident.filter_guard_types)
+        policies = set(incident.filter_policies)
+        benchmark = incident.benchmark_id or incident.task_id
+        searchable = " ".join(
+            [
+                incident.run_id,
+                incident.task_id,
+                benchmark,
+                incident.category or "",
+                incident.agent,
+                incident.guard_mode,
+                incident.blocking_guard,
+                *sorted(guard_types),
+                *sorted(policies),
+            ]
+        )
+        detail_href = f"details/{incident.detail_filename}"
+        rows.append(
+            "<tr data-incident-row "
+            f'data-search="{html(searchable.lower())}" '
+            f'data-status="{_filter_token(_incident_status(incident))}" '
+            f'data-mode="{_filter_token(incident.guard_mode)}" '
+            f'data-guard-type="{html(_filter_tokens(guard_types))}" '
+            f'data-policy="{html(_filter_tokens(policies))}" '
+            f'data-agent="{_filter_token(incident.agent)}" '
+            f'data-benchmark="{_filter_token(benchmark)}">'
+            f"<td>{html(incident.detected_at if incident.detected_at != '-' else incident.completed_at)}</td>"
+            f"<td>{html(benchmark)}</td>"
+            f"<td>{html(incident.agent)}</td>"
+            f"<td>{html(incident.guard_mode)}</td>"
+            f"<td>{html(_incident_status(incident))}</td>"
+            f"<td>{html(incident.blocking_guard)}</td>"
+            f"<td>{incident.violation_count}</td>"
+            f"<td>{html(_format_ms(incident.time_to_first_violation_ms))}</td>"
+            f'<td><a href="{detail_href}">View</a></td>'
+            "</tr>"
+        )
+    return (
+        '<table class="data"><thead><tr><th>Detected / completed</th>'
+        "<th>Task / benchmark</th><th>Agent</th><th>Mode</th>"
+        "<th>Status</th><th>Blocking guard</th><th>Violations</th>"
+        "<th>First violation</th><th>Detail</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _unavailable_incident_table(incidents: list[SiteIncident]) -> str:
+    rows = "".join(
+        "<tr>"
+        f"<td>{html(incident.id)}</td>"
+        f"<td>{html(incident.unavailable_reason or 'incident unavailable')}</td>"
+        "</tr>"
+        for incident in incidents
+    )
+    return (
+        '<table class="data"><thead><tr><th>Run</th><th>Status</th></tr></thead>'
+        f"<tbody>{rows}</tbody></table>"
+    )
+
+
+def _render_incident_detail(
+    options: StaticSiteOptions,
+    context: SiteContext,
+    incident: SiteIncident,
+) -> str:
+    run_link = (
+        f'<a href="{incident.run_detail_href}">Open run detail</a>'
+        if incident.run_detail_href is not None
+        else "Unavailable"
+    )
+    facts = {
+        "Run ID": incident.run_id,
+        "Task": incident.task_id,
+        "Benchmark": incident.benchmark_id or "-",
+        "Category": incident.category or "-",
+        "Agent": incident.agent,
+        "Result": incident.result,
+        "Guard mode": incident.guard_mode,
+        "Status": _incident_status(incident),
+        "Blocking guard": incident.blocking_guard,
+        "Started": incident.started_at,
+        "Detected": incident.detected_at,
+        "Completed": incident.completed_at,
+        "Time to first violation": _format_ms(
+            incident.time_to_first_violation_ms
+        ),
+        "Time to block": _format_ms(incident.time_to_block_ms),
+        "Violation count": incident.violation_count,
+        "Redaction": (
+            "Applied"
+            if incident.redaction_applied is True
+            else (
+                "Not applied"
+                if incident.redaction_applied is False
+                else "Not reported"
+            )
+        ),
+    }
+    body = [
+        _hero(incident.task_id, "Guard incident detail"),
+        _facts_table(facts),
+        f"<p>Run detail: {run_link}</p>",
+        _section("Violations", _incident_violations_table(incident)),
+    ]
+    return _page(
+        options,
+        context,
+        f"Incident {incident.run_id}",
+        "".join(body),
+        prefix="../",
+    )
+
+
+def _incident_violations_table(incident: SiteIncident) -> str:
+    if not incident.violations:
+        return _empty("No structured violation details available.")
+    rows = []
+    for violation in incident.violations:
+        rows.append(
+            "<tr>"
+            f"<td>{html(violation.guard_type)}</td>"
+            f"<td>{html(violation.policy)}</td>"
+            f"<td>{html(violation.severity)}</td>"
+            f"<td>{html(violation.action)}</td>"
+            f"<td>{html(violation.detected_at)}</td>"
+            f"<td>{html(_format_ms(violation.elapsed_ms))}</td>"
+            f"<td>{html(violation.evidence_summary)}</td>"
+            "</tr>"
+        )
+    omitted = incident.violation_count - len(incident.violations)
+    notice = (
+        f"<p>{omitted} additional violation(s) omitted.</p>"
+        if omitted > 0
+        else ""
+    )
+    return (
+        '<table class="data"><thead><tr><th>Guard type</th><th>Policy</th>'
+        "<th>Severity</th><th>Action</th><th>Detected</th>"
+        "<th>Elapsed</th><th>Evidence summary</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>{notice}"
+    )
+
+
 def _render_results_page(options: StaticSiteOptions, context: SiteContext) -> str:
     rows = []
     for doc in context.results_docs:
@@ -524,6 +1045,7 @@ def _nav(options: StaticSiteOptions, context: SiteContext, *, prefix: str) -> st
         ("runs.html", "Runs"),
         ("suites.html", "Suites"),
         ("matrices.html", "Matrices"),
+        ("incidents.html", "Incidents"),
         ("diagnostics.html", "Diagnostics"),
     ]
     if options.include_traces:
@@ -924,6 +1446,28 @@ def _format_score(value: Optional[float]) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".")
 
 
+def _nonnegative_int(value: Any) -> Optional[int]:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
+
+
+def _format_ms(value: Optional[int]) -> str:
+    return f"{value} ms" if value is not None else "-"
+
+
+def _incident_status(incident: SiteIncident) -> str:
+    return "blocked" if incident.blocked else "audit-only"
+
+
+def _filter_token(value: str) -> str:
+    return "v-" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def _filter_tokens(values: set[str]) -> str:
+    return " ".join(_filter_token(value) for value in sorted(values))
+
+
 def _hero(title: str, subtitle: str) -> str:
     return f"<section class=\"hero\"><h1>{html(title)}</h1><p>{html(subtitle)}</p></section>"
 
@@ -1008,6 +1552,9 @@ td a { color: var(--accent); }
 .empty { background: var(--panel); border: 1px dashed var(--line); border-radius: 8px; padding: 14px; }
 .filter { display: block; margin: 0 0 12px; color: var(--muted); }
 .filter input { margin-left: 8px; width: min(360px, 100%); padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; }
+.incident-filters { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 12px; }
+.incident-filters label { color: var(--muted); font-size: 13px; }
+.incident-filters input, .incident-filters select { display: block; min-width: 150px; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
 .doc { white-space: pre-wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; }
 footer { color: var(--muted); font-size: 13px; width: min(1120px, calc(100vw - 32px)); margin: 0 auto 32px; }
 @media (max-width: 720px) { header { align-items: flex-start; flex-direction: column; padding: 16px; } main { width: calc(100vw - 20px); } th, td { padding: 8px; } }
@@ -1018,12 +1565,37 @@ def _site_js() -> str:
     return """
 (function () {
   var input = document.querySelector('[data-filter="records"]');
-  if (!input) return;
-  input.addEventListener('input', function () {
-    var query = input.value.toLowerCase();
-    document.querySelectorAll('[data-filter-row]').forEach(function (row) {
-      row.hidden = query && row.textContent.toLowerCase().indexOf(query) === -1;
+  if (input) {
+    input.addEventListener('input', function () {
+      var query = input.value.toLowerCase();
+      document.querySelectorAll('[data-filter-row]').forEach(function (row) {
+        row.hidden = query && row.textContent.toLowerCase().indexOf(query) === -1;
+      });
     });
+  }
+  var incidentFilters = Array.prototype.slice.call(
+    document.querySelectorAll('[data-incident-filter]')
+  );
+  function filterIncidents() {
+    var values = {};
+    incidentFilters.forEach(function (control) {
+      values[control.dataset.incidentFilter] = control.value.toLowerCase();
+    });
+    document.querySelectorAll('[data-incident-row]').forEach(function (row) {
+      var matches = incidentFilters.every(function (control) {
+        var name = control.dataset.incidentFilter;
+        var value = values[name];
+        if (!value) return true;
+        var rowValue = row.getAttribute('data-' + name) || '';
+        if (name === 'search') return rowValue.indexOf(value) !== -1;
+        return rowValue.split(' ').indexOf(value) !== -1;
+      });
+      row.hidden = !matches;
+    });
+  }
+  incidentFilters.forEach(function (control) {
+    var eventName = control.tagName === 'SELECT' ? 'change' : 'input';
+    control.addEventListener(eventName, filterIncidents);
   });
 }());
 """

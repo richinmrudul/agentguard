@@ -35,7 +35,8 @@ The site includes:
 - `index.html` dashboard with total records, pass/fail counts, latest runs,
   average score, benchmark/category summaries, reliability summaries when
   matrix data is available, and diagnostic summaries when requested.
-- `runs.html`, `suites.html`, `matrices.html`, and `diagnostics.html`.
+- `runs.html`, `suites.html`, `matrices.html`, `incidents.html`, and
+  `diagnostics.html`.
 - `traces.html` when `--include-traces` is set.
 - `results.html` when `--include-results-docs` is set and committed
   `docs/results/*.json` or `docs/results/*.md` summaries exist.
@@ -44,6 +45,12 @@ The site includes:
 - Matrix detail pages include a `Guard Incidents` section when the matrix JSON
   contains a structured `guard_summary`. It shows the existing aggregate run,
   incident, block, violation, timing-distribution, and per-guard-type values.
+- The incident index discovers `runs/*/guard/incident.json` beneath the
+  configured reports root and provides local free-text, status, mode, guard
+  type, policy, agent, and benchmark/task filters.
+- Available incidents receive sanitized detail pages with bounded violation
+  tables and a run-detail backlink when that relationship is already present
+  in the generated site context.
 - Local `assets/site.css` and `assets/site.js`.
 
 The exporter reads `.agentguard/history.db` and known report locations under
@@ -57,14 +64,17 @@ does not include raw command stdout/stderr, full diffs, full trace payloads, or
 raw command logs. Trace pages are opt-in and show bounded metadata summaries.
 Diagnostics and committed result docs are also opt-in.
 
-Corrupt or unreadable individual reports are skipped as data sources and listed
-as unavailable instead of failing the whole export.
+Corrupt or unreadable individual reports and incident artifacts are listed as
+unavailable instead of failing the whole export. Incident JSON reads are size
+bounded, symlinks are skipped, unsupported future schemas degrade safely, and
+only the first 50 structured violations are rendered with an omission notice.
 
-The site consumes matrix guard aggregates exactly as recorded. It does not
-discover incident files, recompute incident statistics, render child incident
-evidence, or add standalone incident pages. Matrices without a structured
-`guard_summary` continue to render without the section. Missing, partial, or
-malformed aggregate fields are displayed as unavailable where appropriate.
+The site consumes matrix guard aggregates exactly as recorded and consumes
+individual incident JSON as the source for incident details. It does not parse
+incident Markdown, recompute matrix aggregation, copy raw incident artifacts,
+or change guard/history behavior. Matrices without a structured
+`guard_summary` continue to render without the rollup section. Missing,
+partial, or malformed fields are displayed as unavailable where appropriate.
 
 ## Security And Sanitization
 
@@ -74,9 +84,15 @@ AgentGuard canary formats. Absolute filesystem paths are reduced to safe path
 names where possible so generated pages can be shared without leaking local
 temporary directories.
 
-The guard section uses a narrow field allowlist. It never renders incident
-commands, evidence, child artifact references, or absolute paths, even if
-unexpected fields are present in `guard_summary`.
+Guard rendering uses narrow field allowlists. Incident command fields,
+environment values, raw paths, matched patterns, artifacts, and redaction
+metadata values are never rendered. Evidence summaries are sanitized again,
+all content is HTML-escaped, and links are generated only for local pages.
+There are no external assets, fonts, libraries, or analytics.
+
+Run backlinks are included only when an existing generated run record provides
+a trustworthy relationship. Matrix backlinks and guard-specific history
+queries remain deferred where relationships are not safely available.
 
 Sanitization is pattern-based and cannot guarantee removal of every possible
 secret, encoded value, or application-specific credential. Review the generated
