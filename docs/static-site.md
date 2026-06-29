@@ -41,6 +41,9 @@ The site includes:
   `docs/results/*.json` or `docs/results/*.md` summaries exist.
 - Detail pages for discovered history records, reports, matrices, diagnostics,
   traces, and result documents.
+- Matrix detail pages include a `Guard Incidents` section when the matrix JSON
+  contains a structured `guard_summary`. It shows the existing aggregate run,
+  incident, block, violation, timing-distribution, and per-guard-type values.
 - Local `assets/site.css` and `assets/site.js`.
 
 The exporter reads `.agentguard/history.db` and known report locations under
@@ -57,6 +60,12 @@ Diagnostics and committed result docs are also opt-in.
 Corrupt or unreadable individual reports are skipped as data sources and listed
 as unavailable instead of failing the whole export.
 
+The site consumes matrix guard aggregates exactly as recorded. It does not
+discover incident files, recompute incident statistics, render child incident
+evidence, or add standalone incident pages. Matrices without a structured
+`guard_summary` continue to render without the section. Missing, partial, or
+malformed aggregate fields are displayed as unavailable where appropriate.
+
 ## Security And Sanitization
 
 All dynamic HTML content is escaped. Secret-like strings are redacted with
@@ -64,6 +73,10 @@ defensive patterns covering common password, token, API key, GitHub token, and
 AgentGuard canary formats. Absolute filesystem paths are reduced to safe path
 names where possible so generated pages can be shared without leaking local
 temporary directories.
+
+The guard section uses a narrow field allowlist. It never renders incident
+commands, evidence, child artifact references, or absolute paths, even if
+unexpected fields are present in `guard_summary`.
 
 Sanitization is pattern-based and cannot guarantee removal of every possible
 secret, encoded value, or application-specific credential. Review the generated
