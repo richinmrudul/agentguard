@@ -169,6 +169,33 @@ agentguard guard show .agentguard/runs/<run-id>/guard/incident.json
 
 `agentguard guard list --limit N` lists recent incidents recorded in history.
 
+## Matrix And Evaluation Aggregation
+
+Matrix results aggregate the structured guard metrics captured on each final
+child row. External evaluations use the same aggregation through `run_matrix`;
+there is no separate evaluation counting path.
+
+- An incident run has `guard_violations_total > 0`.
+- A blocked run is an incident run with `guard_blocked = true`.
+- An audit-only run is an incident run that was not blocked.
+- A child with several violations counts once as an incident run, while each
+  violation contributes to the violation total.
+- A child containing both filesystem and command violations contributes to
+  both guard-type groups but only once to the overall incident-run count.
+- Guard-off and execution-error rows are evaluated runs with zero guard metrics.
+
+Timing summaries exclude missing and negative values. Median uses the sorted
+sample median, and p95 uses deterministic nearest rank: rank
+`ceil(0.95 * sample_count)`. Empty distributions report zero samples and no
+statistics.
+
+Matrix JSON, Markdown, manifests, and CLI output consume the same typed
+aggregate. Incident links are safe paths relative to `matrix.md` and refer to
+the existing sanitized child artifacts. Missing or corrupt incident files do
+not remove structured metrics or fail matrix completion. Aggregation does not
+copy raw evidence and does not alter `PASS`/`FAIL`, scoring, reliability, or
+baseline gates.
+
 ## Difference From Post-Hoc Checks
 
 Post-hoc checks evaluate the final workspace after the agent exits. They are
@@ -192,10 +219,8 @@ after a violation.
   operating-system level.
 - Incident evidence is concise and sanitized; it is not a replacement for the
   full JSON report, manifest, trace, command log, or workspace review.
-- Guard incident metrics are written for individual runs and history entries;
-  matrix/evaluation aggregate incident rollups are deferred.
-- Static incident dashboards and filters and history query enhancements are
-  deferred.
+- Static incident dashboard/detail pages, site filters, and history query
+  enhancements are deferred.
 - Docker custom-command termination is deferred.
 - Native filesystem watcher backends, incremental live added/deleted-line
   enforcement, and live secret-content scanning are deferred.

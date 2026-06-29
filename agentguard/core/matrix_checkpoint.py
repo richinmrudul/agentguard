@@ -70,6 +70,15 @@ class MatrixCheckpointAttempt:
     difficulty: Optional[str] = None
     tags: list[str] = field(default_factory=list)
     task_prompt_source: Optional[str] = None
+    guard_violations_total: int = 0
+    guard_blocked: bool = False
+    filesystem_guard_violations: int = 0
+    command_guard_violations: int = 0
+    time_to_first_violation_ms: Optional[int] = None
+    time_to_block_ms: Optional[int] = None
+    guard_incident_json_path: Optional[str] = None
+    guard_incident_markdown_path: Optional[str] = None
+    blocking_guard: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -192,6 +201,18 @@ def atomic_write_checkpoint(checkpoint: MatrixCheckpoint, path: Path) -> Path:
     return output
 
 
+def _nonnegative_int(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def _nonnegative_optional_int(value: object) -> Optional[int]:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 def _attempt_from_dict(data: dict[str, Any], index: int) -> MatrixCheckpointAttempt:
     try:
         attempt = MatrixCheckpointAttempt(
@@ -250,6 +271,31 @@ def _attempt_from_dict(data: dict[str, Any], index: int) -> MatrixCheckpointAtte
             difficulty=data.get("difficulty"),
             tags=list(data.get("tags", [])),
             task_prompt_source=data.get("task_prompt_source"),
+            guard_violations_total=_nonnegative_int(
+                data.get("guard_violations_total")
+            ),
+            guard_blocked=bool(data.get("guard_blocked", False)),
+            filesystem_guard_violations=_nonnegative_int(
+                data.get("filesystem_guard_violations")
+            ),
+            command_guard_violations=_nonnegative_int(
+                data.get("command_guard_violations")
+            ),
+            time_to_first_violation_ms=_nonnegative_optional_int(
+                data.get("time_to_first_violation_ms")
+            ),
+            time_to_block_ms=_nonnegative_optional_int(
+                data.get("time_to_block_ms")
+            ),
+            guard_incident_json_path=data.get("guard_incident_json_path"),
+            guard_incident_markdown_path=data.get(
+                "guard_incident_markdown_path"
+            ),
+            blocking_guard=(
+                data.get("blocking_guard")
+                if data.get("blocking_guard") in {"filesystem", "command"}
+                else None
+            ),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError(f"Invalid checkpoint attempt at index {index}.") from error
@@ -426,6 +472,23 @@ class CheckpointStore:
                 tags=list(row.tags),
                 task_prompt_source=row.task_prompt_source,
                 task_prompt_sha256=row.task_prompt_sha256,
+                guard_violations_total=row.guard_violations_total,
+                guard_blocked=row.guard_blocked,
+                filesystem_guard_violations=row.filesystem_guard_violations,
+                command_guard_violations=row.command_guard_violations,
+                time_to_first_violation_ms=row.time_to_first_violation_ms,
+                time_to_block_ms=row.time_to_block_ms,
+                guard_incident_json_path=(
+                    str(row.guard_incident_json_path)
+                    if row.guard_incident_json_path is not None
+                    else None
+                ),
+                guard_incident_markdown_path=(
+                    str(row.guard_incident_markdown_path)
+                    if row.guard_incident_markdown_path is not None
+                    else None
+                ),
+                blocking_guard=row.blocking_guard,
             )
             self.checkpoint = replace(self.checkpoint, attempts=attempts)
             self._completions_since_write += 1
@@ -529,6 +592,25 @@ def _row_from_report(
             task_prompt_source=data.get("task_prompt_source"),
             task_prompt_sha256=data.get("task_prompt_sha256"),
             profile_id=data.get("profile_id"),
+            guard_violations_total=attempt.guard_violations_total,
+            guard_blocked=(
+                attempt.guard_blocked and attempt.guard_violations_total > 0
+            ),
+            filesystem_guard_violations=attempt.filesystem_guard_violations,
+            command_guard_violations=attempt.command_guard_violations,
+            time_to_first_violation_ms=attempt.time_to_first_violation_ms,
+            time_to_block_ms=attempt.time_to_block_ms,
+            guard_incident_json_path=(
+                Path(attempt.guard_incident_json_path)
+                if attempt.guard_incident_json_path
+                else None
+            ),
+            guard_incident_markdown_path=(
+                Path(attempt.guard_incident_markdown_path)
+                if attempt.guard_incident_markdown_path
+                else None
+            ),
+            blocking_guard=attempt.blocking_guard,
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError("Attempt report is missing required result fields.") from error

@@ -53,8 +53,10 @@ uniformly to every selected attempt, including parallel workers. `audit`
 records violations without terminating the agent or independently changing
 `PASS`/`FAIL`. `enforce` uses only the orchestrator's supported termination
 paths. Command monitoring observes instrumented events, filesystem monitoring
-uses polling, and Docker custom-command termination remains limited. Matrix and
-evaluation incident aggregation and static incident dashboards are deferred.
+uses polling, and Docker custom-command termination remains limited. Evaluation
+results inherit the matrix guard aggregate: overall and grouped incident,
+blocked, audit-only, violation, and detection-timing summaries are identical to
+matrix output. Static incident dashboards remain deferred.
 
 ## Profiles And Tasks
 
@@ -118,6 +120,13 @@ This distinction prevents a test-tampering or boundary-violating change from
 being counted as safe merely because tests returned zero. Repeated trials
 measure observed behavior only; they do not guarantee identical future agent
 behavior.
+
+Guard incident counts are independent from these outcome metrics. One run with
+one or more live violations counts as one incident run; blocked and audit-only
+runs partition incident runs, while violation totals count individual observed
+violations. Optional relative links point to sanitized child incident artifacts.
+The typed metrics remain available when those files are missing or unreadable,
+and guard aggregation does not change evaluation scoring.
 
 The checked-in deterministic profile and suite exercise the full harness
 without network access, paid services, credentials, or proprietary-agent

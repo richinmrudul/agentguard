@@ -298,8 +298,12 @@ positive polling interval, then pass that immutable configuration into every
 selected child. The default matrix runner forwards it directly to the
 orchestrator; the evaluation-specific runner captures it while preserving the
 public three-argument injectable runner contract. Batch reports and manifests
-record the requested settings. Incident aggregation and static incident
-dashboards remain separate deferred layers.
+record the requested settings. After resume/retry reconciliation establishes
+the final rows, one typed aggregation pass computes incident, blocked,
+audit-only, violation, guard-type, grouped, timing, and portable child-reference
+summaries. Matrix JSON, Markdown, manifests, CLI output, and external evaluations
+consume that object without rereading incident files. Static incident dashboards
+remain a deferred presentation layer.
 
 ### Docker Sandbox / Command Runner
 
@@ -643,6 +647,16 @@ ranges, sample standard deviation (defined as `0.0` for one sample), and whether
 each combination passed at least once or on every attempt. These values
 describe observed reliability across the executed attempts; they do not
 guarantee deterministic future behavior.
+
+The same final-row layer aggregates online guard observations. Runs and
+violations are different units: any positive violation count makes one incident
+run, blocked and audit-only runs partition incident runs, and individual
+filesystem/command observations contribute to violation totals. Detection-time
+summaries ignore missing or negative values and use a deterministic nearest-rank
+p95. Relative child links are emitted only for existing incident files that
+resolve beneath the child run directory; missing or corrupt optional incidents
+do not invalidate structured row metrics. This aggregation is reporting only
+and does not modify scoring, reliability, or baseline behavior.
 
 Reliability summaries include a 95% Wilson score confidence interval for the
 observed pass probability. Wilson intervals remain bounded between 0% and 100%

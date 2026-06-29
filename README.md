@@ -320,6 +320,15 @@ agentguard matrix examples/suites/core.yaml --workers 4 --guard-mode enforce --g
 
 Batch guard mode defaults to `off`. Batch JSON, Markdown, manifests, and matrix
 checkpoints record the requested mode and finite positive polling interval.
+Matrix and external-evaluation results also aggregate child guard incidents.
+An incident run has at least one observed guard violation; a blocked run is an
+incident run terminated by a supported guard path, and an audit-only run is an
+incident run that was not blocked. Run counts and violation counts are separate:
+several violations in one child still count as one incident run. Reports include
+overall and per-agent, benchmark, category, and guard-type totals plus
+deterministic timing distributions. Child incident links are relative references
+to sanitized artifacts and become unavailable if those optional files are
+missing; the structured metrics remain valid.
 
 Checkpoint an interruptible matrix and resume only verified attempts:
 
@@ -439,6 +448,11 @@ Guarded runs with violations write concise incident artifacts under
 ```bash
 agentguard guard show .agentguard/runs/<run-id>/guard/incident.json
 ```
+
+Matrix JSON, Markdown, manifests, and CLI summaries roll up those child metrics
+without copying raw incident evidence or changing matrix scoring. External
+evaluations inherit the same aggregation because they execute through matrix
+mode. Static report-site incident dashboards remain deferred.
 
 Export reports for CI/security tools:
 

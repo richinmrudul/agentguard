@@ -48,7 +48,7 @@ from agentguard.benchmarks.signing import (
 from agentguard.core.baseline import write_suite_baseline
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.ci import run_ci
-from agentguard.core.matrix import run_matrix
+from agentguard.core.matrix import MatrixResult, run_matrix
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.suite import (
     format_suite_filters,
@@ -178,6 +178,20 @@ diagnostics_app = typer.Typer(help="Run deterministic AgentGuard diagnostics.")
 app.add_typer(diagnostics_app, name="diagnostics")
 guard_app = typer.Typer(help="Inspect online guard incident reports.")
 app.add_typer(guard_app, name="guard")
+
+
+def _echo_matrix_guard_summary(result: MatrixResult) -> None:
+    summary = result.guard_summary
+    typer.echo("Guard incidents:")
+    typer.echo(f"- Incident runs: {summary.incident_runs}")
+    typer.echo(f"- Blocked runs: {summary.blocked_runs}")
+    typer.echo(f"- Audit-only runs: {summary.audit_only_runs}")
+    typer.echo(f"- Total violations: {summary.violations_total}")
+    typer.echo(f"- Filesystem violations: {summary.filesystem_violations}")
+    typer.echo(f"- Command violations: {summary.command_violations}")
+    timing = summary.time_to_first_violation
+    if timing.samples:
+        typer.echo(f"- Time to first violation p95: {timing.p95_ms} ms")
 
 
 def _version_callback(value: bool) -> None:
@@ -1265,6 +1279,7 @@ def evaluate_run(
     typer.echo(
         f"Guard poll interval: {result.guard_poll_interval_seconds} seconds"
     )
+    _echo_matrix_guard_summary(result)
     typer.echo(f"Attempts: {result.attempts_executed}")
     if result.checkpoint_path is not None:
         typer.echo(f"Checkpoint: {result.checkpoint_path}")
@@ -3282,6 +3297,7 @@ def matrix_command(
     typer.echo(
         f"Guard poll interval: {result.guard_poll_interval_seconds} seconds"
     )
+    _echo_matrix_guard_summary(result)
     if result.filters.has_filters():
         typer.echo(f"Filters: {format_suite_filters(result.filters)}")
     typer.echo(f"Trials per combination: {result.trials}")

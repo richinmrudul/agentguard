@@ -306,3 +306,65 @@ def test_legacy_checkpoint_uses_only_legacy_guard_defaults(tmp_path: Path) -> No
             resume_path=checkpoint,
             guard_mode=GuardMode.AUDIT,
         )
+
+
+def test_resumed_guard_incidents_use_checkpoint_metrics_once(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = REPO_ROOT / "examples/configs/fix_auth_bug_local_command_cheater.yaml"
+    suite = tmp_path / "guard-resume-suite.yaml"
+    suite.write_text(
+        "suite_id: guard_resume\n"
+        "description: Guard resume fixture.\n"
+        "runs:\n"
+        f"  - config: {config}\n"
+        "    agent: local-command\n",
+        encoding="utf-8",
+    )
+    checkpoint = tmp_path / "guard-resume-checkpoint.json"
+    first = run_matrix(
+        suite,
+        matrices_root=tmp_path / "matrices",
+        checkpoint_path=checkpoint,
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.01,
+    )
+    assert first.failed == 1
+    assert first.guard_summary.incident_runs == 1
+    assert first.guard_summary.filesystem_violations > 0
+    first_reference = first.guard_summary.incidents[0]
+    assert first_reference.incident_json is not None
+    assert first_reference.incident_markdown is not None
+    incident_json = first.markdown_report_path.parent / first_reference.incident_json
+    incident_markdown = (
+        first.markdown_report_path.parent / first_reference.incident_markdown
+    )
+    incident_json.unlink()
+    incident_markdown.unlink()
+
+    resumed = run_matrix(
+        suite,
+        matrices_root=tmp_path / "matrices",
+        resume_path=checkpoint,
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.01,
+    )
+
+    assert resumed.attempts_reused == 1
+    assert resumed.guard_summary.incident_runs == 1
+    assert resumed.guard_summary.violations_total == first.guard_summary.violations_total
+    assert resumed.guard_summary.incidents[0].incident_json is None
+    assert resumed.guard_summary.incidents[0].incident_markdown is None
+
+    retried = run_matrix(
+        suite,
+        matrices_root=tmp_path / "matrices",
+        resume_path=checkpoint,
+        retry_failed=True,
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.01,
+    )
+    assert retried.attempts_reused == 0
+    assert retried.guard_summary.incident_runs == 1

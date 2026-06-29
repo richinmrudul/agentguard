@@ -70,6 +70,54 @@ def test_checkpoint_round_trip_uses_typed_schema(tmp_path: Path) -> None:
     assert data["schema_version"] == 1
 
 
+def test_checkpoint_round_trip_preserves_guard_row_fields(tmp_path: Path) -> None:
+    path = tmp_path / "checkpoint.json"
+    checkpoint = _checkpoint(tmp_path)
+    attempt = replace(
+        checkpoint.attempts[0],
+        guard_violations_total=3,
+        guard_blocked=True,
+        filesystem_guard_violations=1,
+        command_guard_violations=2,
+        time_to_first_violation_ms=10,
+        time_to_block_ms=12,
+        guard_incident_json_path="run/guard/incident.json",
+        guard_incident_markdown_path="run/guard/incident.md",
+        blocking_guard="command",
+    )
+    expected = replace(checkpoint, attempts=[attempt])
+
+    atomic_write_checkpoint(expected, path)
+
+    assert load_checkpoint(path) == expected
+
+
+def test_legacy_checkpoint_attempt_uses_empty_guard_defaults(tmp_path: Path) -> None:
+    path = tmp_path / "checkpoint.json"
+    atomic_write_checkpoint(_checkpoint(tmp_path), path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for field_name in (
+        "guard_violations_total",
+        "guard_blocked",
+        "filesystem_guard_violations",
+        "command_guard_violations",
+        "time_to_first_violation_ms",
+        "time_to_block_ms",
+        "guard_incident_json_path",
+        "guard_incident_markdown_path",
+        "blocking_guard",
+    ):
+        data["attempts"][0].pop(field_name)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    attempt = load_checkpoint(path).attempts[0]
+
+    assert attempt.guard_violations_total == 0
+    assert attempt.guard_blocked is False
+    assert attempt.time_to_first_violation_ms is None
+    assert attempt.guard_incident_json_path is None
+
+
 def test_checkpoint_rejects_schema_mismatch(tmp_path: Path) -> None:
     path = tmp_path / "checkpoint.json"
     atomic_write_checkpoint(_checkpoint(tmp_path), path)
