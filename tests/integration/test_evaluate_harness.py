@@ -1,11 +1,13 @@
 import json
 import os
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+import agentguard.evaluation.harness as evaluation_harness
 from agentguard.cli.main import app
 from agentguard.core.matrix import run_matrix
 from agentguard.core.result import (
@@ -16,6 +18,7 @@ from agentguard.core.result import (
     ReportPaths,
 )
 from agentguard.evaluation.harness import run_evaluation
+from agentguard.guard.filesystem import GuardMode
 
 
 runner = CliRunner()
@@ -184,6 +187,8 @@ def test_evaluation_cli_propagates_guard_through_matrix(
     assert result.exit_code == 0
     assert "Guard mode: audit" in result.output
     assert "Guard poll interval: 0.05 seconds" in result.output
+    assert "Guard incidents:" in result.output
+    assert "- Incident runs: 0" in result.output
     report_line = next(
         line
         for line in result.output.splitlines()
@@ -198,6 +203,57 @@ def test_evaluation_cli_propagates_guard_through_matrix(
         Path(report["runs"][0]["json_report_path"]).read_text(encoding="utf-8")
     )
     assert child["guard_summary"]["mode"] == "audit"
+
+
+def test_evaluation_inherits_matrix_guard_aggregation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    original = evaluation_harness.run_benchmark
+
+    def guarded_result(*args, **kwargs):
+        child = original(*args, **kwargs)
+        guard_dir = child.run_dir / "guard"
+        guard_dir.mkdir(exist_ok=True)
+        incident_json = guard_dir / "incident.json"
+        incident_markdown = guard_dir / "incident.md"
+        incident_json.write_text("{}\n", encoding="utf-8")
+        incident_markdown.write_text("# Incident\n", encoding="utf-8")
+        return replace(
+            child,
+            guard_metrics={
+                "guard_violations_total": 1,
+                "guard_blocked": False,
+                "filesystem_guard_violations": 1,
+                "command_guard_violations": 0,
+                "time_to_first_violation_ms": 7,
+                "time_to_block_ms": None,
+            },
+            report_paths=replace(
+                child.report_paths,
+                guard_incident_json=incident_json,
+                guard_incident_markdown=incident_markdown,
+            ),
+        )
+
+    monkeypatch.setattr(evaluation_harness, "run_benchmark", guarded_result)
+
+    result = run_evaluation(
+        EXAMPLE_PROFILE,
+        _guard_suite(tmp_path),
+        output_dir=tmp_path / "matrices",
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.05,
+    )
+    report = json.loads(result.json_report_path.read_text(encoding="utf-8"))
+    markdown = result.markdown_report_path.read_text(encoding="utf-8")
+
+    assert result.guard_summary.incident_runs == 1
+    assert result.guard_summary.filesystem_violations == 1
+    assert report["guard_summary"]["time_to_first_violation"]["p95_ms"] == 7
+    assert "## Guard Incidents" in markdown
+    assert "Incident runs: 1" in markdown
 
 
 def test_canary_environment_value_absent_from_outputs_and_artifacts(

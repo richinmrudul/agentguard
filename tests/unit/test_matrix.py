@@ -134,6 +134,8 @@ def test_matrix_cli_defaults_and_forwards_guard_settings(
     assert calls[1]["guard_poll_interval_seconds"] == 0.05
     assert "Guard mode: off" in default.output
     assert "Guard mode: audit" in custom.output
+    assert "Guard incidents:" in default.output
+    assert "- Incident runs: 0" in custom.output
 
 
 def test_custom_benchmark_runner_contract_is_unchanged(tmp_path: Path) -> None:

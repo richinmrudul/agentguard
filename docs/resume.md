@@ -45,6 +45,14 @@ without unnecessary invalidation, but cannot resume under `audit`, `enforce`,
 or a different interval without compatible recorded evidence. Guard-setting
 mismatches are hard errors and `--force-resume` does not bypass them.
 
+Completed checkpoint rows also persist additive guard counts, blocked state,
+detection timings, blocking guard type, and optional incident paths. Older rows
+without these fields load with zero, false, or null defaults rather than
+guessing from incident files. Reused rows contribute exactly once to the final
+matrix aggregate; retried failures replace the selected row instead of adding a
+second incident. Incident files are optional references and are not reread to
+reconstruct checkpoint metrics.
+
 AgentGuard version or commit changes are explicit compatibility warnings.
 `--force-resume` can acknowledge those warnings, and every bypass is recorded.
 It cannot bypass schema errors, input hash mismatches, corrupt artifacts, failed
@@ -74,9 +82,9 @@ executed, skipped, retried, and invalidated attempts.
 ## Reconciliation and History
 
 Reused and new rows are merged by stable ordinal. Reliability, baseline gates,
-result totals, reports, manifests, and matrix history consume that reconciled
-list exactly once. Existing child history records are upserted by execution ID,
-and the matrix retains its original matrix ID.
+result totals, guard aggregation, reports, manifests, and matrix history consume
+that reconciled list exactly once. Existing child history records are upserted
+by execution ID, and the matrix retains its original matrix ID.
 
 This provides verified exactly-once logical aggregation and history identity.
 It does not claim exactly-once external side effects: an agent process may have

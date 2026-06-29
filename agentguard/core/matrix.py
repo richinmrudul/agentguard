@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from statistics import stdev
 from typing import Any, Callable, Optional
+from urllib.parse import quote
 from uuid import uuid4
 
 from agentguard.config.loader import load_config
@@ -53,6 +54,12 @@ from agentguard.guard.filesystem import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     GuardMode,
     validate_guard_configuration,
+)
+from agentguard.guard.aggregation import (
+    GuardAggregateSummary,
+    GuardGroupSummary,
+    GuardTimingDistribution,
+    aggregate_matrix_guard,
 )
 from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.provenance.manifest import (
@@ -155,6 +162,15 @@ class MatrixRowSummary:
     task_prompt_source: Optional[str] = None
     task_prompt_sha256: Optional[str] = None
     profile_id: Optional[str] = None
+    guard_violations_total: int = 0
+    guard_blocked: bool = False
+    filesystem_guard_violations: int = 0
+    command_guard_violations: int = 0
+    time_to_first_violation_ms: Optional[int] = None
+    time_to_block_ms: Optional[int] = None
+    guard_incident_json_path: Optional[Path] = None
+    guard_incident_markdown_path: Optional[Path] = None
+    blocking_guard: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -217,6 +233,9 @@ class MatrixResult:
     compatibility_warnings: list[str] = field(default_factory=list)
     guard_mode: str = GuardMode.OFF.value
     guard_poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS
+    guard_summary: GuardAggregateSummary = field(
+        default_factory=GuardAggregateSummary
+    )
 
 
 def normalize_matrix_agents(raw_agents: Optional[list[str]]) -> list[str]:
@@ -389,6 +408,18 @@ def _json_default(value: Any) -> str:
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
+def _nonnegative_int(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def _nonnegative_optional_int(value: object) -> Optional[int]:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 def _row_from_result(
     result: BenchmarkResult,
     trial_index: int,
@@ -400,6 +431,26 @@ def _row_from_result(
         for check in result.check_results
         if not check.passed and check.severity == "warning"
     ]
+    raw_metrics = getattr(result, "guard_metrics", {})
+    metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+    filesystem_violations = _nonnegative_int(
+        metrics.get("filesystem_guard_violations")
+    )
+    command_violations = _nonnegative_int(
+        metrics.get("command_guard_violations")
+    )
+    violations_total = _nonnegative_int(metrics.get("guard_violations_total"))
+    blocking_guard = None
+    if bool(getattr(getattr(result, "guard_summary", None), "terminated_agent", False)):
+        blocking_guard = "filesystem"
+    elif bool(
+        getattr(
+            getattr(result, "command_guard_summary", None),
+            "terminated_agent",
+            False,
+        )
+    ):
+        blocking_guard = "command"
     return MatrixRowSummary(
         task_id=result.task_id,
         config_path=result.config_path,
@@ -431,6 +482,25 @@ def _row_from_result(
         task_prompt_source=getattr(result, "task_prompt_source", None),
         task_prompt_sha256=getattr(result, "task_prompt_sha256", None),
         profile_id=getattr(result, "profile_id", None),
+        guard_violations_total=violations_total,
+        guard_blocked=bool(metrics.get("guard_blocked", False)) and violations_total > 0,
+        filesystem_guard_violations=filesystem_violations,
+        command_guard_violations=command_violations,
+        time_to_first_violation_ms=_nonnegative_optional_int(
+            metrics.get("time_to_first_violation_ms")
+        ),
+        time_to_block_ms=_nonnegative_optional_int(metrics.get("time_to_block_ms")),
+        guard_incident_json_path=getattr(
+            result.report_paths,
+            "guard_incident_json",
+            None,
+        ),
+        guard_incident_markdown_path=getattr(
+            result.report_paths,
+            "guard_incident_markdown",
+            None,
+        ),
+        blocking_guard=blocking_guard,
     )
 
 
@@ -777,6 +847,126 @@ def _reliability_lines(summary: MatrixReliabilitySummary) -> list[str]:
     ]
 
 
+def _escape_markdown_table(value: object) -> str:
+    text = str(value)
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\n", "&#10;")
+        .replace("|", "\\|")
+    )
+
+
+def _guard_timing_line(
+    label: str,
+    distribution: GuardTimingDistribution,
+) -> str:
+    if distribution.samples == 0:
+        return f"{label}: no samples"
+    return (
+        f"{label}: {distribution.samples} sample(s), "
+        f"min {distribution.minimum_ms} ms, median {distribution.median_ms} ms, "
+        f"p95 {distribution.p95_ms} ms, max {distribution.maximum_ms} ms"
+    )
+
+
+def _guard_group_table(
+    heading: str,
+    groups: dict[str, GuardGroupSummary],
+) -> list[str]:
+    lines = [
+        f"### {heading}",
+        "",
+        "| Name | Runs | Incidents | Blocked | Audit only | Violations | Filesystem | Command |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for name, summary in groups.items():
+        lines.append(
+            f"| {_escape_markdown_table(name)} | {summary.runs} | "
+            f"{summary.incident_runs} | {summary.blocked_runs} | "
+            f"{summary.audit_only_runs} | {summary.violations_total} | "
+            f"{summary.filesystem_violations} | {summary.command_violations} |"
+        )
+    if not groups:
+        lines.append("| - | 0 | 0 | 0 | 0 | 0 | 0 | 0 |")
+    return lines
+
+
+def _incident_link(path: Optional[str], label: str) -> str:
+    if path is None:
+        return "unavailable"
+    return f"[{label}]({quote(path, safe='/._-')})"
+
+
+def _guard_incident_lines(summary: GuardAggregateSummary) -> list[str]:
+    lines = [
+        "## Guard Incidents",
+        "",
+        f"Runs evaluated: {summary.runs_evaluated}",
+        f"Incident runs: {summary.incident_runs}",
+        f"Blocked runs: {summary.blocked_runs}",
+        f"Audit-only runs: {summary.audit_only_runs}",
+        f"Total violations: {summary.violations_total}",
+        f"Filesystem violations: {summary.filesystem_violations}",
+        f"Command violations: {summary.command_violations}",
+        _guard_timing_line(
+            "Time to first violation",
+            summary.time_to_first_violation,
+        ),
+        _guard_timing_line("Time to block", summary.time_to_block),
+        "",
+    ]
+    if not summary.incidents:
+        lines.extend(["No guard incidents were recorded.", ""])
+    lines.extend(_guard_group_table("By Agent", summary.by_agent))
+    lines.extend(["", *_guard_group_table("By Benchmark", summary.by_benchmark)])
+    lines.extend(["", *_guard_group_table("By Category", summary.by_category)])
+    lines.extend(
+        [
+            "",
+            "### By Guard Type",
+            "",
+            "| Guard | Incident runs | Blocked runs | Violations |",
+            "|---|---:|---:|---:|",
+        ]
+    )
+    for guard_type, guard_summary in summary.by_guard_type.items():
+        lines.append(
+            f"| {_escape_markdown_table(guard_type)} | "
+            f"{guard_summary.incident_runs} | {guard_summary.blocked_runs} | "
+            f"{guard_summary.violations_total} |"
+        )
+    lines.extend(
+        [
+            "",
+            "### Child Incidents",
+            "",
+            (
+                "| Task / benchmark | Agent | Trial | Status | Violations | "
+                "First violation | JSON | Markdown |"
+            ),
+            "|---|---|---:|---|---:|---:|---|---|",
+        ]
+    )
+    for incident in summary.incidents:
+        lines.append(
+            f"| {_escape_markdown_table(incident.task_id)} / "
+            f"{_escape_markdown_table(incident.benchmark_id)} | "
+            f"{_escape_markdown_table(incident.agent)} | {incident.trial_index} | "
+            f"{'blocked' if incident.blocked else 'audit only'} | "
+            f"{incident.violations_total} | "
+            f"{incident.time_to_first_violation_ms if incident.time_to_first_violation_ms is not None else '-'} | "
+            f"{_incident_link(incident.incident_json, 'JSON')} | "
+            f"{_incident_link(incident.incident_markdown, 'Markdown')} |"
+        )
+    if not summary.incidents:
+        lines.append("| - | - | - | - | 0 | - | unavailable | unavailable |")
+    return lines
+
+
 def _write_markdown_report(result: MatrixResult) -> Path:
     lines = [
         "# AgentGuard Matrix Summary",
@@ -856,6 +1046,7 @@ def _write_markdown_report(result: MatrixResult) -> Path:
     )
     if result.filters.has_filters():
         lines.append(f"Filters: {format_suite_filters(result.filters)}")
+    lines.extend(["", *_guard_incident_lines(result.guard_summary)])
     if result.reliability_baseline_path is not None:
         lines.append(f"Reliability baseline: {result.reliability_baseline_path}")
     if result.reliability is not None:
@@ -1295,6 +1486,15 @@ def run_matrix(
                             manifest_sha256=None,
                             duration_seconds=0.0,
                             error=None,
+                            guard_violations_total=0,
+                            guard_blocked=False,
+                            filesystem_guard_violations=0,
+                            command_guard_violations=0,
+                            time_to_first_violation_ms=None,
+                            time_to_block_ms=None,
+                            guard_incident_json_path=None,
+                            guard_incident_markdown_path=None,
+                            blocking_guard=None,
                         )
                         if ordinal not in reused_rows
                         else attempt
@@ -1500,6 +1700,10 @@ def run_matrix(
             6,
         ),
         compatibility_warnings=compatibility_warnings,
+        guard_summary=aggregate_matrix_guard(
+            rows,
+            report_dir / "matrix.md",
+        ),
     )
     if compare_baseline_path is not None:
         result = replace(
@@ -1627,6 +1831,7 @@ def run_matrix(
             "guard_poll_interval_seconds": (
                 result.guard_poll_interval_seconds
             ),
+            "guard_summary": asdict(result.guard_summary),
         },
         guard={
             "guard_mode": result.guard_mode,
