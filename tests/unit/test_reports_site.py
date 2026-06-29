@@ -19,8 +19,9 @@ def test_empty_site_generation(tmp_path: Path, monkeypatch) -> None:
         StaticSiteOptions(output=tmp_path / "site", force=True)
     )
 
-    assert result.page_count == 5
+    assert result.page_count == 6
     assert (tmp_path / "site/index.html").exists()
+    assert (tmp_path / "site/incidents.html").exists()
     assert "No records found" in (tmp_path / "site/runs.html").read_text()
 
 
@@ -184,6 +185,7 @@ def test_cli_exit_codes(tmp_path: Path, monkeypatch) -> None:
 
     assert ok.exit_code == 0
     assert "Static report site:" in ok.output
+    assert "incidents: 0" in ok.output
     assert exists.exit_code == 2
     assert unsafe.exit_code == 2
 

@@ -2423,7 +2423,7 @@ def reports_site(
         f"{result.page_count}; reports: {result.reports}; "
         f"matrices: {result.matrices}; diagnostics: {result.diagnostics}; "
         f"traces: {result.traces}; results docs: {result.results_docs}; "
-        f"unavailable: {result.unavailable}"
+        f"incidents: {result.incidents}; unavailable: {result.unavailable}"
     )
 
 

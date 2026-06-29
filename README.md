@@ -474,8 +474,10 @@ agentguard reports site --output /tmp/agentguard-site --include-results-docs --f
 ```
 
 The static site is self-contained HTML/CSS with optional local JavaScript for
-filtering. It summarizes known safe report data without copying raw command
-output, full diffs, or full trace payloads by default. See
+filtering. It includes matrix guard rollups plus a filtered incident index and
+sanitized incident detail pages discovered from existing run artifacts. It
+does not copy raw commands, incident files, full diffs, or full trace payloads.
+Corrupt or oversized incidents degrade to unavailable rows. See
 [docs/static-site.md](docs/static-site.md) for usage, publishing notes, and
 sanitization limits.
 
