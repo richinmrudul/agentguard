@@ -234,6 +234,10 @@ def list_history(
     name: Optional[str] = None,
     category: Optional[str] = None,
     difficulty: Optional[str] = None,
+    incidents_only: bool = False,
+    guard_blocked: Optional[bool] = None,
+    agent: Optional[str] = None,
+    benchmark_id: Optional[str] = None,
 ) -> list[HistoryRecord]:
     if limit is not None and limit <= 0:
         raise ValueError("limit must be positive.")
@@ -249,6 +253,10 @@ def list_history(
         name=name,
         category=category,
         difficulty=difficulty,
+        incidents_only=incidents_only,
+        guard_blocked=guard_blocked,
+        agent=agent,
+        benchmark_id=benchmark_id,
     )
 
     limit_clause = "LIMIT ?" if limit is not None else ""
@@ -468,6 +476,10 @@ def _history_where_clause(
     name: Optional[str] = None,
     category: Optional[str] = None,
     difficulty: Optional[str] = None,
+    incidents_only: bool = False,
+    guard_blocked: Optional[bool] = None,
+    agent: Optional[str] = None,
+    benchmark_id: Optional[str] = None,
 ) -> tuple[str, list[object]]:
     filters = []
     params: list[object] = []
@@ -477,10 +489,19 @@ def _history_where_clause(
         ("name", name),
         ("category", category),
         ("difficulty", difficulty),
+        ("agent", agent),
+        ("benchmark_id", benchmark_id),
     ]:
         if value is not None:
             filters.append(f"{column} = ?")
             params.append(value)
+    if incidents_only or guard_blocked is not None:
+        filters.append(
+            "guard_incident_path IS NOT NULL AND guard_incident_path != ''"
+        )
+    if guard_blocked is not None:
+        filters.append("guard_blocked = ?")
+        params.append(1 if guard_blocked else 0)
     where = f"WHERE {' AND '.join(filters)}" if filters else ""
     return where, params
 

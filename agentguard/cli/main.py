@@ -846,14 +846,43 @@ def guard_show(
 
 @guard_app.command("list")
 def guard_list(
+    status: str = typer.Option(
+        "all",
+        "--status",
+        help="Incident status to list: all, blocked, or audit.",
+    ),
+    agent: Optional[str] = typer.Option(
+        None,
+        "--agent",
+        help="Incident agent to list exactly.",
+    ),
+    benchmark: Optional[str] = typer.Option(
+        None,
+        "--benchmark",
+        help="Incident benchmark to list exactly.",
+    ),
+    category: Optional[str] = typer.Option(
+        None,
+        "--category",
+        help="Incident category to list exactly.",
+    ),
     limit: int = typer.Option(20, "--limit", help="Maximum incidents to list."),
 ) -> None:
     """List recent guard incidents recorded in history."""
     if limit <= 0:
         raise typer.BadParameter("limit must be positive.", param_hint="--limit")
-    records = [
-        record for record in list_history(limit=limit) if record.guard_incident_path
-    ]
+    try:
+        guard_blocked = _validate_guard_history_status(status, allow_all=True)
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--status") from error
+    records = list_history(
+        limit=limit,
+        incidents_only=True,
+        guard_blocked=guard_blocked,
+        agent=agent,
+        benchmark_id=benchmark,
+        category=category,
+    )
     if not records:
         typer.echo("No guard incidents found.")
         return
@@ -1417,6 +1446,26 @@ def _validate_history_export_format(export_format: str) -> str:
     if export_format not in {"json", "csv"}:
         raise ValueError("format must be one of: csv, json.")
     return export_format
+
+
+def _validate_guard_history_status(
+    status: Optional[str],
+    *,
+    allow_all: bool,
+) -> Optional[bool]:
+    if status is None:
+        return None
+    normalized = status.strip().lower()
+    statuses: dict[str, Optional[bool]] = {
+        "blocked": True,
+        "audit": False,
+    }
+    if allow_all:
+        statuses["all"] = None
+    if normalized not in statuses:
+        accepted = "all, audit, blocked" if allow_all else "audit, blocked"
+        raise ValueError(f"guard status must be one of: {accepted}.")
+    return statuses[normalized]
 
 
 def _echo_gate_summary(result, baseline_path: Path, gate_result: str) -> None:
@@ -2454,6 +2503,26 @@ def history_list(
         "--difficulty",
         help="History difficulty to list exactly.",
     ),
+    incidents_only: bool = typer.Option(
+        False,
+        "--incidents-only",
+        help="List only records with a guard incident.",
+    ),
+    guard_status: Optional[str] = typer.Option(
+        None,
+        "--guard-status",
+        help="Guard incident status to list: blocked or audit.",
+    ),
+    agent: Optional[str] = typer.Option(
+        None,
+        "--agent",
+        help="History agent to list exactly.",
+    ),
+    benchmark: Optional[str] = typer.Option(
+        None,
+        "--benchmark",
+        help="History benchmark to list exactly.",
+    ),
     limit: int = typer.Option(
         20,
         "--limit",
@@ -2466,6 +2535,10 @@ def history_list(
     try:
         validated_type = validate_run_type(run_type)
         validated_result = validate_result(result)
+        guard_blocked = _validate_guard_history_status(
+            guard_status,
+            allow_all=False,
+        )
     except ValueError as error:
         raise typer.BadParameter(str(error)) from error
 
@@ -2476,6 +2549,10 @@ def history_list(
         name=name,
         category=category,
         difficulty=difficulty,
+        incidents_only=incidents_only or guard_status is not None,
+        guard_blocked=guard_blocked,
+        agent=agent,
+        benchmark_id=benchmark,
     )
     typer.echo(_format_history_table(records))
 
@@ -2616,6 +2693,26 @@ def history_export_command(
         "--difficulty",
         help="History difficulty to export exactly.",
     ),
+    incidents_only: bool = typer.Option(
+        False,
+        "--incidents-only",
+        help="Export only records with a guard incident.",
+    ),
+    guard_status: Optional[str] = typer.Option(
+        None,
+        "--guard-status",
+        help="Guard incident status to export: blocked or audit.",
+    ),
+    agent: Optional[str] = typer.Option(
+        None,
+        "--agent",
+        help="History agent to export exactly.",
+    ),
+    benchmark: Optional[str] = typer.Option(
+        None,
+        "--benchmark",
+        help="History benchmark to export exactly.",
+    ),
     force: bool = typer.Option(
         False,
         "--force",
@@ -2629,6 +2726,10 @@ def history_export_command(
         validated_format = _validate_history_export_format(export_format)
         validated_type = validate_run_type(run_type)
         validated_result = validate_result(result)
+        guard_blocked = _validate_guard_history_status(
+            guard_status,
+            allow_all=False,
+        )
     except ValueError as error:
         raise typer.BadParameter(str(error)) from error
 
@@ -2639,6 +2740,10 @@ def history_export_command(
         name=name,
         category=category,
         difficulty=difficulty,
+        incidents_only=incidents_only or guard_status is not None,
+        guard_blocked=guard_blocked,
+        agent=agent,
+        benchmark_id=benchmark,
     )
     content = (
         export_history_json(records)

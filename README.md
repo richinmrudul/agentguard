@@ -447,6 +447,9 @@ Guarded runs with violations write concise incident artifacts under
 
 ```bash
 agentguard guard show .agentguard/runs/<run-id>/guard/incident.json
+agentguard guard list --status blocked --limit 20
+agentguard guard list --status audit --agent local-command
+agentguard guard list --benchmark auth_bug_local_test_cheater
 ```
 
 Matrix JSON, Markdown, manifests, and CLI summaries roll up those child metrics
@@ -486,16 +489,23 @@ Inspect history:
 ```bash
 agentguard history list
 agentguard history list --type suite --result FAIL
+agentguard history list --incidents-only
+agentguard history list --guard-status blocked --category test_tampering
 agentguard history stats
 agentguard history stats --type suite
 agentguard history trends --name core --type suite
 agentguard history export --format csv --output /tmp/agentguard-history.csv
 agentguard history export --format json --type suite --output /tmp/suites.json
+agentguard history export --format json --incidents-only
+agentguard history export --format csv --guard-status audit --output /tmp/audit-incidents.csv
 ```
 
 History exports are useful for external analysis, demos, spreadsheet workflows,
-and dashboard prototypes. They use the local SQLite history index; JSON and
-Markdown reports remain the source of truth.
+and dashboard prototypes. Incident, status, agent, benchmark, and category
+filters are applied to stored SQLite metadata before ordering and `LIMIT`;
+incident files need not exist and are never parsed for these queries. Audit
+means a recorded incident that was not blocked, so ordinary non-incident rows
+are excluded. JSON and Markdown reports remain the source of truth.
 
 ## Execution Provenance
 

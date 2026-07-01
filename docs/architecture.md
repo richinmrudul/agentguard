@@ -473,10 +473,14 @@ The local SQLite history index at `.agentguard/history.db` stores normalized
 summaries for run, suite, matrix, and CI reports. Reports and manifests remain
 the source of truth; the database is a lightweight cache for recent history, stats, and future
 trend/dashboard features. History queries support exact-match filters for type,
-name, category, and difficulty, plus a trends view over recent scores and
-results. History records preserve benchmark identity/version and nullable
-manifest paths when available. Existing databases are migrated by adding the
-manifest column.
+name, category, difficulty, agent, and benchmark, plus incident-only and
+blocked/audit selection and a trends view over recent scores and results.
+Incident selection is expressed in the shared parameterized SQL `WHERE` clause
+before ordering and `LIMIT`; it does not parse or require incident artifacts.
+Audit selection requires a non-empty incident path so ordinary rows are never
+misclassified. History records preserve benchmark identity/version and nullable
+manifest paths when available. Existing databases require no migration for
+these query filters.
 Filtered history can also be exported to JSON or CSV for external analysis,
 demos, spreadsheets, and dashboard prototypes.
 
