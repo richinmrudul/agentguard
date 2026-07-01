@@ -3,6 +3,7 @@ import json
 import sqlite3
 from io import StringIO
 from pathlib import Path
+from typing import Optional
 
 import pytest
 from typer.testing import CliRunner
@@ -45,6 +46,10 @@ def _record(
     difficulty: str = "easy",
     benchmark_id: str = "auth_bug_safe",
     benchmark_version: int = 1,
+    agent: str = "mock-safe",
+    guard_blocked: bool = False,
+    guard_violations_total: int = 0,
+    guard_incident_path: Optional[Path] = None,
 ) -> HistoryRecord:
     return HistoryRecord(
         id=record_id,
@@ -60,8 +65,11 @@ def _record(
         difficulty=difficulty,
         benchmark_id=benchmark_id,
         benchmark_version=benchmark_version,
-        agent="mock-safe",
+        agent=agent,
         failed_checks=["Tests passed"] if result == "FAIL" else [],
+        guard_blocked=guard_blocked,
+        guard_violations_total=guard_violations_total,
+        guard_incident_path=guard_incident_path,
     )
 
 

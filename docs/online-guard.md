@@ -167,7 +167,32 @@ You can print a compact incident summary with:
 agentguard guard show .agentguard/runs/<run-id>/guard/incident.json
 ```
 
-`agentguard guard list --limit N` lists recent incidents recorded in history.
+`agentguard guard list` filters recorded history incidents in SQL before
+ordering and `--limit` are applied:
+
+```bash
+agentguard guard list --status blocked --limit 20
+agentguard guard list --status audit --agent local-command
+agentguard guard list --benchmark auth_bug_local_test_cheater
+```
+
+`--status all` is the default. Blocked and audit status can be combined with
+exact agent, benchmark, and category filters. Audit means an incident path is
+recorded and `guard_blocked` is false; ordinary rows whose blocked flag is false
+are not audit incidents. Queries use stored history metadata and neither parse
+nor require the incident file to remain on disk.
+
+The same incident selection is available from history commands:
+
+```bash
+agentguard history list --incidents-only
+agentguard history list --guard-status blocked --category test_tampering
+agentguard history export --format json --incidents-only
+agentguard history export --format csv --guard-status audit --output /tmp/audit-incidents.csv
+```
+
+JSON keys and CSV columns are unchanged. Guard-mode, policy, and guard-type
+history filters remain deferred.
 
 ## Matrix And Evaluation Aggregation
 
