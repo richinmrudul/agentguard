@@ -100,9 +100,45 @@ The scanner:
 - does not follow symlinks
 - skips `.git`, common cache directories, and
   `.agentguard_agent_events.jsonl`
+- applies validated `guard_ignore_paths` patterns to regular files and safe
+  directory trees
 - tracks created, modified, deleted, and symlink entries
 - bounds scan cost with a maximum observed-file cap
 - avoids reading file contents for live policy decisions
+
+### Configurable generated-path ignores
+
+Benchmarks may declare deterministic repository-relative patterns:
+
+```yaml
+guard_ignore_paths:
+  - coverage/**
+  - build/**
+  - .cache/tool/**
+```
+
+Patterns use the same normalized POSIX-style path matching as other AgentGuard
+path policies. The list preserves configuration order, rejects normalized
+duplicates, and is inherited by suite, matrix, and evaluation child runs.
+Built-in exclusions remain mandatory and cannot be replaced.
+
+Validation rejects empty or non-string entries, absolute/home/URI/drive/UNC
+paths, NULs, dot or traversal components, root-wide wildcards, repository
+metadata, AgentGuard event/evidence paths, and patterns that overlap test,
+forbidden, or secret path policies. Ambiguous leading-wildcard overlaps fail
+closed; there is no unsafe override.
+
+These ignores suppress only online polling observations, live changed-file
+counts, and ignored-tree traversal when pruning is safe. Git diff collection
+and all post-hoc checks still inspect the final repository, so a final ignored
+path can still fail scope, forbidden-path, test-tampering, secret, or diff
+checks. Ignore patterns are noise controls, not security allowlists, and do not
+add paths to `allowed_paths`.
+
+Directory symlinks are never followed. Before pruning a configured ignored
+tree, the guard inspects symlink entries without following them. An ignored-
+looking symlink that resolves outside the workspace is retained as
+`symlink_escape` evidence and can terminate a supported agent in enforce mode.
 
 ## Supported Agents
 
@@ -147,6 +183,11 @@ JSON reports include `guard_summary` and `command_guard_summary`. Markdown
 reports include `Online Filesystem Guard` and `Online Command Guard` sections.
 Manifests include both guard summaries, and execution traces include compact
 `guard_summary` and `command_guard_summary` events.
+
+Filesystem guard summaries add `configured_ignore_patterns`, containing only
+normalized repository-relative patterns. Older reports and traces without this
+field load with an empty list. Incident schemas and matrix aggregates do not
+copy these patterns.
 
 When a guarded run records live violations, AgentGuard also writes first-class
 incident artifacts:

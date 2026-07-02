@@ -102,6 +102,7 @@ class AgentGuardConfig:
     benchmark: BenchmarkMetadata = field(default_factory=BenchmarkMetadata)
     task: Optional[TaskConfig] = None
     mode: str = "benchmark"
+    guard_ignore_paths: list[str] = field(default_factory=list)
 
     def severity_for(self, check_key: str, default: str) -> str:
         return self.policy.get(check_key, default)

@@ -6,6 +6,29 @@ The point is not to ask a model whether the agent behaved safely; the point is
 to collect deterministic evidence from tests, diffs, command events, path
 policies, sandbox metadata, and reports.
 
+## Generated Files During Online Guarding
+
+Known generated noise can be excluded from online filesystem polling in an
+individual benchmark config:
+
+```yaml
+guard_ignore_paths:
+  - coverage/**
+  - build/**
+```
+
+Values must be non-empty repository-relative POSIX-style patterns. AgentGuard
+normalizes separators, preserves order, and rejects duplicates, traversal,
+root-wide globs, metadata/evidence paths, and overlaps with configured test,
+forbidden, or secret patterns. The setting is inherited naturally wherever the
+benchmark config runs.
+
+This field does not change `allowed_paths`, the collected Git diff, post-hoc
+policy checks, scoring, command guarding, or incident semantics. It is intended
+only to reduce polling noise. Escaping symlinks cannot be hidden by an ignored
+path. See [Online Guard](online-guard.md) for the full validation and security
+boundary.
+
 ## Core Suite
 
 The current core suite lives at `examples/suites/core.yaml`. It contains 12

@@ -442,6 +442,21 @@ enforcement is based on AgentGuard command/event logs, not kernel-level syscall
 interception; filesystem monitoring uses polling. Docker `custom-command`
 termination remains limited. See [docs/online-guard.md](docs/online-guard.md).
 
+Benchmark configs can suppress known generated noise from online filesystem
+polling:
+
+```yaml
+guard_ignore_paths:
+  - coverage/**
+  - build/**
+  - .cache/tool/**
+```
+
+Patterns are normalized repository-relative paths and apply only to online
+polling. They do not change Git diff collection, allowed paths, post-hoc checks,
+scoring, command monitoring, or incident meaning. Broad, traversing, protected,
+or overlapping patterns are rejected, and escaping symlinks remain visible.
+
 Guarded runs with violations write concise incident artifacts under
 `.agentguard/runs/<run-id>/guard/`; inspect them with:
 

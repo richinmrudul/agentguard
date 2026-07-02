@@ -83,6 +83,7 @@ class LiveGuardSummary:
     terminated_agent: bool = False
     kill_required: bool = False
     graceful_timeout_seconds: float = DEFAULT_GRACEFUL_TIMEOUT_SECONDS
+    configured_ignore_patterns: list[str] = field(default_factory=list)
 
 
 class ProcessController:
@@ -146,7 +147,10 @@ class RuntimeFilesystemGuard:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._baseline: dict[str, FileState] = {}
-        self._summary = LiveGuardSummary(mode=mode.value)
+        self._summary = LiveGuardSummary(
+            mode=mode.value,
+            configured_ignore_patterns=list(config.guard_ignore_paths),
+        )
         self._start_time: Optional[float] = None
 
     def start(self) -> None:
@@ -234,24 +238,34 @@ class RuntimeFilesystemGuard:
                     if self.process_controller is not None
                     else DEFAULT_GRACEFUL_TIMEOUT_SECONDS
                 ),
+                configured_ignore_patterns=list(self.config.guard_ignore_paths),
             )
 
     def _scan_tree(self) -> dict[str, FileState]:
         observed: dict[str, FileState] = {}
         stack = [self.repo_dir]
-        while stack and len(observed) < MAX_OBSERVED_FILES:
+        inspected = 0
+        while (
+            stack
+            and len(observed) < MAX_OBSERVED_FILES
+            and inspected < MAX_OBSERVED_FILES
+        ):
             directory = stack.pop()
             try:
                 entries = list(os.scandir(directory))
             except OSError:
                 continue
             for entry in entries:
-                if len(observed) >= MAX_OBSERVED_FILES:
+                inspected += 1
+                if (
+                    len(observed) >= MAX_OBSERVED_FILES
+                    or inspected > MAX_OBSERVED_FILES
+                ):
                     break
                 if entry.name in IGNORED_FILE_NAMES:
                     continue
                 rel = self._relative_path(Path(entry.path))
-                if rel is None or self._ignored_path(rel):
+                if rel is None:
                     continue
                 try:
                     stat = entry.stat(follow_symlinks=False)
@@ -267,10 +281,26 @@ class RuntimeFilesystemGuard:
                         target = os.readlink(entry.path)
                     except OSError:
                         target = None
+                    if not self._symlink_escapes(rel, target or "") and (
+                        self._ignored_path(rel)
+                    ):
+                        continue
                 elif is_dir:
                     kind = "directory"
-                    if entry.name not in IGNORED_DIR_NAMES:
-                        stack.append(Path(entry.path))
+                    if self._built_in_ignored_path(rel):
+                        continue
+                    if self._configured_ignored_path(rel, is_directory=True):
+                        if self._tree_contains_escaping_symlink(
+                            Path(entry.path),
+                            rel,
+                        ):
+                            stack.append(Path(entry.path))
+                        continue
+                    stack.append(Path(entry.path))
+                    if self._configured_ignore_has_descendant(rel):
+                        continue
+                elif self._ignored_path(rel):
+                    continue
                 observed[rel] = FileState(
                     kind=kind,
                     mtime_ns=stat.st_mtime_ns,
@@ -359,10 +389,15 @@ class RuntimeFilesystemGuard:
         paths = set(self._baseline) | set(current)
         changed = []
         for path in sorted(paths):
-            if self._ignored_path(path):
-                continue
             before = self._baseline.get(path)
             after = current.get(path)
+            escaping_symlink = (
+                after is not None
+                and after.kind == "symlink"
+                and self._symlink_escapes(path, after.symlink_target or "")
+            )
+            if self._ignored_path(path) and not escaping_symlink:
+                continue
             if before != after:
                 changed.append(path)
         return changed
@@ -391,9 +426,68 @@ class RuntimeFilesystemGuard:
             return 0.0
         return self.time_source() - self._start_time
 
-    def _ignored_path(self, path: str) -> bool:
-        parts = Path(path).parts
-        return any(part in IGNORED_DIR_NAMES for part in parts)
+    def _ignored_path(self, path: str, *, is_directory: bool = False) -> bool:
+        if self._built_in_ignored_path(path):
+            return True
+        return self._configured_ignored_path(path, is_directory=is_directory)
+
+    def _built_in_ignored_path(self, path: str) -> bool:
+        return any(part in IGNORED_DIR_NAMES for part in Path(path).parts)
+
+    def _configured_ignored_path(
+        self,
+        path: str,
+        *,
+        is_directory: bool = False,
+    ) -> bool:
+        if matching_patterns(path, self.config.guard_ignore_paths):
+            return True
+        if is_directory:
+            return any(
+                pattern.endswith("/**")
+                and pattern[: -len("/**")].rstrip("/") == path.rstrip("/")
+                for pattern in self.config.guard_ignore_paths
+            )
+        return False
+
+    def _tree_contains_escaping_symlink(
+        self,
+        directory: Path,
+        relative_directory: str,
+    ) -> bool:
+        stack = [(directory, relative_directory)]
+        inspected = 0
+        while stack and inspected < MAX_OBSERVED_FILES:
+            current, current_relative = stack.pop()
+            try:
+                entries = list(os.scandir(current))
+            except OSError:
+                return True
+            for entry in entries:
+                inspected += 1
+                if inspected >= MAX_OBSERVED_FILES:
+                    return True
+                relative = f"{current_relative}/{entry.name}"
+                try:
+                    if entry.is_symlink():
+                        try:
+                            target = os.readlink(entry.path)
+                        except OSError:
+                            return True
+                        if self._symlink_escapes(relative, target):
+                            return True
+                    elif entry.is_dir(follow_symlinks=False):
+                        stack.append((Path(entry.path), relative))
+                except OSError:
+                    return True
+        return bool(stack)
+
+    def _configured_ignore_has_descendant(self, path: str) -> bool:
+        prefix = path.rstrip("/") + "/"
+        return any(
+            pattern.startswith(prefix)
+            for pattern in self.config.guard_ignore_paths
+        )
 
     def _relative_path(self, path: Path) -> Optional[str]:
         try:

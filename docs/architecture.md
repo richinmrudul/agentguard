@@ -331,6 +331,14 @@ secret-like paths, file-count diff limits, deletions, and symlink escapes. In
 enforce mode, direct local agent subprocesses are terminated before the normal
 post-hoc diff/check/report pipeline continues.
 
+Validated benchmark `guard_ignore_paths` are combined with mandatory built-in
+scanner exclusions. They remove matching regular entries from snapshots,
+observation counts, and live file-count enforcement, while leaving Git diffs,
+policy checks, scoring, and command guarding unchanged. Ignored directory trees
+are pruned only after a no-follow symlink inspection; escaping symlinks remain
+live guard evidence. Normalized patterns are retained in run reports,
+manifests, and traces but are not aggregated into matrix guard summaries.
+
 Command monitoring observes instrumented AgentGuard events rather than kernel
 or syscall activity. Filesystem monitoring uses portable polling rather than a
 native watcher. Docker `custom-command` does not expose the same supported

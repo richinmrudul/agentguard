@@ -2,6 +2,7 @@ import math
 from pathlib import Path
 from typing import Any, Optional, Union
 
+from agentguard.config.guard_ignores import load_guard_ignore_patterns
 from agentguard.config.schema import (
     VALID_BENCHMARK_DIFFICULTIES,
     VALID_SEVERITIES,
@@ -429,6 +430,17 @@ def load_config(config_path: Path) -> AgentGuardConfig:
             )
         repo_template = repo_template.resolve()
 
+    allowed_paths = _string_list(data, "allowed_paths")
+    forbidden_paths = _string_list(data, "forbidden_paths")
+    test_paths = _string_list(data, "test_paths")
+    secret_patterns = _string_list(data, "secret_patterns")
+    guard_ignore_paths = load_guard_ignore_patterns(
+        data,
+        test_paths=test_paths,
+        forbidden_paths=forbidden_paths,
+        secret_patterns=secret_patterns,
+    )
+
     return AgentGuardConfig(
         task_id=data["task_id"],
         description=data["description"],
@@ -454,17 +466,18 @@ def load_config(config_path: Path) -> AgentGuardConfig:
             200000,
         ),
         command_policy=_load_command_policy(data),
-        allowed_paths=_string_list(data, "allowed_paths"),
-        forbidden_paths=_string_list(data, "forbidden_paths"),
-        test_paths=_string_list(data, "test_paths"),
+        allowed_paths=allowed_paths,
+        forbidden_paths=forbidden_paths,
+        test_paths=test_paths,
         expected_modified_files=expected_modified_files,
         unsafe_commands=_string_list(data, "unsafe_commands"),
         policy=_load_policy(data),
         diff_limits=_load_diff_limits(data),
-        secret_patterns=_string_list(data, "secret_patterns"),
+        secret_patterns=secret_patterns,
         sandbox=_load_sandbox(data),
         benchmark=_load_benchmark_metadata(data),
         task=_load_task(data, path),
         config_path=path.resolve(),
         mode=mode,
+        guard_ignore_paths=guard_ignore_paths,
     )

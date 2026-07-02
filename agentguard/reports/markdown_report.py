@@ -72,7 +72,7 @@ def _benchmark_lines(result: BenchmarkResult) -> list[str]:
 
 def _guard_lines(result: BenchmarkResult) -> list[str]:
     summary = result.guard_summary
-    if summary.mode == "off":
+    if summary.mode == "off" and not summary.configured_ignore_patterns:
         return []
     lines = [
         "",
@@ -85,6 +85,12 @@ def _guard_lines(result: BenchmarkResult) -> list[str]:
         f"- Scans: {summary.scan_count}",
         f"- Duration: {summary.monitor_duration_seconds:.3f}s",
     ]
+    if summary.configured_ignore_patterns:
+        lines.append("- Configured ignore patterns:")
+        lines.extend(
+            f"  - {_escape_markdown(pattern)}"
+            for pattern in summary.configured_ignore_patterns
+        )
     if summary.first_violation_time is not None:
         lines.append(f"- First violation time: {summary.first_violation_time:.6f}")
     if summary.violations:
@@ -96,6 +102,13 @@ def _guard_lines(result: BenchmarkResult) -> list[str]:
             for violation in summary.violations
         )
     return lines
+
+
+def _escape_markdown(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
+    for character in "`*_{}[]()#+-.!|>":
+        escaped = escaped.replace(character, f"\\{character}")
+    return escaped
 
 
 def _command_guard_lines(result: BenchmarkResult) -> list[str]:
