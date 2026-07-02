@@ -781,6 +781,22 @@ def build_execution_trace(
                     "configured_ignore_patterns": list(
                         result.guard_summary.configured_ignore_patterns
                     ),
+                    "live_lines_added": result.guard_summary.live_lines_added,
+                    "live_lines_deleted": result.guard_summary.live_lines_deleted,
+                    "line_measurement_complete": (
+                        result.guard_summary.line_measurement_complete
+                    ),
+                    "line_measurement_skipped_files": (
+                        result.guard_summary.line_measurement_skipped_files
+                    ),
+                    "line_measurement_error": (
+                        sanitize_text(
+                            result.guard_summary.line_measurement_error,
+                            sensitive_values,
+                        )[:MAX_STRING_CHARS]
+                        if result.guard_summary.line_measurement_error
+                        else None
+                    ),
                     "violations": [
                         {
                             "violation_type": violation.violation_type,
@@ -1376,6 +1392,18 @@ def _validate_payload(event: TraceEvent) -> None:
             and "configured_ignore_patterns" in event.payload
         ):
             event_fields = event_fields | {"configured_ignore_patterns"}
+        line_measurement_fields = {
+            "live_lines_added",
+            "live_lines_deleted",
+            "line_measurement_complete",
+            "line_measurement_skipped_files",
+            "line_measurement_error",
+        }
+        if (
+            event.event_type == "guard_summary"
+            and line_measurement_fields & set(event.payload)
+        ):
+            event_fields = event_fields | line_measurement_fields
     _require_exact_fields(event.payload, event_fields, f"{event.event_type} payload")
     _validate_bounds(event.payload)
     if event.event_type == "guard_summary":
@@ -1386,6 +1414,33 @@ def _validate_payload(event: TraceEvent) -> None:
             raise ValueError(
                 "Trace configured guard ignore patterns must be strings."
             )
+        if "live_lines_added" in event.payload:
+            for field_name in (
+                "live_lines_added",
+                "live_lines_deleted",
+                "line_measurement_skipped_files",
+            ):
+                value = event.payload.get(field_name)
+                if (
+                    not isinstance(value, int)
+                    or isinstance(value, bool)
+                    or value < 0
+                ):
+                    raise ValueError(
+                        f"Trace {field_name} must be a nonnegative integer."
+                    )
+            if not isinstance(
+                event.payload.get("line_measurement_complete"),
+                bool,
+            ):
+                raise ValueError(
+                    "Trace line_measurement_complete must be boolean."
+                )
+            error = event.payload.get("line_measurement_error")
+            if error is not None and not isinstance(error, str):
+                raise ValueError(
+                    "Trace line_measurement_error must be a string or null."
+                )
     if event.event_type == "file_change":
         path = event.payload.get("path")
         if not isinstance(path, str):
@@ -1762,6 +1817,19 @@ def _guard_summary_from_dict(data: object):
         isinstance(pattern, str) for pattern in configured_ignore_patterns
     ):
         configured_ignore_patterns = []
+    live_lines_added = _nonnegative_int(data.get("live_lines_added"))
+    live_lines_deleted = _nonnegative_int(data.get("live_lines_deleted"))
+    skipped_files = _nonnegative_int(
+        data.get("line_measurement_skipped_files")
+    )
+    measurement_complete = data.get("line_measurement_complete", True)
+    if not isinstance(measurement_complete, bool):
+        measurement_complete = False
+    measurement_error = data.get("line_measurement_error")
+    if isinstance(measurement_error, str):
+        measurement_error = sanitize_text(measurement_error)[:MAX_STRING_CHARS]
+    else:
+        measurement_error = None
     return LiveGuardSummary(
         mode=str(data.get("mode") or "off"),
         triggered=bool(data.get("triggered")),
@@ -1774,6 +1842,11 @@ def _guard_summary_from_dict(data: object):
         kill_required=bool(data.get("kill_required")),
         graceful_timeout_seconds=float(data.get("graceful_timeout_seconds") or 0.0),
         configured_ignore_patterns=list(configured_ignore_patterns),
+        live_lines_added=live_lines_added,
+        live_lines_deleted=live_lines_deleted,
+        line_measurement_complete=measurement_complete,
+        line_measurement_skipped_files=skipped_files,
+        line_measurement_error=measurement_error,
     )
 
 
@@ -1824,6 +1897,12 @@ def _optional_report_path(data: object, key: str) -> Optional[Path]:
         return None
     value = data.get(key)
     return Path(str(value)) if value else None
+
+
+def _nonnegative_int(value: object) -> int:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return 0
 
 
 def _result_from_report(

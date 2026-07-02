@@ -339,6 +339,15 @@ are pruned only after a no-follow symlink inspection; escaping symlinks remain
 live guard evidence. Normalized patterns are retained in run reports,
 manifests, and traces but are not aggregated into matrix guard summaries.
 
+When line limits are configured, the scanner turns its already-computed changed
+file set into bounded candidates. A captured initial commit anchors Git numstat
+for tracked files even if an agent later commits; untracked text uses bounded
+byte-line counting. Configured and built-in ignores are removed before this
+step. Binary, unreadable, oversized, disappearing, or Git-unavailable evidence
+is represented as an incomplete measurement, never raw content or stderr.
+Post-hoc `DiffSizeCheck` continues to evaluate the final collected diff and
+remains the scoring authority.
+
 Command monitoring observes instrumented AgentGuard events rather than kernel
 or syscall activity. Filesystem monitoring uses portable polling rather than a
 native watcher. Docker `custom-command` does not expose the same supported

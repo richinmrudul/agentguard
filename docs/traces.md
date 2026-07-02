@@ -128,6 +128,11 @@ patterns when present. The field is additive; older traces without it continue
 to verify and load with an empty list. Replay continues to evaluate captured
 post-hoc policy evidence, because polling ignores do not alter those policies.
 
+New guard summary events also retain current live added/deleted counts,
+measurement completeness, skipped-file count, and a sanitized incomplete
+status. Older traces default these fields safely. Replay loads the recorded
+summary but does not rerun polling or claim to reproduce violation timing.
+
 Trace validity does not prove benchmark correctness, policy completeness,
 agent identity, or that recorded evidence was honestly produced. Traces are
 not signed. Schema v2 traces can be replayed through the real checks and scorer

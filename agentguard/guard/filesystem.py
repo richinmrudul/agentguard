@@ -10,6 +10,12 @@ from typing import Callable, Optional
 
 from agentguard.config.schema import AgentGuardConfig
 from agentguard.policy.path_matcher import matching_patterns
+from agentguard.repo.live_diff import (
+    LiveDiffCandidate,
+    LiveLineMeasurement,
+    measure_live_line_diff,
+    resolve_live_diff_baseline,
+)
 
 
 DEFAULT_POLL_INTERVAL_SECONDS = 0.2
@@ -84,6 +90,11 @@ class LiveGuardSummary:
     kill_required: bool = False
     graceful_timeout_seconds: float = DEFAULT_GRACEFUL_TIMEOUT_SECONDS
     configured_ignore_patterns: list[str] = field(default_factory=list)
+    live_lines_added: int = 0
+    live_lines_deleted: int = 0
+    line_measurement_complete: bool = True
+    line_measurement_skipped_files: int = 0
+    line_measurement_error: Optional[str] = None
 
 
 class ProcessController:
@@ -136,6 +147,7 @@ class RuntimeFilesystemGuard:
         process_controller: Optional[ProcessController] = None,
         poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
         time_source: Callable[[], float] = time.monotonic,
+        line_measurer: Callable[..., LiveLineMeasurement] = measure_live_line_diff,
     ) -> None:
         self.repo_dir = repo_dir.expanduser().resolve()
         self.config = config
@@ -143,6 +155,16 @@ class RuntimeFilesystemGuard:
         self.process_controller = process_controller
         self.poll_interval_seconds = poll_interval_seconds
         self.time_source = time_source
+        self.line_measurer = line_measurer
+        has_line_limits = (
+            config.diff_limits.max_lines_added is not None
+            or config.diff_limits.max_lines_deleted is not None
+        )
+        self._line_baseline_ref = (
+            resolve_live_diff_baseline(self.repo_dir)
+            if has_line_limits
+            else None
+        )
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -175,8 +197,14 @@ class RuntimeFilesystemGuard:
 
     def scan_once(self) -> list[LiveGuardViolation]:
         current = self._scan_tree()
-        violations = self._violations_for_diff(current)
-        self._record_scan(current, violations)
+        changed = self._changed_paths(current)
+        line_measurement = self._measure_lines(current, changed)
+        violations = self._violations_for_diff(
+            current,
+            changed=changed,
+            line_measurement=line_measurement,
+        )
+        self._record_scan(current, violations, line_measurement)
         return violations
 
     def summary(self) -> LiveGuardSummary:
@@ -193,6 +221,7 @@ class RuntimeFilesystemGuard:
         self,
         current: dict[str, FileState],
         violations: list[LiveGuardViolation],
+        line_measurement: LiveLineMeasurement,
     ) -> None:
         with self._lock:
             existing = list(self._summary.violations)
@@ -239,6 +268,11 @@ class RuntimeFilesystemGuard:
                     else DEFAULT_GRACEFUL_TIMEOUT_SECONDS
                 ),
                 configured_ignore_patterns=list(self.config.guard_ignore_paths),
+                live_lines_added=line_measurement.lines_added,
+                live_lines_deleted=line_measurement.lines_deleted,
+                line_measurement_complete=line_measurement.complete,
+                line_measurement_skipped_files=line_measurement.skipped_files,
+                line_measurement_error=line_measurement.error,
             )
 
     def _scan_tree(self) -> dict[str, FileState]:
@@ -312,9 +346,12 @@ class RuntimeFilesystemGuard:
     def _violations_for_diff(
         self,
         current: dict[str, FileState],
+        *,
+        changed: Optional[list[str]] = None,
+        line_measurement: Optional[LiveLineMeasurement] = None,
     ) -> list[LiveGuardViolation]:
         violations: list[LiveGuardViolation] = []
-        changed = self._changed_paths(current)
+        changed = changed if changed is not None else self._changed_paths(current)
         for path in changed:
             state = current.get(path)
             previous = self._baseline.get(path)
@@ -383,7 +420,75 @@ class RuntimeFilesystemGuard:
                     f"{self.config.diff_limits.max_files_changed}.",
                 )
             )
+        measurement = line_measurement or LiveLineMeasurement()
+        if (
+            self.config.diff_limits.max_lines_added is not None
+            and measurement.lines_added
+            > self.config.diff_limits.max_lines_added
+        ):
+            violations.append(
+                self._violation(
+                    "diff_lines_added",
+                    "(workspace)",
+                    f"Added {measurement.lines_added} lines; live limit is "
+                    f"{self.config.diff_limits.max_lines_added}.",
+                )
+            )
+        if (
+            self.config.diff_limits.max_lines_deleted is not None
+            and measurement.lines_deleted
+            > self.config.diff_limits.max_lines_deleted
+        ):
+            violations.append(
+                self._violation(
+                    "diff_lines_deleted",
+                    "(workspace)",
+                    f"Deleted {measurement.lines_deleted} lines; live limit is "
+                    f"{self.config.diff_limits.max_lines_deleted}.",
+                )
+            )
         return violations
+
+    def _measure_lines(
+        self,
+        current: dict[str, FileState],
+        changed: list[str],
+    ) -> LiveLineMeasurement:
+        limits = self.config.diff_limits
+        if (
+            limits.max_lines_added is None
+            and limits.max_lines_deleted is None
+        ):
+            return LiveLineMeasurement()
+        candidates = []
+        for path in changed:
+            before = self._baseline.get(path)
+            after = current.get(path)
+            before_is_file = before is not None and before.kind == "file"
+            after_is_file = after is not None and after.kind == "file"
+            if not before_is_file and not after_is_file:
+                continue
+            candidates.append(
+                LiveDiffCandidate(
+                    path=path,
+                    baseline_size=before.size if before_is_file else None,
+                    current_size=after.size if after_is_file else None,
+                )
+            )
+        if not candidates:
+            return LiveLineMeasurement()
+        try:
+            return self.line_measurer(
+                self.repo_dir,
+                candidates,
+                self._line_baseline_ref,
+            )
+        except Exception:
+            return LiveLineMeasurement(
+                complete=False,
+                skipped_files=len(candidates),
+                error="Line measurement incomplete: measurement unavailable.",
+            )
 
     def _changed_paths(self, current: dict[str, FileState]) -> list[str]:
         paths = set(self._baseline) | set(current)

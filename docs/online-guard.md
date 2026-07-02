@@ -62,11 +62,39 @@ detects:
 - path changes outside `allowed_paths`
 - secret-like path creation based on configured `secret_patterns`
 - changed-file count above `diff_limits.max_files_changed`
+- current baseline-relative additions above `diff_limits.max_lines_added`
+- current baseline-relative deletions above `diff_limits.max_lines_deleted`
 - deletion of files that existed before the agent started
 - symlinks that point outside the benchmark workspace
 
 Secret content scanning remains a post-hoc policy check. The online guard only
 uses path, metadata, deletion, and symlink evidence.
+
+### Live line limits
+
+Line limits measure the current workspace against the guard’s initial Git
+baseline. They are not cumulative editing churn: if an agent adds 20 lines and
+then removes five of those additions, the current delta reflects the remaining
+15. A violation occurs only when the measured value is greater than its limit;
+equality is permitted.
+
+Tracked-file counts use Git numstat semantics against the captured baseline
+commit. Untracked text files are counted without decoding content. Measurement
+runs only when at least one line threshold is configured and metadata shows a
+relevant file change. It is bounded to 1,000 files, 1 MB per file version, and
+8 MB of total candidate content per scan.
+
+Binary files, unreadable or disappearing files, oversized inputs, exhausted
+bounds, and Git failures make the summary explicitly incomplete. Known counts
+are retained and can still exceed a threshold, but unavailability alone does
+not terminate an agent. Raw file content and Git stderr are never placed in
+guard evidence.
+
+`diff_lines_added` and `diff_lines_deleted` incidents map to the existing
+`diff_size` warning policy. Audit mode records them without terminating.
+Enforce mode terminates supported local agents, retaining both violations if
+both thresholds were exceeded. Later scans do not duplicate or erase an
+already-observed violation.
 
 ## Live Command Policies
 
@@ -129,7 +157,7 @@ forbidden, or secret path policies. Ambiguous leading-wildcard overlaps fail
 closed; there is no unsafe override.
 
 These ignores suppress only online polling observations, live changed-file
-counts, and ignored-tree traversal when pruning is safe. Git diff collection
+counts, live line counts, and ignored-tree traversal when pruning is safe. Git diff collection
 and all post-hoc checks still inspect the final repository, so a final ignored
 path can still fail scope, forbidden-path, test-tampering, secret, or diff
 checks. Ignore patterns are noise controls, not security allowlists, and do not
@@ -188,6 +216,11 @@ Filesystem guard summaries add `configured_ignore_patterns`, containing only
 normalized repository-relative patterns. Older reports and traces without this
 field load with an empty list. Incident schemas and matrix aggregates do not
 copy these patterns.
+
+The same summary includes current `live_lines_added`, `live_lines_deleted`,
+measurement completeness, skipped-file count, and a sanitized status when
+measurement is incomplete. These additive values appear in JSON, Markdown,
+manifests, and traces. Old artifacts use zero counts and a complete default.
 
 When a guarded run records live violations, AgentGuard also writes first-class
 incident artifacts:
