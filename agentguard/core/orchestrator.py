@@ -268,6 +268,14 @@ def _guard_timeline_events(
             "files_observed": guard_summary.files_observed,
             "scan_count": guard_summary.scan_count,
             "monitor_duration_seconds": guard_summary.monitor_duration_seconds,
+            "live_lines_added": guard_summary.live_lines_added,
+            "live_lines_deleted": guard_summary.live_lines_deleted,
+            "line_measurement_complete": (
+                guard_summary.line_measurement_complete
+            ),
+            "line_measurement_skipped_files": (
+                guard_summary.line_measurement_skipped_files
+            ),
         },
     )
 

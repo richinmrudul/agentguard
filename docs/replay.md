@@ -9,7 +9,9 @@ agentguard trace replay trace.jsonl
 ```
 
 Replay reproduces policy evaluation from captured evidence. It does not rerun
-or reproduce agent behavior.
+or reproduce agent behavior or online filesystem polling. New traces can retain
+recorded live line summaries, but replay does not reproduce their detection
+timing; post-hoc diff evidence remains the replay input.
 
 ## Replay Definition
 

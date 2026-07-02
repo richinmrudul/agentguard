@@ -457,6 +457,14 @@ polling. They do not change Git diff collection, allowed paths, post-hoc checks,
 scoring, command monitoring, or incident meaning. Broad, traversing, protected,
 or overlapping patterns are rejected, and escaping symlinks remain visible.
 
+When `diff_limits.max_lines_added` or `max_lines_deleted` is configured, the
+online filesystem guard also measures the current baseline-relative line delta.
+Values must exceed a limit to trigger; equality is allowed. Audit records
+`diff_lines_added` or `diff_lines_deleted`, while enforce terminates supported
+agents. Binary, unreadable, or bounded-out files make measurement explicitly
+incomplete instead of silently counting as zero. Post-hoc Git diff checks remain
+authoritative.
+
 Guarded runs with violations write concise incident artifacts under
 `.agentguard/runs/<run-id>/guard/`; inspect them with:
 

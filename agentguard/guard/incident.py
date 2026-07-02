@@ -274,6 +274,8 @@ def _filesystem_policy(violation: LiveGuardViolation) -> str:
         "secret_like_path": "secret_scan",
         "protected_deletion": "protected_deletion",
         "diff_size": "diff_size",
+        "diff_lines_added": "diff_size",
+        "diff_lines_deleted": "diff_size",
         "symlink_escape": "scope_adherence",
     }.get(violation.violation_type, violation.violation_type)
 
@@ -287,6 +289,8 @@ def _filesystem_severity(violation: LiveGuardViolation) -> str:
         "protected_deletion": "error",
         "out_of_scope_path": "warning",
         "diff_size": "warning",
+        "diff_lines_added": "warning",
+        "diff_lines_deleted": "warning",
     }.get(violation.violation_type, "warning")
 
 

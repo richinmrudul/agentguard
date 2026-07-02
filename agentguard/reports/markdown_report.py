@@ -84,7 +84,17 @@ def _guard_lines(result: BenchmarkResult) -> list[str]:
         f"- Files observed: {summary.files_observed}",
         f"- Scans: {summary.scan_count}",
         f"- Duration: {summary.monitor_duration_seconds:.3f}s",
+        f"- Current lines added: {summary.live_lines_added}",
+        f"- Current lines deleted: {summary.live_lines_deleted}",
+        f"- Line measurement complete: {summary.line_measurement_complete}",
+        "- Line measurement skipped files: "
+        f"{summary.line_measurement_skipped_files}",
     ]
+    if summary.line_measurement_error:
+        lines.append(
+            "- Line measurement status: "
+            f"{_escape_markdown(summary.line_measurement_error)}"
+        )
     if summary.configured_ignore_patterns:
         lines.append("- Configured ignore patterns:")
         lines.extend(
