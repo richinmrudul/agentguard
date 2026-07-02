@@ -123,6 +123,11 @@ Traces capture policy-relevant evidence, not repository snapshots. They omit
 raw command output, full file content, host-specific repository roots, and
 environment values by default.
 
+Online filesystem guard summary events include normalized configured ignore
+patterns when present. The field is additive; older traces without it continue
+to verify and load with an empty list. Replay continues to evaluate captured
+post-hoc policy evidence, because polling ignores do not alter those policies.
+
 Trace validity does not prove benchmark correctness, policy completeness,
 agent identity, or that recorded evidence was honestly produced. Traces are
 not signed. Schema v2 traces can be replayed through the real checks and scorer

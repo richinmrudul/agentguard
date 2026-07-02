@@ -585,7 +585,10 @@ def run_benchmark(
         process_controller=process_controller,
         poll_interval_seconds=guard_poll_interval_seconds,
     )
-    guard_summary = LiveGuardSummary(mode=guard_mode.value)
+    guard_summary = LiveGuardSummary(
+        mode=guard_mode.value,
+        configured_ignore_patterns=list(config.guard_ignore_paths),
+    )
     command_guard_summary = CommandGuardSummary(mode=guard_mode.value)
     if guard_mode != GuardMode.OFF:
         timeline.add(
@@ -595,6 +598,7 @@ def run_benchmark(
                 "mode": guard_mode.value,
                 "poll_interval_seconds": guard_poll_interval_seconds,
                 "termination_supported": process_controller is not None,
+                "configured_ignore_patterns": list(config.guard_ignore_paths),
             },
         )
         guard.start()
@@ -990,6 +994,7 @@ def run_benchmark(
                 "mode": config.mode,
                 "guard_mode": guard_mode.value,
                 "guard_poll_interval_seconds": guard_poll_interval_seconds,
+                "guard_ignore_paths": list(config.guard_ignore_paths),
                 "agent_workdir": config.agent_workdir,
                 "profile_id": (
                     evaluation_profile.id if evaluation_profile is not None else None

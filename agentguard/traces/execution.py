@@ -761,7 +761,10 @@ def build_execution_trace(
         )
         for event in result.command_events
     )
-    if result.guard_summary.mode != "off":
+    if (
+        result.guard_summary.mode != "off"
+        or result.guard_summary.configured_ignore_patterns
+    ):
         event_values.append(
             (
                 "guard_summary",
@@ -774,6 +777,9 @@ def build_execution_trace(
                     "scan_count": result.guard_summary.scan_count,
                     "monitor_duration_seconds": (
                         result.guard_summary.monitor_duration_seconds
+                    ),
+                    "configured_ignore_patterns": list(
+                        result.guard_summary.configured_ignore_patterns
                     ),
                     "violations": [
                         {
@@ -1365,8 +1371,21 @@ def _validate_payload(event: TraceEvent) -> None:
             event_fields = event_fields | {"unified_diff", "diff_truncated"}
     else:
         event_fields = expected[event.event_type]
+        if (
+            event.event_type == "guard_summary"
+            and "configured_ignore_patterns" in event.payload
+        ):
+            event_fields = event_fields | {"configured_ignore_patterns"}
     _require_exact_fields(event.payload, event_fields, f"{event.event_type} payload")
     _validate_bounds(event.payload)
+    if event.event_type == "guard_summary":
+        patterns = event.payload.get("configured_ignore_patterns", [])
+        if not isinstance(patterns, list) or not all(
+            isinstance(pattern, str) for pattern in patterns
+        ):
+            raise ValueError(
+                "Trace configured guard ignore patterns must be strings."
+            )
     if event.event_type == "file_change":
         path = event.payload.get("path")
         if not isinstance(path, str):
@@ -1738,6 +1757,11 @@ def _guard_summary_from_dict(data: object):
         for item in data.get("violations", [])
         if isinstance(item, dict)
     ]
+    configured_ignore_patterns = data.get("configured_ignore_patterns", [])
+    if not isinstance(configured_ignore_patterns, list) or not all(
+        isinstance(pattern, str) for pattern in configured_ignore_patterns
+    ):
+        configured_ignore_patterns = []
     return LiveGuardSummary(
         mode=str(data.get("mode") or "off"),
         triggered=bool(data.get("triggered")),
@@ -1749,6 +1773,7 @@ def _guard_summary_from_dict(data: object):
         terminated_agent=bool(data.get("terminated_agent")),
         kill_required=bool(data.get("kill_required")),
         graceful_timeout_seconds=float(data.get("graceful_timeout_seconds") or 0.0),
+        configured_ignore_patterns=list(configured_ignore_patterns),
     )
 
 
