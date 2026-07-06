@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from agentguard.config.schema import SecretContentPattern
-from agentguard.core.result import DiffSummary
+
+if TYPE_CHECKING:
+    from agentguard.core.result import DiffSummary
 
 
 MAX_SECRET_SCAN_FILES = 256
@@ -20,6 +24,44 @@ class SecretContentScanResult:
     matches: list[str]
     complete: bool
     error: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SecretContentMatch:
+    path: str
+    line_number: Optional[int]
+    detector_id: str
+
+
+def match_secret_content_line(
+    *,
+    path: str,
+    line_number: Optional[int],
+    text: str,
+    patterns: list[SecretContentPattern],
+) -> list[SecretContentMatch]:
+    safe_path = _safe_path(path)
+    if safe_path is None:
+        return []
+    return [
+        SecretContentMatch(
+            path=safe_path,
+            line_number=line_number,
+            detector_id=pattern.id,
+        )
+        for pattern in patterns
+        if pattern.contains in text
+    ]
+
+
+def format_secret_content_match(match: SecretContentMatch) -> str:
+    location = _markdown_path(match.path)
+    if match.line_number is not None:
+        location = f"{location}:{match.line_number}"
+    return (
+        f"{location} matched secret-content detector "
+        f"{match.detector_id}"
+    )
 
 
 def _safe_path(raw_path: str) -> Optional[str]:
@@ -171,27 +213,29 @@ def scan_secret_content(
                 )
             additions.append((path, line_number, line))
 
-    retained: list[tuple[str, int, str]] = []
+    retained: list[SecretContentMatch] = []
     omitted = 0
     per_detector_file: dict[tuple[str, str], int] = {}
     for path, line_number, content in additions:
-        for pattern in patterns:
-            if pattern.contains not in content:
-                continue
-            key = (path, pattern.id)
+        for match in match_secret_content_line(
+            path=path,
+            line_number=line_number,
+            text=content,
+            patterns=patterns,
+        ):
+            key = (match.path, match.detector_id)
             count = per_detector_file.get(key, 0)
             if count >= MAX_SECRET_SCAN_MATCHES_PER_DETECTOR_FILE:
                 omitted += 1
                 continue
             per_detector_file[key] = count + 1
-            retained.append((path, line_number, pattern.id))
-    retained.sort()
+            retained.append(match)
+    retained.sort(
+        key=lambda item: (item.path, item.line_number or 0, item.detector_id)
+    )
     omitted += max(0, len(retained) - MAX_SECRET_SCAN_MATCHES)
     retained = retained[:MAX_SECRET_SCAN_MATCHES]
-    matches = [
-        f"{_markdown_path(path)}:{line_number} matched secret-content detector {detector_id}"
-        for path, line_number, detector_id in retained
-    ]
+    matches = [format_secret_content_match(match) for match in retained]
     if omitted:
         matches.append(f"{omitted} additional secret-content match(es) omitted")
     return SecretContentScanResult(matches=matches, complete=True)

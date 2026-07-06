@@ -272,6 +272,8 @@ def _filesystem_policy(violation: LiveGuardViolation) -> str:
         "test_tampering": "test_tampering",
         "out_of_scope_path": "scope_adherence",
         "secret_like_path": "secret_scan",
+        "secret_content_detected": "secret_content",
+        "secret_content_scan_incomplete": "secret_content",
         "protected_deletion": "protected_deletion",
         "diff_size": "diff_size",
         "diff_lines_added": "diff_size",
@@ -284,6 +286,8 @@ def _filesystem_severity(violation: LiveGuardViolation) -> str:
     return {
         "forbidden_path": "critical",
         "secret_like_path": "critical",
+        "secret_content_detected": "critical",
+        "secret_content_scan_incomplete": "critical",
         "symlink_escape": "critical",
         "test_tampering": "error",
         "protected_deletion": "error",
