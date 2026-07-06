@@ -10,6 +10,13 @@ from agentguard.core.result import CommandResult
 from agentguard.guard.filesystem import ProcessController
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.output_limits import limit_output
+from agentguard.instrumentation.processes import (
+    PROCESS_TIMEOUT_TERMINATED_MESSAGE,
+    ProcessCleanupResult,
+    append_cleanup_message,
+    popen_with_process_group,
+    terminate_process_tree,
+)
 from agentguard.instrumentation.test_runner import _build_test_env
 from agentguard.policy.command_policy import evaluate_command_policy
 
@@ -76,48 +83,39 @@ class LocalCommandAgent(Agent):
     ) -> CommandResult:
         started = time.monotonic()
         timed_out = False
+        cleanup = ProcessCleanupResult()
         process: Optional[subprocess.Popen] = None
         try:
-            if process_controller is None:
-                completed = subprocess.run(
-                    argv,
-                    cwd=repo_dir,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    env=_build_test_env(repo_dir),
-                    timeout=self.config.command_timeout_seconds,
-                )
-                exit_code = completed.returncode
-                stdout = completed.stdout
-                stderr = completed.stderr
-            else:
-                process = subprocess.Popen(
-                    argv,
-                    cwd=repo_dir,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    env=_build_test_env(repo_dir),
-                )
+            process = popen_with_process_group(
+                argv,
+                cwd=repo_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=_build_test_env(repo_dir),
+            )
+            if process_controller is not None:
                 process_controller.attach(process)
-                stdout, stderr = process.communicate(
-                    timeout=self.config.command_timeout_seconds
+            stdout, stderr = process.communicate(
+                timeout=self.config.command_timeout_seconds
+            )
+            exit_code = process.returncode
+            if (
+                process_controller is not None
+                and process_controller.termination_requested
+            ):
+                reason = (
+                    process_controller.termination_reason
+                    or "policy violation"
                 )
-                exit_code = process.returncode
-                if process_controller.termination_requested:
-                    reason = (
-                        process_controller.termination_reason
-                        or "policy violation"
-                    )
-                    label = (
-                        "online filesystem guard"
-                        if "filesystem" in reason
-                        else "online guard"
-                    )
-                    stderr = (
-                        f"{stderr}\nAgent terminated by {label}: {reason}"
-                    ).strip()
+                label = (
+                    "online filesystem guard"
+                    if "filesystem" in reason
+                    else "online guard"
+                )
+                stderr = (
+                    f"{stderr}\nAgent terminated by {label}: {reason}"
+                ).strip()
         except FileNotFoundError as error:
             exit_code = 127
             stdout = ""
@@ -126,7 +124,7 @@ class LocalCommandAgent(Agent):
             timed_out = True
             exit_code = 124
             if process is not None and process.poll() is None:
-                process.kill()
+                cleanup = terminate_process_tree(process)
                 stdout, stderr = process.communicate()
             else:
                 stdout = error.stdout or ""
@@ -138,7 +136,9 @@ class LocalCommandAgent(Agent):
             stderr = (
                 f"{stderr}\nLocal command timed out after "
                 f"{self.config.command_timeout_seconds} seconds."
+                f"\n{PROCESS_TIMEOUT_TERMINATED_MESSAGE}"
             ).strip()
+            stderr = append_cleanup_message(stderr, cleanup)
 
         duration_seconds = time.monotonic() - started
         limited_stdout = limit_output(stdout, self.config.max_output_bytes)
@@ -156,6 +156,9 @@ class LocalCommandAgent(Agent):
             stderr_truncated=limited_stderr.truncated,
             preflight_matched_patterns=preflight_matched_patterns,
             policy_mode=policy_mode,
+            process_cleanup_attempted=cleanup.attempted,
+            process_cleanup_complete=cleanup.complete,
+            process_cleanup_message=cleanup.message,
         )
         return CommandResult(
             command=command_text,
@@ -166,4 +169,7 @@ class LocalCommandAgent(Agent):
             timed_out=timed_out,
             stdout_truncated=limited_stdout.truncated,
             stderr_truncated=limited_stderr.truncated,
+            process_cleanup_attempted=cleanup.attempted,
+            process_cleanup_complete=cleanup.complete,
+            process_cleanup_message=cleanup.message,
         )

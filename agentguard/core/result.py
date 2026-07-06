@@ -19,6 +19,9 @@ class CommandResult:
     timed_out: bool = False
     stdout_truncated: bool = False
     stderr_truncated: bool = False
+    process_cleanup_attempted: bool = False
+    process_cleanup_complete: bool = True
+    process_cleanup_message: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -53,8 +53,17 @@ bytes, line length, and retained match evidence. If a configured content scan
 cannot be completed within those bounds, `Secret scan` fails closed with a
 sanitized incomplete-scan message. Reports and traces render detector IDs plus
 normalized relative paths/line numbers; they never render detector literals,
-matched secret values, raw lines, or raw diffs. Live online secret-content
-enforcement remains deferred.
+matched secret values, raw lines, or raw diffs. The online guard can also
+enforce configured secret-content detectors during live filesystem polling.
+
+## Timeout Cleanup
+
+Benchmark `command_timeout_seconds` and Docker sandbox timeouts do not require
+additional user-facing cleanup configuration. On timeout or guard enforcement,
+AgentGuard attempts graceful process-tree termination, escalates to kill when
+needed, and records sanitized cleanup status. Docker-backed runs additionally
+attempt to remove the managed container on timeout/error. Cleanup hardening is
+best-effort process containment, not syscall interception or a VM boundary.
 
 ## Core Suite
 

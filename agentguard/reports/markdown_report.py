@@ -21,6 +21,15 @@ def _event_flags(event) -> str:
         flags.append("stdout truncated")
     if event.stderr_truncated:
         flags.append("stderr truncated")
+    if event.process_cleanup_attempted:
+        status = (
+            "process cleanup complete"
+            if event.process_cleanup_complete
+            else "process cleanup incomplete"
+        )
+        if event.process_cleanup_message:
+            status = f"{status}: {event.process_cleanup_message}"
+        flags.append(status)
     return f" ({', '.join(flags)})" if flags else ""
 
 

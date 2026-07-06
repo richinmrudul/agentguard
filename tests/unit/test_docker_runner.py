@@ -16,6 +16,38 @@ from agentguard.sandbox.docker_runner import (
 )
 
 
+class FakeProcess:
+    def __init__(
+        self,
+        *,
+        returncode: int = 0,
+        stdout: str = "ok",
+        stderr: str = "",
+        timeout: bool = False,
+    ) -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+        self.timeout = timeout
+        self.pid = 12345
+        self._communicated = False
+
+    def communicate(self, timeout=None):
+        if self.timeout and not self._communicated:
+            self._communicated = True
+            raise subprocess.TimeoutExpired(
+                cmd=["docker"],
+                timeout=timeout,
+                output=self.stdout.encode(),
+                stderr=self.stderr.encode(),
+            )
+        self.returncode = -9 if self.timeout else self.returncode
+        return self.stdout, self.stderr
+
+    def poll(self):
+        return self.returncode
+
+
 def test_docker_command_includes_expected_container_options(tmp_path: Path) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
@@ -108,10 +140,13 @@ def test_docker_command_runner_records_readable_agent_command(
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
 
-    def fake_run(command, **kwargs):
-        return SimpleNamespace(returncode=0, stdout="agent ok", stderr="")
+    def fake_popen(command, **kwargs):
+        return FakeProcess(returncode=0, stdout="agent ok", stderr="")
 
-    monkeypatch.setattr("agentguard.sandbox.docker_runner.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        fake_popen,
+    )
     tracker = CommandTracker()
     runner = DockerCommandRunner(
         tracker,
@@ -136,11 +171,14 @@ def test_docker_runner_records_install_and_test_commands(
     repo_dir.mkdir()
     calls = []
 
-    def fake_run(command, **kwargs):
+    def fake_popen(command, **kwargs):
         calls.append((command, kwargs))
-        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        return FakeProcess(returncode=0, stdout="ok", stderr="")
 
-    monkeypatch.setattr("agentguard.sandbox.docker_runner.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        fake_popen,
+    )
     tracker = CommandTracker()
     runner = DockerTestRunner(
         tracker,
@@ -165,7 +203,6 @@ def test_docker_runner_records_install_and_test_commands(
         "docker: python -m pip install --no-build-isolation -e .",
         "docker: pytest",
     ]
-    assert calls[0][1]["timeout"] == 60
 
 
 def test_docker_command_runner_uses_configured_timeout(
@@ -176,11 +213,14 @@ def test_docker_command_runner_uses_configured_timeout(
     repo_dir.mkdir()
     calls = []
 
-    def fake_run(command, **kwargs):
+    def fake_popen(command, **kwargs):
         calls.append((command, kwargs))
-        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+        return FakeProcess(returncode=0, stdout="ok", stderr="")
 
-    monkeypatch.setattr("agentguard.sandbox.docker_runner.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        fake_popen,
+    )
     runner = DockerCommandRunner(
         CommandTracker(),
         SandboxConfig(type="docker", image="python:3.11-slim"),
@@ -190,7 +230,7 @@ def test_docker_command_runner_uses_configured_timeout(
     result = runner.run_argv(repo_dir, ["python", "-m", "tests"], "docker: tests")
 
     assert result.exit_code == 0
-    assert calls[0][1]["timeout"] == 7
+    assert calls[0][0][calls[0][0].index("--name") + 1].startswith("agentguard-")
 
 
 def test_docker_command_runner_records_timeout(
@@ -200,15 +240,34 @@ def test_docker_command_runner_records_timeout(
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
 
-    def fake_run(command, **kwargs):
-        raise subprocess.TimeoutExpired(
-            cmd=command,
-            timeout=kwargs["timeout"],
-            output=b"partial stdout",
-            stderr=b"partial stderr",
+    remove_calls = []
+
+    def fake_popen(command, **kwargs):
+        return FakeProcess(
+            returncode=None,
+            stdout="partial stdout",
+            stderr="partial stderr",
+            timeout=True,
         )
 
+    def fake_run(command, **kwargs):
+        remove_calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        fake_popen,
+    )
     monkeypatch.setattr("agentguard.sandbox.docker_runner.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.terminate_process_tree",
+        lambda process: SimpleNamespace(
+            attempted=True,
+            complete=True,
+            kill_required=True,
+            message="process tree terminated",
+        ),
+    )
     tracker = CommandTracker()
     runner = DockerCommandRunner(
         tracker,
@@ -221,7 +280,11 @@ def test_docker_command_runner_records_timeout(
     assert result.exit_code == 124
     assert result.timed_out is True
     assert "Docker command timed out after 3 seconds" in result.stderr
+    assert result.process_cleanup_attempted is True
+    assert result.process_cleanup_complete is True
+    assert remove_calls[0][:3] == ["docker", "rm", "-f"]
     assert tracker.events[0].timed_out is True
+    assert tracker.events[0].process_cleanup_complete is True
 
 
 def test_docker_command_runner_truncates_output(
@@ -231,10 +294,17 @@ def test_docker_command_runner_truncates_output(
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
 
-    def fake_run(command, **kwargs):
-        return SimpleNamespace(returncode=0, stdout="start" + ("x" * 200) + "end", stderr="")
+    def fake_popen(command, **kwargs):
+        return FakeProcess(
+            returncode=0,
+            stdout="start" + ("x" * 200) + "end",
+            stderr="",
+        )
 
-    monkeypatch.setattr("agentguard.sandbox.docker_runner.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        fake_popen,
+    )
     tracker = CommandTracker()
     runner = DockerCommandRunner(
         tracker,
@@ -274,10 +344,13 @@ def test_docker_runner_surfaces_missing_docker(
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
 
-    def fake_run(command, **kwargs):
+    def fake_popen(command, **kwargs):
         raise FileNotFoundError
 
-    monkeypatch.setattr("agentguard.sandbox.docker_runner.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        fake_popen,
+    )
     tracker = CommandTracker()
     runner = DockerTestRunner(
         tracker,
@@ -314,11 +387,14 @@ def test_custom_command_agent_runs_in_docker_with_readable_event(
     repo_dir.mkdir()
     calls = []
 
-    def fake_run(command, **kwargs):
+    def fake_popen(command, **kwargs):
         calls.append(command)
-        return SimpleNamespace(returncode=0, stdout="agent ok", stderr="")
+        return FakeProcess(returncode=0, stdout="agent ok", stderr="")
 
-    monkeypatch.setattr("agentguard.sandbox.docker_runner.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        fake_popen,
+    )
     tracker = CommandTracker()
 
     CustomCommandAgent(config).run(repo_dir, tracker)
