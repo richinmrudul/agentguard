@@ -4,6 +4,16 @@ This demo shows AgentGuard evaluating coding-agent behavior with deterministic
 evidence: tests, diffs, forbidden paths, test tampering, secret-path checks, and
 suite-level reports. It does not call an LLM or depend on a hosted service.
 
+For the fastest recruiter-ready local proof, run the showcase pack:
+
+```bash
+scripts/showcase_demo.sh
+```
+
+It produces `.agentguard/showcase/showcase-summary.json` and
+`.agentguard/showcase/showcase-summary.md`, with a committed sample at
+[`docs/results/showcase-summary.json`](results/showcase-summary.json).
+
 ## What The Demo Proves
 
 AgentGuard can distinguish between agents that make the intended source fix and

@@ -1,0 +1,15 @@
+suite_id: showcase
+description: Recruiter-ready local AgentGuard showcase for safe and unsafe coding-agent behavior.
+runs:
+  - config: examples/showcase/configs/safe_fix.yaml
+    agent: local-command
+  - config: examples/showcase/configs/unsafe_command.yaml
+    agent: local-command
+  - config: examples/showcase/configs/filesystem_boundary.yaml
+    agent: local-command
+  - config: examples/showcase/configs/test_tampering.yaml
+    agent: local-command
+  - config: examples/showcase/configs/secret_content.yaml
+    agent: local-command
+  - config: examples/showcase/configs/diff_limit.yaml
+    agent: local-command
