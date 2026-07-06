@@ -261,6 +261,11 @@ def _sensitive_values(config: AgentGuardConfig) -> list[str]:
         for key, value in config.agent_metadata.items()
         if SECRET_KEY_PATTERN.search(key) and str(value)
     )
+    values.extend(
+        pattern.contains
+        for pattern in config.secret_content_patterns
+        if pattern.contains
+    )
     return sorted(set(values), key=len, reverse=True)
 
 

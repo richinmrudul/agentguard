@@ -12,6 +12,7 @@ from agentguard.agents.local_command_agent import LocalCommandAgent
 from agentguard.agents.mock_agent import get_agent
 from agentguard.checks.base import Check
 from agentguard.checks.registry import instantiate_checks
+from agentguard.checks.secret_content import with_secret_content_scan
 from agentguard.config.loader import load_config
 from agentguard.core.result import (
     BenchmarkResult,
@@ -399,6 +400,22 @@ def _sanitize_profile_evidence(
     )
 
 
+def _config_sensitive_values(config) -> list[str]:
+    return (
+        [value for value in config.agent_environment.values() if value]
+        + [
+            str(value)
+            for key, value in config.agent_metadata.items()
+            if SECRET_KEY_PATTERN.search(key) and str(value)
+        ]
+        + [
+            pattern.contains
+            for pattern in config.secret_content_patterns
+            if pattern.contains
+        ]
+    )
+
+
 def _sanitize_timeline_events(
     events: list[TimelineEvent],
     sensitive_values: list[str],
@@ -748,6 +765,11 @@ def run_benchmark(
         )
     policy_started = timing_recorder.now() if timing_recorder is not None else None
     diff_summary = collect_diff(prepared.repo_dir)
+    diff_summary = with_secret_content_scan(
+        prepared.repo_dir,
+        diff_summary,
+        config.secret_content_patterns,
+    )
     timeline.add(
         "diff_collected",
         (
@@ -797,7 +819,7 @@ def run_benchmark(
             "result": score_result.result,
         },
     )
-    if evaluation_profile is not None:
+    if evaluation_profile is not None or config.secret_content_patterns:
         (
             test_result,
             diff_summary,
@@ -807,7 +829,7 @@ def run_benchmark(
             diff_summary,
             check_results,
             command_tracker,
-            [value for value in config.agent_environment.values() if value],
+            _config_sensitive_values(config),
         )
     with _measure_stage(timing_recorder, "report_writing"):
         command_log_path = command_tracker.write_json(prepared.run_dir)
@@ -856,10 +878,10 @@ def run_benchmark(
         },
     )
     timeline_events = timeline.events
-    if evaluation_profile is not None:
+    if evaluation_profile is not None or config.secret_content_patterns:
         timeline_events = _sanitize_timeline_events(
             timeline_events,
-            [value for value in config.agent_environment.values() if value],
+            _config_sensitive_values(config),
         )
     partial_result = BenchmarkResult(
         task_id=config.task_id,
@@ -918,14 +940,7 @@ def run_benchmark(
                 json=json_path,
                 markdown=markdown_path,
             ),
-            sensitive_values=[
-                value for value in config.agent_environment.values() if value
-            ]
-            + [
-                str(value)
-                for key, value in config.agent_metadata.items()
-                if SECRET_KEY_PATTERN.search(key) and str(value)
-            ],
+            sensitive_values=_config_sensitive_values(config),
         )
         if incident is not None:
             incident_paths = write_guard_incident(incident, prepared.run_dir)
@@ -1070,14 +1085,7 @@ def run_benchmark(
             ),
             policy_snapshot=build_policy_snapshot(config),
             execution_duration_seconds=manifest.duration_seconds,
-            sensitive_values=[
-                value for value in config.agent_environment.values() if value
-            ]
-            + [
-                str(value)
-                for key, value in config.agent_metadata.items()
-                if SECRET_KEY_PATTERN.search(key) and str(value)
-            ],
+            sensitive_values=_config_sensitive_values(config),
         )
         write_execution_trace(trace, trace_path)
     except (OSError, TypeError, ValueError) as error:

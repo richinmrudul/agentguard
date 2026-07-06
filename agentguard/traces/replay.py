@@ -470,15 +470,32 @@ def replay_trace(
         diff_summary=evidence.diff_summary,
         command_events=evidence.command_events,
     )
+    recorded, recorded_contributions = _recorded_checks(trace)
     recomputed = evaluate_policy_checks(
         context,
         enabled_identifiers=snapshot.enabled_checks,
     )
+    recorded_secret_scan = next(
+        (
+            check
+            for check in recorded
+            if check.name == "Secret scan"
+            and (
+                "content-based" in check.message.lower()
+                or "scan was incomplete" in check.message.lower()
+            )
+        ),
+        None,
+    )
+    if recorded_secret_scan is not None:
+        recomputed = [
+            recorded_secret_scan if check.name == "Secret scan" else check
+            for check in recomputed
+        ]
     recomputed_score = score_checks(
         recomputed,
         deductions=snapshot.score_weights,
     )
-    recorded, recorded_contributions = _recorded_checks(trace)
     comparisons, divergences = _compare_checks(
         recorded,
         recorded_contributions,

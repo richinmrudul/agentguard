@@ -36,6 +36,10 @@ integrity.
 Known environment values and secret-like metadata values are never embedded.
 If sanitization changes a policy pattern required for exact evaluation, the
 trace remains integrity-valid but is explicitly non-replayable.
+Secret-content detector literals and matched content are not embedded. When a
+recorded `Secret scan` result depends on content detectors or a bounded
+incomplete scan, replay preserves that sanitized recorded check result rather
+than rerunning literal matching from unavailable secret material.
 
 Replay evidence includes the functional test outcome, normalized changed paths
 and line totals, sanitized command and preflight events, and benchmark

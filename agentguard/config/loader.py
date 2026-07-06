@@ -1,4 +1,5 @@
 import math
+import re
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -13,6 +14,7 @@ from agentguard.config.schema import (
     ExpectedModifiedFiles,
     SandboxConfig,
     ScalarMetadata,
+    SecretContentPattern,
     TaskConfig,
 )
 from agentguard.config.yaml import load_yaml
@@ -22,6 +24,13 @@ VALID_DOCKER_NETWORKS = {"none", "bridge"}
 VALID_COMMAND_POLICY_MODES = {"audit", "enforce"}
 VALID_AGENT_WORKDIRS = {"repo_root", "config_dir"}
 MAX_TASK_PROMPT_FILE_BYTES = 65536
+MAX_SECRET_CONTENT_PATTERNS = 32
+MAX_SECRET_CONTENT_PATTERN_ID_LENGTH = 64
+MIN_SECRET_CONTENT_LITERAL_LENGTH = 8
+MAX_SECRET_CONTENT_LITERAL_LENGTH = 1024
+MAX_SECRET_CONTENT_LITERAL_BYTES = 2048
+MAX_SECRET_CONTENT_TOTAL_LITERAL_BYTES = 16384
+SECRET_CONTENT_PATTERN_ID = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
 
 
 def _string_list(data: dict[str, Any], key: str) -> list[str]:
@@ -29,6 +38,80 @@ def _string_list(data: dict[str, Any], key: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ValueError(f"Config field '{key}' must be a list of strings.")
     return value
+
+
+def _load_secret_content_patterns(
+    data: dict[str, Any],
+) -> list[SecretContentPattern]:
+    raw_patterns = data.get("secret_content_patterns", [])
+    if not isinstance(raw_patterns, list):
+        raise ValueError(
+            "Config field 'secret_content_patterns' must be a list."
+        )
+    if len(raw_patterns) > MAX_SECRET_CONTENT_PATTERNS:
+        raise ValueError(
+            "Config field 'secret_content_patterns' exceeds the maximum "
+            f"of {MAX_SECRET_CONTENT_PATTERNS} detectors."
+        )
+    patterns: list[SecretContentPattern] = []
+    seen_ids: set[str] = set()
+    seen_literals: set[str] = set()
+    total_literal_bytes = 0
+    for index, raw_pattern in enumerate(raw_patterns):
+        label = f"secret_content_patterns[{index}]"
+        if not isinstance(raw_pattern, dict):
+            raise ValueError(f"Config field '{label}' must be an object.")
+        unknown = set(raw_pattern) - {"id", "contains"}
+        if unknown:
+            raise ValueError(
+                f"Config field '{label}' contains unsupported key(s): "
+                + ", ".join(sorted(str(key) for key in unknown))
+            )
+        detector_id = raw_pattern.get("id")
+        literal = raw_pattern.get("contains")
+        if not isinstance(detector_id, str) or not detector_id:
+            raise ValueError(f"Config field '{label}.id' is required.")
+        detector_label = f"secret-content detector '{detector_id}'"
+        if len(detector_id) > MAX_SECRET_CONTENT_PATTERN_ID_LENGTH:
+            raise ValueError(f"{detector_label} has an ID that is too long.")
+        if SECRET_CONTENT_PATTERN_ID.fullmatch(detector_id) is None:
+            raise ValueError(
+                f"{detector_label} ID must use lowercase letters, digits, "
+                "underscores, hyphens, or periods."
+            )
+        if detector_id in seen_ids:
+            raise ValueError(f"Duplicate {detector_label} ID.")
+        if not isinstance(literal, str):
+            raise ValueError(f"{detector_label} requires a string 'contains'.")
+        if "\0" in literal:
+            raise ValueError(f"{detector_label} literal must not contain NUL.")
+        if "\n" in literal or "\r" in literal:
+            raise ValueError(
+                f"{detector_label} literal must fit on one line."
+            )
+        if not literal.strip():
+            raise ValueError(f"{detector_label} literal must not be blank.")
+        if len(literal) < MIN_SECRET_CONTENT_LITERAL_LENGTH:
+            raise ValueError(f"{detector_label} literal is too short.")
+        if len(literal) > MAX_SECRET_CONTENT_LITERAL_LENGTH:
+            raise ValueError(f"{detector_label} literal is too long.")
+        literal_bytes = len(literal.encode("utf-8"))
+        if literal_bytes > MAX_SECRET_CONTENT_LITERAL_BYTES:
+            raise ValueError(f"{detector_label} literal is too large.")
+        if literal in seen_literals:
+            raise ValueError(f"{detector_label} duplicates another literal.")
+        total_literal_bytes += literal_bytes
+        if total_literal_bytes > MAX_SECRET_CONTENT_TOTAL_LITERAL_BYTES:
+            raise ValueError(
+                "Config field 'secret_content_patterns' exceeds the total "
+                "literal byte limit."
+            )
+        seen_ids.add(detector_id)
+        seen_literals.add(literal)
+        patterns.append(
+            SecretContentPattern(id=detector_id, contains=literal)
+        )
+    return patterns
 
 
 def _argv_field(
@@ -434,6 +517,7 @@ def load_config(config_path: Path) -> AgentGuardConfig:
     forbidden_paths = _string_list(data, "forbidden_paths")
     test_paths = _string_list(data, "test_paths")
     secret_patterns = _string_list(data, "secret_patterns")
+    secret_content_patterns = _load_secret_content_patterns(data)
     guard_ignore_paths = load_guard_ignore_patterns(
         data,
         test_paths=test_paths,
@@ -474,6 +558,7 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         policy=_load_policy(data),
         diff_limits=_load_diff_limits(data),
         secret_patterns=secret_patterns,
+        secret_content_patterns=secret_content_patterns,
         sandbox=_load_sandbox(data),
         benchmark=_load_benchmark_metadata(data),
         task=_load_task(data, path),

@@ -63,6 +63,10 @@ Traces reuse AgentGuard's manifest sanitization for known environment values,
 secret-like metadata, common token/password/API-key options, authorization
 headers, and URL credentials. Environment names may appear; values do not.
 Known repository, run, and configuration roots are replaced by symbolic roles.
+Configured secret-content detector literals are treated as redaction inputs and
+are not stored in trace policy snapshots or payloads. Content-based `Secret
+scan` evidence records only safe detector IDs, normalized relative locations,
+and sanitized incomplete-scan messages.
 
 Strings, evidence lists, argv, changed-file lists, patterns, and optional diffs
 are bounded. Truncation metadata is recorded. Sanitization is pattern-based and

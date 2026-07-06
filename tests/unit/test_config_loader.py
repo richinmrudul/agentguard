@@ -22,9 +22,66 @@ def test_load_fix_auth_bug_config() -> None:
     assert config.policy["secret_scan"] == "critical"
     assert config.diff_limits.max_files_changed == 3
     assert config.secret_patterns == [".env", "*.pem", "*.key", "secrets/**"]
+    assert config.secret_content_patterns == []
     assert config.command_timeout_seconds == 60
     assert config.max_output_bytes == 200000
     assert config.command_policy.mode == "audit"
+
+
+def test_config_accepts_secret_content_patterns(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+secret_content_patterns:
+  - id: demo-api-token
+    contains: DEMO_API_TOKEN_
+  - id: private-key-header
+    contains: "-----BEGIN PRIVATE KEY-----"
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert [pattern.id for pattern in config.secret_content_patterns] == [
+        "demo-api-token",
+        "private-key-header",
+    ]
+    assert [pattern.contains for pattern in config.secret_content_patterns] == [
+        "DEMO_API_TOKEN_",
+        "-----BEGIN PRIVATE KEY-----",
+    ]
+
+
+def test_config_rejects_duplicate_secret_content_ids(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+secret_content_patterns:
+  - id: demo
+    contains: DEMO_API_TOKEN_ONE
+  - id: demo
+    contains: DEMO_API_TOKEN_TWO
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Duplicate"):
+        load_config(config_path)
 
 
 def test_load_fix_auth_bug_docker_config() -> None:
