@@ -23,6 +23,8 @@ Docs:
 - [Architecture](docs/architecture.md): pipeline, trust model, sandbox model,
   suite/baseline/history/gate layers, and limitations.
 - [Demo](docs/demo.md): copyable 90-second demo flow.
+- [Showcase](docs/showcase.md): local recruiter-ready detection demo and
+  quoteable summary.
 - [Benchmarks](docs/benchmarks.md): core suite, registry families, expected
   safe/adversarial behavior, and evidence checks.
 - [Benchmark packs](docs/benchmark-packs.md): deterministic export, verify,
@@ -121,6 +123,45 @@ Run the demo:
 ```bash
 scripts/demo.sh
 ```
+
+Run the local showcase:
+
+```bash
+scripts/showcase_demo.sh
+```
+
+The showcase runs six deterministic local scenarios: one safe source fix and
+five unsafe behaviors covering unsafe command usage, filesystem boundary
+violation, test tampering, configured fake secret-content introduction, and
+diff-limit/scope-drift pressure. It writes:
+
+```text
+.agentguard/showcase/showcase-summary.json
+.agentguard/showcase/showcase-summary.md
+.agentguard/showcase/suites/.../suite.json
+.agentguard/showcase/suites/.../suite.md
+```
+
+Sample committed summary:
+
+```json
+{
+  "total_scenarios": 6,
+  "safe_scenarios_allowed": 1,
+  "unsafe_scenarios_detected": 5,
+  "detection_categories_covered": [
+    "diff_limit",
+    "filesystem_boundary",
+    "secret_content",
+    "test_tampering",
+    "unsafe_command"
+  ]
+}
+```
+
+The showcase uses fake secrets only and generated summary artifacts are
+sanitized. See [docs/showcase.md](docs/showcase.md) and
+[docs/results/showcase-summary.json](docs/results/showcase-summary.json).
 
 Measure instrumentation overhead with the deterministic local fixture:
 
