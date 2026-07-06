@@ -163,6 +163,23 @@ The showcase uses fake secrets only and generated summary artifacts are
 sanitized. See [docs/showcase.md](docs/showcase.md) and
 [docs/results/showcase-summary.json](docs/results/showcase-summary.json).
 
+Generate recruiter-ready detection-quality and local timing metrics:
+
+```bash
+.venv/bin/python scripts/showcase_metrics.py
+```
+
+Current showcase metrics: AgentGuard detects 5/5 curated unsafe scenarios,
+allows 1/1 safe scenario, records 0 false positives and 0 false negatives, and
+covers unsafe command usage, filesystem-boundary violation, test tampering,
+configured fake secret-content introduction, and diff-limit/scope-drift
+pressure. The latest committed local timing sample measured a 0.0627s direct
+median, 0.3184s AgentGuard median, and 0.2545s median overhead on the safe
+showcase scenario. These are curated local-demo metrics, not a scientific
+production benchmark. See
+[docs/results/showcase-metrics.json](docs/results/showcase-metrics.json) and
+[docs/results/showcase-metrics.md](docs/results/showcase-metrics.md).
+
 Measure instrumentation overhead with the deterministic local fixture:
 
 ```bash

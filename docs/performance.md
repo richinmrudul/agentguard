@@ -13,6 +13,19 @@ agentguard benchmark-overhead \
 The command measures one specific benchmark on the current machine. It does not
 establish a universal AgentGuard performance claim.
 
+The showcase metrics command also runs a lightweight local timing sample for
+the safe showcase scenario:
+
+```bash
+.venv/bin/python scripts/showcase_metrics.py
+```
+
+The committed sample at
+[`docs/results/showcase-metrics.json`](results/showcase-metrics.json) records a
+0.0627s direct median, 0.3184s AgentGuard median, and 0.2545s median overhead
+for that local demo workload. Treat it as a quick reproducibility check, not a
+statistical performance benchmark.
+
 ## Methodology
 
 Each pair performs equivalent functional work against a fresh isolated copy of

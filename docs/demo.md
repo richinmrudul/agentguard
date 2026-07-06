@@ -14,6 +14,16 @@ It produces `.agentguard/showcase/showcase-summary.json` and
 `.agentguard/showcase/showcase-summary.md`, with a committed sample at
 [`docs/results/showcase-summary.json`](results/showcase-summary.json).
 
+To regenerate the quoteable detection-quality and local timing proof, run:
+
+```bash
+.venv/bin/python scripts/showcase_metrics.py
+```
+
+The committed metrics live at
+[`docs/results/showcase-metrics.json`](results/showcase-metrics.json) and
+[`docs/results/showcase-metrics.md`](results/showcase-metrics.md).
+
 ## What The Demo Proves
 
 AgentGuard can distinguish between agents that make the intended source fix and

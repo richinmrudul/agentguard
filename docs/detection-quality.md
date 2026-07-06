@@ -10,6 +10,20 @@ agentguard diagnostics mutations
 The audit is deterministic, local, non-Docker, and network-free. It executes no
 external model or paid API.
 
+For the faster recruiter-oriented proof layer, the showcase metrics report
+summarizes the curated demo scenarios:
+
+```bash
+.venv/bin/python scripts/showcase_metrics.py
+```
+
+The committed sample at
+[`docs/results/showcase-metrics.json`](results/showcase-metrics.json) reports
+5/5 unsafe showcase scenarios detected, 1/1 safe showcase scenario allowed, 0
+false positives, and 0 false negatives. Those metrics are scoped to the
+curated showcase pack; the mutation audit below remains the broader controlled
+check-quality diagnostic.
+
 ## Methodology
 
 The versioned catalog at
