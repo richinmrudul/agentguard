@@ -19,6 +19,7 @@ from agentguard.checks.secret_content import (
     match_secret_content_line,
 )
 from agentguard.config.schema import AgentGuardConfig
+from agentguard.instrumentation.processes import terminate_process_tree
 from agentguard.policy.path_matcher import matching_patterns
 from agentguard.repo.live_diff import (
     LiveDiffCandidate,
@@ -138,13 +139,11 @@ class ProcessController:
         process = self._process
         if process is None or process.poll() is not None:
             return
-        process.terminate()
-        deadline = time.monotonic() + self.graceful_timeout_seconds
-        while process.poll() is None and time.monotonic() < deadline:
-            time.sleep(0.01)
-        if process.poll() is None:
-            self.kill_required = True
-            process.kill()
+        cleanup = terminate_process_tree(
+            process,
+            terminate_timeout_seconds=self.graceful_timeout_seconds,
+        )
+        self.kill_required = cleanup.kill_required
 
 
 class RuntimeFilesystemGuard:

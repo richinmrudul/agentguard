@@ -1,5 +1,7 @@
 import os
+import shlex
 import sys
+import time
 from pathlib import Path
 
 from agentguard.instrumentation.command_tracker import CommandTracker
@@ -38,6 +40,29 @@ def test_test_runner_times_out_sleeping_command(tmp_path: Path) -> None:
     assert result.timed_out is True
     assert "timed out after 1 seconds" in result.stderr
     assert tracker.events[0].timed_out is True
+    assert result.process_cleanup_attempted is True
+    assert result.process_cleanup_complete is True
+
+
+def test_test_runner_timeout_cleans_up_child_process(tmp_path: Path) -> None:
+    child_pid = tmp_path / "child.pid"
+    tracker = CommandTracker()
+    runner = AgentGuardTestRunner(tracker, timeout_seconds=1)
+    script = (
+        "import subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "\"import time; time.sleep(30)\"])\n"
+        f"Path({str(child_pid)!r}).write_text(str(child.pid), encoding='utf-8')\n"
+        "time.sleep(30)\n"
+    )
+
+    result = runner.run(tmp_path, shlex.join([sys.executable, "-c", script]))
+
+    pid = _read_pid(child_pid)
+    assert _process_exited(pid), f"child process still running: {pid}"
+    assert result.timed_out is True
+    assert tracker.events[0].process_cleanup_complete is True
 
 
 def test_test_runner_truncates_large_stdout(tmp_path: Path) -> None:
@@ -56,3 +81,23 @@ def test_test_runner_truncates_large_stdout(tmp_path: Path) -> None:
     assert "end" in result.stdout
     assert "start" not in result.stdout
     assert tracker.events[0].stdout_truncated is True
+
+
+def _read_pid(path: Path) -> int:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if path.exists():
+            return int(path.read_text(encoding="utf-8"))
+        time.sleep(0.02)
+    raise AssertionError("child pid was not written")
+
+
+def _process_exited(pid: int) -> bool:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.02)
+    return False

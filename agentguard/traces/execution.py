@@ -370,6 +370,11 @@ def _command_payload(
             "matched_patterns": patterns,
         },
         "agent": event.agent_name or result.agent,
+        "process_cleanup": {
+            "attempted": event.process_cleanup_attempted,
+            "complete": event.process_cleanup_complete,
+            "message": event.process_cleanup_message,
+        },
         "truncation": {
             "command": command_truncated,
             "argv": len(argv) > 128,
@@ -553,6 +558,11 @@ def _test_payload(
             sensitive_values,
             test_result.stderr_truncated,
         ),
+        "process_cleanup": {
+            "attempted": test_result.process_cleanup_attempted,
+            "complete": test_result.process_cleanup_complete,
+            "message": test_result.process_cleanup_message,
+        },
         "truncation": {"command": command_truncated},
     }
 
@@ -1404,6 +1414,11 @@ def _validate_payload(event: TraceEvent) -> None:
             and line_measurement_fields & set(event.payload)
         ):
             event_fields = event_fields | line_measurement_fields
+        if (
+            event.event_type in {"agent_command", "test_result"}
+            and "process_cleanup" in event.payload
+        ):
+            event_fields = event_fields | {"process_cleanup"}
     _require_exact_fields(event.payload, event_fields, f"{event.event_type} payload")
     _validate_bounds(event.payload)
     if event.event_type == "guard_summary":
@@ -1478,6 +1493,19 @@ def _validate_payload(event: TraceEvent) -> None:
             raise ValueError("Trace exit code must be an integer.")
         _validate_output_identity(event.payload.get("stdout"), "stdout")
         _validate_output_identity(event.payload.get("stderr"), "stderr")
+        cleanup = event.payload.get(
+            "process_cleanup",
+            {"attempted": False, "complete": True, "message": None},
+        )
+        if not isinstance(cleanup, dict):
+            raise ValueError("Trace process cleanup must be an object.")
+        if not isinstance(cleanup.get("attempted"), bool):
+            raise ValueError("Trace process cleanup attempted must be boolean.")
+        if not isinstance(cleanup.get("complete"), bool):
+            raise ValueError("Trace process cleanup complete must be boolean.")
+        message = cleanup.get("message")
+        if message is not None and not isinstance(message, str):
+            raise ValueError("Trace process cleanup message must be a string or null.")
     for key in ("duration_seconds",):
         value = event.payload.get(key)
         if value is not None and (
@@ -1786,6 +1814,13 @@ def _command_event_from_dict(data: dict[str, Any]) -> CommandEvent:
         ),
         policy_mode=data.get("policy_mode"),
         agent_name=data.get("agent_name"),
+        process_cleanup_attempted=bool(data.get("process_cleanup_attempted")),
+        process_cleanup_complete=(
+            bool(data.get("process_cleanup_complete"))
+            if "process_cleanup_complete" in data
+            else True
+        ),
+        process_cleanup_message=data.get("process_cleanup_message"),
     )
 
 
@@ -1952,6 +1987,25 @@ def _result_from_report(
     test_data = report["test_result"]
     diff_data = report["diff_summary"]
     checks = [CheckResult(**item) for item in report["check_results"]]
+    test_result = CommandResult(
+        command=str(test_data["command"]),
+        exit_code=int(test_data["exit_code"]),
+        stdout=str(test_data.get("stdout") or ""),
+        stderr=str(test_data.get("stderr") or ""),
+        duration_seconds=float(test_data.get("duration_seconds") or 0.0),
+        timed_out=bool(test_data.get("timed_out")),
+        stdout_truncated=bool(test_data.get("stdout_truncated")),
+        stderr_truncated=bool(test_data.get("stderr_truncated")),
+        process_cleanup_attempted=bool(
+            test_data.get("process_cleanup_attempted")
+        ),
+        process_cleanup_complete=(
+            bool(test_data.get("process_cleanup_complete"))
+            if "process_cleanup_complete" in test_data
+            else True
+        ),
+        process_cleanup_message=test_data.get("process_cleanup_message"),
+    )
     result = BenchmarkResult(
         task_id=str(report["task_id"]),
         agent=str(report["agent"]),
@@ -1960,7 +2014,7 @@ def _result_from_report(
         config_path=Path(str(report["config_path"])),
         run_dir=run_dir,
         repo_dir=repo_dir,
-        test_result=CommandResult(**test_data),
+        test_result=test_result,
         diff_summary=DiffSummary(**diff_data),
         check_results=checks,
         report_paths=ReportPaths(

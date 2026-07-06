@@ -176,9 +176,10 @@ Runtime termination is supported for:
 - `local-command`
 - `agent-command`
 
-Docker `custom-command` remains effectively audit-only for this phase because
-the termination boundary is the container runner rather than a direct local
-agent process.
+Docker `custom-command` runs through the Docker command runner. AgentGuard
+does not use the online guard to signal a process inside the container, but
+timeout and error cleanup names the container and attempts forced removal so
+long-running Docker work is not left behind.
 
 Mock agents are not long-running subprocesses, so they can be monitored for
 audit evidence but are not a meaningful termination target.
@@ -186,8 +187,17 @@ audit evidence but are not a meaningful termination target.
 ## Termination Semantics
 
 In enforce mode, AgentGuard sends a graceful termination signal to the running
-agent process. If the process does not exit within a short grace window,
-AgentGuard kills it. The report marks the run as `FAIL` with a controlled
+agent process group. If the process tree does not exit within a short grace
+window, AgentGuard escalates to kill. Local command, agent-command, and test
+command timeouts use the same process-tree cleanup path. Docker-backed
+commands are run with a managed container name so timeout/error cleanup can
+attempt `docker rm -f` after terminating the local Docker client process.
+
+Cleanup status is recorded with sanitized booleans and fixed messages such as
+`command timed out and process tree was terminated` or
+`docker cleanup incomplete: container removal failed`; raw exception text,
+environment values, and workspace absolute paths are not added as cleanup
+evidence. The report marks guard-enforced runs as `FAIL` with a controlled
 `Live filesystem guard` check instead of surfacing a traceback.
 
 AgentGuard preserves partial command logs, timeline events, JSON and Markdown
@@ -322,6 +332,7 @@ after a violation.
   full JSON report, manifest, trace, command log, or workspace review.
 - Static incident dashboard/detail pages, site filters, and history query
   enhancements are deferred.
-- Docker custom-command termination is deferred.
+- Process-tree cleanup is best-effort on the host platform; it is not syscall
+  interception or a full sandbox boundary.
 - Native filesystem watcher backends and live secret-content scanning are
   deferred.

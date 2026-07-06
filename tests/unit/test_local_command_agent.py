@@ -1,6 +1,9 @@
 from dataclasses import replace
+import os
+import shlex
 from pathlib import Path
 import sys
+import time
 
 import pytest
 
@@ -68,6 +71,38 @@ def test_local_command_agent_timeout_records_controlled_event(
     assert event.exit_code == 124
     assert event.timed_out is True
     assert "Local command timed out after 1 seconds." in event.stderr
+    assert event.process_cleanup_attempted is True
+    assert event.process_cleanup_complete is True
+
+
+def test_local_command_agent_timeout_cleans_up_child_process(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    child_pid = tmp_path / "child.pid"
+    tracker = CommandTracker()
+    script = (
+        "import subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "\"import time; time.sleep(30)\"])\n"
+        f"Path({str(child_pid)!r}).write_text(str(child.pid), encoding='utf-8')\n"
+        "time.sleep(30)\n"
+    )
+
+    LocalCommandAgent(
+        _config(
+            agent_command=shlex.join([sys.executable, "-c", script]),
+            command_timeout_seconds=1,
+        )
+    ).run(repo_dir, tracker)
+
+    pid = _read_pid(child_pid)
+    assert _process_exited(pid), f"child process still running: {pid}"
+    event = tracker.events[0]
+    assert event.timed_out is True
+    assert event.process_cleanup_complete is True
 
 
 def test_local_command_agent_preflight_enforce_blocks_before_execution(
@@ -103,3 +138,23 @@ def test_local_command_agent_requires_agent_command(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="requires config field 'agent_command'"):
         agent.run(tmp_path, CommandTracker())
+
+
+def _read_pid(path: Path) -> int:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if path.exists():
+            return int(path.read_text(encoding="utf-8"))
+        time.sleep(0.02)
+    raise AssertionError("child pid was not written")
+
+
+def _process_exited(pid: int) -> bool:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.02)
+    return False

@@ -1,6 +1,8 @@
 import json
+import os
 import shlex
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -68,6 +70,36 @@ def test_enforce_mode_terminates_after_forbidden_path(
     assert result.test_result.command.startswith("local agent:")
     assert "Agent terminated by online filesystem guard" in result.test_result.stderr
     assert "Live filesystem guard" in _failed_check_names(result)
+
+
+def test_enforce_mode_terminates_agent_child_process(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    child_pid = tmp_path / "child.pid"
+    script = (
+        "import pathlib, subprocess, sys, time\n"
+        f"pid_path = pathlib.Path({str(child_pid)!r})\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "\"import time; time.sleep(30)\"])\n"
+        "pid_path.write_text(str(child.pid), encoding='utf-8')\n"
+        "pathlib.Path('protected/owned.txt').parent.mkdir(exist_ok=True)\n"
+        "pathlib.Path('protected/owned.txt').write_text('bad')\n"
+        "time.sleep(30)\n"
+    )
+    config = _write_config(tmp_path, script)
+
+    result = run_benchmark(
+        config,
+        "local-command",
+        guard_mode=GuardMode.ENFORCE,
+        guard_poll_interval_seconds=0.01,
+    )
+
+    pid = _read_pid(child_pid)
+    assert _process_exited(pid), f"child process still running: {pid}"
+    assert result.guard_summary.terminated_agent is True
 
 
 def test_enforce_mode_terminates_on_test_tampering(
@@ -628,3 +660,23 @@ def _guard_artifacts_text(result) -> str:
         for path in paths
         if path is not None and path.exists()
     )
+
+
+def _read_pid(path: Path) -> int:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if path.exists():
+            return int(path.read_text(encoding="utf-8"))
+        time.sleep(0.02)
+    raise AssertionError("child pid was not written")
+
+
+def _process_exited(pid: int) -> bool:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.02)
+    return False

@@ -8,6 +8,13 @@ from pathlib import Path
 from agentguard.core.result import CommandResult
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.output_limits import limit_output
+from agentguard.instrumentation.processes import (
+    PROCESS_TIMEOUT_TERMINATED_MESSAGE,
+    ProcessCleanupResult,
+    append_cleanup_message,
+    popen_with_process_group,
+    terminate_process_tree,
+)
 
 
 def _argv(command: str) -> list[str]:
@@ -50,24 +57,23 @@ class TestRunner:
 
         started = time.monotonic()
         timed_out = False
+        cleanup = ProcessCleanupResult()
         try:
-            completed = subprocess.run(
+            process = popen_with_process_group(
                 argv,
                 cwd=repo_dir,
-                check=False,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 env=env,
-                timeout=self.timeout_seconds,
             )
-            exit_code = completed.returncode
-            stdout = completed.stdout
-            stderr = completed.stderr
-        except subprocess.TimeoutExpired as error:
+            stdout, stderr = process.communicate(timeout=self.timeout_seconds)
+            exit_code = process.returncode
+        except subprocess.TimeoutExpired:
             timed_out = True
             exit_code = 124
-            stdout = error.stdout or ""
-            stderr = error.stderr or ""
+            cleanup = terminate_process_tree(process)
+            stdout, stderr = process.communicate()
             if isinstance(stdout, bytes):
                 stdout = stdout.decode(errors="replace")
             if isinstance(stderr, bytes):
@@ -75,7 +81,9 @@ class TestRunner:
             stderr = (
                 f"{stderr}\nCommand timed out after "
                 f"{self.timeout_seconds} seconds."
+                f"\n{PROCESS_TIMEOUT_TERMINATED_MESSAGE}"
             ).strip()
+            stderr = append_cleanup_message(stderr, cleanup)
         duration_seconds = time.monotonic() - started
         limited_stdout = limit_output(stdout, self.max_output_bytes)
         limited_stderr = limit_output(stderr, self.max_output_bytes)
@@ -90,6 +98,9 @@ class TestRunner:
             timed_out=timed_out,
             stdout_truncated=limited_stdout.truncated,
             stderr_truncated=limited_stderr.truncated,
+            process_cleanup_attempted=cleanup.attempted,
+            process_cleanup_complete=cleanup.complete,
+            process_cleanup_message=cleanup.message,
         )
         return CommandResult(
             command=command,
@@ -100,4 +111,7 @@ class TestRunner:
             timed_out=timed_out,
             stdout_truncated=limited_stdout.truncated,
             stderr_truncated=limited_stderr.truncated,
+            process_cleanup_attempted=cleanup.attempted,
+            process_cleanup_complete=cleanup.complete,
+            process_cleanup_message=cleanup.message,
         )

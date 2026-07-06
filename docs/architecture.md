@@ -308,11 +308,11 @@ remain a deferred presentation layer.
 
 ### Docker Sandbox / Command Runner
 
-The Docker runner executes configured commands inside a container using a mounted repository workspace, working directory, environment, network mode, optional memory and CPU limits, timeout handling, and output limits. It also records executed command events through the command tracker.
+The Docker runner executes configured commands inside a container using a mounted repository workspace, working directory, environment, network mode, optional memory and CPU limits, timeout handling, and output limits. Timeout-managed Docker commands receive a generated container name so AgentGuard can attempt forced container removal on timeout or cleanup failure. It also records executed command events through the command tracker.
 
 ### Instrumentation / Command Tracker
 
-The command tracker records command text, argv, cwd, exit code, stdout, stderr, duration, timeout state, truncation state, and preflight policy metadata. Agent-emitted events can also be ingested from the repository so reports include both AgentGuard-run commands and agent-reported activity.
+The command tracker records command text, argv, cwd, exit code, stdout, stderr, duration, timeout state, process cleanup status, truncation state, and preflight policy metadata. Agent-emitted events can also be ingested from the repository so reports include both AgentGuard-run commands and agent-reported activity.
 
 ### Git Diff Collector
 
@@ -335,8 +335,8 @@ execution. In audit or enforce mode it snapshots the prepared benchmark
 workspace, polls the file tree without following symlinks, and records live
 policy violations for forbidden paths, test tampering, out-of-scope paths,
 secret-like paths, file-count diff limits, deletions, and symlink escapes. In
-enforce mode, direct local agent subprocesses are terminated before the normal
-post-hoc diff/check/report pipeline continues.
+enforce mode, direct local agent process groups are terminated before the
+normal post-hoc diff/check/report pipeline continues.
 
 Validated benchmark `guard_ignore_paths` are combined with mandatory built-in
 scanner exclusions. They remove matching regular entries from snapshots,
@@ -357,8 +357,8 @@ remains the scoring authority.
 
 Command monitoring observes instrumented AgentGuard events rather than kernel
 or syscall activity. Filesystem monitoring uses portable polling rather than a
-native watcher. Docker `custom-command` does not expose the same supported
-local-process termination path, so enforcement remains limited there.
+native watcher. Process cleanup is best-effort process-tree/container cleanup,
+not syscall-level containment.
 
 ### Scoring
 
@@ -581,7 +581,7 @@ sandbox. AgentGuard still records command evidence, applies preflight command
 policy, enforces timeout/output limits, runs tests, inspects diffs, and writes
 reports.
 
-Docker mode runs commands in a container with a mounted repository workspace. Configurable controls include image, working directory, network mode, memory limit, CPU limit, read-only root filesystem mode, command timeout, and output byte limit. The default Docker network mode is `none`, which reduces accidental or malicious network access during benchmark runs.
+Docker mode runs commands in a container with a mounted repository workspace. Configurable controls include image, working directory, network mode, memory limit, CPU limit, read-only root filesystem mode, command timeout, and output byte limit. On timeout or command-runner cleanup, AgentGuard attempts to stop and remove the managed container. The default Docker network mode is `none`, which reduces accidental or malicious network access during benchmark runs.
 
 Command preflight policy can audit or enforce unsafe command patterns before custom-command agent execution. Audit mode records matched patterns and allows execution; enforce mode blocks matched commands before they run. Later checks can still fail a run based on unsafe command evidence.
 

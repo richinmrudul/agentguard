@@ -54,6 +54,10 @@ Some boundaries are intentionally difficult to cover in the fast job:
 - Operating-system failures such as permissions, disk exhaustion, process
   signals, and rare subprocess races are tested selectively with controlled
   doubles rather than destructive system manipulation.
+- Process cleanup coverage uses short-lived subprocess fixtures and pid
+  sentinels to verify timeout/enforcement cleanup without long sleeps. Docker
+  cleanup behavior is unit-tested with controlled doubles and covered by
+  Docker integration tests only when a Docker daemon is available.
 - Defensive fallbacks for corrupt external files are tested where behavior is
   meaningful, but exhaustive malformed-input combinations are not a goal.
 

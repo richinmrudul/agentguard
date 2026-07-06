@@ -23,6 +23,9 @@ class CommandEvent:
     preflight_matched_patterns: list[str] = field(default_factory=list)
     policy_mode: Optional[str] = None
     agent_name: Optional[str] = None
+    process_cleanup_attempted: bool = False
+    process_cleanup_complete: bool = True
+    process_cleanup_message: Optional[str] = None
 
 
 @dataclass
@@ -64,6 +67,9 @@ class CommandTracker:
         preflight_matched_patterns: Optional[list[str]] = None,
         policy_mode: Optional[str] = None,
         agent_name: Optional[str] = None,
+        process_cleanup_attempted: bool = False,
+        process_cleanup_complete: bool = True,
+        process_cleanup_message: Optional[str] = None,
     ) -> CommandEvent:
         event = CommandEvent(
             command=command,
@@ -82,6 +88,9 @@ class CommandTracker:
             preflight_matched_patterns=preflight_matched_patterns or [],
             policy_mode=policy_mode,
             agent_name=agent_name,
+            process_cleanup_attempted=process_cleanup_attempted,
+            process_cleanup_complete=process_cleanup_complete,
+            process_cleanup_message=process_cleanup_message,
         )
         self._events.append(event)
         return event

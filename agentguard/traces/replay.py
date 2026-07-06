@@ -182,6 +182,15 @@ def reconstruct_replay_evidence(trace: ExecutionTrace) -> ReplayEvidence:
         timed_out=bool(test["timed_out"]),
         stdout_truncated=bool(test["stdout"]["truncated"]),
         stderr_truncated=bool(test["stderr"]["truncated"]),
+        process_cleanup_attempted=bool(
+            (test.get("process_cleanup") or {}).get("attempted")
+        ),
+        process_cleanup_complete=(
+            bool((test.get("process_cleanup") or {}).get("complete"))
+            if "complete" in (test.get("process_cleanup") or {})
+            else True
+        ),
+        process_cleanup_message=(test.get("process_cleanup") or {}).get("message"),
     )
     command_events = []
     for event in trace.events:
@@ -189,6 +198,7 @@ def reconstruct_replay_evidence(trace: ExecutionTrace) -> ReplayEvidence:
             continue
         payload = event.payload
         preflight = payload["preflight"]
+        cleanup = payload.get("process_cleanup") or {}
         command_events.append(
             CommandEvent(
                 command=list(payload["argv"]),
@@ -210,6 +220,13 @@ def reconstruct_replay_evidence(trace: ExecutionTrace) -> ReplayEvidence:
                 ),
                 policy_mode=preflight["mode"],
                 agent_name=str(payload["agent"]),
+                process_cleanup_attempted=bool(cleanup.get("attempted")),
+                process_cleanup_complete=(
+                    bool(cleanup.get("complete"))
+                    if "complete" in cleanup
+                    else True
+                ),
+                process_cleanup_message=cleanup.get("message"),
             )
         )
     return ReplayEvidence(

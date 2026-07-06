@@ -1,6 +1,7 @@
 import shlex
 import subprocess
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -8,6 +9,13 @@ from agentguard.config.schema import SandboxConfig
 from agentguard.core.result import CommandResult
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.output_limits import limit_output
+from agentguard.instrumentation.processes import (
+    PROCESS_TIMEOUT_TERMINATED_MESSAGE,
+    ProcessCleanupResult,
+    append_cleanup_message,
+    popen_with_process_group,
+    terminate_process_tree,
+)
 
 
 INSTALL_COMMAND = [
@@ -19,6 +27,10 @@ INSTALL_COMMAND = [
     "-e",
     ".",
 ]
+DOCKER_CLEANUP_COMPLETE_MESSAGE = "docker container removed after timeout"
+DOCKER_CLEANUP_INCOMPLETE_MESSAGE = (
+    "docker cleanup incomplete: container removal failed"
+)
 
 
 def _docker_test_argv(command: str) -> list[str]:
@@ -88,6 +100,9 @@ class DockerTestRunner:
                 timed_out=install_result.timed_out,
                 stdout_truncated=install_result.stdout_truncated,
                 stderr_truncated=install_result.stderr_truncated,
+                process_cleanup_attempted=install_result.process_cleanup_attempted,
+                process_cleanup_complete=install_result.process_cleanup_complete,
+                process_cleanup_message=install_result.process_cleanup_message,
             )
 
         test_result = self._run_inner_command(
@@ -105,6 +120,9 @@ class DockerTestRunner:
             timed_out=test_result.timed_out,
             stdout_truncated=test_result.stdout_truncated,
             stderr_truncated=test_result.stderr_truncated,
+            process_cleanup_attempted=test_result.process_cleanup_attempted,
+            process_cleanup_complete=test_result.process_cleanup_complete,
+            process_cleanup_message=test_result.process_cleanup_message,
         )
 
 
@@ -123,7 +141,13 @@ class DockerCommandRunner:
         )
         self.max_output_bytes = max_output_bytes
 
-    def build_command(self, repo_dir: Path, inner_command: list[str]) -> list[str]:
+    def build_command(
+        self,
+        repo_dir: Path,
+        inner_command: list[str],
+        *,
+        container_name: Optional[str] = None,
+    ) -> list[str]:
         if self.sandbox.type != "docker":
             raise ValueError("DockerCommandRunner requires sandbox.type='docker'.")
         if not self.sandbox.image:
@@ -132,6 +156,10 @@ class DockerCommandRunner:
             "docker",
             "run",
             "--rm",
+        ]
+        if container_name is not None:
+            command.extend(["--name", container_name])
+        command.extend([
             "-v",
             f"{repo_dir.resolve()}:{self.sandbox.workdir}",
             "-w",
@@ -140,7 +168,7 @@ class DockerCommandRunner:
             f"PYTHONPATH={self.sandbox.workdir}/src",
             "--network",
             self.sandbox.network,
-        ]
+        ])
         if self.sandbox.memory is not None:
             command.extend(["--memory", self.sandbox.memory])
         if self.sandbox.cpus is not None:
@@ -158,29 +186,35 @@ class DockerCommandRunner:
         preflight_matched_patterns: Optional[list[str]] = None,
         policy_mode: Optional[str] = None,
     ) -> CommandResult:
-        docker_command = self.build_command(repo_dir, inner_command)
+        container_name = self._container_name()
+        docker_command = self.build_command(
+            repo_dir,
+            inner_command,
+            container_name=container_name,
+        )
         started = time.monotonic()
         timed_out = False
+        cleanup = ProcessCleanupResult()
         try:
-            completed = subprocess.run(
+            process = popen_with_process_group(
                 docker_command,
-                check=False,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=self.timeout_seconds,
             )
-            exit_code = completed.returncode
-            stdout = completed.stdout
-            stderr = completed.stderr
+            stdout, stderr = process.communicate(timeout=self.timeout_seconds)
+            exit_code = process.returncode
         except FileNotFoundError:
             exit_code = 127
             stdout = ""
             stderr = "Docker is not installed or is not available on PATH."
-        except subprocess.TimeoutExpired as error:
+        except subprocess.TimeoutExpired:
             timed_out = True
             exit_code = 124
-            stdout = error.stdout or ""
-            stderr = error.stderr or ""
+            cleanup = terminate_process_tree(process)
+            docker_cleanup = self._remove_container(container_name)
+            cleanup = self._combine_cleanup(cleanup, docker_cleanup)
+            stdout, stderr = process.communicate()
             if isinstance(stdout, bytes):
                 stdout = stdout.decode(errors="replace")
             if isinstance(stderr, bytes):
@@ -188,7 +222,9 @@ class DockerCommandRunner:
             stderr = (
                 f"{stderr}\nDocker command timed out after "
                 f"{self.timeout_seconds} seconds."
+                f"\n{PROCESS_TIMEOUT_TERMINATED_MESSAGE}"
             ).strip()
+            stderr = append_cleanup_message(stderr, cleanup)
         duration_seconds = time.monotonic() - started
         limited_stdout = limit_output(stdout, self.max_output_bytes)
         limited_stderr = limit_output(stderr, self.max_output_bytes)
@@ -206,6 +242,9 @@ class DockerCommandRunner:
             stderr_truncated=limited_stderr.truncated,
             preflight_matched_patterns=preflight_matched_patterns,
             policy_mode=policy_mode,
+            process_cleanup_attempted=cleanup.attempted,
+            process_cleanup_complete=cleanup.complete,
+            process_cleanup_message=cleanup.message,
         )
         return CommandResult(
             command=command_text,
@@ -216,4 +255,55 @@ class DockerCommandRunner:
             timed_out=timed_out,
             stdout_truncated=limited_stdout.truncated,
             stderr_truncated=limited_stderr.truncated,
+            process_cleanup_attempted=cleanup.attempted,
+            process_cleanup_complete=cleanup.complete,
+            process_cleanup_message=cleanup.message,
+        )
+
+    def _container_name(self) -> str:
+        return f"agentguard-{uuid.uuid4().hex[:12]}"
+
+    def _remove_container(self, container_name: str) -> ProcessCleanupResult:
+        try:
+            completed = subprocess.run(
+                ["docker", "rm", "-f", container_name],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ProcessCleanupResult(
+                attempted=True,
+                complete=False,
+                kill_required=False,
+                message=DOCKER_CLEANUP_INCOMPLETE_MESSAGE,
+            )
+        return ProcessCleanupResult(
+            attempted=True,
+            complete=completed.returncode == 0,
+            kill_required=False,
+            message=(
+                DOCKER_CLEANUP_COMPLETE_MESSAGE
+                if completed.returncode == 0
+                else DOCKER_CLEANUP_INCOMPLETE_MESSAGE
+            ),
+        )
+
+    def _combine_cleanup(
+        self,
+        process_cleanup: ProcessCleanupResult,
+        docker_cleanup: ProcessCleanupResult,
+    ) -> ProcessCleanupResult:
+        if not process_cleanup.attempted and not docker_cleanup.attempted:
+            return ProcessCleanupResult()
+        return ProcessCleanupResult(
+            attempted=process_cleanup.attempted or docker_cleanup.attempted,
+            complete=process_cleanup.complete and docker_cleanup.complete,
+            kill_required=process_cleanup.kill_required,
+            message=(
+                docker_cleanup.message
+                if not docker_cleanup.complete
+                else docker_cleanup.message or process_cleanup.message
+            ),
         )

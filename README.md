@@ -438,10 +438,12 @@ agentguard run examples/configs/fix_auth_bug_local_command_safe.yaml --agent loc
 
 `--guard-mode audit` records live filesystem and instrumented command-policy
 violations without stopping the agent. `--guard-mode enforce` terminates
-supported local agent processes when a live violation is detected. Command guard
-enforcement is based on AgentGuard command/event logs, not kernel-level syscall
-interception; filesystem monitoring uses polling. Docker `custom-command`
-termination remains limited. See [docs/online-guard.md](docs/online-guard.md).
+supported local agent process groups when a live violation is detected. Local
+agent, external agent, and test-command timeouts also attempt process-tree
+cleanup; Docker-backed commands attempt managed container removal on timeout or
+cleanup failure. Command guard enforcement is based on AgentGuard command/event
+logs, not kernel-level syscall interception; filesystem monitoring uses
+polling. See [docs/online-guard.md](docs/online-guard.md).
 
 Benchmark configs can suppress known generated noise from online filesystem
 polling:
