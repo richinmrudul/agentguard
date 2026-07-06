@@ -8,6 +8,16 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 
+from agentguard.checks.secret_content import (
+    MAX_SECRET_SCAN_BYTES_PER_FILE,
+    MAX_SECRET_SCAN_FILES,
+    MAX_SECRET_SCAN_LINE_BYTES,
+    MAX_SECRET_SCAN_MATCHES,
+    MAX_SECRET_SCAN_MATCHES_PER_DETECTOR_FILE,
+    MAX_SECRET_SCAN_TOTAL_BYTES,
+    SecretContentMatch,
+    match_secret_content_line,
+)
 from agentguard.config.schema import AgentGuardConfig
 from agentguard.policy.path_matcher import matching_patterns
 from agentguard.repo.live_diff import (
@@ -169,6 +179,8 @@ class RuntimeFilesystemGuard:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._baseline: dict[str, FileState] = {}
+        self._baseline_secret_content_matches: set[tuple[str, int, str]] = set()
+        self._secret_content_baseline_error: Optional[str] = None
         self._summary = LiveGuardSummary(
             mode=mode.value,
             configured_ignore_patterns=list(config.guard_ignore_paths),
@@ -179,6 +191,10 @@ class RuntimeFilesystemGuard:
         if self.mode == GuardMode.OFF:
             return
         self._baseline = self._scan_tree()
+        (
+            self._baseline_secret_content_matches,
+            self._secret_content_baseline_error,
+        ) = self._scan_secret_content_baseline()
         self._start_time = self.time_source()
         self._thread = threading.Thread(
             target=self._run,
@@ -225,11 +241,14 @@ class RuntimeFilesystemGuard:
     ) -> None:
         with self._lock:
             existing = list(self._summary.violations)
-            known = {(item.violation_type, item.path) for item in existing}
+            known = {
+                (item.violation_type, item.path, item.message)
+                for item in existing
+            }
             new_violations = [
                 item
                 for item in violations
-                if (item.violation_type, item.path) not in known
+                if (item.violation_type, item.path, item.message) not in known
             ]
             all_violations = [*existing, *new_violations]
             triggered = bool(all_violations)
@@ -447,7 +466,142 @@ class RuntimeFilesystemGuard:
                     f"{self.config.diff_limits.max_lines_deleted}.",
                 )
             )
+        violations.extend(self._secret_content_violations(current, changed))
         return violations
+
+    def _secret_content_violations(
+        self,
+        current: dict[str, FileState],
+        changed: list[str],
+    ) -> list[LiveGuardViolation]:
+        if not self.config.secret_content_patterns:
+            return []
+        candidates = [
+            path
+            for path in changed
+            if (
+                (state := current.get(path)) is not None
+                and state.kind == "file"
+            )
+        ]
+        matches, error = self._scan_secret_content_candidates(current, candidates)
+        violations = [
+            self._violation(
+                "secret_content_detected",
+                match.path,
+                f"secret-content detector {match.detector_id} matched in "
+                f"{match.path}"
+                + (
+                    f":{match.line_number}"
+                    if match.line_number is not None
+                    else ""
+                ),
+            )
+            for match in matches
+        ]
+        if error is not None:
+            violations.append(
+                self._violation(
+                    "secret_content_scan_incomplete",
+                    "(workspace)",
+                    f"secret-content live scan incomplete: {error}",
+                )
+            )
+        return violations
+
+    def _scan_secret_content_baseline(
+        self,
+    ) -> tuple[set[tuple[str, int, str]], Optional[str]]:
+        if not self.config.secret_content_patterns:
+            return set(), None
+        paths = [
+            path
+            for path, state in self._baseline.items()
+            if state.kind == "file"
+        ]
+        matches, error = self._scan_secret_content_candidates(
+            self._baseline,
+            paths,
+            baseline_keys=set(),
+        )
+        return {
+            (match.path, match.line_number or 0, match.detector_id)
+            for match in matches
+            if match.line_number is not None
+        }, error
+
+    def _scan_secret_content_candidates(
+        self,
+        states: dict[str, FileState],
+        candidates: list[str],
+        baseline_keys: Optional[set[tuple[str, int, str]]] = None,
+    ) -> tuple[list[SecretContentMatch], Optional[str]]:
+        baseline_keys = (
+            self._baseline_secret_content_matches
+            if baseline_keys is None
+            else baseline_keys
+        )
+        selected = sorted(set(candidates))
+        if len(selected) > MAX_SECRET_SCAN_FILES:
+            return [], "candidate file limit exceeded"
+        retained: list[SecretContentMatch] = []
+        per_detector_file: dict[tuple[str, str], int] = {}
+        total_bytes = 0
+        omitted = 0
+        for path in selected:
+            state = states.get(path)
+            if state is None or state.kind != "file":
+                continue
+            if state.size > MAX_SECRET_SCAN_BYTES_PER_FILE:
+                return retained, "file byte limit exceeded"
+            total_bytes += state.size
+            if total_bytes > MAX_SECRET_SCAN_TOTAL_BYTES:
+                return retained, "total byte limit exceeded"
+            target = self.repo_dir / path
+            try:
+                file_stat = target.lstat()
+                if target.is_symlink() or not target.is_file():
+                    continue
+                content = target.read_bytes()
+            except OSError:
+                return retained, "file content unavailable"
+            if len(content) > MAX_SECRET_SCAN_BYTES_PER_FILE:
+                return retained, "file byte limit exceeded"
+            if b"\0" in content:
+                continue
+            try:
+                text = content.decode("utf-8")
+            except UnicodeDecodeError:
+                return retained, "text decoding unavailable"
+            if file_stat.st_size != len(content):
+                total_bytes += max(0, len(content) - state.size)
+                if total_bytes > MAX_SECRET_SCAN_TOTAL_BYTES:
+                    return retained, "total byte limit exceeded"
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                if len(line.encode("utf-8")) > MAX_SECRET_SCAN_LINE_BYTES:
+                    return retained, "line byte limit exceeded"
+                for match in match_secret_content_line(
+                    path=path,
+                    line_number=line_number,
+                    text=line,
+                    patterns=self.config.secret_content_patterns,
+                ):
+                    key = (match.path, match.line_number or 0, match.detector_id)
+                    if key in baseline_keys:
+                        continue
+                    detector_file = (match.path, match.detector_id)
+                    count = per_detector_file.get(detector_file, 0)
+                    if count >= MAX_SECRET_SCAN_MATCHES_PER_DETECTOR_FILE:
+                        omitted += 1
+                        continue
+                    if len(retained) >= MAX_SECRET_SCAN_MATCHES:
+                        omitted += 1
+                        continue
+                    per_detector_file[detector_file] = count + 1
+                    retained.append(match)
+        if omitted:
+            return retained, "match limit exceeded"
+        return retained, None
 
     def _measure_lines(
         self,

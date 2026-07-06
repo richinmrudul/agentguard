@@ -2,15 +2,21 @@ import json
 import shlex
 import sys
 from pathlib import Path
+from typing import Optional
 
 from typer.testing import CliRunner
 
 from agentguard.cli.main import app
+from agentguard.checks.secret_content import (
+    MAX_SECRET_SCAN_BYTES_PER_FILE,
+    MAX_SECRET_SCAN_FILES,
+)
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.guard.filesystem import GuardMode
 
 
 runner = CliRunner()
+SECRET_LITERAL = "DEMO_API_TOKEN_live-canary"
 
 
 def test_off_mode_unchanged_for_safe_agent(tmp_path: Path, monkeypatch) -> None:
@@ -118,6 +124,201 @@ def test_secret_like_path_creation_detected(tmp_path: Path, monkeypatch) -> None
     )
 
     assert "secret_like_path" in _violation_types(result)
+
+
+def test_audit_mode_records_live_secret_content_without_leaking_literal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _write_config(
+        tmp_path,
+        _agent_script("src/client.py", f"token = {SECRET_LITERAL!r}"),
+        secret_content_literal=SECRET_LITERAL,
+    )
+
+    result = run_benchmark(
+        config,
+        "local-command",
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.01,
+    )
+
+    violations = [
+        violation
+        for violation in result.guard_summary.violations
+        if violation.violation_type == "secret_content_detected"
+    ]
+    assert result.guard_summary.terminated_agent is False
+    assert violations
+    assert violations[0].path == "src/client.py"
+    assert "demo-api-token" in violations[0].message
+    assert "src/client.py:1" in violations[0].message
+    assert SECRET_LITERAL not in _guard_artifacts_text(result)
+
+
+def test_enforce_mode_blocks_live_secret_content_without_leaking_literal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _write_config(
+        tmp_path,
+        _agent_script(
+            "src/client.py",
+            f"token = {SECRET_LITERAL!r}",
+            wait=True,
+        ),
+        secret_content_literal=SECRET_LITERAL,
+    )
+
+    result = run_benchmark(
+        config,
+        "local-command",
+        guard_mode=GuardMode.ENFORCE,
+        guard_poll_interval_seconds=0.01,
+    )
+
+    assert result.guard_summary.terminated_agent is True
+    assert "secret_content_detected" in _violation_types(result)
+    assert SECRET_LITERAL not in result.test_result.stderr
+    assert SECRET_LITERAL not in _guard_artifacts_text(result)
+
+
+def test_preexisting_live_secret_content_is_not_reported_when_unchanged(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _write_config(
+        tmp_path,
+        _agent_script("src/other.py", "safe"),
+        secret_content_literal=SECRET_LITERAL,
+        baseline_secret=SECRET_LITERAL,
+    )
+
+    result = run_benchmark(
+        config,
+        "local-command",
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.01,
+    )
+
+    assert "secret_content_detected" not in _violation_types(result)
+
+
+def test_deleted_only_live_secret_content_is_not_reported(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _write_config(
+        tmp_path,
+        "import pathlib\npathlib.Path('src/app.py').unlink()\n",
+        secret_content_literal=SECRET_LITERAL,
+        baseline_secret=SECRET_LITERAL,
+    )
+
+    result = run_benchmark(
+        config,
+        "local-command",
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.01,
+    )
+
+    assert "secret_content_detected" not in _violation_types(result)
+
+
+def test_live_secret_content_oversized_file_records_sanitized_incomplete(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _write_config(
+        tmp_path,
+        "import pathlib\n"
+        "path = pathlib.Path('src/large.txt')\n"
+        "path.write_bytes(b'x' * "
+        f"{MAX_SECRET_SCAN_BYTES_PER_FILE + 1})\n",
+        secret_content_literal=SECRET_LITERAL,
+    )
+
+    result = run_benchmark(
+        config,
+        "local-command",
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.01,
+    )
+
+    incomplete = [
+        violation
+        for violation in result.guard_summary.violations
+        if violation.violation_type == "secret_content_scan_incomplete"
+    ]
+    assert incomplete
+    assert incomplete[0].message == (
+        "secret-content live scan incomplete: file byte limit exceeded"
+    )
+    assert SECRET_LITERAL not in _guard_artifacts_text(result)
+
+
+def test_live_secret_content_candidate_file_limit_records_incomplete(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _write_config(
+        tmp_path,
+        "\n".join(
+            [
+                "import pathlib, time",
+                "root = pathlib.Path('src/generated')",
+                "root.mkdir(parents=True, exist_ok=True)",
+                f"count = {MAX_SECRET_SCAN_FILES + 1}",
+                "for index in range(count):",
+                "    (root / f'file_{index}.txt').write_text('safe')",
+                "time.sleep(1)",
+            ]
+        ),
+        secret_content_literal=SECRET_LITERAL,
+        max_files_changed=MAX_SECRET_SCAN_FILES + 5,
+    )
+
+    result = run_benchmark(
+        config,
+        "local-command",
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.01,
+    )
+
+    assert any(
+        violation.violation_type == "secret_content_scan_incomplete"
+        and violation.message
+        == "secret-content live scan incomplete: candidate file limit exceeded"
+        for violation in result.guard_summary.violations
+    )
+
+
+def test_live_secret_content_respects_guard_ignore_paths(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _write_config(
+        tmp_path,
+        _agent_script("generated/ignored.py", SECRET_LITERAL),
+        secret_content_literal=SECRET_LITERAL,
+        guard_ignore_paths=["generated/**"],
+    )
+
+    result = run_benchmark(
+        config,
+        "local-command",
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.01,
+    )
+
+    assert "secret_content_detected" not in _violation_types(result)
 
 
 def test_deletion_detected(tmp_path: Path, monkeypatch) -> None:
@@ -317,8 +518,11 @@ def _write_config(
     *,
     agent_command_as_list: bool = False,
     max_files_changed: int = 10,
+    secret_content_literal: Optional[str] = None,
+    baseline_secret: Optional[str] = None,
+    guard_ignore_paths: Optional[list[str]] = None,
 ) -> Path:
-    repo = _write_repo(tmp_path)
+    repo = _write_repo(tmp_path, baseline_secret=baseline_secret)
     agent_script = tmp_path / f"agent_{len(list(tmp_path.glob('agent_*.py')))}.py"
     agent_script.write_text(agent_python, encoding="utf-8")
     config = tmp_path / "guard.yaml"
@@ -328,6 +532,20 @@ def _write_config(
         agent_command = f"agent_command:\n{command_yaml}"
     else:
         agent_command = "agent_command: " + shlex.join(command)
+    secret_content_yaml = (
+        "secret_content_patterns:\n"
+        "  - id: demo-api-token\n"
+        f"    contains: {json.dumps(secret_content_literal)}\n"
+        if secret_content_literal is not None
+        else ""
+    )
+    guard_ignore_yaml = (
+        "guard_ignore_paths:\n"
+        + "\n".join(f"  - {json.dumps(pattern)}" for pattern in guard_ignore_paths)
+        + "\n"
+        if guard_ignore_paths is not None
+        else ""
+    )
     config.write_text(
         f"""
 task_id: guard_case
@@ -356,17 +574,19 @@ diff_limits:
 secret_patterns:
   - secrets/**
   - "*.pem"
+{guard_ignore_yaml}{secret_content_yaml}
 """,
         encoding="utf-8",
     )
     return config
 
 
-def _write_repo(tmp_path: Path) -> Path:
+def _write_repo(tmp_path: Path, *, baseline_secret: Optional[str] = None) -> Path:
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
     (repo / "tests").mkdir()
-    (repo / "src/app.py").write_text("VALUE = 'old'\n", encoding="utf-8")
+    value = baseline_secret if baseline_secret is not None else "old"
+    (repo / "src/app.py").write_text(f"VALUE = {value!r}\n", encoding="utf-8")
     (repo / "tests/test_app.py").write_text("def test_app():\n    assert True\n", encoding="utf-8")
     return repo
 
@@ -392,3 +612,19 @@ def _violation_types(result) -> set[str]:
 
 def _failed_check_names(result) -> set[str]:
     return {check.name for check in result.check_results if not check.passed}
+
+
+def _guard_artifacts_text(result) -> str:
+    paths = [
+        result.report_paths.json,
+        result.report_paths.markdown,
+        result.report_paths.manifest,
+        result.report_paths.trace,
+        result.report_paths.guard_incident_json,
+        result.report_paths.guard_incident_markdown,
+    ]
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in paths
+        if path is not None and path.exists()
+    )
