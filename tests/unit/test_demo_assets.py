@@ -9,6 +9,7 @@ import yaml
 
 from agentguard.config.loader import load_config
 from agentguard.core.suite import load_suite_config
+from scripts.showcase_metrics import compute_detection_metrics
 
 
 FAKE_SHOWCASE_SECRET = "AGENTGUARD_SHOWCASE_SECRET_EXAMPLE"
@@ -36,6 +37,7 @@ def test_demo_assets_exist_and_reference_required_commands() -> None:
     assert Path("docs/showcase.md").exists()
     assert Path("examples/showcase/showcase.yaml").exists()
     assert Path("scripts/showcase_demo.sh").exists()
+    assert Path("scripts/showcase_metrics.py").exists()
 
     script = demo_script.read_text(encoding="utf-8")
     assert "set -euo pipefail" in script
@@ -194,6 +196,100 @@ def test_showcase_summary_sample_is_stable_and_sanitized() -> None:
     assert not re.search(r"(/Users/|/private/|[A-Za-z]:\\\\)", combined)
 
 
+def test_showcase_metrics_calculation_tracks_false_results() -> None:
+    metrics = compute_detection_metrics(
+        {
+            "scenarios": [
+                {
+                    "id": "safe",
+                    "category": "source_fix",
+                    "expected": "allowed",
+                    "result": "FAIL",
+                    "failed_checks": ["Scope adherence"],
+                },
+                {
+                    "id": "unsafe_hit",
+                    "category": "unsafe_command",
+                    "expected": "detected",
+                    "result": "FAIL",
+                    "failed_checks": ["Unsafe commands"],
+                },
+                {
+                    "id": "unsafe_miss",
+                    "category": "secret_content",
+                    "expected": "detected",
+                    "result": "PASS",
+                    "failed_checks": [],
+                },
+            ],
+            "failed_check_counts": {"Unsafe commands": 1},
+            "report_formats_generated": ["json_report", "trace"],
+            "guard_incident_count": 2,
+        }
+    )
+
+    assert metrics["total_scenarios"] == 3
+    assert metrics["safe_scenarios"] == 1
+    assert metrics["unsafe_scenarios"] == 2
+    assert metrics["safe_allowed"] == 0
+    assert metrics["unsafe_detected"] == 1
+    assert metrics["false_positive_count"] == 1
+    assert metrics["false_negative_count"] == 1
+    assert metrics["false_positive_scenarios"] == ["safe"]
+    assert metrics["false_negative_scenarios"] == ["unsafe_miss"]
+    assert metrics["unsafe_detection_rate_percent"] == 50.0
+    assert metrics["safe_allowance_rate_percent"] == 0.0
+    assert metrics["category_coverage"] == ["secret_content", "unsafe_command"]
+    assert metrics["categories"]["source_fix"]["false_positives"] == 1
+    assert metrics["categories"]["secret_content"]["false_negatives"] == 1
+    assert metrics["report_availability"]["json_reports"] == 3
+    assert metrics["report_availability"]["traces"] == 3
+
+
+def test_showcase_metrics_artifacts_are_stable_and_sanitized() -> None:
+    metrics_path = Path("docs/results/showcase-metrics.json")
+    markdown_path = Path("docs/results/showcase-metrics.md")
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    combined = (
+        metrics_path.read_text(encoding="utf-8")
+        + "\n"
+        + markdown_path.read_text(encoding="utf-8")
+    )
+    detection = metrics["detection_quality"]
+    overhead = metrics["overhead"]
+
+    assert metrics["schema"] == "agentguard.showcase-metrics"
+    assert metrics["schema_version"] == 1
+    assert detection["total_scenarios"] == 6
+    assert detection["safe_scenarios"] == 1
+    assert detection["unsafe_scenarios"] == 5
+    assert detection["safe_allowed"] == 1
+    assert detection["unsafe_detected"] == 5
+    assert detection["false_positive_count"] == 0
+    assert detection["false_negative_count"] == 0
+    assert detection["unsafe_detection_rate_percent"] == 100.0
+    assert detection["safe_allowance_rate_percent"] == 100.0
+    assert set(detection["category_coverage"]) == {
+        "unsafe_command",
+        "filesystem_boundary",
+        "test_tampering",
+        "secret_content",
+        "diff_limit",
+    }
+    assert overhead["runs_measured"] >= 1
+    assert overhead["baseline_median_seconds"] >= 0
+    assert overhead["guard_enabled_median_seconds"] >= 0
+    assert "Detection Quality" in markdown_path.read_text(encoding="utf-8")
+    assert "Local Overhead Measurement" in markdown_path.read_text(encoding="utf-8")
+    assert metrics["sanitization"]["fake_secret_value_rendered"] is False
+    assert metrics["sanitization"]["raw_diffs_included"] is False
+    assert metrics["sanitization"]["absolute_workspace_paths_included"] is False
+    assert FAKE_SHOWCASE_SECRET not in combined
+    assert "diff --git" not in combined
+    assert "\n@@" not in combined
+    assert not re.search(r"(/Users/|/private/|[A-Za-z]:\\\\)", combined)
+
+
 def test_showcase_script_help_works() -> None:
     result = subprocess.run(
         [sys.executable, "scripts/showcase_demo.py", "--help"],
@@ -204,3 +300,15 @@ def test_showcase_script_help_works() -> None:
 
     assert result.returncode == 0
     assert "Run the local AgentGuard showcase suite" in result.stdout
+
+
+def test_showcase_metrics_script_help_works() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/showcase_metrics.py", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "Generate sanitized detection-quality" in result.stdout

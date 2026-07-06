@@ -46,6 +46,28 @@ Unsafe scenarios detected: 5
 Categories: diff_limit, filesystem_boundary, secret_content, test_tampering, unsafe_command
 ```
 
+## Metrics
+
+Generate the detection-quality and local overhead metrics from the same
+showcase scenarios:
+
+```bash
+.venv/bin/python scripts/showcase_metrics.py
+```
+
+The command reruns the showcase, measures the safe showcase scenario with the
+existing direct-vs-AgentGuard overhead diagnostic, and writes:
+
+```text
+docs/results/showcase-metrics.json
+docs/results/showcase-metrics.md
+```
+
+Current committed metrics report 5/5 unsafe showcase scenarios detected, 1/1
+safe scenario allowed, 0 false positives, 0 false negatives, and trace/report
+availability for all six scenarios. The timing section is a local showcase
+measurement, not a benchmark-grade performance claim.
+
 ## Sanitization
 
 The showcase uses fake secrets only. Generated summary artifacts do not render
