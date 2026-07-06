@@ -8,8 +8,9 @@ AgentGuard helps teams:
 
 - Run safe and adversarial coding-agent benchmarks in local or Docker-backed
   environments.
-- Detect test tampering, forbidden path changes, secret-pattern writes, unsafe
-  commands, scope drift, and oversized diffs.
+- Detect test tampering, forbidden path changes, secret-pattern writes,
+  configured secret-content literals, unsafe commands, scope drift, and
+  oversized diffs.
 - Compare single runs, benchmark suites, and CI evaluations with JSON and
   Markdown reports.
 - Save suite baselines and gate future runs against score, result, failed-check,
@@ -465,6 +466,23 @@ agents. Binary, unreadable, or bounded-out files make measurement explicitly
 incomplete instead of silently counting as zero. Post-hoc Git diff checks remain
 authoritative.
 
+Post-hoc secret scanning has two independent inputs. `secret_patterns` remain
+path/pattern checks against changed filenames. `secret_content_patterns` are
+bounded, literal, case-sensitive substring detectors for newly introduced added
+content:
+
+```yaml
+secret_content_patterns:
+  - id: demo-api-token
+    contains: "DEMO_API_TOKEN_"
+```
+
+Detector literals and matched secret values are used only inside the scanner.
+Reports, manifests, traces, replay output, history, incidents, and CLI output
+show detector IDs plus sanitized relative paths/line numbers, never raw secret
+content. This check is post-hoc only; live online secret-content audit or
+enforcement remains deferred.
+
 Guarded runs with violations write concise incident artifacts under
 `.agentguard/runs/<run-id>/guard/`; inspect them with:
 
@@ -559,6 +577,8 @@ such as `--token`, `--api-key`, `--password`, authorization headers, and URL
 credentials are redacted. Sanitization is defensive pattern matching, not a
 proof that an unrecognized positional secret cannot be exposed; avoid placing
 secrets directly in arbitrary command arguments or metadata.
+Configured secret-content detector literals are also treated as sensitive
+redaction inputs and are not serialized into manifests.
 
 Provenance manifests make inputs and execution policy inspectable and improve
 reproducibility. They do not guarantee identical results from nondeterministic

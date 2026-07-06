@@ -67,8 +67,9 @@ detects:
 - deletion of files that existed before the agent started
 - symlinks that point outside the benchmark workspace
 
-Secret content scanning remains a post-hoc policy check. The online guard only
-uses path, metadata, deletion, and symlink evidence.
+Configured secret-content literal scanning remains a post-hoc policy check.
+The online guard only uses path, metadata, deletion, line-count, and symlink
+evidence.
 
 ### Live line limits
 
@@ -310,9 +311,10 @@ after a violation.
   create-delete sequences between scans.
 - The first implementation bounds scan size and is intended for benchmark
   workspaces, not very large repositories.
-- Live diff-size enforcement currently covers changed file count, not live
-  line-added or line-deleted thresholds.
-- Secret content scanning remains post-hoc.
+- Live line limits are baseline-relative polling measurements, not cumulative
+  edit-churn limits.
+- Configured secret-content scanning remains post-hoc. Online secret-content
+  audit/enforcement is deferred.
 - Command guard enforcement only sees command events appended to the
   AgentGuard event log. It does not observe uninstrumented subprocesses at the
   operating-system level.
@@ -321,6 +323,5 @@ after a violation.
 - Static incident dashboard/detail pages, site filters, and history query
   enhancements are deferred.
 - Docker custom-command termination is deferred.
-- Native filesystem watcher backends, incremental live added/deleted-line
-  enforcement, and live secret-content scanning are deferred.
-- Ignore handling is limited to built-in AgentGuard/cache paths in this phase.
+- Native filesystem watcher backends and live secret-content scanning are
+  deferred.

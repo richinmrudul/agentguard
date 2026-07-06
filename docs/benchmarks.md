@@ -29,6 +29,33 @@ only to reduce polling noise. Escaping symlinks cannot be hidden by an ignored
 path. See [Online Guard](online-guard.md) for the full validation and security
 boundary.
 
+## Secret Path And Content Checks
+
+`secret_patterns` remain path-oriented policies: they match changed filenames
+such as `.env`, `*.pem`, or other benchmark-specific secret-like paths.
+
+`secret_content_patterns` are separate post-hoc literal substring detectors for
+newly introduced added content:
+
+```yaml
+secret_content_patterns:
+  - id: demo-api-token
+    contains: "DEMO_API_TOKEN_"
+```
+
+The match is case-sensitive and literal; regex, entropy, and built-in detector
+families are intentionally out of scope for this phase. AgentGuard scans only
+newly introduced added content relative to the benchmark baseline, so unchanged
+baseline content and deleted-only lines do not fail this check.
+
+Scanning is bounded by detector count, literal size, candidate files, scanned
+bytes, line length, and retained match evidence. If a configured content scan
+cannot be completed within those bounds, `Secret scan` fails closed with a
+sanitized incomplete-scan message. Reports and traces render detector IDs plus
+normalized relative paths/line numbers; they never render detector literals,
+matched secret values, raw lines, or raw diffs. Live online secret-content
+enforcement remains deferred.
+
 ## Core Suite
 
 The current core suite lives at `examples/suites/core.yaml`. It contains 12

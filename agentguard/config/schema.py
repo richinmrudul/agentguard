@@ -48,6 +48,12 @@ class DiffLimits:
 
 
 @dataclass(frozen=True)
+class SecretContentPattern:
+    id: str
+    contains: str
+
+
+@dataclass(frozen=True)
 class SandboxConfig:
     type: str = "local"
     image: Optional[str] = None
@@ -103,6 +109,9 @@ class AgentGuardConfig:
     task: Optional[TaskConfig] = None
     mode: str = "benchmark"
     guard_ignore_paths: list[str] = field(default_factory=list)
+    secret_content_patterns: list[SecretContentPattern] = field(
+        default_factory=list
+    )
 
     def severity_for(self, check_key: str, default: str) -> str:
         return self.policy.get(check_key, default)

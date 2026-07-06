@@ -29,6 +29,9 @@ class DiffSummary:
     lines_added: int
     lines_deleted: int
     unified_diff: str
+    secret_content_matches: list[str] = field(default_factory=list)
+    secret_content_scan_complete: bool = True
+    secret_content_scan_error: Optional[str] = None
 
     @property
     def changed_files(self) -> list[str]:

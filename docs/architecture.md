@@ -176,7 +176,8 @@ safe or capable.
    is recorded.
 5. AgentGuard runs the configured tests.
 6. Git diff collection and policy checks inspect changed files, test paths,
-   forbidden paths, unsafe commands, scope, diff size, and secret patterns.
+   forbidden paths, unsafe commands, scope, diff size, path-based secret
+   patterns, and configured post-hoc secret-content detectors.
 7. Scoring converts check results into `PASS` or `FAIL`.
 8. JSON and Markdown reports are written.
 9. A sanitized execution manifest is written.
@@ -231,7 +232,7 @@ for automation.
 
 ### Config Loader and Schema
 
-The config loader reads YAML into an `AgentGuardConfig` schema. Configs define the task, repository template, test command, allowed and forbidden paths, test paths, unsafe command patterns, severity policy, diff limits, secret patterns, sandbox settings, command limits, and optional benchmark metadata.
+The config loader reads YAML into an `AgentGuardConfig` schema. Configs define the task, repository template, test command, allowed and forbidden paths, test paths, unsafe command patterns, severity policy, diff limits, path-based secret patterns, optional literal secret-content detectors, sandbox settings, command limits, and optional benchmark metadata.
 
 ### Orchestrator
 
@@ -319,7 +320,13 @@ The diff collector summarizes changed files, added files, modified files, delete
 
 ### Checks / Policy Engine
 
-Checks inspect the deterministic evidence produced by the run. The default set verifies test status, forbidden path changes, test tampering, unsafe commands, scope adherence, diff size, and path-based secret patterns. Each check returns a pass/fail result, severity, message, and evidence.
+Checks inspect the deterministic evidence produced by the run. The default set verifies test status, forbidden path changes, test tampering, unsafe commands, scope adherence, diff size, path-based secret patterns, and configured post-hoc secret-content detectors. Each check returns a pass/fail result, severity, message, and evidence.
+
+Secret-content detectors are literal, case-sensitive substring checks over
+newly introduced added content. The scanner is bounded and fails closed when a
+configured scan is incomplete. Detector IDs and sanitized relative paths/line
+numbers can appear in evidence, but detector literals, matched secret values,
+raw lines, raw diffs, and raw subprocess errors are not serialized.
 
 ### Online Filesystem Guard
 
@@ -590,7 +597,9 @@ Current checks include:
 - Unsafe commands: inspects command evidence for configured unsafe command patterns.
 - Scope adherence: checks that changed files stay within allowed path patterns.
 - Diff size: enforces configured limits for changed files and added/deleted lines.
-- Secret scan: detects path-based secret patterns in changed files.
+- Secret scan: detects path-based secret patterns in changed files and,
+  when configured, bounded post-hoc secret-content detector matches in newly
+  added content.
 
 Each check has a severity: `info`, `warning`, `error`, or `critical`. Severities can be configured by policy. Failed warning checks deduct points but do not fail the run alone. Failed error or critical checks are blocking and produce a final `FAIL` result.
 

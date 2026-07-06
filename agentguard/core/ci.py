@@ -1,12 +1,13 @@
 import subprocess
 import warnings
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
 from agentguard.config.loader import load_config
+from agentguard.checks.secret_content import with_secret_content_scan
 from agentguard.core.orchestrator import default_checks
 from agentguard.core.result import CiResult, ReportPaths
 from agentguard.core.timeline import TimelineRecorder
@@ -15,6 +16,7 @@ from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
 from agentguard.repo.git_diff import collect_diff, collect_diff_between_refs
+from agentguard.provenance.manifest import sanitize_text
 from agentguard.scoring.scorer import score_checks
 
 
@@ -234,6 +236,11 @@ def run_ci(
         diff_mode = "working_tree"
         diff_summary = collect_diff(detected_repo_dir)
         diff_metadata = {"diff_mode": diff_mode}
+    diff_summary = with_secret_content_scan(
+        detected_repo_dir,
+        diff_summary,
+        config.secret_content_patterns,
+    )
 
     timeline.add(
         "diff_collected",
@@ -255,6 +262,33 @@ def run_ci(
         check.run(config, test_result, diff_summary, command_tracker.events)
         for check in default_checks()
     ]
+    if config.secret_content_patterns:
+        sensitive_values = [
+            pattern.contains for pattern in config.secret_content_patterns
+        ]
+        test_result = replace(
+            test_result,
+            command=sanitize_text(test_result.command, sensitive_values),
+            stdout=sanitize_text(test_result.stdout, sensitive_values),
+            stderr=sanitize_text(test_result.stderr, sensitive_values),
+        )
+        diff_summary = replace(
+            diff_summary,
+            unified_diff=sanitize_text(
+                diff_summary.unified_diff, sensitive_values
+            ),
+        )
+        check_results = [
+            replace(
+                check,
+                message=sanitize_text(check.message, sensitive_values),
+                evidence=[
+                    sanitize_text(item, sensitive_values)
+                    for item in check.evidence
+                ],
+            )
+            for check in check_results
+        ]
     score_result = score_checks(check_results)
     failed_check_names = [check.name for check in check_results if not check.passed]
     blocking_failures = [
