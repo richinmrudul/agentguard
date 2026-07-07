@@ -811,6 +811,15 @@ def _trend_body(context: SiteContext, *, full: bool) -> str:
                 ),
             ),
             _section(
+                "Guard Type Breakdown",
+                _trend_counter_table(
+                    _incident_guard_type_counts(incidents),
+                    "Guard type",
+                    incident_links=_incident_links_by_guard_type(incidents),
+                    empty="No guard incident types found.",
+                ),
+            ),
+            _section(
                 "Severity Breakdown",
                 _trend_counter_table(
                     _incident_severity_counts(incidents),
@@ -886,6 +895,13 @@ def _incident_policy_counts(incidents: list[SiteIncident]) -> Counter[str]:
     return counts
 
 
+def _incident_guard_type_counts(incidents: list[SiteIncident]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for incident in incidents:
+        counts.update(incident.guard_type_counts)
+    return counts
+
+
 def _incident_severity_counts(incidents: list[SiteIncident]) -> Counter[str]:
     counts: Counter[str] = Counter()
     for incident in incidents:
@@ -908,6 +924,22 @@ def _incident_links_by_policy(
             if violation.policy and violation.policy != "-":
                 links.setdefault(
                     violation.policy,
+                    f"details/{incident.detail_filename}",
+                )
+    return links
+
+
+def _incident_links_by_guard_type(
+    incidents: list[SiteIncident],
+) -> dict[str, str]:
+    links: dict[str, str] = {}
+    for incident in incidents:
+        if incident.detail_filename is None:
+            continue
+        for guard_type in incident.guard_type_counts:
+            if guard_type and guard_type != "-":
+                links.setdefault(
+                    guard_type,
                     f"details/{incident.detail_filename}",
                 )
     return links

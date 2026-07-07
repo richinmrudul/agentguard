@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -168,6 +169,9 @@ def test_guard_trends_render_counts_deltas_and_links(
     assert "test_tampering" in trends
     assert "unsafe_commands" in trends
     assert "scope_adherence" in trends
+    assert "<h2>Guard Type Breakdown</h2>" in trends
+    assert "<td><a href=\"details/incident-blocked-run.html\">filesystem</a></td><td>2</td>" in trends
+    assert "<td><a href=\"details/incident-audit-run.html\">command</a></td><td>1</td>" in trends
     assert "critical" in trends
     assert "audit" in trends
     assert "enforce" in trends
@@ -443,6 +447,37 @@ def test_cli_reports_incident_count_and_existing_js_filter_remains(
     assert "http://" not in _all_html(tmp_path / "site")
     assert "https://" not in _all_html(tmp_path / "site")
     assert str(tmp_path) not in _all_html(tmp_path / "site")
+
+
+def test_generated_site_has_no_broken_internal_links(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_json(
+        tmp_path / ".agentguard/runs/link-run/reports/report.json",
+        {
+            "task_id": "linked task",
+            "result": "FAIL",
+            "score": 0,
+            "benchmark_id": "linked-benchmark",
+            "agent": "linked-agent",
+        },
+    )
+    _write_incident(tmp_path, "link-run")
+
+    _generate(tmp_path)
+
+    site = tmp_path / "site"
+    references = re.compile(r'\b(?:href|src)="([^"]+)"')
+    for page in site.rglob("*.html"):
+        html = page.read_text(encoding="utf-8")
+        for reference in references.findall(html):
+            if reference.startswith(("#", "mailto:")):
+                continue
+            assert not reference.startswith(("http://", "https://", "file:", "javascript:"))
+            target = (page.parent / reference).resolve()
+            assert target.exists(), f"{page.relative_to(site)} references {reference}"
 
 
 def _generate(tmp_path: Path):
