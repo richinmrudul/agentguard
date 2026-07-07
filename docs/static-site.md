@@ -56,9 +56,9 @@ The site includes:
 - `trends.html` summarizes static guard and evaluation trends from discovered
   reports and incidents: represented runs, safe passes, failed evaluations,
   failed checks, total incidents, total violations, latest-vs-previous incident
-  deltas, category/policy counts, severity counts, guard modes, benchmark/task
-  counts, and agent/profile counts. Trend rows link to incident or run detail
-  pages when the generated site already has those pages.
+  deltas, category/policy counts, guard-type counts, severity counts, guard
+  modes, benchmark/task counts, and agent/profile counts. Trend rows link to
+  incident or run detail pages when the generated site already has those pages.
 - Local `assets/site.css` and `assets/site.js`.
 
 The exporter reads `.agentguard/history.db` and known report locations under

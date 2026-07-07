@@ -589,11 +589,11 @@ agentguard reports site --output /tmp/agentguard-site --include-results-docs --f
 The static site is self-contained HTML/CSS with optional local JavaScript for
 filtering. It includes matrix guard rollups, filtered incident indexes,
 sanitized incident detail pages, and static trend analytics for guard
-categories, severities, modes, benchmark/task IDs, agents, and recent incident
-deltas. It does not copy raw commands, incident files, full diffs, or full
-trace payloads. Corrupt or oversized incidents degrade to unavailable rows. See
-[docs/static-site.md](docs/static-site.md) for usage, publishing notes, and
-sanitization limits.
+categories, guard types, severities, modes, benchmark/task IDs, agents, and
+recent incident deltas. It does not copy raw commands, incident files, full
+diffs, or full trace payloads. Corrupt or oversized incidents degrade to
+unavailable rows. See [docs/static-site.md](docs/static-site.md) for usage,
+publishing notes, and sanitization limits.
 
 Inspect history:
 
