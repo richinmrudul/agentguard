@@ -26,6 +26,7 @@ SUPPORTED_INCIDENT_SCHEMA_VERSION = 1
 ABSOLUTE_PATH_PATTERN = re.compile(
     r"(?<![\w.-])(?:/[^\s,;:'\")\]}<>]+|[A-Za-z]:\\[^\s,;:'\")\]}<>]+)"
 )
+RAW_DIFF_MARKER_PATTERN = re.compile(r"diff --git", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,7 @@ def generate_static_report_site(options: StaticSiteOptions) -> StaticSiteResult:
         options, context, "Diagnostics", context.diagnostics
     )
     pages[Path("incidents.html")] = _render_incidents_page(options, context)
+    pages[Path("trends.html")] = _render_trends_page(options, context)
     if options.include_traces:
         pages[Path("traces.html")] = _render_records_page(
             options, context, "Traces", context.traces
@@ -661,6 +663,7 @@ def _render_index(options: StaticSiteOptions, context: SiteContext) -> str:
             if reliability
             else _empty("No reliability summaries found."),
         ),
+        _section("Guard trends", _trend_preview(context)),
         _section(
             "Diagnostics summaries",
             _records_table(context.diagnostics[:8], detail_prefix="details")
@@ -673,6 +676,14 @@ def _render_index(options: StaticSiteOptions, context: SiteContext) -> str:
         ),
     ]
     return _page(options, context, "Dashboard", "".join(body))
+
+
+def _render_trends_page(
+    options: StaticSiteOptions,
+    context: SiteContext,
+) -> str:
+    body = _trend_body(context, full=True)
+    return _page(options, context, "Guard Trends", body)
 
 
 def _render_records_page(
@@ -735,6 +746,283 @@ def _render_incidents_page(
             )
         )
     return _page(options, context, "Guard Incidents", "".join(body))
+
+
+def _available_incidents(context: SiteContext) -> list[SiteIncident]:
+    return [
+        incident
+        for incident in context.incidents
+        if incident.unavailable_reason is None
+    ]
+
+
+def _trend_body(context: SiteContext, *, full: bool) -> str:
+    records = [*context.records, *context.matrices]
+    incidents = _available_incidents(context)
+    failed_checks = sum(len(record.failed_checks) for record in records)
+    failed_records = sum(record.result.upper() == "FAIL" for record in records)
+    passed_records = sum(record.result.upper() == "PASS" for record in records)
+    total_violations = sum(incident.violation_count for incident in incidents)
+    latest, previous = _latest_previous_incident_counts(incidents)
+    delta = latest - previous
+    body = []
+    if full:
+        body.append(
+            _hero(
+                "Guard Trends",
+                "Static snapshot of guard and evaluation safety signals.",
+            )
+        )
+    body.extend(
+        [
+            '<section class="metrics">',
+            _metric("Runs represented", str(len(records))),
+            _metric("Guard incidents", str(len(incidents))),
+            _metric("Guard violations", str(total_violations)),
+            _metric("Failed checks", str(failed_checks)),
+            _metric("Failed evaluations", str(failed_records)),
+            _metric("Safe passes", str(passed_records)),
+            _metric("Latest incident violations", str(latest)),
+            _metric("Previous incident violations", str(previous)),
+            _metric("Incident delta", _format_delta(delta)),
+            "</section>",
+        ]
+    )
+    if not records and not incidents:
+        body.append(
+            _section(
+                "Trend data",
+                _empty(
+                    "No trend data found. Generate reports or guard incidents under .agentguard before building the static site."
+                ),
+            )
+        )
+        return "".join(body)
+
+    body.extend(
+        [
+            _section(
+                "Incident Categories",
+                _trend_counter_table(
+                    _incident_policy_counts(incidents),
+                    "Category",
+                    incident_links=_incident_links_by_policy(incidents),
+                    empty="No guard incident categories found.",
+                ),
+            ),
+            _section(
+                "Severity Breakdown",
+                _trend_counter_table(
+                    _incident_severity_counts(incidents),
+                    "Severity",
+                    empty="No guard incident severities found.",
+                ),
+            ),
+            _section(
+                "Guard Mode Breakdown",
+                _trend_counter_table(
+                    Counter(incident.guard_mode for incident in incidents),
+                    "Guard mode",
+                    empty="No guard modes found.",
+                ),
+            ),
+            _section(
+                "Benchmark / Task Breakdown",
+                _trend_counter_table(
+                    Counter(
+                        incident.benchmark_id or incident.task_id
+                        for incident in incidents
+                    ),
+                    "Benchmark or task",
+                    incident_links=_incident_links_by_benchmark(incidents),
+                    empty="No incident benchmark metadata found.",
+                ),
+            ),
+            _section(
+                "Agent / Profile Breakdown",
+                _trend_counter_table(
+                    Counter(incident.agent for incident in incidents),
+                    "Agent or profile",
+                    empty="No incident agent metadata found.",
+                ),
+            ),
+        ]
+    )
+    if full:
+        body.extend(
+            [
+                _section("Recent Incident Runs", _incident_trend_table(incidents)),
+                _section("Recent Evaluation Runs", _run_trend_table(records)),
+            ]
+        )
+    else:
+        body.append(
+            '<p><a href="trends.html">Open full trend analytics</a></p>'
+        )
+    return "".join(body)
+
+
+def _trend_preview(context: SiteContext) -> str:
+    return _trend_body(context, full=False)
+
+
+def _latest_previous_incident_counts(
+    incidents: list[SiteIncident],
+) -> tuple[int, int]:
+    ordered = sorted(incidents, key=_incident_sort_key, reverse=True)
+    latest = ordered[0].violation_count if ordered else 0
+    previous = ordered[1].violation_count if len(ordered) > 1 else 0
+    return latest, previous
+
+
+def _incident_policy_counts(incidents: list[SiteIncident]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for incident in incidents:
+        counts.update(
+            violation.policy
+            for violation in incident.violations
+            if violation.policy and violation.policy != "-"
+        )
+    return counts
+
+
+def _incident_severity_counts(incidents: list[SiteIncident]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for incident in incidents:
+        counts.update(
+            violation.severity
+            for violation in incident.violations
+            if violation.severity and violation.severity != "-"
+        )
+    return counts
+
+
+def _incident_links_by_policy(
+    incidents: list[SiteIncident],
+) -> dict[str, str]:
+    links: dict[str, str] = {}
+    for incident in incidents:
+        if incident.detail_filename is None:
+            continue
+        for violation in incident.violations:
+            if violation.policy and violation.policy != "-":
+                links.setdefault(
+                    violation.policy,
+                    f"details/{incident.detail_filename}",
+                )
+    return links
+
+
+def _incident_links_by_benchmark(
+    incidents: list[SiteIncident],
+) -> dict[str, str]:
+    links: dict[str, str] = {}
+    for incident in incidents:
+        if incident.detail_filename is None:
+            continue
+        benchmark = incident.benchmark_id or incident.task_id
+        if benchmark and benchmark != "-":
+            links.setdefault(benchmark, f"details/{incident.detail_filename}")
+    return links
+
+
+def _trend_counter_table(
+    counter: Counter[str],
+    label: str,
+    *,
+    incident_links: Optional[dict[str, str]] = None,
+    empty: str,
+) -> str:
+    items = [
+        (name, count)
+        for name, count in counter.items()
+        if name and name != "-"
+    ]
+    if not items:
+        return _empty(empty)
+    links = incident_links or {}
+    rows = []
+    for name, count in sorted(items, key=lambda item: (-item[1], item[0])):
+        display = html(name)
+        href = links.get(name)
+        if href is not None:
+            display = f'<a href="{html(href)}">{display}</a>'
+        rows.append(f"<tr><td>{display}</td><td>{count}</td></tr>")
+    return (
+        f'<table class="data"><thead><tr><th>{html(label)}</th><th>Count</th>'
+        f"</tr></thead><tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _incident_trend_table(incidents: list[SiteIncident]) -> str:
+    if not incidents:
+        return _empty("No guard incidents found.")
+    rows = []
+    for incident in sorted(incidents, key=_incident_sort_key, reverse=True)[:MAX_DETAIL_ITEMS]:
+        benchmark = incident.benchmark_id or incident.task_id
+        detail_href = (
+            f"details/{incident.detail_filename}"
+            if incident.detail_filename is not None
+            else ""
+        )
+        detail = (
+            f'<a href="{html(detail_href)}">Incident</a>'
+            if detail_href
+            else "-"
+        )
+        run_detail = (
+            f'<a href="details/{html(incident.run_detail_href)}">Run</a>'
+            if incident.run_detail_href is not None
+            else "-"
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{html(incident.detected_at if incident.detected_at != '-' else incident.completed_at)}</td>"
+            f"<td>{html(benchmark)}</td>"
+            f"<td>{html(incident.agent)}</td>"
+            f"<td>{html(incident.guard_mode)}</td>"
+            f"<td>{html(_incident_status(incident))}</td>"
+            f"<td>{incident.violation_count}</td>"
+            f"<td>{detail}</td>"
+            f"<td>{run_detail}</td>"
+            "</tr>"
+        )
+    return (
+        '<table class="data"><thead><tr><th>Detected / completed</th>'
+        "<th>Benchmark / task</th><th>Agent</th><th>Mode</th>"
+        "<th>Status</th><th>Violations</th><th>Incident</th><th>Run</th>"
+        f"</tr></thead><tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _run_trend_table(records: list[SiteRecord]) -> str:
+    if not records:
+        return _empty("No evaluation runs found.")
+    rows = []
+    for record in sorted(records, key=_record_sort_key, reverse=True)[:MAX_DETAIL_ITEMS]:
+        href = f"details/{_slug(record.kind)}-{_slug(record.id)}.html"
+        rows.append(
+            "<tr>"
+            f"<td>{html(record.created_at or '-')}</td>"
+            f"<td>{html(record.kind)}</td>"
+            f"<td><a href=\"{href}\">{html(record.name or record.id)}</a></td>"
+            f"<td>{html(record.result or '-')}</td>"
+            f"<td>{html(_format_score(record.score))}</td>"
+            f"<td>{html(record.agent or '-')}</td>"
+            f"<td>{len(record.failed_checks)}</td>"
+            "</tr>"
+        )
+    return (
+        '<table class="data"><thead><tr><th>Created</th><th>Type</th>'
+        "<th>Name</th><th>Result</th><th>Score</th><th>Agent</th>"
+        f"<th>Failed checks</th></tr></thead><tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _format_delta(value: int) -> str:
+    if value > 0:
+        return f"+{value}"
+    return str(value)
 
 
 def _incident_filter_controls(incidents: list[SiteIncident]) -> str:
@@ -1046,6 +1334,7 @@ def _nav(options: StaticSiteOptions, context: SiteContext, *, prefix: str) -> st
         ("suites.html", "Suites"),
         ("matrices.html", "Matrices"),
         ("incidents.html", "Incidents"),
+        ("trends.html", "Trends"),
         ("diagnostics.html", "Diagnostics"),
     ]
     if options.include_traces:
@@ -1300,6 +1589,7 @@ def sanitize_text(value: object) -> str:
     for pattern in SECRET_PATTERNS:
         text = pattern.sub("[REDACTED]", text)
     text = ABSOLUTE_PATH_PATTERN.sub(_absolute_path_replacement, text)
+    text = RAW_DIFF_MARKER_PATTERN.sub("[diff omitted]", text)
     return text
 
 

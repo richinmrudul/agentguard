@@ -34,8 +34,10 @@ The site includes:
 
 - `index.html` dashboard with total records, pass/fail counts, latest runs,
   average score, benchmark/category summaries, reliability summaries when
-  matrix data is available, and diagnostic summaries when requested.
-- `runs.html`, `suites.html`, `matrices.html`, `incidents.html`, and
+  matrix data is available, guard trend previews, and diagnostic summaries
+  when requested.
+- `runs.html`, `suites.html`, `matrices.html`, `incidents.html`,
+  `trends.html`, and
   `diagnostics.html`.
 - `traces.html` when `--include-traces` is set.
 - `results.html` when `--include-results-docs` is set and committed
@@ -51,11 +53,23 @@ The site includes:
 - Available incidents receive sanitized detail pages with bounded violation
   tables and a run-detail backlink when that relationship is already present
   in the generated site context.
+- `trends.html` summarizes static guard and evaluation trends from discovered
+  reports and incidents: represented runs, safe passes, failed evaluations,
+  failed checks, total incidents, total violations, latest-vs-previous incident
+  deltas, category/policy counts, severity counts, guard modes, benchmark/task
+  counts, and agent/profile counts. Trend rows link to incident or run detail
+  pages when the generated site already has those pages.
 - Local `assets/site.css` and `assets/site.js`.
 
 The exporter reads `.agentguard/history.db` and known report locations under
 `.agentguard/` by default. Missing history or a missing `.agentguard/`
 directory produces a useful empty site.
+
+Trend analytics are a static snapshot. They are generated from the reports,
+matrix guard summaries, and `runs/*/guard/incident.json` artifacts present at
+export time; the site does not monitor new runs after generation. If no
+reports or incidents are available, the trend page renders a clear empty
+state instead of failing.
 
 ## Excluded
 
@@ -84,15 +98,16 @@ AgentGuard canary formats. Absolute filesystem paths are reduced to safe path
 names where possible so generated pages can be shared without leaking local
 temporary directories.
 
-Guard rendering uses narrow field allowlists. Incident command fields,
+Guard and trend rendering use narrow field allowlists. Incident command fields,
 environment values, raw paths, matched patterns, artifacts, and redaction
 metadata values are never rendered. Evidence summaries are sanitized again,
-all content is HTML-escaped, and links are generated only for local pages.
-There are no external assets, fonts, libraries, or analytics.
+raw diff markers are omitted, all content is HTML-escaped, and links are
+generated only for local pages. There are no external assets, fonts,
+libraries, or analytics.
 
-Run backlinks are included only when an existing generated run record provides
-a trustworthy relationship. Matrix backlinks and guard-specific history
-queries remain deferred where relationships are not safely available.
+Run and incident backlinks are included only when existing generated records
+provide a trustworthy relationship. Matrix backlinks and richer guard-specific
+history joins remain deferred where relationships are not safely available.
 
 Sanitization is pattern-based and cannot guarantee removal of every possible
 secret, encoded value, or application-specific credential. Review the generated

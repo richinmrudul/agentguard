@@ -564,7 +564,8 @@ agentguard guard list --benchmark auth_bug_local_test_cheater
 Matrix JSON, Markdown, manifests, and CLI summaries roll up those child metrics
 without copying raw incident evidence or changing matrix scoring. External
 evaluations inherit the same aggregation because they execute through matrix
-mode. Static report-site incident dashboards remain deferred.
+mode. Static report-site pages include incident indexes, sanitized incident
+details, and guard trend analytics.
 
 Export reports for CI/security tools:
 
@@ -586,10 +587,11 @@ agentguard reports site --output /tmp/agentguard-site --include-results-docs --f
 ```
 
 The static site is self-contained HTML/CSS with optional local JavaScript for
-filtering. It includes matrix guard rollups plus a filtered incident index and
-sanitized incident detail pages discovered from existing run artifacts. It
-does not copy raw commands, incident files, full diffs, or full trace payloads.
-Corrupt or oversized incidents degrade to unavailable rows. See
+filtering. It includes matrix guard rollups, filtered incident indexes,
+sanitized incident detail pages, and static trend analytics for guard
+categories, severities, modes, benchmark/task IDs, agents, and recent incident
+deltas. It does not copy raw commands, incident files, full diffs, or full
+trace payloads. Corrupt or oversized incidents degrade to unavailable rows. See
 [docs/static-site.md](docs/static-site.md) for usage, publishing notes, and
 sanitization limits.
 

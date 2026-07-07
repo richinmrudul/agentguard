@@ -89,4 +89,7 @@ agentguard reports site --output .agentguard/site
 ```
 
 Open `.agentguard/site/index.html` to browse recent runs, suites, docs/results
-summaries, and guard incidents.
+summaries, guard incidents, and the static `trends.html` page. Trend analytics
+summarize whatever reports and incident artifacts are present at generation
+time, so showcase runs without guard incidents will show the evaluation
+records and an empty incident trend state.

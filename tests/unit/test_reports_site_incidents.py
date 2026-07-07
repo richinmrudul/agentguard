@@ -90,6 +90,142 @@ def test_incident_index_metrics_filters_and_deterministic_order(
     assert 'data-benchmark="v-' in page
 
 
+def test_guard_trends_render_counts_deltas_and_links(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_json(
+        tmp_path / ".agentguard/runs/audit-run/reports/report.json",
+        {
+            "task_id": "audit task",
+            "result": "FAIL",
+            "score": 20,
+            "benchmark_id": "benchmark-a",
+            "category": "test_tampering",
+            "agent": "agent-b",
+            "check_results": [
+                {"name": "Test tampering", "passed": False},
+                {"name": "Unsafe commands", "passed": False},
+            ],
+        },
+    )
+    _write_json(
+        tmp_path / ".agentguard/runs/blocked-run/reports/report.json",
+        {
+            "task_id": "blocked task",
+            "result": "FAIL",
+            "score": 0,
+            "benchmark_id": "benchmark-b",
+            "category": "filesystem_boundary",
+            "agent": "agent-a",
+            "check_results": [{"name": "Scope adherence", "passed": False}],
+        },
+    )
+    _write_incident(
+        tmp_path,
+        "audit-run",
+        blocked=False,
+        detected_at="2026-06-29T10:00:00+00:00",
+        mode="audit",
+        agent="agent-b",
+        task="benchmark-a",
+        violations=[
+            _violation("filesystem", "test_tampering"),
+            _violation("command", "unsafe_commands"),
+        ],
+    )
+    _write_incident(
+        tmp_path,
+        "blocked-run",
+        blocked=True,
+        detected_at="2026-06-29T11:00:00+00:00",
+        mode="enforce",
+        agent="agent-a",
+        task="benchmark-b",
+        violations=[_violation("filesystem", "scope_adherence")],
+    )
+
+    _generate(tmp_path)
+    dashboard = (tmp_path / "site/index.html").read_text(encoding="utf-8")
+    trends = (tmp_path / "site/trends.html").read_text(encoding="utf-8")
+
+    assert 'href="trends.html">Trends</a>' in dashboard
+    assert "<h2>Guard trends</h2>" in dashboard
+    assert "<h1>Guard Trends</h1>" in trends
+    for label, value in [
+        ("Runs represented", "2"),
+        ("Guard incidents", "2"),
+        ("Guard violations", "3"),
+        ("Failed checks", "3"),
+        ("Failed evaluations", "2"),
+        ("Safe passes", "0"),
+        ("Latest incident violations", "1"),
+        ("Previous incident violations", "2"),
+        ("Incident delta", "-1"),
+    ]:
+        assert f"<span>{label}</span><strong>{value}</strong>" in trends
+    assert "test_tampering" in trends
+    assert "unsafe_commands" in trends
+    assert "scope_adherence" in trends
+    assert "critical" in trends
+    assert "audit" in trends
+    assert "enforce" in trends
+    assert "agent-a" in trends
+    assert "agent-b" in trends
+    assert 'href="details/incident-blocked-run.html"' in trends
+    assert 'href="details/run-blocked-run.html">Run</a>' in trends
+
+
+def test_guard_trends_escape_labels_and_omit_sensitive_content(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    absolute_path = str(tmp_path / "secret/path.txt")
+    _write_json(
+        tmp_path / ".agentguard/runs/tricky/reports/report.json",
+        {
+            "task_id": "<script>alert('run')</script>",
+            "result": "FAIL",
+            "score": 0,
+            "benchmark_id": absolute_path,
+            "agent": "<script>alert('agent')</script>",
+            "check_results": [
+                {
+                    "name": "Secret scan",
+                    "passed": False,
+                    "evidence": ["AGENTGUARD_SECRET_CANARY_TREND"],
+                }
+            ],
+        },
+    )
+    _write_incident(
+        tmp_path,
+        "tricky",
+        agent="<script>alert('agent')</script>",
+        task="<script>alert('task')</script>",
+        evidence=f"AGENTGUARD_SECRET_CANARY_TREND {absolute_path} diff --git",
+        violations=[
+            {
+                **_violation("filesystem", "<script>alert('policy')</script>"),
+                "evidence_summary": (
+                    f"AGENTGUARD_SECRET_CANARY_TREND {absolute_path} diff --git"
+                ),
+            }
+        ],
+    )
+
+    _generate(tmp_path)
+    html = _all_html(tmp_path / "site")
+
+    assert "<script>alert" not in html
+    assert "&lt;script&gt;alert" in html
+    assert "AGENTGUARD_SECRET_CANARY_TREND" not in html
+    assert str(tmp_path) not in html
+    assert "diff --git" not in html
+
+
 def test_incident_detail_is_sanitized_and_links_to_run(
     tmp_path: Path,
     monkeypatch,
