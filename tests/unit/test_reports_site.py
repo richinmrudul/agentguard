@@ -19,10 +19,12 @@ def test_empty_site_generation(tmp_path: Path, monkeypatch) -> None:
         StaticSiteOptions(output=tmp_path / "site", force=True)
     )
 
-    assert result.page_count == 6
+    assert result.page_count == 7
     assert (tmp_path / "site/index.html").exists()
     assert (tmp_path / "site/incidents.html").exists()
+    assert (tmp_path / "site/trends.html").exists()
     assert "No records found" in (tmp_path / "site/runs.html").read_text()
+    assert "No trend data found" in (tmp_path / "site/trends.html").read_text()
 
 
 def test_site_from_history_with_runs_suites_and_matrices(
