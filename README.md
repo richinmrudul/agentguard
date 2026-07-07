@@ -460,8 +460,16 @@ GitHub Actions can run the gate after checkout and dependency setup:
   run: agentguard gate suite examples/suites/core.yaml --baseline baselines/core.json --allow-failures
 ```
 
-See the copyable workflow at
-[examples/github-actions/agentguard-gate.yml](examples/github-actions/agentguard-gate.yml).
+See the copyable workflow examples:
+
+- [examples/github-actions/agentguard-ci.yml](examples/github-actions/agentguard-ci.yml)
+  for a fail-on-unsafe PR gate with uploaded reports
+- [examples/github-actions/agentguard-pr-summary.yml](examples/github-actions/agentguard-pr-summary.yml)
+  for a sanitized GitHub job summary
+- [examples/github-actions/agentguard-showcase.yml](examples/github-actions/agentguard-showcase.yml)
+  for showcase metrics in CI
+- [examples/github-actions/agentguard-gate.yml](examples/github-actions/agentguard-gate.yml)
+  for suite baseline gating
 
 ## Reports, History, And Baselines
 

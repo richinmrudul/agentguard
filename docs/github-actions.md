@@ -8,6 +8,20 @@ writes JSON/Markdown reports.
 AgentGuard also ships a reusable composite action. See [docs/action.md](action.md)
 for action inputs and an action-based workflow example.
 
+Copyable workflow examples live under
+[`examples/github-actions/`](../examples/github-actions/):
+
+- [`agentguard-ci.yml`](../examples/github-actions/agentguard-ci.yml): basic
+  fail-on-unsafe PR gate with report artifact upload.
+- [`agentguard-pr-summary.yml`](../examples/github-actions/agentguard-pr-summary.yml):
+  CI gate plus a concise sanitized GitHub job summary.
+- [`agentguard-showcase.yml`](../examples/github-actions/agentguard-showcase.yml):
+  runs the local showcase metrics flow for evaluators.
+- [`agentguard-sarif-junit.yml`](../examples/github-actions/agentguard-sarif-junit.yml):
+  exports existing reports to SARIF and JUnit.
+- [`agentguard-gate.yml`](../examples/github-actions/agentguard-gate.yml):
+  compares a suite against an approved baseline.
+
 ```bash
 agentguard ci --config agentguard.yaml
 ```
@@ -57,6 +71,11 @@ When `--github-summary` is provided, AgentGuard appends a compact Markdown summa
 the file path in `GITHUB_STEP_SUMMARY`. GitHub renders that content on the Actions run
 summary page. The summary includes result, score, failed and warning checks, changed
 file counts, and report paths; it does not include full command stdout or stderr.
+
+The example workflows upload JSON, Markdown, command-log, and manifest artifacts
+with `actions/upload-artifact@v4`. Generated artifacts remain under
+`.agentguard/...` or `docs/results/...`; do not commit `.agentguard/` runtime
+directories.
 
 ## Example Config
 
@@ -141,3 +160,83 @@ jobs:
       - name: Run AgentGuard CI
         run: agentguard ci --config agentguard.yaml --base origin/main --head HEAD --github-summary
 ```
+
+## Fail A Pull Request On Unsafe Behavior
+
+Use the basic gate example when you want AgentGuard to block unsafe PRs:
+
+```yaml
+permissions:
+  contents: read
+
+steps:
+  - uses: actions/checkout@v4
+    with:
+      fetch-depth: 0
+  - uses: actions/setup-python@v5
+    with:
+      python-version: "3.11"
+  - run: python -m pip install -e ".[dev]"
+  - run: agentguard ci --config agentguard.yaml --base "origin/${{ github.base_ref }}" --head HEAD --github-summary
+```
+
+The full copyable version, including artifact upload, is
+[`examples/github-actions/agentguard-ci.yml`](../examples/github-actions/agentguard-ci.yml).
+
+## PR Or Job Summary
+
+[`examples/github-actions/agentguard-pr-summary.yml`](../examples/github-actions/agentguard-pr-summary.yml)
+uses `--github-summary` so the Actions run page shows the AgentGuard result,
+failed checks, changed-file counts, guard incident counts when available, and
+report locations. It appends only static artifact pointers after the run and
+does not render raw diffs, secret values, environment variables, or full
+stdout/stderr blobs.
+
+## Showcase Metrics In CI
+
+For reviewers evaluating the repository itself, run the deterministic showcase
+metrics flow:
+
+```yaml
+- run: python scripts/showcase_metrics.py
+- uses: actions/upload-artifact@v4
+  with:
+    name: agentguard-showcase-metrics
+    path: |
+      docs/results/showcase-summary.json
+      docs/results/showcase-summary.md
+      docs/results/showcase-metrics.json
+      docs/results/showcase-metrics.md
+      .agentguard/showcase/**/*.json
+      .agentguard/showcase/**/*.md
+```
+
+The full workflow is
+[`examples/github-actions/agentguard-showcase.yml`](../examples/github-actions/agentguard-showcase.yml).
+It is local, non-Docker, and network-free after checkout and dependency
+installation.
+
+## Permissions
+
+Most AgentGuard examples need only:
+
+```yaml
+permissions:
+  contents: read
+```
+
+SARIF upload to GitHub Code Scanning additionally requires
+`security-events: write`. Do not add `pull-requests: write`, `checks: write`,
+or broad repository write permissions unless your own workflow adds commenting,
+annotations, or other write operations outside AgentGuard.
+
+## Troubleshooting
+
+- If base/head diff collection fails, ensure `actions/checkout` uses
+  `fetch-depth: 0`.
+- If `agentguard.yaml` is missing, copy the config shape from this page and
+  adapt `allowed_paths`, `forbidden_paths`, and `test_command`.
+- If expected unsafe demo scenarios fail the job, use suite baselines or
+  `--allow-fail-result` only for demo/evidence jobs, not merge-blocking gates.
+- If artifacts are missing, keep upload steps guarded with `if: always()` so
+  reports are preserved after a failed gate.

@@ -1,8 +1,10 @@
-name: AgentGuard
+name: AgentGuard CI Gate
 
 on:
   pull_request:
-  push:
+
+permissions:
+  contents: read
 
 jobs:
   agentguard:
@@ -20,5 +22,24 @@ jobs:
       - name: Install AgentGuard
         run: python -m pip install -e ".[dev]"
 
-      - name: Run AgentGuard CI
-        run: agentguard ci --config agentguard.yaml --base origin/main --head HEAD --github-summary
+      # Replace agentguard.yaml with your repository's AgentGuard CI config.
+      # This step fails the PR when AgentGuard scores the change as unsafe.
+      - name: Run AgentGuard CI gate
+        run: |
+          agentguard ci \
+            --config agentguard.yaml \
+            --base "origin/${{ github.base_ref }}" \
+            --head HEAD \
+            --github-summary
+
+      - name: Upload AgentGuard reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentguard-ci-reports
+          path: |
+            .agentguard/ci/**/*.json
+            .agentguard/ci/**/*.md
+            .agentguard/ci/**/command_log.json
+            .agentguard/ci/**/manifest.json
+          if-no-files-found: warn
