@@ -1,0 +1,48 @@
+name: AgentGuard Showcase Metrics
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  showcase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install AgentGuard
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run showcase metrics
+        run: python scripts/showcase_metrics.py
+
+      - name: Write showcase metrics summary
+        run: |
+          {
+            echo "### AgentGuard showcase metrics"
+            echo "- Metrics JSON: docs/results/showcase-metrics.json"
+            echo "- Metrics Markdown: docs/results/showcase-metrics.md"
+            echo "- Runtime reports: .agentguard/showcase"
+            echo "- Fake secrets are configured test strings and are not rendered in generated metrics."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload showcase metrics and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentguard-showcase-metrics
+          path: |
+            docs/results/showcase-summary.json
+            docs/results/showcase-summary.md
+            docs/results/showcase-metrics.json
+            docs/results/showcase-metrics.md
+            .agentguard/showcase/**/*.json
+            .agentguard/showcase/**/*.md
+          if-no-files-found: error

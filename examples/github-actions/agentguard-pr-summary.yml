@@ -1,0 +1,57 @@
+name: AgentGuard PR Summary
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  agentguard-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Required for AgentGuard to compare the PR against its base ref.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install AgentGuard
+        run: python -m pip install -e ".[dev]"
+
+      # AgentGuard writes a sanitized summary to $GITHUB_STEP_SUMMARY.
+      # The summary includes result, failed checks, changed-file counts,
+      # guard incident counts when present, and report paths.
+      - name: Run AgentGuard with job summary
+        run: |
+          agentguard ci \
+            --config agentguard.yaml \
+            --base "origin/${{ github.base_ref }}" \
+            --head HEAD \
+            --github-summary
+
+      - name: Add artifact pointers to summary
+        if: always()
+        run: |
+          {
+            echo ""
+            echo "### AgentGuard artifacts"
+            echo "- JSON/Markdown reports: agentguard-pr-summary artifact"
+            echo "- Report root: .agentguard/ci"
+            echo "- Exports: use the SARIF/JUnit workflow example when needed"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload AgentGuard PR summary reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentguard-pr-summary
+          path: |
+            .agentguard/ci/**/*.json
+            .agentguard/ci/**/*.md
+            .agentguard/ci/**/command_log.json
+            .agentguard/ci/**/manifest.json
+          if-no-files-found: warn

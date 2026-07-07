@@ -3,6 +3,9 @@ name: AgentGuard Gate
 on:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   agentguard-gate:
     runs-on: ubuntu-latest
@@ -21,6 +24,17 @@ jobs:
 
       - name: Gate suite against baseline
         run: agentguard gate suite examples/suites/core.yaml --baseline /tmp/agentguard-core-baseline.json --allow-failures
+
+      - name: Upload gate reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentguard-suite-gate
+          path: |
+            .agentguard/suites/**/*.json
+            .agentguard/suites/**/*.md
+            .agentguard/suites/**/manifest.json
+          if-no-files-found: warn
 
       # This example writes the baseline to /tmp so it is copyable and
       # self-contained. In a real repository, store an approved baseline in a

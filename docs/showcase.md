@@ -68,6 +68,11 @@ safe scenario allowed, 0 false positives, 0 false negatives, and trace/report
 availability for all six scenarios. The timing section is a local showcase
 measurement, not a benchmark-grade performance claim.
 
+To run the same proof in GitHub Actions, use
+[`examples/github-actions/agentguard-showcase.yml`](../examples/github-actions/agentguard-showcase.yml).
+It uploads the committed `docs/results` summaries plus generated
+`.agentguard/showcase` JSON/Markdown reports as CI artifacts.
+
 ## Sanitization
 
 The showcase uses fake secrets only. Generated summary artifacts do not render
