@@ -1,4 +1,6 @@
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13,18 +15,22 @@ from typer.testing import CliRunner
 
 from agentguard import __version__
 from agentguard.cli.main import app
+from scripts.release_readiness import build_readiness_summary
 
 
 ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = ROOT / "pyproject.toml"
 BUILD_SCRIPT = ROOT / "scripts/build_release.sh"
 VALIDATION_SCRIPT = ROOT / "scripts/validate_release_artifacts.py"
+READINESS_SCRIPT = ROOT / "scripts/release_readiness.py"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 LICENSE = ROOT / "LICENSE"
 CHANGELOG = ROOT / "CHANGELOG.md"
 README = ROOT / "README.md"
 RELEASE_DOC = ROOT / "docs/release.md"
 EVALUATION_DOC = ROOT / "docs/evaluation.md"
+READINESS_JSON = ROOT / "docs/results/release-readiness-v0.1.json"
+READINESS_MD = ROOT / "docs/results/release-readiness-v0.1.md"
 SUPPORTED_PYTHON = ["3.9", "3.10", "3.11", "3.12"]
 
 
@@ -99,8 +105,16 @@ def test_release_readiness_documents_and_license_agree() -> None:
     assert "## v0.1.0 - Draft" in changelog
     for target in ("LICENSE", "CHANGELOG.md", "docs/release.md"):
         assert f"]({target})" in readme
+    for target in (
+        "docs/results/release-readiness-v0.1.md",
+        "examples/github-actions/",
+        "docs/showcase.md",
+        "docs/static-site.md",
+    ):
+        assert target in readme
     assert "no external-agent benchmark results are" in evaluation_doc
     assert "published with v0.1.0" in evaluation_doc
+    assert "release_readiness.py" in release_doc
 
     forbidden_publish_commands = (
         "twine upload",
@@ -112,6 +126,94 @@ def test_release_readiness_documents_and_license_agree() -> None:
         "git tag ",
     )
     assert not any(command in release_doc for command in forbidden_publish_commands)
+
+
+def test_release_readiness_script_and_artifacts_are_valid() -> None:
+    assert READINESS_SCRIPT.exists()
+    artifact = json_load(READINESS_JSON)
+    markdown = READINESS_MD.read_text(encoding="utf-8")
+    generated = build_readiness_summary()
+
+    assert artifact == generated
+    assert artifact["schema"] == "agentguard.release-readiness"
+    assert artifact["schema_version"] == 1
+    assert artifact["release"] == "v0.1.0"
+    assert artifact["recommendation"] == "ready with caveats"
+    assert artifact["package_metadata"]["version"] == __version__
+    assert artifact["package_metadata"]["console_script"] == (
+        "agentguard.cli.main:app"
+    )
+    assert artifact["package_metadata"]["supported_python"] == SUPPORTED_PYTHON
+    assert artifact["showcase_metrics"]["unsafe_scenarios_detected"] == 5
+    assert artifact["showcase_metrics"]["safe_scenarios_allowed"] == 1
+    assert artifact["showcase_metrics"]["false_positive_count"] == 0
+    assert artifact["showcase_metrics"]["false_negative_count"] == 0
+    assert artifact["validation_summary"]["phase36a_local_result"] == (
+        "passed before opening the review PR"
+    )
+    assert all(item["exists"] for item in artifact["required_docs"])
+    assert all(item["exists"] for item in artifact["required_examples"])
+    assert all(item["exists"] for item in artifact["required_scripts"])
+    assert all(
+        item.get("help_rendered") or item.get("version_matches_package")
+        for item in artifact["cli_smoke"]
+    )
+    assert "Recommendation: **ready with caveats**" in markdown
+    assert "PyPI publishing" in markdown
+
+
+def test_release_readiness_artifacts_are_sanitized() -> None:
+    combined = (
+        READINESS_JSON.read_text(encoding="utf-8")
+        + "\n"
+        + READINESS_MD.read_text(encoding="utf-8")
+    )
+
+    forbidden_patterns = [
+        r"AGENTGUARD_SHOWCASE_SECRET",
+        r"AGENTGUARD_SECRET",
+        r"diff --git",
+        r"/Users/",
+        r"/private/",
+        r"[A-Za-z]:\\\\",
+        r"richinmrudul",
+        r"\bHOME=",
+        r"\bTMPDIR=",
+        r"javascript:",
+        r"file:",
+    ]
+    for pattern in forbidden_patterns:
+        assert not re.search(pattern, combined)
+
+
+def test_release_readiness_referenced_paths_exist() -> None:
+    artifact = json_load(READINESS_JSON)
+
+    for section in ("required_docs", "required_examples", "required_scripts"):
+        for item in artifact[section]:
+            path = ROOT / item["path"]
+            assert path.exists(), item["path"]
+
+
+def test_no_generated_release_outputs_are_tracked() -> None:
+    tracked = subprocess.run(
+        ["git", "ls-files"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    forbidden = (
+        "dist/",
+        "build/",
+        ".agentguard/",
+        ".venv/",
+    )
+    assert not any(path.startswith(forbidden) for path in tracked)
+    assert not any(
+        path.endswith((".egg-info/PKG-INFO", ".egg-info/SOURCES.txt"))
+        for path in tracked
+    )
 
 
 def test_build_release_script_is_executable_and_never_publishes() -> None:
@@ -236,3 +338,9 @@ def test_installed_wheel_runs_outside_repository(
     )
     assert registry_result.returncode == 2
     assert "examples/benchmarks/registry.yaml" in registry_result.stderr
+
+
+def json_load(path: Path) -> dict:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(data, dict)
+    return data

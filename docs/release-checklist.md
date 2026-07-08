@@ -18,6 +18,8 @@ request is reviewed and merged. Completing it does not itself publish anything.
 
 ## Artifact Review
 
+- [ ] Regenerate and review `docs/results/release-readiness-v0.1.json` and
+  `docs/results/release-readiness-v0.1.md`.
 - [ ] Inspect wheel and source distribution member lists.
 - [ ] Confirm no `.agentguard`, coverage, cache, build, local database, secret,
   test, documentation, example, or workflow artifacts are unintentionally

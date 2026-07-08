@@ -85,11 +85,11 @@ absolute workspace paths.
 After running the showcase, generate a browsable local site with:
 
 ```bash
-agentguard reports site --output .agentguard/site
+agentguard reports site --output /tmp/agentguard-site --include-results-docs --force
 ```
 
-Open `.agentguard/site/index.html` to browse recent runs, suites, docs/results
-summaries, guard incidents, and the static `trends.html` page. Trend analytics
-summarize whatever reports and incident artifacts are present at generation
-time, so showcase runs without guard incidents will show the evaluation
-records and an empty incident trend state.
+Open `/tmp/agentguard-site/index.html` to browse recent runs, suites,
+docs/results summaries, guard incidents, and the static `trends.html` page.
+Trend analytics summarize whatever reports and incident artifacts are present
+at generation time, so showcase runs without guard incidents will show the
+evaluation records and an empty incident trend state.
