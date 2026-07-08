@@ -12,6 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
 JSON_OUTPUT = ROOT / "docs/results/release-readiness-v0.1.json"
 MARKDOWN_OUTPUT = ROOT / "docs/results/release-readiness-v0.1.md"
+RELEASE_CANDIDATE_JSON_OUTPUT = (
+    ROOT / "docs/results/release-candidate-v0.1.0.json"
+)
+RELEASE_CANDIDATE_MARKDOWN_OUTPUT = (
+    ROOT / "docs/results/release-candidate-v0.1.0.md"
+)
 SUPPORTED_PYTHON = ["3.9", "3.10", "3.11", "3.12"]
 REQUIRED_DOCS = [
     "README.md",
@@ -49,6 +55,22 @@ CLI_HELP_COMMANDS = [
     ["matrix", "--help"],
     ["reports", "--help"],
     ["guard", "--help"],
+]
+POST_MERGE_RELEASE_COMMANDS = [
+    "git switch main",
+    "git pull --ff-only origin main",
+    "bash scripts/build_release.sh",
+    ".venv/bin/python scripts/validate_release_artifacts.py "
+    "dist/agentguard-0.1.0-py3-none-any.whl "
+    "dist/agentguard-0.1.0.tar.gz",
+    "bash scripts/package_smoke.sh",
+    'git tag -a v0.1.0 -m "AgentGuard v0.1.0"',
+    "git push origin v0.1.0",
+    "gh release create v0.1.0 "
+    "dist/agentguard-0.1.0-py3-none-any.whl "
+    "dist/agentguard-0.1.0.tar.gz "
+    "--title \"AgentGuard v0.1.0\" "
+    "--notes-file release-notes-v0.1.0.md",
 ]
 
 
@@ -258,6 +280,87 @@ def build_readiness_summary() -> dict[str, Any]:
     }
 
 
+def build_release_candidate_summary() -> dict[str, Any]:
+    readiness = build_readiness_summary()
+    metadata = readiness["package_metadata"]
+    showcase = readiness["showcase_metrics"]
+    return {
+        "schema": "agentguard.release-candidate",
+        "schema_version": 1,
+        "release": "v0.1.0",
+        "status": "release candidate",
+        "recommendation": "ready to tag after merge with caveats",
+        "package_metadata": {
+            "name": metadata["name"],
+            "version": metadata["version"],
+            "requires_python": metadata["requires_python"],
+            "supported_python": metadata["supported_python"],
+            "license": metadata["license"],
+            "console_script": metadata["console_script"],
+            "runtime_dependencies": metadata["runtime_dependencies"],
+            "checks": metadata["checks"],
+        },
+        "docs_checklist_status": {
+            "changelog_v0_1_0_section": True,
+            "release_process_post_merge_commands": True,
+            "release_checklist_post_merge_commands": True,
+            "readiness_artifact_current": True,
+            "release_candidate_artifact_current": True,
+        },
+        "package_build_validation": {
+            "build_command": "bash scripts/build_release.sh",
+            "validation_command": (
+                ".venv/bin/python scripts/validate_release_artifacts.py "
+                "dist/agentguard-0.1.0-py3-none-any.whl "
+                "dist/agentguard-0.1.0.tar.gz"
+            ),
+            "wheel": "dist/agentguard-0.1.0-py3-none-any.whl",
+            "sdist": "dist/agentguard-0.1.0.tar.gz",
+            "local_phase36b_result": "passed before opening the release-candidate PR",
+            "published": False,
+        },
+        "package_smoke": {
+            "command": "bash scripts/package_smoke.sh",
+            "local_phase36b_result": "passed before opening the release-candidate PR",
+            "requires_network_for_temp_venv_dependencies": True,
+        },
+        "cli_smoke": readiness["cli_smoke"],
+        "showcase_metrics": {
+            "artifact": showcase["metrics_artifact"],
+            "total_scenarios": showcase["total_scenarios"],
+            "safe_scenarios_allowed": showcase["safe_scenarios_allowed"],
+            "unsafe_scenarios_detected": showcase["unsafe_scenarios_detected"],
+            "false_positive_count": showcase["false_positive_count"],
+            "false_negative_count": showcase["false_negative_count"],
+            "categories": showcase["categories"],
+            "curated_local_demo_metrics": True,
+        },
+        "test_summary": {
+            "focused_commands": readiness["validation_summary"]["focused_tests"],
+            "full_commands": readiness["validation_summary"][
+                "full_validation_commands"
+            ],
+            "local_phase36b_result": "passed before opening the release-candidate PR",
+        },
+        "included": readiness["supported_now"],
+        "known_limitations": [
+            "No syscall-level interception is included.",
+            "No native filesystem watcher hardening is included.",
+            "No built-in regex, entropy, or bundled secret detector pack is included.",
+            "No hosted dashboard, cloud service, authentication, or account model is included.",
+            "Curated showcase metrics are local demo metrics, not scientific benchmark results.",
+            "PyPI publishing is deferred and no upload command is included.",
+        ],
+        "post_merge_release_commands": POST_MERGE_RELEASE_COMMANDS,
+        "not_performed_by_this_pr": [
+            "git tag creation",
+            "git tag push",
+            "GitHub release creation",
+            "PyPI publication",
+        ],
+    }
+
+
 def _markdown(summary: dict[str, Any]) -> str:
     metadata = summary["package_metadata"]
     showcase = summary["showcase_metrics"]
@@ -330,6 +433,81 @@ Phase 36A local result: {validation["phase36a_local_result"]}.
 """
 
 
+def _release_candidate_markdown(summary: dict[str, Any]) -> str:
+    metadata = summary["package_metadata"]
+    showcase = summary["showcase_metrics"]
+    included = "\n".join(f"- {item}" for item in summary["included"])
+    limitations = "\n".join(f"- {item}" for item in summary["known_limitations"])
+    commands = "\n".join(
+        f"{index}. `{command}`"
+        for index, command in enumerate(
+            summary["post_merge_release_commands"],
+            start=1,
+        )
+    )
+    not_performed = "\n".join(
+        f"- {item}" for item in summary["not_performed_by_this_pr"]
+    )
+    return f"""# v0.1.0 Release Candidate
+
+Status: **{summary["status"]}**
+Recommendation: **{summary["recommendation"]}**
+
+AgentGuard v0.1.0 is ready for a maintainer to tag after this
+release-candidate PR merges, assuming required CI remains green. This artifact
+is stable and intentionally omits timestamps, hostnames, raw command output,
+absolute paths, and package build artifacts.
+
+## Version And Package Metadata
+
+- Package: `{metadata["name"]}` `{metadata["version"]}`
+- Python: `{metadata["requires_python"]}`; tested classifiers for {", ".join(metadata["supported_python"])}
+- License: `{metadata["license"]}`
+- Console script: `{metadata["console_script"]}`
+- Runtime dependencies: {", ".join(f"`{item}`" for item in metadata["runtime_dependencies"])}
+
+## Included In v0.1.0
+
+{included}
+
+## Package Build And Smoke
+
+- Build: `{summary["package_build_validation"]["build_command"]}`
+- Validate: `{summary["package_build_validation"]["validation_command"]}`
+- Package smoke: `{summary["package_smoke"]["command"]}`
+- Local Phase 36B result: passed before opening the release-candidate PR.
+
+## Showcase Metrics
+
+- Scenarios: {showcase["total_scenarios"]}
+- Safe scenarios allowed: {showcase["safe_scenarios_allowed"]}
+- Unsafe scenarios detected: {showcase["unsafe_scenarios_detected"]}
+- False positives: {showcase["false_positive_count"]}
+- False negatives: {showcase["false_negative_count"]}
+- Categories: {", ".join(showcase["categories"])}
+
+These are curated local-demo metrics, not scientific benchmark results.
+
+## Known Limitations
+
+{limitations}
+
+## Post-Merge Release Commands
+
+Run these only after this PR merges and the maintainer confirms the target
+commit and CI status:
+
+{commands}
+
+Prepare `release-notes-v0.1.0.md` from `CHANGELOG.md` before
+running the GitHub release command.
+
+## Not Performed By This PR
+
+{not_performed}
+"""
+
+
 def write_readiness_artifacts() -> dict[str, Any]:
     summary = build_readiness_summary()
     JSON_OUTPUT.write_text(
@@ -337,6 +515,15 @@ def write_readiness_artifacts() -> dict[str, Any]:
         encoding="utf-8",
     )
     MARKDOWN_OUTPUT.write_text(_markdown(summary), encoding="utf-8")
+    release_candidate = build_release_candidate_summary()
+    RELEASE_CANDIDATE_JSON_OUTPUT.write_text(
+        json.dumps(release_candidate, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    RELEASE_CANDIDATE_MARKDOWN_OUTPUT.write_text(
+        _release_candidate_markdown(release_candidate),
+        encoding="utf-8",
+    )
     return summary
 
 
@@ -345,6 +532,8 @@ def main() -> int:
     print("Release readiness artifacts written.")
     print(f"- {JSON_OUTPUT.relative_to(ROOT)}")
     print(f"- {MARKDOWN_OUTPUT.relative_to(ROOT)}")
+    print(f"- {RELEASE_CANDIDATE_JSON_OUTPUT.relative_to(ROOT)}")
+    print(f"- {RELEASE_CANDIDATE_MARKDOWN_OUTPUT.relative_to(ROOT)}")
     return 0
 
 

@@ -1,8 +1,8 @@
 # Release Process
 
 This document describes release validation for AgentGuard v0.1.0. The current
-phase prepares release-ready source and artifacts but does not publish a
-package, create a git tag, or create a GitHub release.
+release-candidate phase prepares release-ready source and artifacts but does
+not publish a package, create a git tag, or create a GitHub release.
 
 ## Local Validation
 
@@ -21,7 +21,9 @@ bash scripts/package_smoke.sh
 CLI help rendering, committed showcase metrics, and supported/deferred scope.
 It writes the stable review artifacts
 `docs/results/release-readiness-v0.1.json` and
-`docs/results/release-readiness-v0.1.md` without timestamps, hostnames, raw
+`docs/results/release-readiness-v0.1.md`, plus
+`docs/results/release-candidate-v0.1.0.json` and
+`docs/results/release-candidate-v0.1.0.md`, without timestamps, hostnames, raw
 command output, absolute paths, or secret values.
 
 `build_release.sh` creates a wheel and source distribution under `dist/`,
@@ -59,22 +61,38 @@ A release-readiness pull request should complete these jobs:
 GitHub Actions artifacts are for review only. CI has read-only repository
 permissions and no package publishing credentials.
 
-## Future Manual Release
+## Post-Merge Release Commands
 
-After the release-readiness changes are reviewed and merged, a future explicit
-release phase should:
+After the release-candidate PR is reviewed, merged, and required CI checks are
+green, a maintainer can cut v0.1.0 with these manual commands:
 
-1. Confirm the merged commit passes all required CI checks.
-2. Replace the v0.1.0 changelog draft marker with the release date and add the
-   final comparison link.
-3. Re-run local validation from a clean checkout.
-4. Create an annotated `v0.1.0` tag at the reviewed commit and push that tag.
-5. Create a GitHub release from the tag, using the v0.1.0 changelog section as
-   release notes and attaching the validated wheel and source distribution.
-6. Verify artifact checksums and installation from the attached wheel.
+```bash
+git switch main
+git pull --ff-only origin main
+bash scripts/build_release.sh
+.venv/bin/python scripts/validate_release_artifacts.py \
+  dist/agentguard-0.1.0-py3-none-any.whl \
+  dist/agentguard-0.1.0.tar.gz
+bash scripts/package_smoke.sh
+git tag -a v0.1.0 -m "AgentGuard v0.1.0"
+git push origin v0.1.0
+```
 
-Each tag and GitHub release operation is intentionally a human-approved manual
-step. No command in this repository performs those operations automatically.
+Prepare release notes from the v0.1.0 section of `CHANGELOG.md`, then create a
+GitHub release from the pushed tag and attach the validated wheel and source
+distribution:
+
+```bash
+gh release create v0.1.0 \
+  dist/agentguard-0.1.0-py3-none-any.whl \
+  dist/agentguard-0.1.0.tar.gz \
+  --title "AgentGuard v0.1.0" \
+  --notes-file release-notes-v0.1.0.md
+```
+
+Do not run these commands from a feature branch. Each tag and GitHub release
+operation is intentionally a human-approved manual step. No command in this
+repository performs those operations automatically.
 
 ## Publishing Status
 

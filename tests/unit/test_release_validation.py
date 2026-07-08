@@ -15,7 +15,10 @@ from typer.testing import CliRunner
 
 from agentguard import __version__
 from agentguard.cli.main import app
-from scripts.release_readiness import build_readiness_summary
+from scripts.release_readiness import (
+    build_readiness_summary,
+    build_release_candidate_summary,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -31,6 +34,8 @@ RELEASE_DOC = ROOT / "docs/release.md"
 EVALUATION_DOC = ROOT / "docs/evaluation.md"
 READINESS_JSON = ROOT / "docs/results/release-readiness-v0.1.json"
 READINESS_MD = ROOT / "docs/results/release-readiness-v0.1.md"
+RELEASE_CANDIDATE_JSON = ROOT / "docs/results/release-candidate-v0.1.0.json"
+RELEASE_CANDIDATE_MD = ROOT / "docs/results/release-candidate-v0.1.0.md"
 SUPPORTED_PYTHON = ["3.9", "3.10", "3.11", "3.12"]
 
 
@@ -102,11 +107,20 @@ def test_release_readiness_documents_and_license_agree() -> None:
     assert license_text.startswith("MIT License\n")
     assert "Copyright (c) 2026 Richin Mrudul" in license_text
     assert "## Unreleased" in changelog
-    assert "## v0.1.0 - Draft" in changelog
+    assert "## v0.1.0 - Release Candidate" in changelog
+    for heading in (
+        "### Added",
+        "### Changed",
+        "### Fixed",
+        "### Security/Safety",
+        "### Known Limitations",
+    ):
+        assert heading in changelog
     for target in ("LICENSE", "CHANGELOG.md", "docs/release.md"):
         assert f"]({target})" in readme
     for target in (
         "docs/results/release-readiness-v0.1.md",
+        "docs/results/release-candidate-v0.1.0.md",
         "examples/github-actions/",
         "docs/showcase.md",
         "docs/static-site.md",
@@ -122,10 +136,18 @@ def test_release_readiness_documents_and_license_agree() -> None:
         "hatch publish",
         "flit publish",
         "poetry publish",
-        "gh release create",
-        "git tag ",
     )
     assert not any(command in release_doc for command in forbidden_publish_commands)
+    for command in (
+        "git switch main",
+        "git pull --ff-only origin main",
+        'git tag -a v0.1.0 -m "AgentGuard v0.1.0"',
+        "git push origin v0.1.0",
+        "gh release create v0.1.0",
+    ):
+        assert command in release_doc
+    assert "does\nnot publish a package, create a git tag" in release_doc
+    assert "No command in this\nrepository performs those operations automatically." in release_doc
 
 
 def test_release_readiness_script_and_artifacts_are_valid() -> None:
@@ -162,11 +184,51 @@ def test_release_readiness_script_and_artifacts_are_valid() -> None:
     assert "PyPI publishing" in markdown
 
 
+def test_release_candidate_artifacts_are_valid() -> None:
+    artifact = json_load(RELEASE_CANDIDATE_JSON)
+    markdown = RELEASE_CANDIDATE_MD.read_text(encoding="utf-8")
+    generated = build_release_candidate_summary()
+
+    assert artifact == generated
+    assert artifact["schema"] == "agentguard.release-candidate"
+    assert artifact["schema_version"] == 1
+    assert artifact["release"] == "v0.1.0"
+    assert artifact["status"] == "release candidate"
+    assert artifact["recommendation"] == "ready to tag after merge with caveats"
+    assert artifact["package_metadata"]["version"] == __version__
+    assert artifact["package_metadata"]["console_script"] == (
+        "agentguard.cli.main:app"
+    )
+    assert artifact["package_build_validation"]["published"] is False
+    assert artifact["package_smoke"]["command"] == "bash scripts/package_smoke.sh"
+    assert artifact["showcase_metrics"]["unsafe_scenarios_detected"] == 5
+    assert artifact["showcase_metrics"]["safe_scenarios_allowed"] == 1
+    assert "No syscall-level interception is included." in artifact[
+        "known_limitations"
+    ]
+    assert "git tag creation" in artifact["not_performed_by_this_pr"]
+    for command in (
+        "git switch main",
+        "git pull --ff-only origin main",
+        "bash scripts/build_release.sh",
+        'git tag -a v0.1.0 -m "AgentGuard v0.1.0"',
+        "git push origin v0.1.0",
+    ):
+        assert command in artifact["post_merge_release_commands"]
+        assert command in markdown
+    assert "gh release create v0.1.0" in markdown
+    assert "PyPI publication" in markdown
+
+
 def test_release_readiness_artifacts_are_sanitized() -> None:
     combined = (
         READINESS_JSON.read_text(encoding="utf-8")
         + "\n"
         + READINESS_MD.read_text(encoding="utf-8")
+        + "\n"
+        + RELEASE_CANDIDATE_JSON.read_text(encoding="utf-8")
+        + "\n"
+        + RELEASE_CANDIDATE_MD.read_text(encoding="utf-8")
     )
 
     forbidden_patterns = [
@@ -175,6 +237,7 @@ def test_release_readiness_artifacts_are_sanitized() -> None:
         r"diff --git",
         r"/Users/",
         r"/private/",
+        r"/tmp/",
         r"[A-Za-z]:\\\\",
         r"richinmrudul",
         r"\bHOME=",

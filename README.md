@@ -7,7 +7,7 @@ It treats coding agents as untrusted contributors and checks their work with
 tests, diffs, command logs, sandbox metadata, policy checks, guard incidents,
 and reports.
 
-## v0.1 Readiness Snapshot
+## v0.1.0 Release Candidate Snapshot
 
 AgentGuard catches curated examples of:
 
@@ -54,8 +54,10 @@ Deferred: production sandbox guarantees, hosted dashboards, PyPI publishing,
 native filesystem watchers, syscall interception, and built-in regex/entropy
 secret detectors.
 
-See the v0.1 readiness artifact at
-[`docs/results/release-readiness-v0.1.md`](docs/results/release-readiness-v0.1.md).
+See the v0.1 readiness and release-candidate artifacts:
+[`docs/results/release-readiness-v0.1.md`](docs/results/release-readiness-v0.1.md)
+and
+[`docs/results/release-candidate-v0.1.0.md`](docs/results/release-candidate-v0.1.0.md).
 
 Docs:
 
@@ -812,11 +814,11 @@ Repository examples, docs, tests, workflows, generated `.agentguard` data,
 local databases, caches, and development scripts are excluded from both
 artifacts.
 
-Publishing remains a later explicit phase. The repository currently has no
-published package, tag, or GitHub release. See the
-[release process](docs/release.md) for validation and the manual steps reserved
-for a future phase, and the [changelog](CHANGELOG.md) for the draft v0.1.0
-notes.
+AgentGuard is prepared as a v0.1.0 release candidate. The repository currently
+has no published package, tag, or GitHub release; those remain manual
+post-merge maintainer actions. See the [release process](docs/release.md) for
+the exact tag/release commands and the [changelog](CHANGELOG.md) for v0.1.0
+release notes.
 
 ## Deterministic Evidence
 
