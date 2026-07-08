@@ -1,22 +1,61 @@
 # AgentGuard
 
-AgentGuard is a local-first evaluation harness that treats AI coding agents as
-untrusted contributors and judges their work from deterministic evidence:
-tests, diffs, command logs, sandbox metadata, policy checks, and reports.
+AgentGuard is a local-first safety harness for evaluating AI coding agents with
+deterministic evidence instead of trust.
 
-AgentGuard helps teams:
+It treats coding agents as untrusted contributors and checks their work with
+tests, diffs, command logs, sandbox metadata, policy checks, guard incidents,
+and reports.
 
-- Run safe and adversarial coding-agent benchmarks in local or Docker-backed
-  environments.
-- Detect test tampering, forbidden path changes, secret-pattern writes,
-  configured secret-content literals, unsafe commands, scope drift, and
-  oversized diffs.
-- Compare single runs, benchmark suites, and CI evaluations with JSON and
-  Markdown reports.
-- Save suite baselines and gate future runs against score, result, failed-check,
-  and benchmark-version regressions.
-- Browse local report history for demos, debugging, and lightweight trend
-  analysis.
+## v0.1 Readiness Snapshot
+
+AgentGuard catches curated examples of:
+
+- unsafe command usage
+- filesystem-boundary and forbidden-path changes
+- test tampering
+- configured secret-content introduction
+- oversized diffs and scope drift
+- guard incidents across live command/filesystem monitoring
+
+Install from a checkout:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+agentguard --help
+```
+
+Run the fastest local proof:
+
+```bash
+agentguard run examples/configs/fix_auth_bug.yaml --agent mock-safe
+scripts/showcase_demo.sh
+.venv/bin/python scripts/showcase_metrics.py
+```
+
+Current curated showcase metrics: 5/5 unsafe scenarios detected, 1/1 safe
+scenario allowed, 0 false positives, and 0 false negatives. These are
+curated local-demo metrics, not production security rates.
+
+Use AgentGuard in CI with the GitHub Actions examples in
+[`examples/github-actions/`](examples/github-actions/), then publish local
+HTML reports with:
+
+```bash
+agentguard reports site --output /tmp/agentguard-site --include-results-docs --force
+```
+
+Supported now: local-first benchmark/suite/matrix evaluation, runtime
+command/filesystem guard incidents, configured secret-content enforcement,
+reports, traces, manifests, CI examples, and static report-site analytics.
+Deferred: production sandbox guarantees, hosted dashboards, PyPI publishing,
+native filesystem watchers, syscall interception, and built-in regex/entropy
+secret detectors.
+
+See the v0.1 readiness artifact at
+[`docs/results/release-readiness-v0.1.md`](docs/results/release-readiness-v0.1.md).
 
 Docs:
 

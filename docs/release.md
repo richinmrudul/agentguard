@@ -9,12 +9,20 @@ package, create a git tag, or create a GitHub release.
 Run from the repository root with the development environment installed:
 
 ```bash
+.venv/bin/python scripts/release_readiness.py
 .venv/bin/python -m pytest
 .venv/bin/python -m ruff check .
 git diff --check
 bash scripts/build_release.sh
 bash scripts/package_smoke.sh
 ```
+
+`release_readiness.py` validates package metadata, required docs and examples,
+CLI help rendering, committed showcase metrics, and supported/deferred scope.
+It writes the stable review artifacts
+`docs/results/release-readiness-v0.1.json` and
+`docs/results/release-readiness-v0.1.md` without timestamps, hostnames, raw
+command output, absolute paths, or secret values.
 
 `build_release.sh` creates a wheel and source distribution under `dist/`,
 validates their metadata and members, prints their paths, and never publishes
