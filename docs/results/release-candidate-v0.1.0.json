@@ -1,0 +1,164 @@
+{
+  "cli_smoke": [
+    {
+      "command": "agentguard --help",
+      "exit_code": 0,
+      "help_rendered": true
+    },
+    {
+      "command": "agentguard run --help",
+      "exit_code": 0,
+      "help_rendered": true
+    },
+    {
+      "command": "agentguard suite --help",
+      "exit_code": 0,
+      "help_rendered": true
+    },
+    {
+      "command": "agentguard matrix --help",
+      "exit_code": 0,
+      "help_rendered": true
+    },
+    {
+      "command": "agentguard reports --help",
+      "exit_code": 0,
+      "help_rendered": true
+    },
+    {
+      "command": "agentguard guard --help",
+      "exit_code": 0,
+      "help_rendered": true
+    },
+    {
+      "command": "agentguard --version",
+      "exit_code": 0,
+      "version_matches_package": true
+    }
+  ],
+  "docs_checklist_status": {
+    "changelog_v0_1_0_section": true,
+    "readiness_artifact_current": true,
+    "release_candidate_artifact_current": true,
+    "release_checklist_post_merge_commands": true,
+    "release_process_post_merge_commands": true
+  },
+  "included": [
+    "local and Docker-backed benchmark execution",
+    "suite and matrix evaluation with JSON and Markdown reports",
+    "runtime command and filesystem guard incidents",
+    "live diff line enforcement",
+    "configured secret-content guard and post-hoc secret-content scan",
+    "guard incident history queries and exports",
+    "static HTML report site with incident pages and trend analytics",
+    "GitHub Actions CI gate examples",
+    "trace export, verification, replay, and manifests",
+    "wheel and source distribution validation without publishing"
+  ],
+  "known_limitations": [
+    "No syscall-level interception is included.",
+    "No native filesystem watcher hardening is included.",
+    "No built-in regex, entropy, or bundled secret detector pack is included.",
+    "No hosted dashboard, cloud service, authentication, or account model is included.",
+    "Curated showcase metrics are local demo metrics, not scientific benchmark results.",
+    "PyPI publishing is deferred and no upload command is included."
+  ],
+  "not_performed_by_this_pr": [
+    "git tag creation",
+    "git tag push",
+    "GitHub release creation",
+    "PyPI publication"
+  ],
+  "package_build_validation": {
+    "build_command": "bash scripts/build_release.sh",
+    "local_phase36b_result": "passed before opening the release-candidate PR",
+    "published": false,
+    "sdist": "dist/agentguard-0.1.0.tar.gz",
+    "validation_command": ".venv/bin/python scripts/validate_release_artifacts.py dist/agentguard-0.1.0-py3-none-any.whl dist/agentguard-0.1.0.tar.gz",
+    "wheel": "dist/agentguard-0.1.0-py3-none-any.whl"
+  },
+  "package_metadata": {
+    "checks": {
+      "build_backend": true,
+      "console_script": true,
+      "description_mentions_local_first": true,
+      "license": true,
+      "license_files": true,
+      "name": true,
+      "python_classifiers": true,
+      "readme": true,
+      "requires_python": true,
+      "runtime_dependencies": true,
+      "version": true
+    },
+    "console_script": "agentguard.cli.main:app",
+    "license": "MIT",
+    "name": "agentguard",
+    "requires_python": ">=3.9",
+    "runtime_dependencies": [
+      "PyYAML>=6.0.0",
+      "typer>=0.12.0"
+    ],
+    "supported_python": [
+      "3.9",
+      "3.10",
+      "3.11",
+      "3.12"
+    ],
+    "version": "0.1.0"
+  },
+  "package_smoke": {
+    "command": "bash scripts/package_smoke.sh",
+    "local_phase36b_result": "passed before opening the release-candidate PR",
+    "requires_network_for_temp_venv_dependencies": true
+  },
+  "post_merge_release_commands": [
+    "git switch main",
+    "git pull --ff-only origin main",
+    "bash scripts/build_release.sh",
+    ".venv/bin/python scripts/validate_release_artifacts.py dist/agentguard-0.1.0-py3-none-any.whl dist/agentguard-0.1.0.tar.gz",
+    "bash scripts/package_smoke.sh",
+    "git tag -a v0.1.0 -m \"AgentGuard v0.1.0\"",
+    "git push origin v0.1.0",
+    "gh release create v0.1.0 dist/agentguard-0.1.0-py3-none-any.whl dist/agentguard-0.1.0.tar.gz --title \"AgentGuard v0.1.0\" --notes-file release-notes-v0.1.0.md"
+  ],
+  "recommendation": "ready to tag after merge with caveats",
+  "release": "v0.1.0",
+  "schema": "agentguard.release-candidate",
+  "schema_version": 1,
+  "showcase_metrics": {
+    "artifact": "docs/results/showcase-metrics.json",
+    "categories": [
+      "diff_limit",
+      "filesystem_boundary",
+      "secret_content",
+      "test_tampering",
+      "unsafe_command"
+    ],
+    "curated_local_demo_metrics": true,
+    "false_negative_count": 0,
+    "false_positive_count": 0,
+    "safe_scenarios_allowed": 1,
+    "total_scenarios": 6,
+    "unsafe_scenarios_detected": 5
+  },
+  "status": "release candidate",
+  "test_summary": {
+    "focused_commands": [
+      "tests/unit/test_release_validation.py",
+      "tests/unit/test_package_smoke.py",
+      "tests/unit/test_demo_assets.py",
+      "tests/unit/test_cli.py",
+      "tests/unit/test_action_metadata.py"
+    ],
+    "full_commands": [
+      ".venv/bin/python -m pytest",
+      ".venv/bin/python -m ruff check .",
+      "git diff --check",
+      ".venv/bin/python scripts/validate_release_artifacts.py dist/agentguard-0.1.0-py3-none-any.whl dist/agentguard-0.1.0.tar.gz",
+      "bash scripts/package_smoke.sh",
+      ".venv/bin/python scripts/showcase_metrics.py"
+    ],
+    "local_phase36b_result": "passed before opening the release-candidate PR"
+  }
+}

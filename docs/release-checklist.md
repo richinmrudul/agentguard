@@ -20,6 +20,8 @@ request is reviewed and merged. Completing it does not itself publish anything.
 
 - [ ] Regenerate and review `docs/results/release-readiness-v0.1.json` and
   `docs/results/release-readiness-v0.1.md`.
+- [ ] Regenerate and review `docs/results/release-candidate-v0.1.0.json` and
+  `docs/results/release-candidate-v0.1.0.md`.
 - [ ] Inspect wheel and source distribution member lists.
 - [ ] Confirm no `.agentguard`, coverage, cache, build, local database, secret,
   test, documentation, example, or workflow artifacts are unintentionally
@@ -60,7 +62,24 @@ request is reviewed and merged. Completing it does not itself publish anything.
 - [ ] Validate and inspect artifacts before any upload.
 - [ ] Prepare draft release notes from the changelog and reviewed PRs.
 - [ ] Obtain an explicit human publish decision.
-- [ ] Create a tag and GitHub release only after that approval.
+- [ ] Create a tag and GitHub release only after that approval:
+
+```bash
+git switch main
+git pull --ff-only origin main
+bash scripts/build_release.sh
+.venv/bin/python scripts/validate_release_artifacts.py \
+  dist/agentguard-0.1.0-py3-none-any.whl \
+  dist/agentguard-0.1.0.tar.gz
+bash scripts/package_smoke.sh
+git tag -a v0.1.0 -m "AgentGuard v0.1.0"
+git push origin v0.1.0
+gh release create v0.1.0 \
+  dist/agentguard-0.1.0-py3-none-any.whl \
+  dist/agentguard-0.1.0.tar.gz \
+  --title "AgentGuard v0.1.0" \
+  --notes-file release-notes-v0.1.0.md
+```
 
 ## Manual Publish Decision
 
