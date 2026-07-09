@@ -1,6 +1,8 @@
 import json
 import re
 import shlex
+import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -9,11 +11,14 @@ from agentguard.benchmarks.contracts import load_benchmark_contract
 from agentguard.benchmarks.registry import find_benchmark, load_benchmark_registry
 from agentguard.config.loader import load_config
 from agentguard.core.suite import load_suite_config
+from scripts.adversarial_metrics import build_metrics_report, render_markdown
 
 
 PACK_PATH = Path("examples/benchmarks/adversarial-core.yaml")
 SUMMARY_JSON = Path("docs/results/adversarial-pack-summary.json")
 SUMMARY_MD = Path("docs/results/adversarial-pack-summary.md")
+METRICS_JSON = Path("docs/results/adversarial-metrics.json")
+METRICS_MD = Path("docs/results/adversarial-metrics.md")
 
 REQUIRED_SCENARIO_FIELDS = {
     "id",
@@ -164,12 +169,77 @@ def test_adversarial_pack_summary_matches_descriptor() -> None:
     assert "agentguard suite examples/suites/adversarial_core.yaml --allow-failures" in markdown
 
 
+def test_adversarial_metrics_match_descriptor_and_are_fresh() -> None:
+    pack = _load_pack()
+    metrics = json.loads(METRICS_JSON.read_text(encoding="utf-8"))
+    expected = build_metrics_report(metrics_json_path=METRICS_JSON)
+
+    assert metrics == expected
+    assert METRICS_MD.read_text(encoding="utf-8") == render_markdown(expected)
+    assert metrics["schema"] == "agentguard.adversarial-metrics"
+    assert metrics["pack"]["id"] == "adversarial-core"
+    assert metrics["validation"]["kind"] == "metadata validation"
+    assert metrics["validation"]["runtime_validated"] is False
+    assert metrics["coverage"]["total_scenarios"] == len(pack["scenarios"]) == 5
+    assert metrics["coverage"]["safe_scenarios"] == 0
+    assert metrics["coverage"]["unsafe_scenarios"] == 5
+    assert metrics["coverage"]["expected_unsafe_detections"] == 5
+    assert set(metrics["coverage"]["categories"]) == EXPECTED_CATEGORIES
+    assert set(metrics["coverage"]["detection_surfaces"]) == EXPECTED_GUARDS
+    assert metrics["coverage"]["threat_model_count"] == 5
+    assert [item["id"] for item in metrics["scenarios"]] == [
+        item["id"] for item in pack["scenarios"]
+    ]
+    for scenario in metrics["scenarios"]:
+        assert scenario["threat_model"]
+        assert scenario["expected_safe_outcome"]
+        assert scenario["expected_unsafe_behavior"]
+        assert set(scenario["expected_guards"]) <= EXPECTED_GUARDS
+
+
+def test_adversarial_metrics_script_check_and_temp_output(tmp_path: Path) -> None:
+    check = subprocess.run(
+        [sys.executable, "scripts/adversarial_metrics.py", "--check"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert check.returncode == 0
+    assert "Adversarial metrics check passed" in check.stdout
+
+    output_dir = tmp_path / "metrics"
+    generated = subprocess.run(
+        [
+            sys.executable,
+            "scripts/adversarial_metrics.py",
+            "--output-dir",
+            str(output_dir),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert generated.returncode == 0
+    generated_json = output_dir / "adversarial-metrics.json"
+    generated_md = output_dir / "adversarial-metrics.md"
+    assert generated_json.is_file()
+    assert generated_md.is_file()
+    data = json.loads(generated_json.read_text(encoding="utf-8"))
+    assert data["metrics_artifacts"] == {
+        "json": "adversarial-metrics.json",
+        "markdown": "adversarial-metrics.md",
+    }
+    assert data["coverage"]["total_scenarios"] == 5
+
+
 def test_adversarial_pack_artifacts_are_sanitized() -> None:
     combined = "\n".join(
         [
             PACK_PATH.read_text(encoding="utf-8"),
             SUMMARY_JSON.read_text(encoding="utf-8"),
             SUMMARY_MD.read_text(encoding="utf-8"),
+            METRICS_JSON.read_text(encoding="utf-8"),
+            METRICS_MD.read_text(encoding="utf-8"),
         ]
     )
 
@@ -197,6 +267,8 @@ def test_adversarial_pack_docs_reference_existing_files() -> None:
         "examples/suites/adversarial_core.yaml",
         "docs/results/adversarial-pack-summary.json",
         "docs/results/adversarial-pack-summary.md",
+        "docs/results/adversarial-metrics.json",
+        "docs/results/adversarial-metrics.md",
     ]:
         assert Path(path).exists()
         assert path in combined

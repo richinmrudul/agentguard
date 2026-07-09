@@ -104,6 +104,20 @@ and
 [`docs/results/adversarial-pack-summary.md`](results/adversarial-pack-summary.md)
 for the stable scenario summary and limitations.
 
+Generate metadata metrics and verify they have not drifted with:
+
+```bash
+.venv/bin/python scripts/adversarial_metrics.py
+.venv/bin/python scripts/adversarial_metrics.py --check
+```
+
+The metrics artifacts at
+[`docs/results/adversarial-metrics.json`](results/adversarial-metrics.json) and
+[`docs/results/adversarial-metrics.md`](results/adversarial-metrics.md)
+validate scenario counts, categories, threat models, expected guard coverage,
+and descriptor/config/registry references. They do not include runtime output;
+use the suite command above as the runtime smoke.
+
 ## Registry
 
 Benchmark families are registered in `examples/benchmarks/registry.yaml`. The

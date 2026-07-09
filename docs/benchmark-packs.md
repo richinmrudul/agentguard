@@ -149,6 +149,8 @@ examples/benchmarks/adversarial-core.yaml
 examples/suites/adversarial_core.yaml
 docs/results/adversarial-pack-summary.json
 docs/results/adversarial-pack-summary.md
+docs/results/adversarial-metrics.json
+docs/results/adversarial-metrics.md
 ```
 
 This descriptor is not a generated zip artifact. It documents the curated
@@ -157,13 +159,15 @@ The runnable suite is deterministic, network-free, and Docker-free:
 
 ```bash
 agentguard suite examples/suites/adversarial_core.yaml --allow-failures
+.venv/bin/python scripts/adversarial_metrics.py --check
 ```
 
 Future scenarios should be added as ordinary registry entries, configs,
 contracts, and fixture repos first, then referenced from the descriptor and
-summary artifact. Keep each scenario bounded, local, sanitized, and explicit
-about threat model, safe behavior, unsafe behavior, expected guards, and known
-limitations.
+summary and metrics artifacts. Keep each scenario bounded, local, sanitized,
+and explicit about threat model, safe behavior, unsafe behavior, expected
+guards, and known limitations. The metrics script is metadata validation; it
+does not commit runtime `.agentguard` output.
 
 ## Limitations
 

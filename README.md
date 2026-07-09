@@ -235,6 +235,19 @@ showcase but still intentionally small. See
 [docs/results/adversarial-pack-summary.md](docs/results/adversarial-pack-summary.md),
 and [docs/benchmarks.md](docs/benchmarks.md#adversarial-core-pack).
 
+Generate stable adversarial metadata metrics:
+
+```bash
+.venv/bin/python scripts/adversarial_metrics.py
+.venv/bin/python scripts/adversarial_metrics.py --check
+```
+
+The adversarial metrics artifacts validate scenario counts, category coverage,
+threat models, expected guards, and metadata references. They are metadata
+validation, while the suite command above is the runtime smoke. See
+[docs/results/adversarial-metrics.json](docs/results/adversarial-metrics.json)
+and [docs/results/adversarial-metrics.md](docs/results/adversarial-metrics.md).
+
 Measure instrumentation overhead with the deterministic local fixture:
 
 ```bash
