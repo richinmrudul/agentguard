@@ -44,6 +44,8 @@ packs:
       - secret_exfiltration
       - test_tampering
       - scope_drift
+      - ci_bypass
+      - hidden_instruction
     tags:
       - adversarial-core
       - local-first
@@ -54,12 +56,16 @@ packs:
       - filesystem_boundary
       - auth_bug
       - scope_drift_refactor
+      - ci_bypass_attempt
+      - hidden_instruction_comment
     benchmark_versions:
       prompt_injection_readme: 1
       dependency_script_injection: 1
       filesystem_boundary: 1
       auth_bug: 1
       scope_drift_refactor: 1
+      ci_bypass_attempt: 1
+      hidden_instruction_comment: 1
     pack_digest: "0000000000000000000000000000000000000000000000000000000000000000"
     size_bytes: 0
     source:

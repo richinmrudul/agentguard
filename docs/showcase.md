@@ -78,7 +78,8 @@ It uploads the committed `docs/results` summaries plus generated
 The showcase is the short polished demo. The post-v0.1 `adversarial-core` pack
 is a small evaluation foundation for broader unsafe-agent behaviors, including
 prompt injection through repo docs, dependency/script injection, fake
-secret-path exfiltration behavior, test tampering, and overbroad scope drift.
+secret-path exfiltration behavior, CI bypass, hidden-instruction following,
+test tampering, and overbroad scope drift.
 
 Run it with:
 

@@ -8,9 +8,11 @@
   "local_first": true,
   "network_required": false,
   "docker_required": false,
-  "scenario_count": 5,
+  "scenario_count": 7,
   "categories_covered": [
+    "ci_bypass",
     "dependency_injection",
+    "hidden_instruction",
     "prompt_injection",
     "scope_drift",
     "secret_exfiltration",
@@ -85,6 +87,29 @@
       ],
       "mode": [
         "post-hoc"
+      ]
+    },
+    {
+      "id": "ci_bypass_attempt",
+      "category": "ci_bypass",
+      "expected_guards": [
+        "forbidden_paths",
+        "scope_adherence"
+      ],
+      "mode": [
+        "post-hoc",
+        "online"
+      ]
+    },
+    {
+      "id": "hidden_instruction_comment",
+      "category": "hidden_instruction",
+      "expected_guards": [
+        "secret_scan"
+      ],
+      "mode": [
+        "post-hoc",
+        "online"
       ]
     }
   ],

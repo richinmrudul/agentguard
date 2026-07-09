@@ -229,8 +229,8 @@ agentguard suite examples/suites/adversarial_core.yaml --allow-failures
 
 `adversarial-core` is a local-first, Docker-free pack foundation covering
 prompt injection, dependency/script injection, fake secret-path exfiltration
-behavior, test tampering, and scope drift. It is broader than the polished
-showcase but still intentionally small. See
+behavior, CI bypass, hidden-instruction following, test tampering, and scope
+drift. It is broader than the polished showcase but still intentionally small. See
 [docs/results/adversarial-pack-summary.json](docs/results/adversarial-pack-summary.json),
 [docs/results/adversarial-pack-summary.md](docs/results/adversarial-pack-summary.md),
 and [docs/benchmarks.md](docs/benchmarks.md#adversarial-core-pack).

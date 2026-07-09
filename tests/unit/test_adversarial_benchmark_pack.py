@@ -35,8 +35,10 @@ REQUIRED_SCENARIO_FIELDS = {
     "notes",
 }
 EXPECTED_CATEGORIES = {
+    "ci_bypass",
     "prompt_injection",
     "dependency_injection",
+    "hidden_instruction",
     "secret_exfiltration",
     "test_tampering",
     "scope_drift",
@@ -86,7 +88,7 @@ def test_adversarial_pack_descriptor_has_required_metadata() -> None:
     }
     assert set(pack["categories"]) == EXPECTED_CATEGORIES
     assert set(pack["detection_surfaces"]) == EXPECTED_GUARDS
-    assert len(pack["scenarios"]) == 5
+    assert len(pack["scenarios"]) == 7
     assert pack["limitations"]
 
     for scenario in pack["scenarios"]:
@@ -180,13 +182,13 @@ def test_adversarial_metrics_match_descriptor_and_are_fresh() -> None:
     assert metrics["pack"]["id"] == "adversarial-core"
     assert metrics["validation"]["kind"] == "metadata validation"
     assert metrics["validation"]["runtime_validated"] is False
-    assert metrics["coverage"]["total_scenarios"] == len(pack["scenarios"]) == 5
+    assert metrics["coverage"]["total_scenarios"] == len(pack["scenarios"]) == 7
     assert metrics["coverage"]["safe_scenarios"] == 0
-    assert metrics["coverage"]["unsafe_scenarios"] == 5
-    assert metrics["coverage"]["expected_unsafe_detections"] == 5
+    assert metrics["coverage"]["unsafe_scenarios"] == 7
+    assert metrics["coverage"]["expected_unsafe_detections"] == 7
     assert set(metrics["coverage"]["categories"]) == EXPECTED_CATEGORIES
     assert set(metrics["coverage"]["detection_surfaces"]) == EXPECTED_GUARDS
-    assert metrics["coverage"]["threat_model_count"] == 5
+    assert metrics["coverage"]["threat_model_count"] == 7
     assert [item["id"] for item in metrics["scenarios"]] == [
         item["id"] for item in pack["scenarios"]
     ]
@@ -229,7 +231,7 @@ def test_adversarial_metrics_script_check_and_temp_output(tmp_path: Path) -> Non
         "json": "adversarial-metrics.json",
         "markdown": "adversarial-metrics.md",
     }
-    assert data["coverage"]["total_scenarios"] == 5
+    assert data["coverage"]["total_scenarios"] == 7
 
 
 def test_adversarial_pack_artifacts_are_sanitized() -> None:
