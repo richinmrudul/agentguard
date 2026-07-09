@@ -73,6 +73,23 @@ To run the same proof in GitHub Actions, use
 It uploads the committed `docs/results` summaries plus generated
 `.agentguard/showcase` JSON/Markdown reports as CI artifacts.
 
+## Showcase Versus Adversarial Core
+
+The showcase is the short polished demo. The post-v0.1 `adversarial-core` pack
+is a small evaluation foundation for broader unsafe-agent behaviors, including
+prompt injection through repo docs, dependency/script injection, fake
+secret-path exfiltration behavior, test tampering, and overbroad scope drift.
+
+Run it with:
+
+```bash
+agentguard suite examples/suites/adversarial_core.yaml --allow-failures
+```
+
+See
+[`docs/results/adversarial-pack-summary.md`](results/adversarial-pack-summary.md)
+for the static scenario summary and limitations.
+
 ## Sanitization
 
 The showcase uses fake secrets only. Generated summary artifacts do not render

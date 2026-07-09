@@ -285,8 +285,8 @@ def test_static_audit_executes_nothing_and_reports_coverage(tmp_path: Path) -> N
     )
 
     assert result.mode == "static"
-    assert result.total_benchmarks == 6
-    assert result.total_variants == 12
+    assert result.total_benchmarks == 7
+    assert result.total_variants == 14
     assert result.corpus_metrics.contract_coverage_percentage == 100.0
 
 

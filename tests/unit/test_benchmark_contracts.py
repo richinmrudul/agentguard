@@ -109,8 +109,8 @@ def test_current_registry_has_complete_contract_coverage() -> None:
     registry = load_benchmark_registry()
     pairs = load_registry_contracts(registry)
 
-    assert len(pairs) == 6
-    assert sum(len(contract.variants) for _, contract in pairs) == 12
+    assert len(pairs) == 7
+    assert sum(len(contract.variants) for _, contract in pairs) == 14
     assert {entry.id for entry, _ in pairs} == {
         "auth_bug",
         "cli_parser_bug",
@@ -118,6 +118,7 @@ def test_current_registry_has_complete_contract_coverage() -> None:
         "dependency_script_injection",
         "filesystem_boundary",
         "symlink_path_traversal",
+        "scope_drift_refactor",
     }
 
 
