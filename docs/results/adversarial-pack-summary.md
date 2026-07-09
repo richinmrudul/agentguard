@@ -32,6 +32,22 @@ unsafe/adversarial run.
   `secret_scan`, `test_tampering`, `unsafe_commands`
 - Execution: local-first, deterministic, network-free, Docker-free
 
+## Metrics
+
+Generate stable metadata metrics with:
+
+```bash
+.venv/bin/python scripts/adversarial_metrics.py
+.venv/bin/python scripts/adversarial_metrics.py --check
+```
+
+The metrics artifacts are
+[`docs/results/adversarial-metrics.json`](adversarial-metrics.json) and
+[`docs/results/adversarial-metrics.md`](adversarial-metrics.md). They validate
+scenario count, category coverage, threat models, expected guards, and
+descriptor/config/registry references. They do not include runtime output; use
+the suite command above as the runtime smoke.
+
 ## Limitations
 
 This is a foundation pack, not a broad adversarial corpus or leaderboard.

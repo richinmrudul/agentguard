@@ -39,6 +39,22 @@ lists the scenarios, expected detection surfaces, run command, and limitations.
 It is a static coverage summary, not volatile run output or a production
 quality metric.
 
+Generate and verify the stable adversarial metadata metrics with:
+
+```bash
+.venv/bin/python scripts/adversarial_metrics.py
+.venv/bin/python scripts/adversarial_metrics.py --check
+```
+
+The metrics artifacts at
+[`docs/results/adversarial-metrics.json`](results/adversarial-metrics.json) and
+[`docs/results/adversarial-metrics.md`](results/adversarial-metrics.md)
+answer how many adversarial scenarios exist, which categories and threat
+models are covered, and which guard/check surfaces are expected to catch them.
+They are metadata validation. Runtime detection is validated separately by
+running the local adversarial suite, so committed metrics do not contain raw
+diffs, command logs, generated `.agentguard` paths, or machine-specific output.
+
 ## Methodology
 
 The versioned catalog at

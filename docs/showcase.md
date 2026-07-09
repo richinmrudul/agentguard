@@ -88,7 +88,17 @@ agentguard suite examples/suites/adversarial_core.yaml --allow-failures
 
 See
 [`docs/results/adversarial-pack-summary.md`](results/adversarial-pack-summary.md)
-for the static scenario summary and limitations.
+for the static scenario summary and limitations. The matching adversarial
+metrics flow is:
+
+```bash
+.venv/bin/python scripts/adversarial_metrics.py
+.venv/bin/python scripts/adversarial_metrics.py --check
+```
+
+Those metrics validate pack metadata and expected detections. Showcase metrics
+come from the curated demo runtime; adversarial metrics are intentionally
+metadata-first, with the suite command used as the runtime smoke.
 
 ## Sanitization
 

@@ -123,7 +123,11 @@ The committed `examples/benchmarks/pack-index.yaml` includes illustrative
 metadata for `adversarial-core` so local tooling can list the pack alongside
 the older auth example. The source uses an `example.invalid` URL and is not
 downloaded by AgentGuard in this phase; the runnable in-repo entrypoint is the
-suite at `examples/suites/adversarial_core.yaml`.
+suite at `examples/suites/adversarial_core.yaml`. Metadata drift is checked by
+`scripts/adversarial_metrics.py --check`, which validates the descriptor,
+scenario metadata, expected guard coverage, and committed
+`docs/results/adversarial-metrics.*` artifacts without fetching packs or
+running benchmark code.
 
 ## Limitations
 
