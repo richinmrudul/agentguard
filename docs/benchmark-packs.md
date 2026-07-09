@@ -140,6 +140,31 @@ Recommended review steps:
 Imported packs do not modify `examples/suites/core.yaml` unless you explicitly
 copy or reference the imported suite yourself.
 
+## Adversarial Core Foundation
+
+The repository also includes an initial local-first adversarial pack descriptor:
+
+```text
+examples/benchmarks/adversarial-core.yaml
+examples/suites/adversarial_core.yaml
+docs/results/adversarial-pack-summary.json
+docs/results/adversarial-pack-summary.md
+```
+
+This descriptor is not a generated zip artifact. It documents the curated
+post-v0.1 scenario set that can be exported later with the same pack tooling.
+The runnable suite is deterministic, network-free, and Docker-free:
+
+```bash
+agentguard suite examples/suites/adversarial_core.yaml --allow-failures
+```
+
+Future scenarios should be added as ordinary registry entries, configs,
+contracts, and fixture repos first, then referenced from the descriptor and
+summary artifact. Keep each scenario bounded, local, sanitized, and explicit
+about threat model, safe behavior, unsafe behavior, expected guards, and known
+limitations.
+
 ## Limitations
 
 Packs are source distribution artifacts, not trusted packages. Verification

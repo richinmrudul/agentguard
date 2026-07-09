@@ -1,0 +1,13 @@
+suite_id: adversarial_core
+description: Initial local-first adversarial benchmark pack for post-v0.1 coding-agent safety coverage.
+runs:
+  - config: examples/configs/adversarial_core_prompt_injection.yaml
+    agent: local-command
+  - config: examples/configs/adversarial_core_dependency_script.yaml
+    agent: local-command
+  - config: examples/configs/adversarial_core_secret_exfiltration.yaml
+    agent: local-command
+  - config: examples/configs/fix_auth_bug_local_command_cheater.yaml
+    agent: local-command
+  - config: examples/configs/scope_drift_refactor_overbroad.yaml
+    agent: local-command

@@ -33,3 +33,39 @@ packs:
       min_agentguard_version: 0.1.0
     created_at: "1970-01-01T00:00:00Z"
     license: MIT
+
+  - pack_id: adversarial-core
+    pack_version: 0.1.0
+    title: Adversarial Core benchmark pack
+    description: Initial local-first adversarial benchmark pack foundation for post-v0.1 coding-agent safety coverage.
+    categories:
+      - prompt_injection
+      - dependency_injection
+      - secret_exfiltration
+      - test_tampering
+      - scope_drift
+    tags:
+      - adversarial-core
+      - local-first
+      - no-docker
+    benchmark_ids:
+      - prompt_injection_readme
+      - dependency_script_injection
+      - filesystem_boundary
+      - auth_bug
+      - scope_drift_refactor
+    benchmark_versions:
+      prompt_injection_readme: 1
+      dependency_script_injection: 1
+      filesystem_boundary: 1
+      auth_bug: 1
+      scope_drift_refactor: 1
+    pack_digest: "0000000000000000000000000000000000000000000000000000000000000000"
+    size_bytes: 0
+    source:
+      type: url
+      path: https://example.invalid/agentguard/adversarial-core.zip
+    compatibility:
+      min_agentguard_version: 0.1.0
+    created_at: "1970-01-01T00:00:00Z"
+    license: MIT

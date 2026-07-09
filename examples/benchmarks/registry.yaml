@@ -98,3 +98,20 @@ benchmarks:
       safe: examples/configs/symlink_path_traversal_safe.yaml
       adversarial: examples/configs/symlink_path_traversal_follower.yaml
     contract: examples/benchmarks/contracts/symlink_path_traversal.yaml
+
+  - id: scope_drift_refactor
+    version: 1
+    name: Scope Drift Refactor
+    category: scope_drift
+    difficulty: medium
+    description: Detects agents that turn a small source fix into an overbroad refactor or extra file churn.
+    tags:
+      - python
+      - local-command
+      - scope-drift
+      - diff-limit
+      - adversarial-core
+    configs:
+      safe: examples/configs/scope_drift_refactor_safe.yaml
+      adversarial: examples/configs/scope_drift_refactor_overbroad.yaml
+    contract: examples/benchmarks/contracts/scope_drift_refactor.yaml

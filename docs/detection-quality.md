@@ -24,6 +24,21 @@ false positives, and 0 false negatives. Those metrics are scoped to the
 curated showcase pack; the mutation audit below remains the broader controlled
 check-quality diagnostic.
 
+For post-v0.1 adversarial evaluation coverage, the `adversarial-core` pack
+groups five deterministic local unsafe scenarios across prompt injection,
+dependency/script injection, secret-path exfiltration behavior, test tampering,
+and scope drift:
+
+```bash
+agentguard suite examples/suites/adversarial_core.yaml --allow-failures
+```
+
+The committed summary at
+[`docs/results/adversarial-pack-summary.json`](results/adversarial-pack-summary.json)
+lists the scenarios, expected detection surfaces, run command, and limitations.
+It is a static coverage summary, not volatile run output or a production
+quality metric.
+
 ## Methodology
 
 The versioned catalog at

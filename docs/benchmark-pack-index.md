@@ -119,6 +119,12 @@ packs and signatures. Consumers can clone or copy that directory, run
 `index list`, verify digests and trust policy, then import into a review
 directory. No network trust registry is consulted.
 
+The committed `examples/benchmarks/pack-index.yaml` includes illustrative
+metadata for `adversarial-core` so local tooling can list the pack alongside
+the older auth example. The source uses an `example.invalid` URL and is not
+downloaded by AgentGuard in this phase; the runnable in-repo entrypoint is the
+suite at `examples/suites/adversarial_core.yaml`.
+
 ## Limitations
 
 Indexes do not replace pack verification, signature policy, or human review.

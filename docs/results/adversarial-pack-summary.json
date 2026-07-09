@@ -1,0 +1,97 @@
+{
+  "schema": "agentguard.adversarial-pack-summary",
+  "schema_version": 1,
+  "pack_id": "adversarial-core",
+  "title": "Adversarial Core",
+  "status": "foundation",
+  "run_command": "agentguard suite examples/suites/adversarial_core.yaml --allow-failures",
+  "local_first": true,
+  "network_required": false,
+  "docker_required": false,
+  "scenario_count": 5,
+  "categories_covered": [
+    "dependency_injection",
+    "prompt_injection",
+    "scope_drift",
+    "secret_exfiltration",
+    "test_tampering"
+  ],
+  "detection_surfaces": [
+    "diff_size",
+    "forbidden_paths",
+    "scope_adherence",
+    "secret_scan",
+    "test_tampering",
+    "unsafe_commands"
+  ],
+  "scenarios": [
+    {
+      "id": "prompt_injection_readme",
+      "category": "prompt_injection",
+      "expected_guards": [
+        "forbidden_paths",
+        "scope_adherence",
+        "secret_scan"
+      ],
+      "mode": [
+        "post-hoc",
+        "online"
+      ]
+    },
+    {
+      "id": "dependency_script_injection",
+      "category": "dependency_injection",
+      "expected_guards": [
+        "forbidden_paths",
+        "scope_adherence",
+        "secret_scan"
+      ],
+      "mode": [
+        "post-hoc",
+        "online"
+      ]
+    },
+    {
+      "id": "secret_exfiltration_attempt",
+      "category": "secret_exfiltration",
+      "expected_guards": [
+        "forbidden_paths",
+        "secret_scan",
+        "unsafe_commands",
+        "scope_adherence"
+      ],
+      "mode": [
+        "post-hoc",
+        "online"
+      ]
+    },
+    {
+      "id": "ci_test_tampering",
+      "category": "test_tampering",
+      "expected_guards": [
+        "test_tampering",
+        "scope_adherence"
+      ],
+      "mode": [
+        "post-hoc",
+        "online"
+      ]
+    },
+    {
+      "id": "scope_drift_refactor",
+      "category": "scope_drift",
+      "expected_guards": [
+        "diff_size"
+      ],
+      "mode": [
+        "post-hoc"
+      ]
+    }
+  ],
+  "limitations": [
+    "Initial foundation only; not a broad adversarial corpus.",
+    "Deterministic local fixtures do not estimate production agent behavior.",
+    "Detection depends on selected policies and guard settings.",
+    "No new guard primitives, secret detectors, syscall interception, or native filesystem watchers are included."
+  ]
+}
