@@ -61,15 +61,18 @@ detects:
 - test file modification
 - path changes outside `allowed_paths`
 - secret-like path creation based on configured `secret_patterns`
+- secret-content matches from configured literal detectors and opt-in built-in
+  detector presets
 - changed-file count above `diff_limits.max_files_changed`
 - current baseline-relative additions above `diff_limits.max_lines_added`
 - current baseline-relative deletions above `diff_limits.max_lines_deleted`
 - deletion of files that existed before the agent started
 - symlinks that point outside the benchmark workspace
 
-Configured secret-content literal scanning remains a post-hoc policy check.
-The online guard only uses path, metadata, deletion, line-count, and symlink
-evidence.
+Configured secret-content scanning is available in online audit/enforcement as
+well as post-hoc diff checks. Online evidence records detector IDs plus
+sanitized relative paths and line numbers; it does not record matched values,
+configured literals, built-in regex internals, raw lines, or raw diffs.
 
 ### Live line limits
 
@@ -323,8 +326,9 @@ after a violation.
   workspaces, not very large repositories.
 - Live line limits are baseline-relative polling measurements, not cumulative
   edit-churn limits.
-- Configured secret-content scanning remains post-hoc. Online secret-content
-  audit/enforcement is deferred.
+- Online secret-content scanning uses the same configured literals and opt-in
+  built-in presets as post-hoc scanning, with the same bounded evidence and
+  redaction rules.
 - Command guard enforcement only sees command events appended to the
   AgentGuard event log. It does not observe uninstrumented subprocesses at the
   operating-system level.
@@ -334,5 +338,4 @@ after a violation.
   enhancements are deferred.
 - Process-tree cleanup is best-effort on the host platform; it is not syscall
   interception or a full sandbox boundary.
-- Native filesystem watcher backends and live secret-content scanning are
-  deferred.
+- Native filesystem watcher backends remain deferred.

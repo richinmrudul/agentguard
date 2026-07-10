@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional, Union
 
+from agentguard.checks.secret_content import BUILTIN_SECRET_CONTENT_DETECTORS
 from agentguard.config.guard_ignores import load_guard_ignore_patterns
 from agentguard.config.schema import (
     VALID_BENCHMARK_DIFFICULTIES,
@@ -42,19 +43,23 @@ def _string_list(data: dict[str, Any], key: str) -> list[str]:
 
 def _load_secret_content_patterns(
     data: dict[str, Any],
+    builtin_ids: list[str],
 ) -> list[SecretContentPattern]:
     raw_patterns = data.get("secret_content_patterns", [])
     if not isinstance(raw_patterns, list):
         raise ValueError(
             "Config field 'secret_content_patterns' must be a list."
         )
-    if len(raw_patterns) > MAX_SECRET_CONTENT_PATTERNS:
+    if len(raw_patterns) + len(builtin_ids) > MAX_SECRET_CONTENT_PATTERNS:
         raise ValueError(
-            "Config field 'secret_content_patterns' exceeds the maximum "
+            "Config secret-content detectors exceed the maximum "
             f"of {MAX_SECRET_CONTENT_PATTERNS} detectors."
         )
-    patterns: list[SecretContentPattern] = []
-    seen_ids: set[str] = set()
+    patterns: list[SecretContentPattern] = [
+        BUILTIN_SECRET_CONTENT_DETECTORS[detector_id]
+        for detector_id in builtin_ids
+    ]
+    seen_ids: set[str] = set(builtin_ids)
     seen_literals: set[str] = set()
     total_literal_bytes = 0
     for index, raw_pattern in enumerate(raw_patterns):
@@ -112,6 +117,33 @@ def _load_secret_content_patterns(
             SecretContentPattern(id=detector_id, contains=literal)
         )
     return patterns
+
+
+def _load_secret_content_builtin_detectors(data: dict[str, Any]) -> list[str]:
+    raw_detectors = data.get("secret_content_builtin_detectors", [])
+    if not isinstance(raw_detectors, list) or not all(
+        isinstance(item, str) for item in raw_detectors
+    ):
+        raise ValueError(
+            "Config field 'secret_content_builtin_detectors' must be a list "
+            "of strings."
+        )
+    seen: set[str] = set()
+    detectors: list[str] = []
+    for detector_id in raw_detectors:
+        if detector_id not in BUILTIN_SECRET_CONTENT_DETECTORS:
+            raise ValueError(
+                "Unknown built-in secret-content detector "
+                f"'{detector_id}'."
+            )
+        if detector_id in seen:
+            raise ValueError(
+                "Duplicate built-in secret-content detector "
+                f"'{detector_id}'."
+            )
+        seen.add(detector_id)
+        detectors.append(detector_id)
+    return detectors
 
 
 def _argv_field(
@@ -517,7 +549,11 @@ def load_config(config_path: Path) -> AgentGuardConfig:
     forbidden_paths = _string_list(data, "forbidden_paths")
     test_paths = _string_list(data, "test_paths")
     secret_patterns = _string_list(data, "secret_patterns")
-    secret_content_patterns = _load_secret_content_patterns(data)
+    secret_content_builtin_detectors = _load_secret_content_builtin_detectors(data)
+    secret_content_patterns = _load_secret_content_patterns(
+        data,
+        secret_content_builtin_detectors,
+    )
     guard_ignore_paths = load_guard_ignore_patterns(
         data,
         test_paths=test_paths,
@@ -559,6 +595,7 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         diff_limits=_load_diff_limits(data),
         secret_patterns=secret_patterns,
         secret_content_patterns=secret_content_patterns,
+        secret_content_builtin_detectors=secret_content_builtin_detectors,
         sandbox=_load_sandbox(data),
         benchmark=_load_benchmark_metadata(data),
         task=_load_task(data, path),

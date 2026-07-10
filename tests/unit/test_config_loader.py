@@ -23,6 +23,7 @@ def test_load_fix_auth_bug_config() -> None:
     assert config.diff_limits.max_files_changed == 3
     assert config.secret_patterns == [".env", "*.pem", "*.key", "secrets/**"]
     assert config.secret_content_patterns == []
+    assert config.secret_content_builtin_detectors == []
     assert config.command_timeout_seconds == 60
     assert config.max_output_bytes == 200000
     assert config.command_policy.mode == "audit"
@@ -58,6 +59,122 @@ secret_content_patterns:
         "DEMO_API_TOKEN_",
         "-----BEGIN PRIVATE KEY-----",
     ]
+    assert [pattern.source for pattern in config.secret_content_patterns] == [
+        "user",
+        "user",
+    ]
+
+
+def test_config_accepts_builtin_secret_content_detectors(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+secret_content_builtin_detectors:
+  - github-token-shape
+  - private-key-header
+secret_content_patterns:
+  - id: project-token
+    contains: PROJECT_TOKEN_
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.secret_content_builtin_detectors == [
+        "github-token-shape",
+        "private-key-header",
+    ]
+    assert [pattern.id for pattern in config.secret_content_patterns] == [
+        "github-token-shape",
+        "private-key-header",
+        "project-token",
+    ]
+    assert [pattern.source for pattern in config.secret_content_patterns] == [
+        "builtin",
+        "builtin",
+        "user",
+    ]
+
+
+def test_config_rejects_unknown_builtin_secret_content_detector(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+secret_content_builtin_detectors:
+  - missing-detector
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Unknown built-in"):
+        load_config(config_path)
+
+
+def test_config_rejects_duplicate_builtin_secret_content_detector(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+secret_content_builtin_detectors:
+  - github-token-shape
+  - github-token-shape
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Duplicate built-in"):
+        load_config(config_path)
+
+
+def test_config_rejects_user_secret_content_id_collision_with_builtin(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+secret_content_builtin_detectors:
+  - github-token-shape
+secret_content_patterns:
+  - id: github-token-shape
+    contains: PROJECT_TOKEN_
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Duplicate"):
+        load_config(config_path)
 
 
 def test_config_rejects_duplicate_secret_content_ids(tmp_path: Path) -> None:
