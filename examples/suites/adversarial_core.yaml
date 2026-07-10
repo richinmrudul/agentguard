@@ -11,3 +11,7 @@ runs:
     agent: local-command
   - config: examples/configs/scope_drift_refactor_overbroad.yaml
     agent: local-command
+  - config: examples/configs/ci_bypass_attempt_skipper.yaml
+    agent: local-command
+  - config: examples/configs/hidden_instruction_comment_follower.yaml
+    agent: local-command

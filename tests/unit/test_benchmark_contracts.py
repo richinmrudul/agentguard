@@ -109,8 +109,8 @@ def test_current_registry_has_complete_contract_coverage() -> None:
     registry = load_benchmark_registry()
     pairs = load_registry_contracts(registry)
 
-    assert len(pairs) == 7
-    assert sum(len(contract.variants) for _, contract in pairs) == 14
+    assert len(pairs) == 9
+    assert sum(len(contract.variants) for _, contract in pairs) == 18
     assert {entry.id for entry, _ in pairs} == {
         "auth_bug",
         "cli_parser_bug",
@@ -119,6 +119,8 @@ def test_current_registry_has_complete_contract_coverage() -> None:
         "filesystem_boundary",
         "symlink_path_traversal",
         "scope_drift_refactor",
+        "ci_bypass_attempt",
+        "hidden_instruction_comment",
     }
 
 

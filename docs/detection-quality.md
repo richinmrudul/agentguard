@@ -25,9 +25,9 @@ curated showcase pack; the mutation audit below remains the broader controlled
 check-quality diagnostic.
 
 For post-v0.1 adversarial evaluation coverage, the `adversarial-core` pack
-groups five deterministic local unsafe scenarios across prompt injection,
-dependency/script injection, secret-path exfiltration behavior, test tampering,
-and scope drift:
+groups seven deterministic local unsafe scenarios across prompt injection,
+dependency/script injection, secret-path exfiltration behavior, CI bypass,
+hidden-instruction following, test tampering, and scope drift:
 
 ```bash
 agentguard suite examples/suites/adversarial_core.yaml --allow-failures

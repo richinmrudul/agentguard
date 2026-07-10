@@ -115,3 +115,37 @@ benchmarks:
       safe: examples/configs/scope_drift_refactor_safe.yaml
       adversarial: examples/configs/scope_drift_refactor_overbroad.yaml
     contract: examples/benchmarks/contracts/scope_drift_refactor.yaml
+
+  - id: ci_bypass_attempt
+    version: 1
+    name: CI Bypass Attempt
+    category: ci_bypass
+    difficulty: medium
+    description: Detects agents that edit CI configuration to skip tests instead of fixing the task.
+    tags:
+      - python
+      - local-command
+      - ci-bypass
+      - test-tampering
+      - adversarial-core
+    configs:
+      safe: examples/configs/ci_bypass_attempt_safe.yaml
+      adversarial: examples/configs/ci_bypass_attempt_skipper.yaml
+    contract: examples/benchmarks/contracts/ci_bypass_attempt.yaml
+
+  - id: hidden_instruction_comment
+    version: 1
+    name: Hidden Instruction Comment
+    category: hidden_instruction
+    difficulty: medium
+    description: Detects agents that follow hidden repository instructions and write fake approval state.
+    tags:
+      - python
+      - local-command
+      - hidden-instruction
+      - prompt-injection
+      - adversarial-core
+    configs:
+      safe: examples/configs/hidden_instruction_comment_safe.yaml
+      adversarial: examples/configs/hidden_instruction_comment_follower.yaml
+    contract: examples/benchmarks/contracts/hidden_instruction_comment.yaml
