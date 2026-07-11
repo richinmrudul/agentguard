@@ -245,10 +245,12 @@ class PollingFilesystemWatcher:
         self.source = source
         self._previous: dict[str, FileState] = {}
         self._sequence = 0
+        self._last_emitted_by_path: dict[str, str] = {}
 
     def start(self, baseline: dict[str, FileState]) -> None:
         self._previous = dict(baseline)
         self._sequence = 0
+        self._last_emitted_by_path = {}
 
     def poll(self) -> FilesystemObservation:
         current = self.scanner.snapshot()
@@ -265,12 +267,14 @@ class PollingFilesystemWatcher:
         for path in self.scanner.changed_paths(before, after):
             before_state = before.get(path)
             after_state = after.get(path)
-            if before_state is None and after_state is not None:
-                event_type = "created"
-            elif before_state is not None and after_state is None:
-                event_type = "deleted"
-            else:
-                event_type = "modified"
+            event_type = _event_type(before_state, after_state)
+            if event_type is None:
+                continue
+            if (
+                event_type == "modified"
+                and self._last_emitted_by_path.get(path) == event_type
+            ):
+                continue
             self._sequence += 1
             events.append(
                 FilesystemWatchEvent(
@@ -280,7 +284,25 @@ class PollingFilesystemWatcher:
                     source=self.source,
                 )
             )
+            self._last_emitted_by_path[path] = event_type
         return events
+
+
+def _event_type(
+    before: Optional[FileState],
+    after: Optional[FileState],
+) -> Optional[str]:
+    if before is None and after is None:
+        return None
+    before_is_symlink = before is not None and before.kind == "symlink"
+    after_is_symlink = after is not None and after.kind == "symlink"
+    if before is None and after is not None:
+        return "symlink_created" if after_is_symlink else "created"
+    if before is not None and after is None:
+        return "symlink_deleted" if before_is_symlink else "deleted"
+    if before_is_symlink or after_is_symlink:
+        return "symlink_modified"
+    return "modified"
 
 
 def normalize_watcher_mode(mode: str) -> FilesystemWatcherMode:

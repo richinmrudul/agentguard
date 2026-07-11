@@ -820,6 +820,17 @@ def build_execution_trace(
                         }
                         for event in result.guard_summary.watcher_events
                     ],
+                    "watcher_event_limit_exceeded": (
+                        result.guard_summary.watcher_event_limit_exceeded
+                    ),
+                    "watcher_event_error": (
+                        sanitize_text(
+                            result.guard_summary.watcher_event_error,
+                            sensitive_values,
+                        )[:MAX_STRING_CHARS]
+                        if result.guard_summary.watcher_event_error
+                        else None
+                    ),
                     "violations": [
                         {
                             "violation_type": violation.violation_type,
@@ -1426,6 +1437,8 @@ def _validate_payload(event: TraceEvent) -> None:
             "watcher_mode",
             "watcher_events_observed",
             "watcher_events",
+            "watcher_event_limit_exceeded",
+            "watcher_event_error",
         }
         if (
             event.event_type == "guard_summary"
@@ -1436,7 +1449,7 @@ def _validate_payload(event: TraceEvent) -> None:
             event.event_type == "guard_summary"
             and watcher_fields & set(event.payload)
         ):
-            event_fields = event_fields | watcher_fields
+            event_fields = event_fields | (watcher_fields & set(event.payload))
         if (
             event.event_type in {"agent_command", "test_result"}
             and "process_cleanup" in event.payload
@@ -1514,6 +1527,9 @@ def _validate_payload(event: TraceEvent) -> None:
                     "created",
                     "modified",
                     "deleted",
+                    "symlink_created",
+                    "symlink_modified",
+                    "symlink_deleted",
                 }:
                     raise ValueError("Trace watcher event_type is invalid.")
                 sequence = watcher_event.get("observed_at_sequence")
@@ -1527,6 +1543,22 @@ def _validate_payload(event: TraceEvent) -> None:
                     )
                 if watcher_event.get("source") not in {"polling"}:
                     raise ValueError("Trace watcher source is invalid.")
+            if "watcher_event_limit_exceeded" in event.payload and not isinstance(
+                event.payload.get("watcher_event_limit_exceeded"),
+                bool,
+            ):
+                raise ValueError(
+                    "Trace watcher_event_limit_exceeded must be boolean."
+                )
+            error = event.payload.get("watcher_event_error")
+            if (
+                "watcher_event_error" in event.payload
+                and error is not None
+                and not isinstance(error, str)
+            ):
+                raise ValueError(
+                    "Trace watcher_event_error must be a string or null."
+                )
     if event.event_type == "file_change":
         path = event.payload.get("path")
         if not isinstance(path, str):
@@ -1951,7 +1983,14 @@ def _guard_summary_from_dict(data: object):
                 continue
             event_type = item.get("event_type")
             source = item.get("source")
-            if event_type not in {"created", "modified", "deleted"}:
+            if event_type not in {
+                "created",
+                "modified",
+                "deleted",
+                "symlink_created",
+                "symlink_modified",
+                "symlink_deleted",
+            }:
                 continue
             if source not in {"polling"}:
                 continue
@@ -1990,6 +2029,14 @@ def _guard_summary_from_dict(data: object):
         watcher_mode=watcher_mode,
         watcher_events_observed=watcher_events_observed,
         watcher_events=watcher_events,
+        watcher_event_limit_exceeded=bool(
+            data.get("watcher_event_limit_exceeded")
+        ),
+        watcher_event_error=(
+            sanitize_text(data.get("watcher_event_error"))[:MAX_STRING_CHARS]
+            if isinstance(data.get("watcher_event_error"), str)
+            else None
+        ),
     )
 
 

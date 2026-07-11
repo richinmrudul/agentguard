@@ -18,6 +18,7 @@ from agentguard.guard.filesystem import (
     ProcessController,
     RuntimeFilesystemGuard,
 )
+from agentguard.guard.watcher import FilesystemWatchEvent
 from agentguard.repo.git_diff import collect_diff
 from agentguard.repo.live_diff import (
     LiveDiffCandidate,
@@ -449,6 +450,37 @@ def test_old_report_guard_summary_defaults_are_safe() -> None:
     assert summary.watcher_mode == "auto"
     assert summary.watcher_events_observed == 0
     assert summary.watcher_events == []
+    assert summary.watcher_event_limit_exceeded is False
+    assert summary.watcher_event_error is None
+
+
+def test_watcher_event_retention_cap_reports_sanitized_overflow(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    guard = _guard(repo, _config(repo))
+    events = [
+        FilesystemWatchEvent(
+            path=f"src/generated_{index}.py",
+            event_type="created",
+            observed_at_sequence=index + 1,
+            source="polling",
+        )
+        for index in range(205)
+    ]
+
+    guard._record_scan(
+        guard._baseline,
+        [],
+        LiveLineMeasurement(),
+        events,
+    )
+    summary = guard.summary()
+
+    assert summary.watcher_events_observed == 205
+    assert len(summary.watcher_events) == 200
+    assert summary.watcher_event_limit_exceeded is True
+    assert summary.watcher_event_error == "filesystem watcher event limit exceeded"
 
 
 def test_matrix_aggregation_counts_both_line_violations(tmp_path: Path) -> None:

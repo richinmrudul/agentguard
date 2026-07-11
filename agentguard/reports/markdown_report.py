@@ -95,6 +95,8 @@ def _guard_lines(result: BenchmarkResult) -> list[str]:
         f"- Duration: {summary.monitor_duration_seconds:.3f}s",
         f"- Filesystem watcher mode: {summary.watcher_mode}",
         f"- Filesystem watcher events observed: {summary.watcher_events_observed}",
+        "- Filesystem watcher event limit exceeded: "
+        f"{summary.watcher_event_limit_exceeded}",
         f"- Current lines added: {summary.live_lines_added}",
         f"- Current lines deleted: {summary.live_lines_deleted}",
         f"- Line measurement complete: {summary.line_measurement_complete}",
@@ -105,6 +107,11 @@ def _guard_lines(result: BenchmarkResult) -> list[str]:
         lines.append(
             "- Line measurement status: "
             f"{_escape_markdown(summary.line_measurement_error)}"
+        )
+    if summary.watcher_event_error:
+        lines.append(
+            "- Filesystem watcher status: "
+            f"{_escape_markdown(summary.watcher_event_error)}"
         )
     if summary.configured_ignore_patterns:
         lines.append("- Configured ignore patterns:")
