@@ -144,9 +144,13 @@ Modes:
 
 The watcher snapshots the workspace before agent execution, then scans the tree
 at the configured guard interval. Watcher events are small, sanitized records:
-repo-relative path, `created`/`modified`/`deleted`, sequence number, and source.
-They do not include file contents, raw diffs, absolute paths, environment
-values, or raw exceptions.
+repo-relative path, event type, sequence number, and source. Regular file and
+directory events use `created`, `modified`, and `deleted`. Symlink changes use
+`symlink_created`, `symlink_modified`, and `symlink_deleted`. Polling mode
+represents renames and moves as a `deleted` event for the old path plus a
+`created` event for the new path. Events do not include file contents, raw
+diffs, absolute paths, symlink target strings, environment values, or raw
+exceptions.
 
 The scanner:
 
@@ -159,11 +163,16 @@ The scanner:
 - tracks created, modified, deleted, and symlink entries
 - bounds scan cost with a maximum observed-file cap
 - avoids reading file contents for live policy decisions
+- deduplicates consecutive `modified` events for the same path
+- retains a bounded event sample and reports
+  `filesystem watcher event limit exceeded` when the retained sample overflows
 
 Policy checks still use the existing baseline-relative snapshot comparison.
 The watcher improves event observability; content validation for live
 secret-content detections and line-limit measurement remains handled by the
-existing bounded scanners.
+existing bounded scanners. Because the current backend is polling, a file that
+is created and deleted entirely between scans may not produce a watcher event;
+final-state safety checks and post-hoc Git evidence remain authoritative.
 
 ### Configurable generated-path ignores
 
@@ -198,6 +207,8 @@ Directory symlinks are never followed. Before pruning a configured ignored
 tree, the guard inspects symlink entries without following them. An ignored-
 looking symlink that resolves outside the workspace is retained as
 `symlink_escape` evidence and can terminate a supported agent in enforce mode.
+Safe symlinks inside ignored trees are ignored. Symlink watcher events expose
+only the symlink path and event type; target strings are not serialized.
 
 ## Supported Agents
 

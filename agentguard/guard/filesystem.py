@@ -94,6 +94,8 @@ class LiveGuardSummary:
     watcher_mode: str = FilesystemWatcherMode.AUTO.value
     watcher_events_observed: int = 0
     watcher_events: list[FilesystemWatchEvent] = field(default_factory=list)
+    watcher_event_limit_exceeded: bool = False
+    watcher_event_error: Optional[str] = None
 
 
 class ProcessController:
@@ -264,10 +266,17 @@ class RuntimeFilesystemGuard:
             if first is None and new_violations:
                 first = new_violations[0].observed_at
             previous_watcher_events = list(self._summary.watcher_events)
-            retained_watcher_events = [
+            candidate_watcher_events = [
                 *previous_watcher_events,
                 *watcher_events,
-            ][:MAX_RETAINED_WATCHER_EVENTS]
+            ]
+            watcher_limit_exceeded = (
+                self._summary.watcher_event_limit_exceeded
+                or len(candidate_watcher_events) > MAX_RETAINED_WATCHER_EVENTS
+            )
+            retained_watcher_events = candidate_watcher_events[
+                :MAX_RETAINED_WATCHER_EVENTS
+            ]
             terminated = self._summary.terminated_agent
             if (
                 self.mode == GuardMode.ENFORCE
@@ -310,6 +319,12 @@ class RuntimeFilesystemGuard:
                     self._summary.watcher_events_observed + len(watcher_events)
                 ),
                 watcher_events=retained_watcher_events,
+                watcher_event_limit_exceeded=watcher_limit_exceeded,
+                watcher_event_error=(
+                    "filesystem watcher event limit exceeded"
+                    if watcher_limit_exceeded
+                    else None
+                ),
             )
 
     def _violations_for_diff(

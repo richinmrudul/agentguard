@@ -36,9 +36,11 @@ filesystem_watcher:
   mode: auto
 ```
 
-`auto` and `polling` retain sanitized create/modify/delete watcher events.
-`disabled` keeps the legacy baseline-diff guard fallback without retaining
-watcher events. All modes preserve the same post-hoc scoring path.
+`auto` and `polling` retain sanitized create/modify/delete watcher events,
+including symlink-specific event labels. Polling represents renames as
+delete+create and may miss create-delete activity that happens entirely between
+scans. `disabled` keeps the legacy baseline-diff guard fallback without
+retaining watcher events. All modes preserve the same post-hoc scoring path.
 
 ## Secret Path And Content Checks
 

@@ -365,6 +365,12 @@ portable polling backend; privileged OS-native watcher integrations remain
 future work. Process cleanup is best-effort process-tree/container cleanup, not
 syscall-level containment.
 
+Polling watcher events are observability records, not syscall evidence. Renames
+are represented as delete plus create, consecutive modifications to the same
+path are deduplicated, and retained event samples are capped with a sanitized
+overflow status. Symlink events expose only the repo-relative symlink path and
+event type, never target contents or absolute targets.
+
 ### Scoring
 
 Scoring starts at 100 and deducts points for failed checks by severity. Warnings reduce score but do not fail the run by themselves. Failed `error` or `critical` checks make the final result `FAIL`.
