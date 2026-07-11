@@ -13,6 +13,7 @@ from agentguard.config.schema import (
     CommandPolicyConfig,
     DiffLimits,
     ExpectedModifiedFiles,
+    FilesystemWatcherConfig,
     SandboxConfig,
     ScalarMetadata,
     SecretContentPattern,
@@ -24,6 +25,7 @@ from agentguard.config.yaml import load_yaml
 VALID_DOCKER_NETWORKS = {"none", "bridge"}
 VALID_COMMAND_POLICY_MODES = {"audit", "enforce"}
 VALID_AGENT_WORKDIRS = {"repo_root", "config_dir"}
+VALID_FILESYSTEM_WATCHER_MODES = {"auto", "polling", "disabled"}
 MAX_TASK_PROMPT_FILE_BYTES = 65536
 MAX_SECRET_CONTENT_PATTERNS = 32
 MAX_SECRET_CONTENT_PATTERN_ID_LENGTH = 64
@@ -438,6 +440,29 @@ def _load_command_policy(data: dict[str, Any]) -> CommandPolicyConfig:
     return CommandPolicyConfig(mode=mode)
 
 
+def _load_filesystem_watcher(data: dict[str, Any]) -> FilesystemWatcherConfig:
+    raw = data.get("filesystem_watcher", {})
+    if raw is None:
+        raw = {}
+    if isinstance(raw, str):
+        raw = {"mode": raw}
+    if not isinstance(raw, dict):
+        raise ValueError("Config field 'filesystem_watcher' must be an object.")
+    unknown = set(raw) - {"mode"}
+    if unknown:
+        raise ValueError(
+            "Config field 'filesystem_watcher' contains unsupported key(s): "
+            + ", ".join(sorted(str(key) for key in unknown))
+        )
+    mode = raw.get("mode", "auto")
+    if mode not in VALID_FILESYSTEM_WATCHER_MODES:
+        raise ValueError(
+            "filesystem_watcher.mode must be one of: "
+            + ", ".join(sorted(VALID_FILESYSTEM_WATCHER_MODES))
+        )
+    return FilesystemWatcherConfig(mode=mode)
+
+
 def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
     sandbox = data.get("sandbox", {})
     if sandbox is None:
@@ -586,6 +611,7 @@ def load_config(config_path: Path) -> AgentGuardConfig:
             200000,
         ),
         command_policy=_load_command_policy(data),
+        filesystem_watcher=_load_filesystem_watcher(data),
         allowed_paths=allowed_paths,
         forbidden_paths=forbidden_paths,
         test_paths=test_paths,

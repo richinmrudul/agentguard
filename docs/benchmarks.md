@@ -29,6 +29,17 @@ only to reduce polling noise. Escaping symlinks cannot be hidden by an ignored
 path. See [Online Guard](online-guard.md) for the full validation and security
 boundary.
 
+Benchmarks can also pin the online filesystem watcher mode:
+
+```yaml
+filesystem_watcher:
+  mode: auto
+```
+
+`auto` and `polling` retain sanitized create/modify/delete watcher events.
+`disabled` keeps the legacy baseline-diff guard fallback without retaining
+watcher events. All modes preserve the same post-hoc scoring path.
+
 ## Secret Path And Content Checks
 
 `secret_patterns` remain path-oriented policies: they match changed filenames

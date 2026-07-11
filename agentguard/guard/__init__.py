@@ -10,9 +10,22 @@ from agentguard.guard.filesystem import (
     ProcessController,
     RuntimeFilesystemGuard,
 )
+from agentguard.guard.watcher import (
+    FileState,
+    FilesystemObservation,
+    FilesystemSnapshotScanner,
+    FilesystemWatchEvent,
+    FilesystemWatcherMode,
+    PollingFilesystemWatcher,
+)
 __all__ = [
     "CommandGuardSummary",
     "CommandGuardViolation",
+    "FileState",
+    "FilesystemObservation",
+    "FilesystemSnapshotScanner",
+    "FilesystemWatchEvent",
+    "FilesystemWatcherMode",
     "GuardIncident",
     "GuardIncidentPaths",
     "GuardIncidentViolation",
@@ -21,6 +34,7 @@ __all__ = [
     "LiveGuardSummary",
     "LiveGuardViolation",
     "ProcessController",
+    "PollingFilesystemWatcher",
     "RuntimeCommandGuard",
     "RuntimeFilesystemGuard",
     "build_guard_incident",

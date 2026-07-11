@@ -24,6 +24,7 @@ def test_load_fix_auth_bug_config() -> None:
     assert config.secret_patterns == [".env", "*.pem", "*.key", "secrets/**"]
     assert config.secret_content_patterns == []
     assert config.secret_content_builtin_detectors == []
+    assert config.filesystem_watcher.mode == "auto"
     assert config.command_timeout_seconds == 60
     assert config.max_output_bytes == 200000
     assert config.command_policy.mode == "audit"
@@ -102,6 +103,98 @@ secret_content_patterns:
         "builtin",
         "user",
     ]
+
+
+def test_config_accepts_filesystem_watcher_modes(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+filesystem_watcher:
+  mode: polling
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.filesystem_watcher.mode == "polling"
+
+
+def test_config_accepts_filesystem_watcher_string_shorthand(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+filesystem_watcher: disabled
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.filesystem_watcher.mode == "disabled"
+
+
+def test_config_rejects_invalid_filesystem_watcher_mode(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+filesystem_watcher:
+  mode: native
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="filesystem_watcher.mode"):
+        load_config(config_path)
+
+
+def test_config_rejects_unknown_filesystem_watcher_keys(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 0
+  max: 2
+filesystem_watcher:
+  mode: auto
+  backend: fsevents
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unsupported key"):
+        load_config(config_path)
 
 
 def test_config_rejects_unknown_builtin_secret_content_detector(

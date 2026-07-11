@@ -93,6 +93,8 @@ def _guard_lines(result: BenchmarkResult) -> list[str]:
         f"- Files observed: {summary.files_observed}",
         f"- Scans: {summary.scan_count}",
         f"- Duration: {summary.monitor_duration_seconds:.3f}s",
+        f"- Filesystem watcher mode: {summary.watcher_mode}",
+        f"- Filesystem watcher events observed: {summary.watcher_events_observed}",
         f"- Current lines added: {summary.live_lines_added}",
         f"- Current lines deleted: {summary.live_lines_deleted}",
         f"- Line measurement complete: {summary.line_measurement_complete}",
@@ -116,9 +118,17 @@ def _guard_lines(result: BenchmarkResult) -> list[str]:
         lines.append("- Violations:")
         lines.extend(
             "  - "
-            f"{violation.violation_type}: {violation.path} "
-            f"({violation.action}) - {violation.message}"
+            f"{violation.violation_type}: {_escape_markdown(violation.path)} "
+            f"({violation.action}) - {_escape_markdown(violation.message)}"
             for violation in summary.violations
+        )
+    if summary.watcher_events:
+        lines.append("- Watcher events:")
+        lines.extend(
+            "  - "
+            f"{event.observed_at_sequence}: {event.event_type} "
+            f"{_escape_markdown(event.path)} ({event.source})"
+            for event in summary.watcher_events[:10]
         )
     return lines
 

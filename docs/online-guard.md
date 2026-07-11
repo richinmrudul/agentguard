@@ -121,22 +121,49 @@ instrumentation and without writing an AgentGuard command event cannot be
 blocked by the online command guard, though post-hoc filesystem, command-log,
 Docker, CI, and review gates may still catch other evidence.
 
-## Filesystem Polling Model
+## Filesystem Watcher Model
 
-The first implementation uses portable polling, not platform-specific watcher
-APIs. AgentGuard snapshots the workspace before agent execution, then scans the
-tree at the configured interval.
+AgentGuard uses a small filesystem watcher abstraction for online guard
+observability. The current implementation is dependency-free portable polling;
+future platform-specific backends can plug into the same event shape without
+changing guard incident semantics.
+
+Configure the watcher in benchmark YAML:
+
+```yaml
+filesystem_watcher:
+  mode: auto
+```
+
+Modes:
+
+- `auto`: default. Uses the safest available watcher, currently `polling`.
+- `polling`: explicitly use the stdlib polling watcher.
+- `disabled`: do not retain watcher events; keep the legacy baseline-diff guard
+  fallback for policy enforcement.
+
+The watcher snapshots the workspace before agent execution, then scans the tree
+at the configured guard interval. Watcher events are small, sanitized records:
+repo-relative path, `created`/`modified`/`deleted`, sequence number, and source.
+They do not include file contents, raw diffs, absolute paths, environment
+values, or raw exceptions.
 
 The scanner:
 
 - does not follow symlinks
 - skips `.git`, common cache directories, and
   `.agentguard_agent_events.jsonl`
+- skips `.agentguard` runtime artifact directories
 - applies validated `guard_ignore_paths` patterns to regular files and safe
   directory trees
 - tracks created, modified, deleted, and symlink entries
 - bounds scan cost with a maximum observed-file cap
 - avoids reading file contents for live policy decisions
+
+Policy checks still use the existing baseline-relative snapshot comparison.
+The watcher improves event observability; content validation for live
+secret-content detections and line-limit measurement remains handled by the
+existing bounded scanners.
 
 ### Configurable generated-path ignores
 
@@ -338,4 +365,5 @@ after a violation.
   enhancements are deferred.
 - Process-tree cleanup is best-effort on the host platform; it is not syscall
   interception or a full sandbox boundary.
-- Native filesystem watcher backends remain deferred.
+- Privileged OS-native watcher backends such as FSEvents, fanotify, or eBPF
+  remain deferred.

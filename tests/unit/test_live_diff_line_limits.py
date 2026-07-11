@@ -446,6 +446,9 @@ def test_old_report_guard_summary_defaults_are_safe() -> None:
     assert summary.line_measurement_complete is True
     assert summary.line_measurement_skipped_files == 0
     assert summary.line_measurement_error is None
+    assert summary.watcher_mode == "auto"
+    assert summary.watcher_events_observed == 0
+    assert summary.watcher_events == []
 
 
 def test_matrix_aggregation_counts_both_line_violations(tmp_path: Path) -> None:

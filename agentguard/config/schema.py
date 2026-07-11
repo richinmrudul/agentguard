@@ -74,6 +74,11 @@ class CommandPolicyConfig:
 
 
 @dataclass(frozen=True)
+class FilesystemWatcherConfig:
+    mode: str = "auto"
+
+
+@dataclass(frozen=True)
 class TaskConfig:
     prompt: Optional[str] = None
     prompt_file: Optional[Path] = None
@@ -107,6 +112,9 @@ class AgentGuardConfig:
     command_timeout_seconds: int = 60
     max_output_bytes: int = 200000
     command_policy: CommandPolicyConfig = field(default_factory=CommandPolicyConfig)
+    filesystem_watcher: FilesystemWatcherConfig = field(
+        default_factory=FilesystemWatcherConfig
+    )
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     benchmark: BenchmarkMetadata = field(default_factory=BenchmarkMetadata)
     task: Optional[TaskConfig] = None
