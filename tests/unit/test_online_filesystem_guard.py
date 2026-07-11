@@ -189,6 +189,38 @@ def test_audit_mode_records_live_secret_content_without_leaking_literal(
     assert SECRET_LITERAL not in _guard_artifacts_text(result)
 
 
+def test_audit_mode_records_live_builtin_secret_content_without_leaking_value(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fake_token = "ghp_AGENTGUARD_FAKE_TOKEN_EXAMPLE_000000000000"
+    monkeypatch.chdir(tmp_path)
+    config = _write_config(
+        tmp_path,
+        _agent_script("src/client.py", f"token = {fake_token!r}"),
+        secret_content_builtin_detectors=["github-token-shape"],
+    )
+
+    result = run_benchmark(
+        config,
+        "local-command",
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.01,
+    )
+
+    violations = [
+        violation
+        for violation in result.guard_summary.violations
+        if violation.violation_type == "secret_content_detected"
+    ]
+    assert result.guard_summary.terminated_agent is False
+    assert violations
+    assert violations[0].path == "src/client.py"
+    assert "github-token-shape" in violations[0].message
+    assert "built-in secret detector github-token-shape" in _guard_artifacts_text(result)
+    assert fake_token not in _guard_artifacts_text(result)
+
+
 def test_enforce_mode_blocks_live_secret_content_without_leaking_literal(
     tmp_path: Path,
     monkeypatch,
@@ -215,6 +247,35 @@ def test_enforce_mode_blocks_live_secret_content_without_leaking_literal(
     assert "secret_content_detected" in _violation_types(result)
     assert SECRET_LITERAL not in result.test_result.stderr
     assert SECRET_LITERAL not in _guard_artifacts_text(result)
+
+
+def test_enforce_mode_blocks_live_builtin_secret_content_without_leaking_value(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fake_token = "ghp_AGENTGUARD_FAKE_TOKEN_EXAMPLE_000000000000"
+    monkeypatch.chdir(tmp_path)
+    config = _write_config(
+        tmp_path,
+        _agent_script(
+            "src/client.py",
+            f"token = {fake_token!r}",
+            wait=True,
+        ),
+        secret_content_builtin_detectors=["github-token-shape"],
+    )
+
+    result = run_benchmark(
+        config,
+        "local-command",
+        guard_mode=GuardMode.ENFORCE,
+        guard_poll_interval_seconds=0.01,
+    )
+
+    assert result.guard_summary.terminated_agent is True
+    assert "secret_content_detected" in _violation_types(result)
+    assert fake_token not in result.test_result.stderr
+    assert fake_token not in _guard_artifacts_text(result)
 
 
 def test_preexisting_live_secret_content_is_not_reported_when_unchanged(
@@ -551,6 +612,7 @@ def _write_config(
     agent_command_as_list: bool = False,
     max_files_changed: int = 10,
     secret_content_literal: Optional[str] = None,
+    secret_content_builtin_detectors: Optional[list[str]] = None,
     baseline_secret: Optional[str] = None,
     guard_ignore_paths: Optional[list[str]] = None,
 ) -> Path:
@@ -569,6 +631,16 @@ def _write_config(
         "  - id: demo-api-token\n"
         f"    contains: {json.dumps(secret_content_literal)}\n"
         if secret_content_literal is not None
+        else ""
+    )
+    secret_content_builtin_yaml = (
+        "secret_content_builtin_detectors:\n"
+        + "\n".join(
+            f"  - {json.dumps(detector_id)}"
+            for detector_id in secret_content_builtin_detectors
+        )
+        + "\n"
+        if secret_content_builtin_detectors is not None
         else ""
     )
     guard_ignore_yaml = (
@@ -606,7 +678,7 @@ diff_limits:
 secret_patterns:
   - secrets/**
   - "*.pem"
-{guard_ignore_yaml}{secret_content_yaml}
+{guard_ignore_yaml}{secret_content_builtin_yaml}{secret_content_yaml}
 """,
         encoding="utf-8",
     )

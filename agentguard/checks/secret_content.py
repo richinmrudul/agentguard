@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -19,6 +20,38 @@ MAX_SECRET_SCAN_MATCHES = 100
 MAX_SECRET_SCAN_MATCHES_PER_DETECTOR_FILE = 5
 
 
+BUILTIN_SECRET_CONTENT_DETECTORS: dict[str, SecretContentPattern] = {
+    "private-key-header": SecretContentPattern(
+        id="private-key-header",
+        regex=re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----"),
+        source="builtin",
+    ),
+    "generic-api-key-assignment": SecretContentPattern(
+        id="generic-api-key-assignment",
+        regex=re.compile(
+            r"(?i)\b(api[_-]?key|access[_-]?token|secret)\b"
+            r"\s*[:=]\s*['\"]?[A-Za-z0-9][A-Za-z0-9_.-]{7,}"
+        ),
+        source="builtin",
+    ),
+    "github-token-shape": SecretContentPattern(
+        id="github-token-shape",
+        regex=re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
+        source="builtin",
+    ),
+    "npm-token-shape": SecretContentPattern(
+        id="npm-token-shape",
+        regex=re.compile(r"\bnpm_[A-Za-z0-9_]{20,}\b"),
+        source="builtin",
+    ),
+    "aws-access-key-id-shape": SecretContentPattern(
+        id="aws-access-key-id-shape",
+        regex=re.compile(r"\bAKIA[A-Z0-9]{16}\b"),
+        source="builtin",
+    ),
+}
+
+
 @dataclass(frozen=True)
 class SecretContentScanResult:
     matches: list[str]
@@ -31,6 +64,7 @@ class SecretContentMatch:
     path: str
     line_number: Optional[int]
     detector_id: str
+    detector_source: str = "user"
 
 
 def match_secret_content_line(
@@ -48,9 +82,10 @@ def match_secret_content_line(
             path=safe_path,
             line_number=line_number,
             detector_id=pattern.id,
+            detector_source=pattern.source,
         )
         for pattern in patterns
-        if pattern.contains in text
+        if _pattern_matches(pattern, text)
     ]
 
 
@@ -58,10 +93,20 @@ def format_secret_content_match(match: SecretContentMatch) -> str:
     location = _markdown_path(match.path)
     if match.line_number is not None:
         location = f"{location}:{match.line_number}"
-    return (
-        f"{location} matched secret-content detector "
-        f"{match.detector_id}"
+    label = (
+        "built-in secret detector"
+        if match.detector_source == "builtin"
+        else "secret-content detector"
     )
+    return f"{location} matched {label} {match.detector_id}"
+
+
+def _pattern_matches(pattern: SecretContentPattern, text: str) -> bool:
+    if pattern.contains is not None:
+        return pattern.contains in text
+    if pattern.regex is not None:
+        return pattern.regex.search(text) is not None
+    return False
 
 
 def _safe_path(raw_path: str) -> Optional[str]:

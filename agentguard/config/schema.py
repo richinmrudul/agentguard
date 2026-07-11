@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
+from re import Pattern
 from typing import Optional, Union
 
 
@@ -50,7 +51,9 @@ class DiffLimits:
 @dataclass(frozen=True)
 class SecretContentPattern:
     id: str
-    contains: str
+    contains: Optional[str] = None
+    regex: Optional[Pattern[str]] = None
+    source: str = "user"
 
 
 @dataclass(frozen=True)
@@ -112,6 +115,7 @@ class AgentGuardConfig:
     secret_content_patterns: list[SecretContentPattern] = field(
         default_factory=list
     )
+    secret_content_builtin_detectors: list[str] = field(default_factory=list)
 
     def severity_for(self, check_key: str, default: str) -> str:
         return self.policy.get(check_key, default)

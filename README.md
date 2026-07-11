@@ -14,7 +14,7 @@ AgentGuard catches curated examples of:
 - unsafe command usage
 - filesystem-boundary and forbidden-path changes
 - test tampering
-- configured secret-content introduction
+- configured and opt-in built-in secret-content introduction
 - oversized diffs and scope drift
 - guard incidents across live command/filesystem monitoring
 
@@ -48,11 +48,12 @@ agentguard reports site --output /tmp/agentguard-site --include-results-docs --f
 ```
 
 Supported now: local-first benchmark/suite/matrix evaluation, runtime
-command/filesystem guard incidents, configured secret-content enforcement,
-reports, traces, manifests, CI examples, and static report-site analytics.
+command/filesystem guard incidents, configured and opt-in built-in
+secret-content enforcement, reports, traces, manifests, CI examples, and
+static report-site analytics.
 Deferred: production sandbox guarantees, hosted dashboards, PyPI publishing,
-native filesystem watchers, syscall interception, and built-in regex/entropy
-secret detectors.
+native filesystem watchers, syscall interception, user-provided regex
+detectors, entropy detectors, and large detector catalogs.
 
 See the v0.1 readiness and release-candidate artifacts:
 [`docs/results/release-readiness-v0.1.md`](docs/results/release-readiness-v0.1.md)
@@ -602,7 +603,7 @@ agents. Binary, unreadable, or bounded-out files make measurement explicitly
 incomplete instead of silently counting as zero. Post-hoc Git diff checks remain
 authoritative.
 
-Post-hoc secret scanning has two independent inputs. `secret_patterns` remain
+Secret scanning has three independent inputs. `secret_patterns` remain
 path/pattern checks against changed filenames. `secret_content_patterns` are
 bounded, literal, case-sensitive substring detectors for newly introduced added
 content:
@@ -613,11 +614,20 @@ secret_content_patterns:
     contains: "DEMO_API_TOKEN_"
 ```
 
-Detector literals and matched secret values are used only inside the scanner.
-Reports, manifests, traces, replay output, history, incidents, and CLI output
-show detector IDs plus sanitized relative paths/line numbers, never raw secret
-content. This check is post-hoc only; live online secret-content audit or
-enforcement remains deferred.
+`secret_content_builtin_detectors` enables a small opt-in set of hardcoded,
+bounded detector presets:
+
+```yaml
+secret_content_builtin_detectors:
+  - github-token-shape
+  - private-key-header
+```
+
+Detector literals, built-in regex internals, and matched secret values are used
+only inside the scanner. Reports, manifests, traces, replay output, history,
+incidents, and CLI output show detector IDs plus sanitized relative paths/line
+numbers, never raw secret content. Secret-content detectors work in post-hoc
+diff scanning and live online filesystem audit/enforcement.
 
 Guarded runs with violations write concise incident artifacts under
 `.agentguard/runs/<run-id>/guard/`; inspect them with:
@@ -716,7 +726,8 @@ credentials are redacted. Sanitization is defensive pattern matching, not a
 proof that an unrecognized positional secret cannot be exposed; avoid placing
 secrets directly in arbitrary command arguments or metadata.
 Configured secret-content detector literals are also treated as sensitive
-redaction inputs and are not serialized into manifests.
+redaction inputs and are not serialized into manifests. Built-in detector
+patterns and matched values are likewise omitted.
 
 Provenance manifests make inputs and execution policy inspectable and improve
 reproducibility. They do not guarantee identical results from nondeterministic

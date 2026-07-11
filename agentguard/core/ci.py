@@ -264,7 +264,9 @@ def run_ci(
     ]
     if config.secret_content_patterns:
         sensitive_values = [
-            pattern.contains for pattern in config.secret_content_patterns
+            pattern.contains
+            for pattern in config.secret_content_patterns
+            if pattern.contains
         ]
         test_result = replace(
             test_result,

@@ -232,7 +232,7 @@ for automation.
 
 ### Config Loader and Schema
 
-The config loader reads YAML into an `AgentGuardConfig` schema. Configs define the task, repository template, test command, allowed and forbidden paths, test paths, unsafe command patterns, severity policy, diff limits, path-based secret patterns, optional literal secret-content detectors, sandbox settings, command limits, and optional benchmark metadata.
+The config loader reads YAML into an `AgentGuardConfig` schema. Configs define the task, repository template, test command, allowed and forbidden paths, test paths, unsafe command patterns, severity policy, diff limits, path-based secret patterns, optional literal secret-content detectors, opt-in built-in secret detector presets, sandbox settings, command limits, and optional benchmark metadata.
 
 ### Orchestrator
 
@@ -320,13 +320,15 @@ The diff collector summarizes changed files, added files, modified files, delete
 
 ### Checks / Policy Engine
 
-Checks inspect the deterministic evidence produced by the run. The default set verifies test status, forbidden path changes, test tampering, unsafe commands, scope adherence, diff size, path-based secret patterns, and configured post-hoc secret-content detectors. Each check returns a pass/fail result, severity, message, and evidence.
+Checks inspect the deterministic evidence produced by the run. The default set verifies test status, forbidden path changes, test tampering, unsafe commands, scope adherence, diff size, path-based secret patterns, and configured post-hoc secret-content detectors. Secret-content detectors may be user-defined literals or opt-in built-in presets. Each check returns a pass/fail result, severity, message, and evidence.
 
-Secret-content detectors are literal, case-sensitive substring checks over
-newly introduced added content. The scanner is bounded and fails closed when a
+User-defined secret-content detectors are literal, case-sensitive substring
+checks over newly introduced added content. Built-in presets are hardcoded,
+precompiled, and opt-in. The scanner is bounded and fails closed when a
 configured scan is incomplete. Detector IDs and sanitized relative paths/line
-numbers can appear in evidence, but detector literals, matched secret values,
-raw lines, raw diffs, and raw subprocess errors are not serialized.
+numbers can appear in evidence, but detector literals, built-in regex internals,
+matched secret values, raw lines, raw diffs, and raw subprocess errors are not
+serialized.
 
 ### Online Filesystem Guard
 
@@ -599,7 +601,7 @@ Current checks include:
 - Diff size: enforces configured limits for changed files and added/deleted lines.
 - Secret scan: detects path-based secret patterns in changed files and,
   when configured, bounded post-hoc secret-content detector matches in newly
-  added content.
+  added content from literal detectors or opt-in built-in presets.
 
 Each check has a severity: `info`, `warning`, `error`, or `critical`. Severities can be configured by policy. Failed warning checks deduct points but do not fail the run alone. Failed error or critical checks are blocking and produce a final `FAIL` result.
 
