@@ -807,6 +807,19 @@ def build_execution_trace(
                         if result.guard_summary.line_measurement_error
                         else None
                     ),
+                    "watcher_mode": result.guard_summary.watcher_mode,
+                    "watcher_events_observed": (
+                        result.guard_summary.watcher_events_observed
+                    ),
+                    "watcher_events": [
+                        {
+                            "path": _normalized_path(event.path),
+                            "event_type": event.event_type,
+                            "observed_at_sequence": event.observed_at_sequence,
+                            "source": event.source,
+                        }
+                        for event in result.guard_summary.watcher_events
+                    ],
                     "violations": [
                         {
                             "violation_type": violation.violation_type,
@@ -1409,11 +1422,21 @@ def _validate_payload(event: TraceEvent) -> None:
             "line_measurement_skipped_files",
             "line_measurement_error",
         }
+        watcher_fields = {
+            "watcher_mode",
+            "watcher_events_observed",
+            "watcher_events",
+        }
         if (
             event.event_type == "guard_summary"
             and line_measurement_fields & set(event.payload)
         ):
             event_fields = event_fields | line_measurement_fields
+        if (
+            event.event_type == "guard_summary"
+            and watcher_fields & set(event.payload)
+        ):
+            event_fields = event_fields | watcher_fields
         if (
             event.event_type in {"agent_command", "test_result"}
             and "process_cleanup" in event.payload
@@ -1456,6 +1479,54 @@ def _validate_payload(event: TraceEvent) -> None:
                 raise ValueError(
                     "Trace line_measurement_error must be a string or null."
                 )
+        if "watcher_mode" in event.payload:
+            if event.payload.get("watcher_mode") not in {
+                "auto",
+                "polling",
+                "disabled",
+            }:
+                raise ValueError("Trace watcher_mode is invalid.")
+            observed = event.payload.get("watcher_events_observed")
+            if (
+                not isinstance(observed, int)
+                or isinstance(observed, bool)
+                or observed < 0
+            ):
+                raise ValueError(
+                    "Trace watcher_events_observed must be a nonnegative integer."
+                )
+            watcher_events = event.payload.get("watcher_events")
+            if not isinstance(watcher_events, list):
+                raise ValueError("Trace watcher_events must be a list.")
+            for watcher_event in watcher_events:
+                if not isinstance(watcher_event, dict):
+                    raise ValueError("Trace watcher event must be an object.")
+                _require_exact_fields(
+                    watcher_event,
+                    {"path", "event_type", "observed_at_sequence", "source"},
+                    "trace watcher event",
+                )
+                path = watcher_event.get("path")
+                if not isinstance(path, str):
+                    raise ValueError("Trace watcher path must be a string.")
+                _normalized_path(path)
+                if watcher_event.get("event_type") not in {
+                    "created",
+                    "modified",
+                    "deleted",
+                }:
+                    raise ValueError("Trace watcher event_type is invalid.")
+                sequence = watcher_event.get("observed_at_sequence")
+                if (
+                    not isinstance(sequence, int)
+                    or isinstance(sequence, bool)
+                    or sequence < 1
+                ):
+                    raise ValueError(
+                        "Trace watcher observed_at_sequence must be positive."
+                    )
+                if watcher_event.get("source") not in {"polling"}:
+                    raise ValueError("Trace watcher source is invalid.")
     if event.event_type == "file_change":
         path = event.payload.get("path")
         if not isinstance(path, str):
@@ -1826,6 +1897,7 @@ def _command_event_from_dict(data: dict[str, Any]) -> CommandEvent:
 
 def _guard_summary_from_dict(data: object):
     from agentguard.guard.filesystem import LiveGuardSummary, LiveGuardViolation
+    from agentguard.guard.watcher import FilesystemWatchEvent
 
     if not isinstance(data, dict):
         return LiveGuardSummary()
@@ -1865,6 +1937,39 @@ def _guard_summary_from_dict(data: object):
         measurement_error = sanitize_text(measurement_error)[:MAX_STRING_CHARS]
     else:
         measurement_error = None
+    watcher_mode = data.get("watcher_mode")
+    if watcher_mode not in {"auto", "polling", "disabled"}:
+        watcher_mode = "auto"
+    watcher_events_observed = _nonnegative_int(
+        data.get("watcher_events_observed")
+    )
+    watcher_events = []
+    raw_watcher_events = data.get("watcher_events", [])
+    if isinstance(raw_watcher_events, list):
+        for item in raw_watcher_events:
+            if not isinstance(item, dict):
+                continue
+            event_type = item.get("event_type")
+            source = item.get("source")
+            if event_type not in {"created", "modified", "deleted"}:
+                continue
+            if source not in {"polling"}:
+                continue
+            try:
+                path = _normalized_path(str(item.get("path") or ""))
+            except ValueError:
+                continue
+            sequence = _nonnegative_int(item.get("observed_at_sequence"))
+            if sequence < 1:
+                continue
+            watcher_events.append(
+                FilesystemWatchEvent(
+                    path=path,
+                    event_type=event_type,
+                    observed_at_sequence=sequence,
+                    source=source,
+                )
+            )
     return LiveGuardSummary(
         mode=str(data.get("mode") or "off"),
         triggered=bool(data.get("triggered")),
@@ -1882,6 +1987,9 @@ def _guard_summary_from_dict(data: object):
         line_measurement_complete=measurement_complete,
         line_measurement_skipped_files=skipped_files,
         line_measurement_error=measurement_error,
+        watcher_mode=watcher_mode,
+        watcher_events_observed=watcher_events_observed,
+        watcher_events=watcher_events,
     )
 
 

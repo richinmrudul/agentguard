@@ -46,6 +46,32 @@ def test_audit_mode_records_forbidden_path_but_agent_completes(
     assert result.guard_summary.terminated_agent is False
     assert result.command_events[0].exit_code == 0
     assert _violation_types(result) >= {"forbidden_path", "out_of_scope_path"}
+    assert result.guard_summary.watcher_mode == "auto"
+    assert result.guard_summary.watcher_events_observed >= 1
+    assert any(
+        event.path == "protected/owned.txt" and event.event_type == "created"
+        for event in result.guard_summary.watcher_events
+    )
+
+
+def test_disabled_watcher_keeps_legacy_filesystem_guard_behavior(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = _write_config(
+        tmp_path,
+        _agent_script("protected/owned.txt", "bad"),
+        filesystem_watcher_mode="disabled",
+    )
+
+    result = run_benchmark(config, "local-command", guard_mode=GuardMode.AUDIT)
+
+    assert result.guard_summary.triggered is True
+    assert _violation_types(result) >= {"forbidden_path", "out_of_scope_path"}
+    assert result.guard_summary.watcher_mode == "disabled"
+    assert result.guard_summary.watcher_events_observed == 0
+    assert result.guard_summary.watcher_events == []
 
 
 def test_enforce_mode_terminates_after_forbidden_path(
@@ -219,6 +245,10 @@ def test_audit_mode_records_live_builtin_secret_content_without_leaking_value(
     assert "github-token-shape" in violations[0].message
     assert "built-in secret detector github-token-shape" in _guard_artifacts_text(result)
     assert fake_token not in _guard_artifacts_text(result)
+    assert any(
+        event.path == "src/client.py"
+        for event in result.guard_summary.watcher_events
+    )
 
 
 def test_enforce_mode_blocks_live_secret_content_without_leaking_literal(
@@ -528,9 +558,18 @@ def test_partial_reports_timeline_manifest_and_trace_written(
     manifest = json.loads(result.report_paths.manifest.read_text(encoding="utf-8"))
     trace = result.report_paths.trace.read_text(encoding="utf-8")
     assert report["guard_summary"]["triggered"] is True
+    assert report["guard_summary"]["watcher_mode"] == "auto"
+    assert report["guard_summary"]["watcher_events_observed"] >= 1
+    assert any(
+        event["path"] == "protected/owned.txt"
+        for event in report["guard_summary"]["watcher_events"]
+    )
     assert "Online Filesystem Guard" in markdown
+    assert "Filesystem watcher mode: auto" in markdown
     assert manifest["guard"]["triggered"] is True
+    assert manifest["guard"]["watcher_events_observed"] >= 1
     assert '"event_type":"guard_summary"' in trace
+    assert '"watcher_events_observed"' in trace
     assert "Traceback" not in markdown
     assert "Traceback" not in result.test_result.stderr
 
@@ -615,6 +654,7 @@ def _write_config(
     secret_content_builtin_detectors: Optional[list[str]] = None,
     baseline_secret: Optional[str] = None,
     guard_ignore_paths: Optional[list[str]] = None,
+    filesystem_watcher_mode: Optional[str] = None,
 ) -> Path:
     repo = _write_repo(tmp_path, baseline_secret=baseline_secret)
     agent_script = tmp_path / f"agent_{len(list(tmp_path.glob('agent_*.py')))}.py"
@@ -650,6 +690,12 @@ def _write_config(
         if guard_ignore_paths is not None
         else ""
     )
+    filesystem_watcher_yaml = (
+        "filesystem_watcher:\n"
+        f"  mode: {json.dumps(filesystem_watcher_mode)}\n"
+        if filesystem_watcher_mode is not None
+        else ""
+    )
     config.write_text(
         f"""
 task_id: guard_case
@@ -678,7 +724,7 @@ diff_limits:
 secret_patterns:
   - secrets/**
   - "*.pem"
-{guard_ignore_yaml}{secret_content_builtin_yaml}{secret_content_yaml}
+{guard_ignore_yaml}{filesystem_watcher_yaml}{secret_content_builtin_yaml}{secret_content_yaml}
 """,
         encoding="utf-8",
     )

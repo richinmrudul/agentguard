@@ -1,5 +1,4 @@
 import math
-import os
 import subprocess
 import threading
 import time
@@ -19,6 +18,13 @@ from agentguard.checks.secret_content import (
     match_secret_content_line,
 )
 from agentguard.config.schema import AgentGuardConfig
+from agentguard.guard.watcher import (
+    FileState,
+    FilesystemSnapshotScanner,
+    FilesystemWatchEvent,
+    FilesystemWatcherMode,
+    PollingFilesystemWatcher,
+)
 from agentguard.instrumentation.processes import terminate_process_tree
 from agentguard.policy.path_matcher import matching_patterns
 from agentguard.repo.live_diff import (
@@ -31,20 +37,7 @@ from agentguard.repo.live_diff import (
 
 DEFAULT_POLL_INTERVAL_SECONDS = 0.2
 DEFAULT_GRACEFUL_TIMEOUT_SECONDS = 0.5
-MAX_OBSERVED_FILES = 20000
-IGNORED_DIR_NAMES = {
-    ".git",
-    ".hg",
-    ".svn",
-    "__pycache__",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".tox",
-    ".nox",
-    "node_modules",
-}
-IGNORED_FILE_NAMES = {".agentguard_agent_events.jsonl"}
+MAX_RETAINED_WATCHER_EVENTS = 200
 
 
 class GuardMode(str, Enum):
@@ -69,14 +62,6 @@ def validate_guard_configuration(
             "guard_poll_interval_seconds must be a finite positive number."
         )
     return guard_mode, float(guard_poll_interval_seconds)
-
-
-@dataclass(frozen=True)
-class FileState:
-    kind: str
-    mtime_ns: int
-    size: int
-    symlink_target: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +91,9 @@ class LiveGuardSummary:
     line_measurement_complete: bool = True
     line_measurement_skipped_files: int = 0
     line_measurement_error: Optional[str] = None
+    watcher_mode: str = FilesystemWatcherMode.AUTO.value
+    watcher_events_observed: int = 0
+    watcher_events: list[FilesystemWatchEvent] = field(default_factory=list)
 
 
 class ProcessController:
@@ -177,19 +165,33 @@ class RuntimeFilesystemGuard:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._scanner = FilesystemSnapshotScanner(
+            repo_dir=self.repo_dir,
+            guard_ignore_paths=list(config.guard_ignore_paths),
+        )
+        self._watcher_mode = FilesystemWatcherMode(config.filesystem_watcher.mode)
+        self._watcher = (
+            PollingFilesystemWatcher(scanner=self._scanner)
+            if self._watcher_mode
+            in {FilesystemWatcherMode.AUTO, FilesystemWatcherMode.POLLING}
+            else None
+        )
         self._baseline: dict[str, FileState] = {}
         self._baseline_secret_content_matches: set[tuple[str, int, str]] = set()
         self._secret_content_baseline_error: Optional[str] = None
         self._summary = LiveGuardSummary(
             mode=mode.value,
             configured_ignore_patterns=list(config.guard_ignore_paths),
+            watcher_mode=self._watcher_mode.value,
         )
         self._start_time: Optional[float] = None
 
     def start(self) -> None:
         if self.mode == GuardMode.OFF:
             return
-        self._baseline = self._scan_tree()
+        self._baseline = self._scanner.snapshot()
+        if self._watcher is not None:
+            self._watcher.start(self._baseline)
         (
             self._baseline_secret_content_matches,
             self._secret_content_baseline_error,
@@ -211,15 +213,21 @@ class RuntimeFilesystemGuard:
         return self.summary()
 
     def scan_once(self) -> list[LiveGuardViolation]:
-        current = self._scan_tree()
-        changed = self._changed_paths(current)
+        if self._watcher is not None:
+            observation = self._watcher.poll()
+            current = observation.snapshot
+            watcher_events = observation.events
+        else:
+            current = self._scanner.snapshot()
+            watcher_events = []
+        changed = self._scanner.changed_paths(self._baseline, current)
         line_measurement = self._measure_lines(current, changed)
         violations = self._violations_for_diff(
             current,
             changed=changed,
             line_measurement=line_measurement,
         )
-        self._record_scan(current, violations, line_measurement)
+        self._record_scan(current, violations, line_measurement, watcher_events)
         return violations
 
     def summary(self) -> LiveGuardSummary:
@@ -237,6 +245,7 @@ class RuntimeFilesystemGuard:
         current: dict[str, FileState],
         violations: list[LiveGuardViolation],
         line_measurement: LiveLineMeasurement,
+        watcher_events: list[FilesystemWatchEvent],
     ) -> None:
         with self._lock:
             existing = list(self._summary.violations)
@@ -254,6 +263,11 @@ class RuntimeFilesystemGuard:
             first = self._summary.first_violation_time
             if first is None and new_violations:
                 first = new_violations[0].observed_at
+            previous_watcher_events = list(self._summary.watcher_events)
+            retained_watcher_events = [
+                *previous_watcher_events,
+                *watcher_events,
+            ][:MAX_RETAINED_WATCHER_EVENTS]
             terminated = self._summary.terminated_agent
             if (
                 self.mode == GuardMode.ENFORCE
@@ -291,75 +305,12 @@ class RuntimeFilesystemGuard:
                 line_measurement_complete=line_measurement.complete,
                 line_measurement_skipped_files=line_measurement.skipped_files,
                 line_measurement_error=line_measurement.error,
+                watcher_mode=self._watcher_mode.value,
+                watcher_events_observed=(
+                    self._summary.watcher_events_observed + len(watcher_events)
+                ),
+                watcher_events=retained_watcher_events,
             )
-
-    def _scan_tree(self) -> dict[str, FileState]:
-        observed: dict[str, FileState] = {}
-        stack = [self.repo_dir]
-        inspected = 0
-        while (
-            stack
-            and len(observed) < MAX_OBSERVED_FILES
-            and inspected < MAX_OBSERVED_FILES
-        ):
-            directory = stack.pop()
-            try:
-                entries = list(os.scandir(directory))
-            except OSError:
-                continue
-            for entry in entries:
-                inspected += 1
-                if (
-                    len(observed) >= MAX_OBSERVED_FILES
-                    or inspected > MAX_OBSERVED_FILES
-                ):
-                    break
-                if entry.name in IGNORED_FILE_NAMES:
-                    continue
-                rel = self._relative_path(Path(entry.path))
-                if rel is None:
-                    continue
-                try:
-                    stat = entry.stat(follow_symlinks=False)
-                    is_symlink = entry.is_symlink()
-                    is_dir = entry.is_dir(follow_symlinks=False)
-                except OSError:
-                    continue
-                target = None
-                kind = "file"
-                if is_symlink:
-                    kind = "symlink"
-                    try:
-                        target = os.readlink(entry.path)
-                    except OSError:
-                        target = None
-                    if not self._symlink_escapes(rel, target or "") and (
-                        self._ignored_path(rel)
-                    ):
-                        continue
-                elif is_dir:
-                    kind = "directory"
-                    if self._built_in_ignored_path(rel):
-                        continue
-                    if self._configured_ignored_path(rel, is_directory=True):
-                        if self._tree_contains_escaping_symlink(
-                            Path(entry.path),
-                            rel,
-                        ):
-                            stack.append(Path(entry.path))
-                        continue
-                    stack.append(Path(entry.path))
-                    if self._configured_ignore_has_descendant(rel):
-                        continue
-                elif self._ignored_path(rel):
-                    continue
-                observed[rel] = FileState(
-                    kind=kind,
-                    mtime_ns=stat.st_mtime_ns,
-                    size=stat.st_size,
-                    symlink_target=target,
-                )
-        return observed
 
     def _violations_for_diff(
         self,
@@ -369,7 +320,11 @@ class RuntimeFilesystemGuard:
         line_measurement: Optional[LiveLineMeasurement] = None,
     ) -> list[LiveGuardViolation]:
         violations: list[LiveGuardViolation] = []
-        changed = changed if changed is not None else self._changed_paths(current)
+        changed = (
+            changed
+            if changed is not None
+            else self._scanner.changed_paths(self._baseline, current)
+        )
         for path in changed:
             state = current.get(path)
             previous = self._baseline.get(path)
@@ -417,7 +372,7 @@ class RuntimeFilesystemGuard:
                 )
             if state is not None and state.kind == "symlink":
                 target = state.symlink_target or ""
-                if self._symlink_escapes(path, target):
+                if self._scanner.symlink_escapes(path, target):
                     violations.append(
                         self._violation(
                             "symlink_escape",
@@ -643,23 +598,6 @@ class RuntimeFilesystemGuard:
                 error="Line measurement incomplete: measurement unavailable.",
             )
 
-    def _changed_paths(self, current: dict[str, FileState]) -> list[str]:
-        paths = set(self._baseline) | set(current)
-        changed = []
-        for path in sorted(paths):
-            before = self._baseline.get(path)
-            after = current.get(path)
-            escaping_symlink = (
-                after is not None
-                and after.kind == "symlink"
-                and self._symlink_escapes(path, after.symlink_target or "")
-            )
-            if self._ignored_path(path) and not escaping_symlink:
-                continue
-            if before != after:
-                changed.append(path)
-        return changed
-
     def _violation(
         self,
         violation_type: str,
@@ -684,85 +622,8 @@ class RuntimeFilesystemGuard:
             return 0.0
         return self.time_source() - self._start_time
 
-    def _ignored_path(self, path: str, *, is_directory: bool = False) -> bool:
-        if self._built_in_ignored_path(path):
-            return True
-        return self._configured_ignored_path(path, is_directory=is_directory)
+    def _scan_tree(self) -> dict[str, FileState]:
+        return self._scanner.snapshot()
 
-    def _built_in_ignored_path(self, path: str) -> bool:
-        return any(part in IGNORED_DIR_NAMES for part in Path(path).parts)
-
-    def _configured_ignored_path(
-        self,
-        path: str,
-        *,
-        is_directory: bool = False,
-    ) -> bool:
-        if matching_patterns(path, self.config.guard_ignore_paths):
-            return True
-        if is_directory:
-            return any(
-                pattern.endswith("/**")
-                and pattern[: -len("/**")].rstrip("/") == path.rstrip("/")
-                for pattern in self.config.guard_ignore_paths
-            )
-        return False
-
-    def _tree_contains_escaping_symlink(
-        self,
-        directory: Path,
-        relative_directory: str,
-    ) -> bool:
-        stack = [(directory, relative_directory)]
-        inspected = 0
-        while stack and inspected < MAX_OBSERVED_FILES:
-            current, current_relative = stack.pop()
-            try:
-                entries = list(os.scandir(current))
-            except OSError:
-                return True
-            for entry in entries:
-                inspected += 1
-                if inspected >= MAX_OBSERVED_FILES:
-                    return True
-                relative = f"{current_relative}/{entry.name}"
-                try:
-                    if entry.is_symlink():
-                        try:
-                            target = os.readlink(entry.path)
-                        except OSError:
-                            return True
-                        if self._symlink_escapes(relative, target):
-                            return True
-                    elif entry.is_dir(follow_symlinks=False):
-                        stack.append((Path(entry.path), relative))
-                except OSError:
-                    return True
-        return bool(stack)
-
-    def _configured_ignore_has_descendant(self, path: str) -> bool:
-        prefix = path.rstrip("/") + "/"
-        return any(
-            pattern.startswith(prefix)
-            for pattern in self.config.guard_ignore_paths
-        )
-
-    def _relative_path(self, path: Path) -> Optional[str]:
-        try:
-            return path.relative_to(self.repo_dir).as_posix()
-        except ValueError:
-            try:
-                return path.resolve(strict=False).relative_to(self.repo_dir).as_posix()
-            except ValueError:
-                return None
-
-    def _symlink_escapes(self, path: str, target: str) -> bool:
-        if not target:
-            return False
-        link_path = self.repo_dir / path
-        resolved = (link_path.parent / target).resolve(strict=False)
-        try:
-            resolved.relative_to(self.repo_dir)
-        except ValueError:
-            return True
-        return False
+    def _changed_paths(self, current: dict[str, FileState]) -> list[str]:
+        return self._scanner.changed_paths(self._baseline, current)

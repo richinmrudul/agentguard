@@ -613,6 +613,7 @@ def run_benchmark(
     guard_summary = LiveGuardSummary(
         mode=guard_mode.value,
         configured_ignore_patterns=list(config.guard_ignore_paths),
+        watcher_mode=config.filesystem_watcher.mode,
     )
     command_guard_summary = CommandGuardSummary(mode=guard_mode.value)
     if guard_mode != GuardMode.OFF:
@@ -624,6 +625,7 @@ def run_benchmark(
                 "poll_interval_seconds": guard_poll_interval_seconds,
                 "termination_supported": process_controller is not None,
                 "configured_ignore_patterns": list(config.guard_ignore_paths),
+                "filesystem_watcher_mode": config.filesystem_watcher.mode,
             },
         )
         guard.start()

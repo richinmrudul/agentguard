@@ -52,8 +52,8 @@ command/filesystem guard incidents, configured and opt-in built-in
 secret-content enforcement, reports, traces, manifests, CI examples, and
 static report-site analytics.
 Deferred: production sandbox guarantees, hosted dashboards, PyPI publishing,
-native filesystem watchers, syscall interception, user-provided regex
-detectors, entropy detectors, and large detector catalogs.
+privileged OS-native watcher backends, syscall interception, user-provided
+regex detectors, entropy detectors, and large detector catalogs.
 
 See the v0.1 readiness and release-candidate artifacts:
 [`docs/results/release-readiness-v0.1.md`](docs/results/release-readiness-v0.1.md)
@@ -578,7 +578,8 @@ agent, external agent, and test-command timeouts also attempt process-tree
 cleanup; Docker-backed commands attempt managed container removal on timeout or
 cleanup failure. Command guard enforcement is based on AgentGuard command/event
 logs, not kernel-level syscall interception; filesystem monitoring uses
-polling. See [docs/online-guard.md](docs/online-guard.md).
+the configurable watcher foundation with a dependency-free polling backend.
+See [docs/online-guard.md](docs/online-guard.md).
 
 Benchmark configs can suppress known generated noise from online filesystem
 polling:

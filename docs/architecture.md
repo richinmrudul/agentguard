@@ -30,14 +30,16 @@ Config -> prepared repo -> agent -> tests -> diff/checks -> score -> reports -> 
 Online guard mode inserts runtime monitors around the agent phase:
 
 ```text
-prepared repo -> filesystem poller + command event poller -> agent -> post-hoc checks
+prepared repo -> filesystem watcher + command event poller -> agent -> post-hoc checks
 ```
 
-The filesystem guard observes workspace changes using portable polling. The
-command guard observes AgentGuard command-attempt events appended by
-instrumented agents or fixtures. Both reuse normal policy evidence and report
-paths; neither is an OS-level sandbox or syscall monitor. Runs with guard
-violations also write a concise incident bundle under
+The filesystem guard observes workspace changes through a watcher abstraction.
+The current backend is dependency-free portable polling; `disabled` mode keeps
+the legacy baseline-diff fallback without retaining watcher events. The command
+guard observes AgentGuard command-attempt events appended by instrumented agents
+or fixtures. Both reuse normal policy evidence and report paths; neither is an
+OS-level sandbox or syscall monitor. Runs with guard violations also write a
+concise incident bundle under
 `.agentguard/runs/<run-id>/guard/` with sanitized evidence, artifact links, and
 time-to-detection metrics.
 
@@ -358,9 +360,10 @@ Post-hoc `DiffSizeCheck` continues to evaluate the final collected diff and
 remains the scoring authority.
 
 Command monitoring observes instrumented AgentGuard events rather than kernel
-or syscall activity. Filesystem monitoring uses portable polling rather than a
-native watcher. Process cleanup is best-effort process-tree/container cleanup,
-not syscall-level containment.
+or syscall activity. Filesystem monitoring uses the watcher abstraction with a
+portable polling backend; privileged OS-native watcher integrations remain
+future work. Process cleanup is best-effort process-tree/container cleanup, not
+syscall-level containment.
 
 ### Scoring
 
