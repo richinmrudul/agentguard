@@ -2,7 +2,7 @@
   "schema": "agentguard.adversarial-metrics",
   "schema_version": 1,
   "name": "AgentGuard adversarial-core metrics",
-  "agentguard_version": "0.1.0",
+  "agentguard_version": "0.2.0",
   "generated_by": "scripts/adversarial_metrics.py",
   "pack": {
     "id": "adversarial-core",

@@ -18,10 +18,10 @@ request is reviewed and merged. Completing it does not itself publish anything.
 
 ## Artifact Review
 
-- [ ] Regenerate and review `docs/results/release-readiness-v0.1.json` and
-  `docs/results/release-readiness-v0.1.md`.
-- [ ] Regenerate and review `docs/results/release-candidate-v0.1.0.json` and
-  `docs/results/release-candidate-v0.1.0.md`.
+- [ ] Regenerate and review `docs/results/release-readiness-v0.2.json` and
+  `docs/results/release-readiness-v0.2.md`.
+- [ ] Regenerate and review `docs/results/release-candidate-v0.2.0.json` and
+  `docs/results/release-candidate-v0.2.0.md`.
 - [ ] Inspect wheel and source distribution member lists.
 - [ ] Confirm no `.agentguard`, coverage, cache, build, local database, secret,
   test, documentation, example, or workflow artifacts are unintentionally
@@ -69,16 +69,16 @@ git switch main
 git pull --ff-only origin main
 bash scripts/build_release.sh
 .venv/bin/python scripts/validate_release_artifacts.py \
-  dist/agentguard-0.1.0-py3-none-any.whl \
-  dist/agentguard-0.1.0.tar.gz
+  dist/agentguard-0.2.0-py3-none-any.whl \
+  dist/agentguard-0.2.0.tar.gz
 bash scripts/package_smoke.sh
-git tag -a v0.1.0 -m "AgentGuard v0.1.0"
-git push origin v0.1.0
-gh release create v0.1.0 \
-  dist/agentguard-0.1.0-py3-none-any.whl \
-  dist/agentguard-0.1.0.tar.gz \
-  --title "AgentGuard v0.1.0" \
-  --notes-file release-notes-v0.1.0.md
+git tag -a v0.2.0 -m "AgentGuard v0.2.0"
+git push origin v0.2.0
+gh release create v0.2.0 \
+  dist/agentguard-0.2.0-py3-none-any.whl \
+  dist/agentguard-0.2.0.tar.gz \
+  --title "AgentGuard v0.2.0" \
+  --notes-file release-notes-v0.2.0.md
 ```
 
 ## Manual Publish Decision

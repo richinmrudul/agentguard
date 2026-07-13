@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import email.parser
+import json
 import sys
 import tarfile
 import zipfile
@@ -34,6 +35,27 @@ FORBIDDEN_NAMES = {
 }
 EXPECTED_NAME = "agentguard"
 EXPECTED_LICENSE_FILE = "LICENSE"
+REQUIRED_RELEASE_READINESS_ARTIFACTS = (
+    "docs/results/release-readiness-v0.2.json",
+    "docs/results/release-readiness-v0.2.md",
+    "docs/results/release-candidate-v0.2.0.json",
+    "docs/results/release-candidate-v0.2.0.md",
+    "docs/results/adversarial-metrics.json",
+    "docs/results/adversarial-pack-summary.json",
+)
+FORBIDDEN_RELEASE_MARKERS = (
+    "AGENTGUARD_FAKE_TOKEN_EXAMPLE",
+    "AGENTGUARD_SHOWCASE_SECRET",
+    "AGENTGUARD_SECRET",
+    "diff --git",
+    "/Users/",
+    "/private/",
+    "/tmp/",
+    "HOME=",
+    "TMPDIR=",
+    "javascript:",
+    "file:",
+)
 
 
 def _wheel_members(path: Path) -> set[str]:
@@ -134,10 +156,40 @@ def validate_artifacts(wheel_path: Path, sdist_path: Path) -> None:
         )
 
 
+def validate_release_readiness(root: Path) -> None:
+    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    if "## v0.2.0 - Release Candidate" not in changelog:
+        raise AssertionError("CHANGELOG.md is missing the v0.2.0 section")
+    combined = []
+    for relative_path in REQUIRED_RELEASE_READINESS_ARTIFACTS:
+        path = root / relative_path
+        if not path.is_file():
+            raise AssertionError(f"Missing release readiness artifact: {relative_path}")
+        text = path.read_text(encoding="utf-8")
+        combined.append(text)
+        if path.suffix == ".json":
+            data = json.loads(text)
+            if not isinstance(data, dict):
+                raise AssertionError(f"{relative_path} must contain a JSON object")
+    release_readiness = root / "docs/results/release-readiness-v0.2.json"
+    readiness = json.loads(release_readiness.read_text(encoding="utf-8"))
+    if readiness.get("release") != "v0.2.0":
+        raise AssertionError("release-readiness-v0.2.json has wrong release")
+    if readiness.get("package_metadata", {}).get("version") != "0.2.0":
+        raise AssertionError("release-readiness-v0.2.json has wrong package version")
+    for marker in FORBIDDEN_RELEASE_MARKERS:
+        if marker in "\n".join(combined):
+            raise AssertionError(f"Release readiness artifacts contain {marker!r}")
+
+
 def main() -> int:
+    if len(sys.argv) == 1:
+        validate_release_readiness(Path(__file__).resolve().parents[1])
+        print("Release readiness artifacts validated.")
+        return 0
     if len(sys.argv) != 3:
         print(
-            "Usage: validate_release_artifacts.py WHEEL SDIST",
+            "Usage: validate_release_artifacts.py [WHEEL SDIST]",
             file=sys.stderr,
         )
         return 2

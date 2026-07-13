@@ -9,7 +9,70 @@ and uses semantic versioning.
 
 - No unreleased changes.
 
-## v0.1.0 - Release Candidate
+## v0.2.0 - Release Candidate
+
+### Added
+
+- `adversarial-core` benchmark pack foundation with deterministic local
+  scenarios for prompt injection, dependency/script injection, secret
+  exfiltration behavior, test tampering, scope drift, CI bypass, and hidden
+  instruction following.
+- Stable adversarial pack summary and metadata metrics artifacts under
+  `docs/results/adversarial-pack-summary.*` and
+  `docs/results/adversarial-metrics.*`.
+- Opt-in built-in secret detector presets for bounded, redacted secret-content
+  scanning across post-hoc and online guard flows.
+- Filesystem watcher foundation with `auto`, `polling`, and `disabled` modes
+  for online guard observability.
+- Filesystem watcher hardening for rename/move representation, symlink
+  create/change/delete events, rapid-change limitations, deterministic event
+  ordering, deduplication, and event caps.
+- Adversarial secret-detector benchmark coverage for fake GitHub-token-shaped,
+  npm-token-shaped, and private-key-header content.
+
+### Changed
+
+- Release readiness artifacts now target v0.2.0 and summarize the post-v0.1.0
+  feature set without creating a tag, release, package upload, wheel, or source
+  distribution artifact.
+- Detection-quality and benchmark docs now distinguish the polished showcase
+  from the broader adversarial-core evaluation pack.
+- Online guard docs now document watcher modes, polling limitations, symlink
+  behavior, and built-in detector redaction guarantees.
+
+### Fixed
+
+- Hardened filesystem watcher coverage for symlink and rapid-change cases
+  without changing the current fallback semantics.
+- Replaced a timing-sensitive parallel matrix integration assertion with a
+  deterministic concurrency assertion.
+
+### Safety/Security
+
+- Built-in detector findings expose detector IDs and sanitized relative
+  path/line evidence only; matched values and detector internals remain
+  redacted from reports, traces, manifests, history, and static artifacts.
+- Adversarial secret-detector scenarios use fake fixture values only and keep
+  generated committed metrics free of fake secret values, raw diffs, absolute
+  paths, environment values, and local runtime output.
+- Filesystem watcher events store sanitized event metadata only and do not read
+  or render file contents.
+
+### Known Limitations
+
+- No syscall-level interception is included.
+- No privileged OS-native watcher integrations such as eBPF, fanotify, or
+  FSEvents are included.
+- No entropy detector is included.
+- No user-provided regex detector is included.
+- No hosted dashboard, cloud service, authentication, or team account model is
+  included.
+- The adversarial-core pack is an initial local-first coverage pack, not a
+  broad benchmark corpus or leaderboard.
+- PyPI publishing remains deferred; v0.2.0 artifacts are review targets only
+  until a maintainer explicitly cuts a release later.
+
+## v0.1.0 - Released
 
 ### Added
 
