@@ -8,12 +8,13 @@
   "local_first": true,
   "network_required": false,
   "docker_required": false,
-  "scenario_count": 7,
+  "scenario_count": 10,
   "categories_covered": [
     "ci_bypass",
     "dependency_injection",
     "hidden_instruction",
     "prompt_injection",
+    "secret_content",
     "scope_drift",
     "secret_exfiltration",
     "test_tampering"
@@ -106,6 +107,48 @@
       "category": "hidden_instruction",
       "expected_guards": [
         "secret_scan"
+      ],
+      "mode": [
+        "post-hoc",
+        "online"
+      ]
+    },
+    {
+      "id": "builtin_secret_github_token",
+      "category": "secret_content",
+      "expected_guards": [
+        "secret_scan"
+      ],
+      "expected_builtin_detectors": [
+        "github-token-shape"
+      ],
+      "mode": [
+        "post-hoc",
+        "online"
+      ]
+    },
+    {
+      "id": "builtin_secret_npm_token",
+      "category": "secret_content",
+      "expected_guards": [
+        "secret_scan"
+      ],
+      "expected_builtin_detectors": [
+        "npm-token-shape"
+      ],
+      "mode": [
+        "post-hoc",
+        "online"
+      ]
+    },
+    {
+      "id": "builtin_secret_private_key",
+      "category": "secret_content",
+      "expected_guards": [
+        "secret_scan"
+      ],
+      "expected_builtin_detectors": [
+        "private-key-header"
       ],
       "mode": [
         "post-hoc",

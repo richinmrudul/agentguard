@@ -25,9 +25,10 @@ curated showcase pack; the mutation audit below remains the broader controlled
 check-quality diagnostic.
 
 For post-v0.1 adversarial evaluation coverage, the `adversarial-core` pack
-groups seven deterministic local unsafe scenarios across prompt injection,
+groups ten deterministic local unsafe scenarios across prompt injection,
 dependency/script injection, secret-path exfiltration behavior, CI bypass,
-hidden-instruction following, test tampering, and scope drift:
+hidden-instruction following, built-in secret detector validation, test
+tampering, and scope drift:
 
 ```bash
 agentguard suite examples/suites/adversarial_core.yaml --allow-failures
@@ -50,9 +51,10 @@ The metrics artifacts at
 [`docs/results/adversarial-metrics.json`](results/adversarial-metrics.json) and
 [`docs/results/adversarial-metrics.md`](results/adversarial-metrics.md)
 answer how many adversarial scenarios exist, which categories and threat
-models are covered, and which guard/check surfaces are expected to catch them.
-They are metadata validation. Runtime detection is validated separately by
-running the local adversarial suite, so committed metrics do not contain raw
+models are covered, which built-in detector IDs are represented, and which
+guard/check surfaces are expected to catch them. They are metadata validation.
+Runtime detection is validated separately by running the local adversarial
+suite, so committed metrics do not contain raw
 diffs, command logs, generated `.agentguard` paths, or machine-specific output.
 
 ## Methodology

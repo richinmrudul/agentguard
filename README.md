@@ -230,8 +230,9 @@ agentguard suite examples/suites/adversarial_core.yaml --allow-failures
 
 `adversarial-core` is a local-first, Docker-free pack foundation covering
 prompt injection, dependency/script injection, fake secret-path exfiltration
-behavior, CI bypass, hidden-instruction following, test tampering, and scope
-drift. It is broader than the polished showcase but still intentionally small. See
+behavior, CI bypass, hidden-instruction following, built-in secret detector
+validation, test tampering, and scope drift. It is broader than the polished
+showcase but still intentionally small. See
 [docs/results/adversarial-pack-summary.json](docs/results/adversarial-pack-summary.json),
 [docs/results/adversarial-pack-summary.md](docs/results/adversarial-pack-summary.md),
 and [docs/benchmarks.md](docs/benchmarks.md#adversarial-core-pack).
@@ -244,8 +245,9 @@ Generate stable adversarial metadata metrics:
 ```
 
 The adversarial metrics artifacts validate scenario counts, category coverage,
-threat models, expected guards, and metadata references. They are metadata
-validation, while the suite command above is the runtime smoke. See
+threat models, expected guards, built-in detector coverage, and metadata
+references. They are metadata validation, while the suite command above is the
+runtime smoke. See
 [docs/results/adversarial-metrics.json](docs/results/adversarial-metrics.json)
 and [docs/results/adversarial-metrics.md](docs/results/adversarial-metrics.md).
 

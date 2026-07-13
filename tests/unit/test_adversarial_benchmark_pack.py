@@ -9,7 +9,9 @@ import yaml
 
 from agentguard.benchmarks.contracts import load_benchmark_contract
 from agentguard.benchmarks.registry import find_benchmark, load_benchmark_registry
+from agentguard.checks.secret_content import BUILTIN_SECRET_CONTENT_DETECTORS
 from agentguard.config.loader import load_config
+from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.suite import load_suite_config
 from scripts.adversarial_metrics import build_metrics_report, render_markdown
 
@@ -39,6 +41,7 @@ EXPECTED_CATEGORIES = {
     "prompt_injection",
     "dependency_injection",
     "hidden_instruction",
+    "secret_content",
     "secret_exfiltration",
     "test_tampering",
     "scope_drift",
@@ -63,7 +66,15 @@ FORBIDDEN_ARTIFACT_MARKERS = [
     "TMPDIR=",
     "javascript:",
     "file:",
+    "ghp_AGENTGUARD_FAKE_TOKEN_EXAMPLE_000000000000",
+    "npm_AGENTGUARD_FAKE_TOKEN_EXAMPLE_000000000000",
+    "-----BEGIN AGENTGUARD FAKE PRIVATE KEY-----",
 ]
+EXPECTED_BUILTIN_DETECTORS = {
+    "github-token-shape",
+    "npm-token-shape",
+    "private-key-header",
+}
 
 
 def _load_yaml(path: Path) -> dict:
@@ -88,7 +99,7 @@ def test_adversarial_pack_descriptor_has_required_metadata() -> None:
     }
     assert set(pack["categories"]) == EXPECTED_CATEGORIES
     assert set(pack["detection_surfaces"]) == EXPECTED_GUARDS
-    assert len(pack["scenarios"]) == 7
+    assert len(pack["scenarios"]) == 10
     assert pack["limitations"]
 
     for scenario in pack["scenarios"]:
@@ -100,6 +111,9 @@ def test_adversarial_pack_descriptor_has_required_metadata() -> None:
         assert scenario["expected_unsafe_behavior"]
         assert set(scenario["expected_guards"]) <= EXPECTED_GUARDS
         assert set(scenario["mode"]) <= {"post-hoc", "online"}
+        assert set(scenario.get("expected_builtin_detectors", [])) <= set(
+            BUILTIN_SECRET_CONTENT_DETECTORS
+        )
 
 
 def test_adversarial_pack_references_existing_registry_configs_repos_and_contracts() -> None:
@@ -151,6 +165,38 @@ def test_scope_drift_refactor_is_registered_with_contract() -> None:
     assert {variant.name for variant in contract.variants} == {"safe", "adversarial"}
 
 
+def test_builtin_secret_scenarios_are_registered_with_valid_detectors() -> None:
+    pack = _load_pack()
+    registry = load_benchmark_registry(Path("examples/benchmarks/registry.yaml"))
+    scenarios = {
+        item["id"]: item
+        for item in pack["scenarios"]
+        if item.get("expected_builtin_detectors")
+    }
+
+    assert set(scenarios) == {
+        "builtin_secret_github_token",
+        "builtin_secret_npm_token",
+        "builtin_secret_private_key",
+    }
+    covered_detectors = {
+        detector
+        for scenario in scenarios.values()
+        for detector in scenario["expected_builtin_detectors"]
+    }
+    assert covered_detectors == EXPECTED_BUILTIN_DETECTORS
+
+    for scenario_id, scenario in scenarios.items():
+        entry = find_benchmark(registry, scenario_id)
+        assert entry is not None
+        assert entry.category == "secret_content"
+        assert entry.configs == {"adversarial": Path(scenario["config"])}
+        config = load_config(Path(scenario["config"]))
+        assert set(config.secret_content_builtin_detectors) == set(
+            scenario["expected_builtin_detectors"]
+        )
+
+
 def test_adversarial_pack_summary_matches_descriptor() -> None:
     pack = _load_pack()
     summary = json.loads(SUMMARY_JSON.read_text(encoding="utf-8"))
@@ -182,13 +228,19 @@ def test_adversarial_metrics_match_descriptor_and_are_fresh() -> None:
     assert metrics["pack"]["id"] == "adversarial-core"
     assert metrics["validation"]["kind"] == "metadata validation"
     assert metrics["validation"]["runtime_validated"] is False
-    assert metrics["coverage"]["total_scenarios"] == len(pack["scenarios"]) == 7
+    assert metrics["coverage"]["total_scenarios"] == len(pack["scenarios"]) == 10
     assert metrics["coverage"]["safe_scenarios"] == 0
-    assert metrics["coverage"]["unsafe_scenarios"] == 7
-    assert metrics["coverage"]["expected_unsafe_detections"] == 7
+    assert metrics["coverage"]["unsafe_scenarios"] == 10
+    assert metrics["coverage"]["expected_unsafe_detections"] == 10
     assert set(metrics["coverage"]["categories"]) == EXPECTED_CATEGORIES
     assert set(metrics["coverage"]["detection_surfaces"]) == EXPECTED_GUARDS
-    assert metrics["coverage"]["threat_model_count"] == 7
+    assert metrics["coverage"]["threat_model_count"] == 10
+    assert set(metrics["coverage"]["builtin_detector_coverage"]) == EXPECTED_BUILTIN_DETECTORS
+    assert metrics["coverage"]["builtin_detector_counts"] == {
+        "github-token-shape": 1,
+        "npm-token-shape": 1,
+        "private-key-header": 1,
+    }
     assert [item["id"] for item in metrics["scenarios"]] == [
         item["id"] for item in pack["scenarios"]
     ]
@@ -197,6 +249,9 @@ def test_adversarial_metrics_match_descriptor_and_are_fresh() -> None:
         assert scenario["expected_safe_outcome"]
         assert scenario["expected_unsafe_behavior"]
         assert set(scenario["expected_guards"]) <= EXPECTED_GUARDS
+        assert set(scenario["expected_builtin_detectors"]) <= set(
+            BUILTIN_SECRET_CONTENT_DETECTORS
+        )
 
 
 def test_adversarial_metrics_script_check_and_temp_output(tmp_path: Path) -> None:
@@ -231,7 +286,32 @@ def test_adversarial_metrics_script_check_and_temp_output(tmp_path: Path) -> Non
         "json": "adversarial-metrics.json",
         "markdown": "adversarial-metrics.md",
     }
-    assert data["coverage"]["total_scenarios"] == 7
+    assert data["coverage"]["total_scenarios"] == 10
+
+
+def test_builtin_secret_github_token_scenario_fails_without_leaking_value() -> None:
+    result = run_benchmark(
+        Path("examples/configs/adversarial_core_builtin_secret_github_token.yaml"),
+        "local-command",
+    )
+    combined_artifacts = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in [
+            result.report_paths.json,
+            result.report_paths.markdown,
+            result.report_paths.manifest,
+            result.report_paths.trace,
+        ]
+    )
+
+    assert result.result == "FAIL"
+    assert any(
+        check.name == "Secret scan" and not check.passed
+        for check in result.check_results
+    )
+    assert "github-token-shape" in combined_artifacts
+    assert "built-in secret detector github-token-shape" in combined_artifacts
+    assert "ghp_AGENTGUARD_FAKE_TOKEN_EXAMPLE_000000000000" not in combined_artifacts
 
 
 def test_adversarial_pack_artifacts_are_sanitized() -> None:

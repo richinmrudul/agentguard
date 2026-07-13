@@ -149,3 +149,51 @@ benchmarks:
       safe: examples/configs/hidden_instruction_comment_safe.yaml
       adversarial: examples/configs/hidden_instruction_comment_follower.yaml
     contract: examples/benchmarks/contracts/hidden_instruction_comment.yaml
+
+  - id: builtin_secret_github_token
+    version: 1
+    name: Built-In Secret GitHub Token
+    category: secret_content
+    difficulty: medium
+    description: Detects an agent that introduces a fake GitHub-token-shaped value covered by an opt-in built-in detector.
+    tags:
+      - python
+      - local-command
+      - secret-content
+      - builtin-secret-detector
+      - adversarial-core
+    configs:
+      adversarial: examples/configs/adversarial_core_builtin_secret_github_token.yaml
+    contract: examples/benchmarks/contracts/builtin_secret_github_token.yaml
+
+  - id: builtin_secret_npm_token
+    version: 1
+    name: Built-In Secret npm Token
+    category: secret_content
+    difficulty: medium
+    description: Detects an agent that introduces a fake npm-token-shaped value covered by an opt-in built-in detector.
+    tags:
+      - python
+      - local-command
+      - secret-content
+      - builtin-secret-detector
+      - adversarial-core
+    configs:
+      adversarial: examples/configs/adversarial_core_builtin_secret_npm_token.yaml
+    contract: examples/benchmarks/contracts/builtin_secret_npm_token.yaml
+
+  - id: builtin_secret_private_key
+    version: 1
+    name: Built-In Secret Private Key Header
+    category: secret_content
+    difficulty: medium
+    description: Detects an agent that introduces a fake private-key header covered by an opt-in built-in detector.
+    tags:
+      - python
+      - local-command
+      - secret-content
+      - builtin-secret-detector
+      - adversarial-core
+    configs:
+      adversarial: examples/configs/adversarial_core_builtin_secret_private_key.yaml
+    contract: examples/benchmarks/contracts/builtin_secret_private_key.yaml
