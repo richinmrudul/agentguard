@@ -7,7 +7,11 @@ It treats coding agents as untrusted contributors and checks their work with
 tests, diffs, command logs, sandbox metadata, policy checks, guard incidents,
 and reports.
 
-## v0.1.0 Release Candidate Snapshot
+## v0.2.0 Release Readiness Snapshot
+
+AgentGuard v0.1.0 has been released. The current source tree is prepared for
+v0.2.0 release-candidate review, but v0.2.0 has not been tagged, released on
+GitHub, published to PyPI, or distributed as a package by this repository.
 
 AgentGuard catches curated examples of:
 
@@ -16,6 +20,7 @@ AgentGuard catches curated examples of:
 - test tampering
 - configured and opt-in built-in secret-content introduction
 - oversized diffs and scope drift
+- adversarial CI bypass and hidden-instruction following
 - guard incidents across live command/filesystem monitoring
 
 Install from a checkout:
@@ -50,15 +55,16 @@ agentguard reports site --output /tmp/agentguard-site --include-results-docs --f
 Supported now: local-first benchmark/suite/matrix evaluation, runtime
 command/filesystem guard incidents, configured and opt-in built-in
 secret-content enforcement, reports, traces, manifests, CI examples, and
-static report-site analytics.
+static report-site analytics, plus the adversarial-core pack, built-in secret
+detector presets, and polling filesystem watcher foundation.
 Deferred: production sandbox guarantees, hosted dashboards, PyPI publishing,
 privileged OS-native watcher backends, syscall interception, user-provided
 regex detectors, entropy detectors, and large detector catalogs.
 
-See the v0.1 readiness and release-candidate artifacts:
-[`docs/results/release-readiness-v0.1.md`](docs/results/release-readiness-v0.1.md)
+See the v0.2 readiness and release-candidate artifacts:
+[`docs/results/release-readiness-v0.2.md`](docs/results/release-readiness-v0.2.md)
 and
-[`docs/results/release-candidate-v0.1.0.md`](docs/results/release-candidate-v0.1.0.md).
+[`docs/results/release-candidate-v0.2.0.md`](docs/results/release-candidate-v0.2.0.md).
 
 Docs:
 
@@ -97,7 +103,7 @@ Docs:
   equivalence reporting, schema compatibility, and limitations.
 - [Testing and quality](docs/testing.md): test layers, coverage measurement,
   CI gate, and known limits.
-- [Changelog](CHANGELOG.md): draft v0.1.0 capabilities and future changes.
+- [Changelog](CHANGELOG.md): v0.2.0 readiness notes and released v0.1.0 context.
 - [Release process](docs/release.md): validation, artifact review, and deferred
   manual release steps.
 - [MIT License](LICENSE): terms for using and distributing AgentGuard.
@@ -855,10 +861,10 @@ Repository examples, docs, tests, workflows, generated `.agentguard` data,
 local databases, caches, and development scripts are excluded from both
 artifacts.
 
-AgentGuard is prepared as a v0.1.0 release candidate. The repository currently
-has no published package, tag, or GitHub release; those remain manual
-post-merge maintainer actions. See the [release process](docs/release.md) for
-the exact tag/release commands and the [changelog](CHANGELOG.md) for v0.1.0
+AgentGuard is prepared as a v0.2.0 release candidate. The repository currently
+has no v0.2.0 tag, v0.2.0 GitHub release, or PyPI publication; those remain
+manual post-merge maintainer actions. See the [release process](docs/release.md)
+for the exact tag/release commands and the [changelog](CHANGELOG.md) for v0.2.0
 release notes.
 
 ## Deterministic Evidence

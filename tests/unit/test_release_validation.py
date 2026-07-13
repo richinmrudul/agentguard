@@ -32,10 +32,10 @@ CHANGELOG = ROOT / "CHANGELOG.md"
 README = ROOT / "README.md"
 RELEASE_DOC = ROOT / "docs/release.md"
 EVALUATION_DOC = ROOT / "docs/evaluation.md"
-READINESS_JSON = ROOT / "docs/results/release-readiness-v0.1.json"
-READINESS_MD = ROOT / "docs/results/release-readiness-v0.1.md"
-RELEASE_CANDIDATE_JSON = ROOT / "docs/results/release-candidate-v0.1.0.json"
-RELEASE_CANDIDATE_MD = ROOT / "docs/results/release-candidate-v0.1.0.md"
+READINESS_JSON = ROOT / "docs/results/release-readiness-v0.2.json"
+READINESS_MD = ROOT / "docs/results/release-readiness-v0.2.md"
+RELEASE_CANDIDATE_JSON = ROOT / "docs/results/release-candidate-v0.2.0.json"
+RELEASE_CANDIDATE_MD = ROOT / "docs/results/release-candidate-v0.2.0.md"
 SUPPORTED_PYTHON = ["3.9", "3.10", "3.11", "3.12"]
 
 
@@ -107,7 +107,8 @@ def test_release_readiness_documents_and_license_agree() -> None:
     assert license_text.startswith("MIT License\n")
     assert "Copyright (c) 2026 Richin Mrudul" in license_text
     assert "## Unreleased" in changelog
-    assert "## v0.1.0 - Release Candidate" in changelog
+    assert "## v0.2.0 - Release Candidate" in changelog
+    assert "## v0.1.0 - Released" in changelog
     for heading in (
         "### Added",
         "### Changed",
@@ -119,8 +120,8 @@ def test_release_readiness_documents_and_license_agree() -> None:
     for target in ("LICENSE", "CHANGELOG.md", "docs/release.md"):
         assert f"]({target})" in readme
     for target in (
-        "docs/results/release-readiness-v0.1.md",
-        "docs/results/release-candidate-v0.1.0.md",
+        "docs/results/release-readiness-v0.2.md",
+        "docs/results/release-candidate-v0.2.0.md",
         "examples/github-actions/",
         "docs/showcase.md",
         "docs/static-site.md",
@@ -141,12 +142,13 @@ def test_release_readiness_documents_and_license_agree() -> None:
     for command in (
         "git switch main",
         "git pull --ff-only origin main",
-        'git tag -a v0.1.0 -m "AgentGuard v0.1.0"',
-        "git push origin v0.1.0",
-        "gh release create v0.1.0",
+        'git tag -a v0.2.0 -m "AgentGuard v0.2.0"',
+        "git push origin v0.2.0",
+        "gh release create v0.2.0",
     ):
         assert command in release_doc
-    assert "does\nnot publish a package, create a git tag" in release_doc
+    assert "v0.2.0 has not been tagged" in readme
+    assert "does not publish a package, create a git tag" in release_doc
     assert "No command in this\nrepository performs those operations automatically." in release_doc
 
 
@@ -159,7 +161,7 @@ def test_release_readiness_script_and_artifacts_are_valid() -> None:
     assert artifact == generated
     assert artifact["schema"] == "agentguard.release-readiness"
     assert artifact["schema_version"] == 1
-    assert artifact["release"] == "v0.1.0"
+    assert artifact["release"] == "v0.2.0"
     assert artifact["recommendation"] == "ready with caveats"
     assert artifact["package_metadata"]["version"] == __version__
     assert artifact["package_metadata"]["console_script"] == (
@@ -170,9 +172,14 @@ def test_release_readiness_script_and_artifacts_are_valid() -> None:
     assert artifact["showcase_metrics"]["safe_scenarios_allowed"] == 1
     assert artifact["showcase_metrics"]["false_positive_count"] == 0
     assert artifact["showcase_metrics"]["false_negative_count"] == 0
-    assert artifact["validation_summary"]["phase36a_local_result"] == (
-        "passed before opening the review PR"
-    )
+    assert artifact["adversarial_metrics"]["total_scenarios"] == 10
+    assert set(artifact["adversarial_metrics"]["builtin_detector_coverage"]) == {
+        "github-token-shape",
+        "npm-token-shape",
+        "private-key-header",
+    }
+    assert artifact["watcher_coverage"]["modes"] == ["auto", "polling", "disabled"]
+    assert "filesystem watcher foundation" in artifact["post_v0_1_feature_summary"]
     assert all(item["exists"] for item in artifact["required_docs"])
     assert all(item["exists"] for item in artifact["required_examples"])
     assert all(item["exists"] for item in artifact["required_scripts"])
@@ -192,7 +199,7 @@ def test_release_candidate_artifacts_are_valid() -> None:
     assert artifact == generated
     assert artifact["schema"] == "agentguard.release-candidate"
     assert artifact["schema_version"] == 1
-    assert artifact["release"] == "v0.1.0"
+    assert artifact["release"] == "v0.2.0"
     assert artifact["status"] == "release candidate"
     assert artifact["recommendation"] == "ready to tag after merge with caveats"
     assert artifact["package_metadata"]["version"] == __version__
@@ -211,12 +218,14 @@ def test_release_candidate_artifacts_are_valid() -> None:
         "git switch main",
         "git pull --ff-only origin main",
         "bash scripts/build_release.sh",
-        'git tag -a v0.1.0 -m "AgentGuard v0.1.0"',
-        "git push origin v0.1.0",
+        'git tag -a v0.2.0 -m "AgentGuard v0.2.0"',
+        "git push origin v0.2.0",
     ):
         assert command in artifact["post_merge_release_commands"]
         assert command in markdown
-    assert "gh release create v0.1.0" in markdown
+    assert artifact["adversarial_metrics"]["total_scenarios"] == 10
+    assert "v0.2.0 has not been tagged" in markdown
+    assert "gh release create v0.2.0" in markdown
     assert "PyPI publication" in markdown
 
 
@@ -247,6 +256,19 @@ def test_release_readiness_artifacts_are_sanitized() -> None:
     ]
     for pattern in forbidden_patterns:
         assert not re.search(pattern, combined)
+
+
+def test_validate_release_artifacts_no_args_checks_v0_2_readiness() -> None:
+    result = subprocess.run(
+        [sys.executable, str(VALIDATION_SCRIPT)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "Release readiness artifacts validated." in result.stdout
 
 
 def test_release_readiness_referenced_paths_exist() -> None:

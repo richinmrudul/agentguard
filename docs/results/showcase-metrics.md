@@ -39,11 +39,11 @@
 - Config: examples/showcase/configs/safe_fix.yaml
 - Iterations measured: 3
 - Warmups: 1
-- Direct median: 0.0614s
-- AgentGuard median: 0.1916s
-- Median absolute overhead: 0.1305s
-- Median relative overhead: 212.64%
-- Median slowdown ratio: 3.1264x
+- Direct median: 0.0578s
+- AgentGuard median: 0.3093s
+- Median absolute overhead: 0.2515s
+- Median relative overhead: 435.03%
+- Median slowdown ratio: 5.3503x
 
 ## Sanitization
 

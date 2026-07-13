@@ -1,0 +1,223 @@
+{
+  "adversarial_metrics": {
+    "artifact": "docs/results/adversarial-metrics.json",
+    "builtin_detector_coverage": [
+      "github-token-shape",
+      "npm-token-shape",
+      "private-key-header"
+    ],
+    "categories": [
+      "ci_bypass",
+      "dependency_injection",
+      "hidden_instruction",
+      "prompt_injection",
+      "scope_drift",
+      "secret_content",
+      "secret_exfiltration",
+      "test_tampering"
+    ],
+    "summary_artifact": "docs/results/adversarial-pack-summary.json",
+    "total_scenarios": 10
+  },
+  "cli_smoke": [
+    {
+      "command": "agentguard --help",
+      "exit_code": 0,
+      "help_rendered": true
+    },
+    {
+      "command": "agentguard run --help",
+      "exit_code": 0,
+      "help_rendered": true
+    },
+    {
+      "command": "agentguard suite --help",
+      "exit_code": 0,
+      "help_rendered": true
+    },
+    {
+      "command": "agentguard matrix --help",
+      "exit_code": 0,
+      "help_rendered": true
+    },
+    {
+      "command": "agentguard reports --help",
+      "exit_code": 0,
+      "help_rendered": true
+    },
+    {
+      "command": "agentguard guard --help",
+      "exit_code": 0,
+      "help_rendered": true
+    },
+    {
+      "command": "agentguard --version",
+      "exit_code": 0,
+      "version_matches_package": true
+    }
+  ],
+  "docs_checklist_status": {
+    "changelog_v0_2_0_section": true,
+    "readiness_artifact_current": true,
+    "release_candidate_artifact_current": true,
+    "release_checklist_post_merge_commands": true,
+    "release_process_post_merge_commands": true
+  },
+  "included": [
+    "local and Docker-backed benchmark execution",
+    "suite and matrix evaluation with JSON and Markdown reports",
+    "runtime command and filesystem guard incidents",
+    "live diff line enforcement",
+    "configured and opt-in built-in secret-content guard and post-hoc scan",
+    "guard incident history queries and exports",
+    "static HTML report site with incident pages and trend analytics",
+    "adversarial-core benchmark pack and metadata metrics",
+    "dependency-free polling filesystem watcher mode",
+    "GitHub Actions CI gate examples",
+    "trace export, verification, replay, and manifests",
+    "wheel and source distribution validation without publishing"
+  ],
+  "known_limitations": [
+    "No syscall-level interception is included.",
+    "No privileged OS-native watcher integrations are included.",
+    "No entropy detector or user-provided regex detector is included.",
+    "No hosted dashboard, cloud service, authentication, or account model is included.",
+    "Curated showcase metrics and adversarial metrics are local validation signals, not scientific benchmark results.",
+    "PyPI publishing is deferred and no upload command is included."
+  ],
+  "not_performed_by_this_pr": [
+    "git tag creation",
+    "git tag push",
+    "GitHub release creation",
+    "PyPI publication"
+  ],
+  "package_build_validation": {
+    "build_command": "bash scripts/build_release.sh",
+    "local_phase41a_result": "passed before opening the review PR",
+    "published": false,
+    "sdist": "dist/agentguard-0.2.0.tar.gz",
+    "validation_command": ".venv/bin/python scripts/validate_release_artifacts.py dist/agentguard-0.2.0-py3-none-any.whl dist/agentguard-0.2.0.tar.gz",
+    "wheel": "dist/agentguard-0.2.0-py3-none-any.whl"
+  },
+  "package_metadata": {
+    "checks": {
+      "build_backend": true,
+      "console_script": true,
+      "description_mentions_local_first": true,
+      "license": true,
+      "license_files": true,
+      "name": true,
+      "python_classifiers": true,
+      "readme": true,
+      "requires_python": true,
+      "runtime_dependencies": true,
+      "version": true
+    },
+    "console_script": "agentguard.cli.main:app",
+    "license": "MIT",
+    "name": "agentguard",
+    "requires_python": ">=3.9",
+    "runtime_dependencies": [
+      "PyYAML>=6.0.0",
+      "typer>=0.12.0"
+    ],
+    "supported_python": [
+      "3.9",
+      "3.10",
+      "3.11",
+      "3.12"
+    ],
+    "version": "0.2.0"
+  },
+  "package_smoke": {
+    "command": "bash scripts/package_smoke.sh",
+    "local_phase41a_result": "passed before opening the review PR",
+    "requires_network_for_temp_venv_dependencies": true
+  },
+  "post_merge_release_commands": [
+    "git switch main",
+    "git pull --ff-only origin main",
+    "bash scripts/build_release.sh",
+    ".venv/bin/python scripts/validate_release_artifacts.py dist/agentguard-0.2.0-py3-none-any.whl dist/agentguard-0.2.0.tar.gz",
+    "bash scripts/package_smoke.sh",
+    "git tag -a v0.2.0 -m \"AgentGuard v0.2.0\"",
+    "git push origin v0.2.0",
+    "gh release create v0.2.0 dist/agentguard-0.2.0-py3-none-any.whl dist/agentguard-0.2.0.tar.gz --title \"AgentGuard v0.2.0\" --notes-file release-notes-v0.2.0.md"
+  ],
+  "post_v0_1_feature_summary": [
+    "adversarial-core benchmark pack foundation",
+    "adversarial benchmark metrics validation",
+    "CI bypass and hidden-instruction adversarial scenarios",
+    "built-in secret detector presets",
+    "filesystem watcher foundation",
+    "filesystem watcher hardening for rename, symlink, rapid-change, and dedup cases",
+    "adversarial secret-detector benchmark coverage",
+    "updated adversarial metrics and pack summaries"
+  ],
+  "recommendation": "ready to tag after merge with caveats",
+  "release": "v0.2.0",
+  "schema": "agentguard.release-candidate",
+  "schema_version": 1,
+  "showcase_metrics": {
+    "artifact": "docs/results/showcase-metrics.json",
+    "categories": [
+      "diff_limit",
+      "filesystem_boundary",
+      "secret_content",
+      "test_tampering",
+      "unsafe_command"
+    ],
+    "curated_local_demo_metrics": true,
+    "false_negative_count": 0,
+    "false_positive_count": 0,
+    "safe_scenarios_allowed": 1,
+    "total_scenarios": 6,
+    "unsafe_scenarios_detected": 5
+  },
+  "status": "release candidate",
+  "test_summary": {
+    "focused_commands": [
+      "tests/unit/test_release_validation.py",
+      "tests/unit/test_package_smoke.py",
+      "tests/unit/test_demo_assets.py",
+      "tests/unit/test_adversarial_benchmark_pack.py",
+      "tests/unit/test_cli.py"
+    ],
+    "full_commands": [
+      ".venv/bin/python -m pytest",
+      ".venv/bin/python -m ruff check .",
+      "git diff --check",
+      "bash scripts/build_release.sh",
+      "bash scripts/package_smoke.sh",
+      ".venv/bin/python scripts/showcase_metrics.py",
+      ".venv/bin/python scripts/adversarial_metrics.py --check"
+    ],
+    "local_phase41a_result": "passed before opening the review PR"
+  },
+  "watcher_coverage": {
+    "covered_behaviors": [
+      "create events",
+      "modify events",
+      "delete events",
+      "rename represented as delete+create in polling mode",
+      "symlink create/change/delete events",
+      "ignored-path filtering",
+      "event deduplication and caps"
+    ],
+    "docs": [
+      "docs/online-guard.md",
+      "docs/architecture.md"
+    ],
+    "limitations": [
+      "Polling is not syscall-level containment.",
+      "Rapid create-delete activity can be missed between scans.",
+      "Privileged OS-native backends remain deferred."
+    ],
+    "modes": [
+      "auto",
+      "polling",
+      "disabled"
+    ],
+    "status": "foundation and hardening included"
+  }
+}
