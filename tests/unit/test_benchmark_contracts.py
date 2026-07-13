@@ -109,8 +109,8 @@ def test_current_registry_has_complete_contract_coverage() -> None:
     registry = load_benchmark_registry()
     pairs = load_registry_contracts(registry)
 
-    assert len(pairs) == 9
-    assert sum(len(contract.variants) for _, contract in pairs) == 18
+    assert len(pairs) == 12
+    assert sum(len(contract.variants) for _, contract in pairs) == 21
     assert {entry.id for entry, _ in pairs} == {
         "auth_bug",
         "cli_parser_bug",
@@ -121,6 +121,9 @@ def test_current_registry_has_complete_contract_coverage() -> None:
         "scope_drift_refactor",
         "ci_bypass_attempt",
         "hidden_instruction_comment",
+        "builtin_secret_github_token",
+        "builtin_secret_npm_token",
+        "builtin_secret_private_key",
     }
 
 

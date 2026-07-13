@@ -21,6 +21,7 @@ from agentguard.benchmarks.registry import (  # noqa: E402
     find_benchmark,
     load_benchmark_registry,
 )
+from agentguard.checks.secret_content import BUILTIN_SECRET_CONTENT_DETECTORS  # noqa: E402
 from agentguard.config.loader import load_config  # noqa: E402
 from agentguard.core.suite import load_suite_config  # noqa: E402
 from agentguard.io import atomic_write_json, atomic_write_text  # noqa: E402
@@ -121,6 +122,13 @@ def _validate_pack(pack: dict[str, Any], pack_path: Path) -> None:
         modes = set(scenario.get("mode") or [])
         if not modes or modes - KNOWN_MODES:
             raise ValueError(f"Scenario {scenario['id']} has invalid mode values.")
+        expected_detectors = set(scenario.get("expected_builtin_detectors") or [])
+        unknown_detectors = expected_detectors - set(BUILTIN_SECRET_CONTENT_DETECTORS)
+        if unknown_detectors:
+            raise ValueError(
+                f"Scenario {scenario['id']} declares unknown built-in detectors: "
+                f"{sorted(unknown_detectors)}"
+            )
 
 
 def _validate_references(pack: dict[str, Any]) -> None:
@@ -166,6 +174,11 @@ def build_metrics_report(
         guard for scenario in scenarios for guard in scenario["expected_guards"]
     )
     mode_counts = Counter(mode for scenario in scenarios for mode in scenario["mode"])
+    builtin_detector_counts = Counter(
+        detector
+        for scenario in scenarios
+        for detector in scenario.get("expected_builtin_detectors", [])
+    )
     scenario_rows = [
         {
             "id": str(scenario["id"]),
@@ -176,6 +189,9 @@ def build_metrics_report(
             "expected_safe_outcome": str(scenario["expected_safe_outcome"]),
             "expected_unsafe_behavior": str(scenario["expected_unsafe_behavior"]),
             "expected_guards": sorted(str(item) for item in scenario["expected_guards"]),
+            "expected_builtin_detectors": sorted(
+                str(item) for item in scenario.get("expected_builtin_detectors", [])
+            ),
             "validation_modes": sorted(str(item) for item in scenario["mode"]),
         }
         for scenario in scenarios
@@ -224,6 +240,8 @@ def build_metrics_report(
             ),
             "detection_surfaces": sorted(str(item) for item in pack["detection_surfaces"]),
             "expected_guard_counts": dict(sorted(guard_counts.items())),
+            "builtin_detector_coverage": sorted(builtin_detector_counts),
+            "builtin_detector_counts": dict(sorted(builtin_detector_counts.items())),
             "validation_mode_counts": dict(sorted(mode_counts.items())),
         },
         "scenarios": scenario_rows,
@@ -245,6 +263,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     pack = report["pack"]
     categories = ", ".join(coverage["categories"])
     guards = ", ".join(coverage["detection_surfaces"])
+    builtin_detectors = ", ".join(coverage["builtin_detector_coverage"]) or "none"
     lines = [
         "# AgentGuard Adversarial Metrics",
         "",
@@ -258,6 +277,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Expected safe allowances: {coverage['expected_safe_allowances']}",
         f"- Categories covered: {categories}",
         f"- Expected detection surfaces: {guards}",
+        f"- Built-in detector coverage: {builtin_detectors}",
         "",
         "## Validation Mode",
         "",
@@ -275,15 +295,30 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Scenario Coverage",
         "",
-        "| Scenario | Category | Expected guards | Validation modes |",
-        "| --- | --- | --- | --- |",
+        "| Scenario | Category | Expected guards | Built-in detectors | Validation modes |",
+        "| --- | --- | --- | --- | --- |",
     ]
     for scenario in report["scenarios"]:
+        detectors = ", ".join(scenario["expected_builtin_detectors"]) or "none"
         lines.append(
             f"| `{scenario['id']}` | `{scenario['category']}` | "
             f"{', '.join(scenario['expected_guards'])} | "
+            f"{detectors} | "
             f"{', '.join(scenario['validation_modes'])} |"
         )
+
+    if coverage["builtin_detector_counts"]:
+        lines.extend(
+            [
+                "",
+                "## Built-In Detector Coverage",
+                "",
+                "| Detector | Scenario count |",
+                "| --- | ---: |",
+            ]
+        )
+        for detector, count in coverage["builtin_detector_counts"].items():
+            lines.append(f"| `{detector}` | {count} |")
 
     lines.extend(
         [

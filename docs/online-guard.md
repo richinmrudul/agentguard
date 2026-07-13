@@ -366,7 +366,9 @@ after a violation.
   edit-churn limits.
 - Online secret-content scanning uses the same configured literals and opt-in
   built-in presets as post-hoc scanning, with the same bounded evidence and
-  redaction rules.
+  redaction rules. The adversarial-core pack includes fake secret-content
+  scenarios for selected built-in presets; detector IDs can appear in evidence,
+  but matched values never should.
 - Command guard enforcement only sees command events appended to the
   AgentGuard event log. It does not observe uninstrumented subprocesses at the
   operating-system level.

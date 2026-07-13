@@ -15,3 +15,9 @@ runs:
     agent: local-command
   - config: examples/configs/hidden_instruction_comment_follower.yaml
     agent: local-command
+  - config: examples/configs/adversarial_core_builtin_secret_github_token.yaml
+    agent: local-command
+  - config: examples/configs/adversarial_core_builtin_secret_npm_token.yaml
+    agent: local-command
+  - config: examples/configs/adversarial_core_builtin_secret_private_key.yaml
+    agent: local-command

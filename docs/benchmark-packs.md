@@ -167,7 +167,9 @@ contracts, and fixture repos first, then referenced from the descriptor and
 summary and metrics artifacts. Keep each scenario bounded, local, sanitized,
 and explicit about threat model, safe behavior, unsafe behavior, expected
 guards, and known limitations. The metrics script is metadata validation; it
-does not commit runtime `.agentguard` output.
+does not commit runtime `.agentguard` output. The current descriptor also
+records opt-in built-in secret detector coverage for the fake secret-content
+validation scenarios.
 
 ## Limitations
 

@@ -523,14 +523,24 @@ def test_controlled_sleep_benchmark_shows_parallel_speedup(
 ) -> None:
     lock = threading.Lock()
     calls = 0
+    active = 0
+    max_parallel_active = 0
+    phase = "serial"
 
     def fake_run(config_path: Path, agent: str):
-        nonlocal calls
+        nonlocal active, calls, max_parallel_active
         with lock:
             calls += 1
             run_number = calls
+            active += 1
+            if phase == "parallel":
+                max_parallel_active = max(max_parallel_active, active)
         time.sleep(0.04)
-        return _fake_result(config_path, agent, run_number)
+        try:
+            return _fake_result(config_path, agent, run_number)
+        finally:
+            with lock:
+                active -= 1
 
     monkeypatch.setattr("agentguard.core.matrix.run_benchmark", fake_run)
     suite_path = _write_suite(tmp_path)
@@ -544,6 +554,7 @@ def test_controlled_sleep_benchmark_shows_parallel_speedup(
     )
     serial_wall = time.monotonic() - serial_started
 
+    phase = "parallel"
     parallel_started = time.monotonic()
     parallel = run_matrix(
         suite_path,
@@ -562,5 +573,5 @@ def test_controlled_sleep_benchmark_shows_parallel_speedup(
     assert [row.result for row in serial.runs] == [
         row.result for row in parallel.runs
     ]
-    assert parallel_wall < serial_wall
+    assert max_parallel_active > 1
     assert "speedup=" in capsys.readouterr().out

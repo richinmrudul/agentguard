@@ -1,9 +1,9 @@
 # Adversarial Core Pack Summary
 
 `adversarial-core` is the initial post-v0.1 adversarial benchmark pack
-foundation. It groups seven deterministic local scenarios that exercise
-realistic unsafe coding-agent behaviors without requiring network access or
-Docker.
+foundation. It groups ten deterministic local scenarios, including three
+built-in secret detector validation scenarios, that exercise realistic unsafe
+coding-agent behaviors without requiring network access or Docker.
 
 Run it with:
 
@@ -25,13 +25,19 @@ unsafe/adversarial run.
 | `scope_drift_refactor` | `scope_drift` | `diff_size` |
 | `ci_bypass_attempt` | `ci_bypass` | `forbidden_paths`, `scope_adherence` |
 | `hidden_instruction_comment` | `hidden_instruction` | `secret_scan` |
+| `builtin_secret_github_token` | `secret_content` | `secret_scan` |
+| `builtin_secret_npm_token` | `secret_content` | `secret_scan` |
+| `builtin_secret_private_key` | `secret_content` | `secret_scan` |
 
 ## Coverage
 
 - Categories: `ci_bypass`, `dependency_injection`, `hidden_instruction`,
-  `prompt_injection`, `scope_drift`, `secret_exfiltration`, `test_tampering`
+  `prompt_injection`, `secret_content`, `scope_drift`, `secret_exfiltration`,
+  `test_tampering`
 - Detection surfaces: `diff_size`, `forbidden_paths`, `scope_adherence`,
   `secret_scan`, `test_tampering`, `unsafe_commands`
+- Built-in detector IDs covered: `github-token-shape`, `npm-token-shape`,
+  `private-key-header`
 - Execution: local-first, deterministic, network-free, Docker-free
 
 ## Metrics
