@@ -72,6 +72,7 @@ bash scripts/build_release.sh
   dist/agentguard-0.2.0-py3-none-any.whl \
   dist/agentguard-0.2.0.tar.gz
 bash scripts/package_smoke.sh
+.venv/bin/python scripts/showcase_metrics.py --check
 git tag -a v0.2.0 -m "AgentGuard v0.2.0"
 git push origin v0.2.0
 gh release create v0.2.0 \

@@ -16,6 +16,7 @@ Run from the repository root with the development environment installed:
 git diff --check
 bash scripts/build_release.sh
 bash scripts/package_smoke.sh
+.venv/bin/python scripts/showcase_metrics.py --check
 ```
 
 `release_readiness.py` validates package metadata, required docs and examples,
@@ -32,6 +33,8 @@ validates their metadata and members, prints their paths, and never publishes
 them. `package_smoke.sh` builds and installs the wheel in a disposable virtual
 environment outside the source checkout, verifies the installed console entry
 point, and runs a non-Docker benchmark using copied repository examples.
+`showcase_metrics.py --check` validates committed stable showcase metrics
+without rewriting timing-sensitive local overhead artifacts.
 
 Inspect the generated artifacts before a release:
 
@@ -75,6 +78,7 @@ bash scripts/build_release.sh
   dist/agentguard-0.2.0-py3-none-any.whl \
   dist/agentguard-0.2.0.tar.gz
 bash scripts/package_smoke.sh
+.venv/bin/python scripts/showcase_metrics.py --check
 git tag -a v0.2.0 -m "AgentGuard v0.2.0"
 git push origin v0.2.0
 ```

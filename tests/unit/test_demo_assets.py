@@ -5,14 +5,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 from agentguard.config.loader import load_config
 from agentguard.core.suite import load_suite_config
-from scripts.showcase_metrics import compute_detection_metrics
+from scripts.showcase_metrics import check_metrics_artifacts, compute_detection_metrics
 
 
 FAKE_SHOWCASE_SECRET = "AGENTGUARD_SHOWCASE_SECRET_EXAMPLE"
+SHOWCASE_SUMMARY_JSON = Path("docs/results/showcase-summary.json")
+SHOWCASE_METRICS_JSON = Path("docs/results/showcase-metrics.json")
+SHOWCASE_METRICS_MD = Path("docs/results/showcase-metrics.md")
 
 
 def _read(path: str) -> str:
@@ -247,8 +251,8 @@ def test_showcase_metrics_calculation_tracks_false_results() -> None:
 
 
 def test_showcase_metrics_artifacts_are_stable_and_sanitized() -> None:
-    metrics_path = Path("docs/results/showcase-metrics.json")
-    markdown_path = Path("docs/results/showcase-metrics.md")
+    metrics_path = SHOWCASE_METRICS_JSON
+    markdown_path = SHOWCASE_METRICS_MD
     metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     combined = (
         metrics_path.read_text(encoding="utf-8")
@@ -290,6 +294,90 @@ def test_showcase_metrics_artifacts_are_stable_and_sanitized() -> None:
     assert not re.search(r"(/Users/|/private/|[A-Za-z]:\\\\)", combined)
 
 
+def test_showcase_metrics_check_mode_does_not_rewrite_artifacts() -> None:
+    before_json = SHOWCASE_METRICS_JSON.read_text(encoding="utf-8")
+    before_markdown = SHOWCASE_METRICS_MD.read_text(encoding="utf-8")
+
+    check_metrics_artifacts(
+        summary_json_path=SHOWCASE_SUMMARY_JSON,
+        metrics_json_path=SHOWCASE_METRICS_JSON,
+    )
+
+    assert SHOWCASE_METRICS_JSON.read_text(encoding="utf-8") == before_json
+    assert SHOWCASE_METRICS_MD.read_text(encoding="utf-8") == before_markdown
+
+
+def _copy_showcase_metrics(tmp_path: Path) -> Path:
+    metrics_path = tmp_path / "showcase-metrics.json"
+    markdown_path = tmp_path / "showcase-metrics.md"
+    metrics = json.loads(SHOWCASE_METRICS_JSON.read_text(encoding="utf-8"))
+    metrics["metrics_artifacts"] = {
+        "json": metrics_path.name,
+        "markdown": markdown_path.name,
+    }
+    metrics_path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+    markdown_path.write_text(
+        SHOWCASE_METRICS_MD.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return metrics_path
+
+
+def test_showcase_metrics_check_mode_ignores_timing_only_differences(
+    tmp_path: Path,
+) -> None:
+    metrics_path = _copy_showcase_metrics(tmp_path)
+    markdown_path = metrics_path.with_suffix(".md")
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    metrics["overhead"]["baseline_median_seconds"] = 123.4567
+    metrics["overhead"]["guard_enabled_median_seconds"] = 234.5678
+    metrics["overhead"]["absolute_overhead_median_seconds"] = 111.1111
+    metrics["overhead"]["relative_overhead_median_percent"] = 99.9999
+    metrics["overhead"]["slowdown_ratio_median"] = 2.2222
+    metrics["overhead"]["direct_throughput_runs_per_minute"] = 3.3333
+    metrics["overhead"]["agentguard_throughput_runs_per_minute"] = 4.4444
+    metrics_path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+    markdown = markdown_path.read_text(encoding="utf-8")
+    markdown = markdown.replace("- Direct median: 0.0578s", "- Direct median: 123.4567s")
+    markdown = markdown.replace(
+        "- AgentGuard median: 0.3093s",
+        "- AgentGuard median: 234.5678s",
+    )
+    markdown = markdown.replace(
+        "- Median absolute overhead: 0.2515s",
+        "- Median absolute overhead: 111.1111s",
+    )
+    markdown = markdown.replace(
+        "- Median relative overhead: 435.03%",
+        "- Median relative overhead: 99.99%",
+    )
+    markdown = markdown.replace(
+        "- Median slowdown ratio: 5.3503x",
+        "- Median slowdown ratio: 2.2222x",
+    )
+    markdown_path.write_text(markdown, encoding="utf-8")
+
+    check_metrics_artifacts(
+        summary_json_path=SHOWCASE_SUMMARY_JSON,
+        metrics_json_path=metrics_path,
+    )
+
+
+def test_showcase_metrics_check_mode_detects_stale_stable_metrics(
+    tmp_path: Path,
+) -> None:
+    metrics_path = _copy_showcase_metrics(tmp_path)
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    metrics["detection_quality"]["unsafe_detected"] = 4
+    metrics_path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(AssertionError, match="stable fields"):
+        check_metrics_artifacts(
+            summary_json_path=SHOWCASE_SUMMARY_JSON,
+            metrics_json_path=metrics_path,
+        )
+
+
 def test_showcase_script_help_works() -> None:
     result = subprocess.run(
         [sys.executable, "scripts/showcase_demo.py", "--help"],
@@ -312,3 +400,20 @@ def test_showcase_metrics_script_help_works() -> None:
 
     assert result.returncode == 0
     assert "Generate sanitized detection-quality" in result.stdout
+    assert "--check" in result.stdout
+
+
+def test_showcase_metrics_check_cli_works_without_writes() -> None:
+    before_json = SHOWCASE_METRICS_JSON.read_text(encoding="utf-8")
+    before_markdown = SHOWCASE_METRICS_MD.read_text(encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "scripts/showcase_metrics.py", "--check"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "Showcase metrics check passed" in result.stdout
+    assert SHOWCASE_METRICS_JSON.read_text(encoding="utf-8") == before_json
+    assert SHOWCASE_METRICS_MD.read_text(encoding="utf-8") == before_markdown

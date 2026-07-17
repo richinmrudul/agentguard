@@ -66,6 +66,7 @@ POST_MERGE_RELEASE_COMMANDS = [
     f"dist/agentguard-{TARGET_VERSION}-py3-none-any.whl "
     f"dist/agentguard-{TARGET_VERSION}.tar.gz",
     "bash scripts/package_smoke.sh",
+    ".venv/bin/python scripts/showcase_metrics.py --check",
     f'git tag -a {TARGET_RELEASE} -m "AgentGuard {TARGET_RELEASE}"',
     f"git push origin {TARGET_RELEASE}",
     f"gh release create {TARGET_RELEASE} "
@@ -342,7 +343,7 @@ def build_readiness_summary() -> dict[str, Any]:
                 "git diff --check",
                 "bash scripts/build_release.sh",
                 "bash scripts/package_smoke.sh",
-                ".venv/bin/python scripts/showcase_metrics.py",
+                ".venv/bin/python scripts/showcase_metrics.py --check",
                 ".venv/bin/python scripts/adversarial_metrics.py --check",
             ],
             "phase41a_local_result": "passed before opening the review PR",

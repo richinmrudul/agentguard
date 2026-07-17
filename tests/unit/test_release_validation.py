@@ -142,6 +142,7 @@ def test_release_readiness_documents_and_license_agree() -> None:
     for command in (
         "git switch main",
         "git pull --ff-only origin main",
+        ".venv/bin/python scripts/showcase_metrics.py --check",
         'git tag -a v0.2.0 -m "AgentGuard v0.2.0"',
         "git push origin v0.2.0",
         "gh release create v0.2.0",
@@ -218,6 +219,7 @@ def test_release_candidate_artifacts_are_valid() -> None:
         "git switch main",
         "git pull --ff-only origin main",
         "bash scripts/build_release.sh",
+        ".venv/bin/python scripts/showcase_metrics.py --check",
         'git tag -a v0.2.0 -m "AgentGuard v0.2.0"',
         "git push origin v0.2.0",
     ):

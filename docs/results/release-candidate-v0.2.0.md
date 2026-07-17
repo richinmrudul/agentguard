@@ -95,9 +95,10 @@ commit and CI status:
 3. `bash scripts/build_release.sh`
 4. `.venv/bin/python scripts/validate_release_artifacts.py dist/agentguard-0.2.0-py3-none-any.whl dist/agentguard-0.2.0.tar.gz`
 5. `bash scripts/package_smoke.sh`
-6. `git tag -a v0.2.0 -m "AgentGuard v0.2.0"`
-7. `git push origin v0.2.0`
-8. `gh release create v0.2.0 dist/agentguard-0.2.0-py3-none-any.whl dist/agentguard-0.2.0.tar.gz --title "AgentGuard v0.2.0" --notes-file release-notes-v0.2.0.md`
+6. `.venv/bin/python scripts/showcase_metrics.py --check`
+7. `git tag -a v0.2.0 -m "AgentGuard v0.2.0"`
+8. `git push origin v0.2.0`
+9. `gh release create v0.2.0 dist/agentguard-0.2.0-py3-none-any.whl dist/agentguard-0.2.0.tar.gz --title "AgentGuard v0.2.0" --notes-file release-notes-v0.2.0.md`
 
 Prepare `release-notes-v0.2.0.md` from `CHANGELOG.md` before
 running the GitHub release command.
