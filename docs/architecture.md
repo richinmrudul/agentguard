@@ -10,6 +10,11 @@ trustworthy" from the agent's own explanation. It evaluates observable evidence:
 tests, git diffs, changed files, command logs, policy checks, sandbox metadata,
 timelines, and reports.
 
+For a portfolio-oriented summary of the system, see
+[docs/portfolio.md](portfolio.md). The short version: AgentGuard turns
+agent behavior into auditable local evidence that can be reviewed by engineers,
+CI, and hiring managers without trusting model self-reports.
+
 ## Design Goals
 
 - Treat agents as untrusted. Agent output, tool use, and claims are evidence to inspect, not facts to accept.

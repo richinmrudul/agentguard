@@ -17,6 +17,15 @@ FAKE_SHOWCASE_SECRET = "AGENTGUARD_SHOWCASE_SECRET_EXAMPLE"
 SHOWCASE_SUMMARY_JSON = Path("docs/results/showcase-summary.json")
 SHOWCASE_METRICS_JSON = Path("docs/results/showcase-metrics.json")
 SHOWCASE_METRICS_MD = Path("docs/results/showcase-metrics.md")
+DOC_PATHS_FOR_PRESENTATION = [
+    Path("README.md"),
+    Path("docs/portfolio.md"),
+    Path("docs/showcase.md"),
+    Path("docs/detection-quality.md"),
+    Path("docs/benchmark-packs.md"),
+    Path("docs/online-guard.md"),
+    Path("docs/architecture.md"),
+]
 
 
 def _read(path: str) -> str:
@@ -66,11 +75,84 @@ def test_readme_links_core_docs() -> None:
 
     for doc_path in [
         "docs/architecture.md",
+        "docs/portfolio.md",
         "docs/demo.md",
         "docs/benchmarks.md",
     ]:
         assert Path(doc_path).exists()
         assert f"({doc_path})" in readme
+
+
+def test_readme_portfolio_first_screen_references_existing_proof() -> None:
+    readme = _read("README.md")
+
+    required_text = [
+        "local-first safety and evaluation harness",
+        "What AgentGuard Catches",
+        "Current Proof",
+        "987 passed, 15 skipped, 1 warning",
+        "Architecture At A Glance",
+        "Screenshots And Demo Assets",
+        "v0.2.0` is tagged and release-ready",
+    ]
+    for text in required_text:
+        assert text in readme
+
+    for path in [
+        "scripts/showcase_demo.sh",
+        "scripts/showcase_metrics.py",
+        "scripts/adversarial_metrics.py",
+        "examples/suites/adversarial_core.yaml",
+        "docs/results/showcase-metrics.md",
+        "docs/results/adversarial-metrics.md",
+        "docs/results/release-candidate-v0.2.0.md",
+        "examples/github-actions/",
+    ]:
+        assert Path(path).exists()
+        assert path in readme
+
+
+def test_portfolio_summary_references_existing_artifacts() -> None:
+    portfolio = _read("docs/portfolio.md")
+
+    for text in [
+        "2.0 is tagged and release-ready",
+        "987 passed tests, 15 skipped tests, and 1 warning",
+        "5/5 unsafe scenarios",
+        "1/1 safe scenario",
+        "10 deterministic `adversarial-core` scenarios",
+        "GitHub Actions",
+    ]:
+        assert text in portfolio
+
+    for path in [
+        "docs/results/showcase-metrics.json",
+        "docs/results/adversarial-metrics.json",
+        "examples/suites/adversarial_core.yaml",
+        "examples/github-actions/agentguard-showcase.yml",
+    ]:
+        assert Path(path).exists()
+
+
+def test_presentation_docs_are_sanitized() -> None:
+    combined = "\n".join(
+        path.read_text(encoding="utf-8") for path in DOC_PATHS_FOR_PRESENTATION
+    )
+
+    forbidden_patterns = [
+        FAKE_SHOWCASE_SECRET,
+        r"AGENTGUARD_SECRET",
+        r"diff --git",
+        r"/Users/",
+        r"/private/",
+        r"[A-Za-z]:\\\\",
+        r"\bHOME=",
+        r"\bTMPDIR=",
+        r"javascript:",
+        r"file:",
+    ]
+    for pattern in forbidden_patterns:
+        assert not re.search(pattern, combined)
 
 
 def test_benchmark_docs_match_registry_ids_and_categories() -> None:

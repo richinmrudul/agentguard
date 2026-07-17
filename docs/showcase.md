@@ -73,6 +73,20 @@ To run the same proof in GitHub Actions, use
 It uploads the committed `docs/results` summaries plus generated
 `.agentguard/showcase` JSON/Markdown reports as CI artifacts.
 
+## Recommended Demo Assets
+
+No screenshots are committed yet. For a portfolio page or project write-up,
+capture fresh images from local or CI-generated artifacts:
+
+- static dashboard overview from `agentguard reports site`
+- guard incident detail page for an unsafe showcase run
+- adversarial metrics terminal output from `scripts/adversarial_metrics.py --check`
+- GitHub Actions step summary from the showcase workflow
+
+Review screenshots before publishing them. They should not include private
+paths, environment values, tokens, raw secret-like content, or generated
+`.agentguard` runtime directories outside the visible report UI.
+
 ## Showcase Versus Adversarial Core
 
 The showcase is the short polished demo. The post-v0.1 `adversarial-core` pack

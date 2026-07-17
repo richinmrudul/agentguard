@@ -148,7 +148,8 @@ def test_release_readiness_documents_and_license_agree() -> None:
         "gh release create v0.2.0",
     ):
         assert command in release_doc
-    assert "v0.2.0 has not been tagged" in readme
+    assert "AgentGuard v0.2.0 has been tagged" in readme
+    assert "no v0.2.0 GitHub release or PyPI publication" in readme
     assert "does not publish a package, create a git tag" in release_doc
     assert "No command in this\nrepository performs those operations automatically." in release_doc
 

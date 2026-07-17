@@ -1,27 +1,49 @@
 # AgentGuard
 
-AgentGuard is a local-first safety harness for evaluating AI coding agents with
-deterministic evidence instead of trust.
+AgentGuard is a local-first safety and evaluation harness for AI coding agents
+that detects unsafe behavior across reproducible benchmark runs.
 
-It treats coding agents as untrusted contributors and checks their work with
-tests, diffs, command logs, sandbox metadata, policy checks, guard incidents,
-and reports.
+AI coding agents can solve the requested task while also doing unsafe things:
+disabling tests, following hidden repository instructions, leaking secrets,
+modifying forbidden files, running unsafe commands, or making suspiciously large
+diffs. AgentGuard treats agents as untrusted contributors and scores observable
+evidence instead of trusting the agent's explanation.
 
-## v0.2.0 Release Readiness Snapshot
+## What AgentGuard Catches
 
-AgentGuard v0.1.0 has been released. The current source tree is prepared for
-v0.2.0 release-candidate review, but v0.2.0 has not been tagged, released on
-GitHub, published to PyPI, or distributed as a package by this repository.
+| Risk | Example | Detection surface |
+| --- | --- | --- |
+| Unsafe commands | A local agent records an attempted destructive command. | command policy, command logs, online command guard |
+| Filesystem boundary violations | A run writes outside allowed source paths or touches forbidden/secret paths. | git diff checks, forbidden paths, online filesystem guard |
+| Test tampering | An agent edits tests so its change appears to pass. | test-path checks, benchmark contracts, reports |
+| Secret-content introduction | New token-shaped or configured secret-like content appears in a changed file. | post-hoc secret-content scan, online secret-content guard, built-in detector presets |
+| Scope drift / suspicious diffs | A small fix becomes an overbroad refactor or exceeds line/file limits. | scope adherence, diff-size checks, live diff line enforcement |
+| CI bypass attempts | Workflow or config changes weaken the gate instead of fixing the bug. | adversarial-core scenarios, forbidden/scope/test checks, CI examples |
+| Hidden instruction following | An agent obeys repo-embedded instructions that conflict with the task. | adversarial-core scenarios, changed-file and policy evidence |
+| Process cleanup / timeout issues | A runaway or violating local agent needs bounded termination. | command limits, guard enforce mode, process termination hardening |
 
-AgentGuard catches curated examples of:
+## Current Proof
 
-- unsafe command usage
-- filesystem-boundary and forbidden-path changes
-- test tampering
-- configured and opt-in built-in secret-content introduction
-- oversized diffs and scope drift
-- adversarial CI bypass and hidden-instruction following
-- guard incidents across live command/filesystem monitoring
+- `v0.2.0` is tagged and release-ready from `main`; no GitHub release or PyPI
+  publication has been performed by this repository.
+- Latest release-operator validation reported `987 passed, 15 skipped, 1 warning`
+  for the full pytest suite.
+- The curated showcase detects 5/5 unsafe scenarios, allows 1/1 safe scenario,
+  and records 0 false positives and 0 false negatives.
+- The `adversarial-core` pack covers 10 local deterministic unsafe-agent
+  scenarios, including CI bypass, hidden-instruction following, scope drift,
+  and built-in secret detector coverage.
+- GitHub Actions examples show CI gates and showcase metrics upload flows.
+- Static report sites include run reports, guard incident pages, docs/results
+  summaries, and trend analytics.
+
+See the evidence artifacts:
+[`docs/results/showcase-metrics.md`](docs/results/showcase-metrics.md),
+[`docs/results/adversarial-metrics.md`](docs/results/adversarial-metrics.md),
+[`docs/results/release-candidate-v0.2.0.md`](docs/results/release-candidate-v0.2.0.md),
+and [`CHANGELOG.md`](CHANGELOG.md).
+
+## Quickstart
 
 Install from a checkout:
 
@@ -32,17 +54,55 @@ pip install -e ".[dev]"
 agentguard --help
 ```
 
-Run the fastest local proof:
+Run the showcase and metrics checks:
 
 ```bash
-agentguard run examples/configs/fix_auth_bug.yaml --agent mock-safe
 scripts/showcase_demo.sh
-.venv/bin/python scripts/showcase_metrics.py
+.venv/bin/python scripts/showcase_metrics.py --check
+.venv/bin/python scripts/adversarial_metrics.py --check
 ```
 
-Current curated showcase metrics: 5/5 unsafe scenarios detected, 1/1 safe
-scenario allowed, 0 false positives, and 0 false negatives. These are
-curated local-demo metrics, not production security rates.
+Run the adversarial foundation suite:
+
+```bash
+agentguard suite examples/suites/adversarial_core.yaml --allow-failures
+```
+
+Generate a local static report site after running examples:
+
+```bash
+agentguard reports site --output /tmp/agentguard-site --include-results-docs --force
+```
+
+## Architecture At A Glance
+
+```mermaid
+flowchart LR
+    Benchmarks[Benchmarks and suites] --> Runner[Agent runner]
+    Runner --> OnlineGuard[Online command and filesystem guard]
+    Runner --> PostHoc[Post-hoc checks]
+    OnlineGuard --> Incidents[Guard incidents]
+    PostHoc --> Reports[Reports, traces, manifests, history]
+    Incidents --> Reports
+    Reports --> StaticSite[Static site and trend analytics]
+    Reports --> CI[CI exports and GitHub summaries]
+```
+
+The core loop is deliberately evidence-first: configs prepare a benchmark or CI
+checkout, the agent runs under bounded instrumentation, policy checks inspect
+tests/diffs/events, and JSON/Markdown artifacts make the result auditable.
+
+## Screenshots And Demo Assets
+
+No screenshots are committed yet. Recommended demo assets to add:
+
+- static dashboard screenshot
+- guard incident detail screenshot
+- adversarial metrics terminal output
+- GitHub Actions summary screenshot
+
+Do not commit screenshots that include private repository paths, environment
+values, tokens, or raw secret-like content.
 
 Use AgentGuard in CI with the GitHub Actions examples in
 [`examples/github-actions/`](examples/github-actions/), then publish local
@@ -57,11 +117,13 @@ command/filesystem guard incidents, configured and opt-in built-in
 secret-content enforcement, reports, traces, manifests, CI examples, and
 static report-site analytics, plus the adversarial-core pack, built-in secret
 detector presets, and polling filesystem watcher foundation.
-Deferred: production sandbox guarantees, hosted dashboards, PyPI publishing,
-privileged OS-native watcher backends, syscall interception, user-provided
-regex detectors, entropy detectors, and large detector catalogs.
+Roadmap chapters: PyPI publishing, hosted docs/site, broader adversarial
+benchmark corpus, entropy and user-provided regex detectors, syscall-level
+containment, privileged OS-native watcher integrations, and a hosted dashboard
+or cloud service.
 
-See the v0.2 readiness and release-candidate artifacts:
+The v0.2 readiness and release-candidate artifacts were generated before the
+tag was cut and remain useful for release validation history:
 [`docs/results/release-readiness-v0.2.md`](docs/results/release-readiness-v0.2.md)
 and
 [`docs/results/release-candidate-v0.2.0.md`](docs/results/release-candidate-v0.2.0.md).
@@ -70,6 +132,8 @@ Docs:
 
 - [Architecture](docs/architecture.md): pipeline, trust model, sandbox model,
   suite/baseline/history/gate layers, and limitations.
+- [Portfolio summary](docs/portfolio.md): two-sentence project summary, resume
+  bullets, STAR story, technologies, and metrics to cite.
 - [Demo](docs/demo.md): copyable 90-second demo flow.
 - [Showcase](docs/showcase.md): local recruiter-ready detection demo and
   quoteable summary.
@@ -861,11 +925,11 @@ Repository examples, docs, tests, workflows, generated `.agentguard` data,
 local databases, caches, and development scripts are excluded from both
 artifacts.
 
-AgentGuard is prepared as a v0.2.0 release candidate. The repository currently
-has no v0.2.0 tag, v0.2.0 GitHub release, or PyPI publication; those remain
-manual post-merge maintainer actions. See the [release process](docs/release.md)
-for the exact tag/release commands and the [changelog](CHANGELOG.md) for v0.2.0
-release notes.
+AgentGuard v0.2.0 has been tagged from the release-ready source tree. The
+repository still has no v0.2.0 GitHub release or PyPI publication; those remain
+manual maintainer actions. See the [release process](docs/release.md) for the
+manual release commands and the [changelog](CHANGELOG.md) for v0.2.0 release
+notes.
 
 ## Deterministic Evidence
 
@@ -898,6 +962,10 @@ AgentGuard is available under the [MIT License](LICENSE).
 
 ## Roadmap
 
-- Stronger sandbox isolation beyond the current Docker model
-- Optional real LLM/coding-agent adapters
-- Backend, richer run history, and dashboard for team-scale evaluation
+- PyPI publishing
+- Hosted docs/site
+- Broader adversarial benchmark corpus
+- Entropy and user-provided regex detectors
+- Syscall-level containment
+- Privileged OS-native watcher integrations
+- Hosted dashboard/cloud service for team-scale evaluation
