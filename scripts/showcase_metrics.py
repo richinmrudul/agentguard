@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import copy
+import json
 from pathlib import Path
 import sys
 from typing import Any
@@ -17,9 +19,26 @@ from scripts.showcase_demo import run_showcase  # noqa: E402
 
 
 DEFAULT_METRICS_JSON = Path("docs/results/showcase-metrics.json")
+DEFAULT_SUMMARY_JSON = Path("docs/results/showcase-summary.json")
 DEFAULT_OVERHEAD_OUTPUT = DEFAULT_OUTPUT_DIR / "showcase-overhead.json"
 DEFAULT_OVERHEAD_CONFIG = Path("examples/showcase/configs/safe_fix.yaml")
 FAKE_SHOWCASE_SECRET = "AGENTGUARD_SHOWCASE_SECRET_EXAMPLE"
+VOLATILE_OVERHEAD_FIELDS = {
+    "baseline_median_seconds",
+    "guard_enabled_median_seconds",
+    "absolute_overhead_median_seconds",
+    "relative_overhead_median_percent",
+    "slowdown_ratio_median",
+    "direct_throughput_runs_per_minute",
+    "agentguard_throughput_runs_per_minute",
+}
+VOLATILE_MARKDOWN_PREFIXES = (
+    "- Direct median:",
+    "- AgentGuard median:",
+    "- Median absolute overhead:",
+    "- Median relative overhead:",
+    "- Median slowdown ratio:",
+)
 
 
 def _portable_path(path: Path) -> str:
@@ -208,6 +227,151 @@ def build_metrics_report(
     }
 
 
+def _load_json_object(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise AssertionError(f"{_portable_path(path)} must contain a JSON object")
+    return data
+
+
+def _stable_report(report: dict[str, Any]) -> dict[str, Any]:
+    stable = copy.deepcopy(report)
+    overhead = stable.get("overhead", {})
+    if isinstance(overhead, dict):
+        for field in VOLATILE_OVERHEAD_FIELDS:
+            overhead.pop(field, None)
+    return stable
+
+
+def _stable_markdown(markdown: str) -> str:
+    lines = []
+    for line in markdown.splitlines():
+        if line.startswith(VOLATILE_MARKDOWN_PREFIXES):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _detection_metrics_from_summary(showcase_summary: dict[str, Any]) -> dict[str, Any]:
+    total = int(showcase_summary.get("total_scenarios", 0))
+    safe_allowed = int(showcase_summary.get("safe_scenarios_allowed", 0))
+    unsafe_detected = int(showcase_summary.get("unsafe_scenarios_detected", 0))
+    safe_scenarios = safe_allowed
+    unsafe_scenarios = max(total - safe_scenarios, 0)
+    categories = {}
+    for category, values in sorted(showcase_summary.get("categories", {}).items()):
+        category_total = int(values.get("total", 0))
+        expected_safe = category_total if category == SAFE_CATEGORY else 0
+        expected_unsafe = category_total - expected_safe
+        categories[category] = {
+            "total": category_total,
+            "expected_safe": expected_safe,
+            "expected_unsafe": expected_unsafe,
+            "allowed": int(values.get("allowed", 0)),
+            "detected": int(values.get("detected", 0)),
+            "false_positives": 0,
+            "false_negatives": 0,
+            "failed_checks": sorted(values.get("failed_checks", [])),
+        }
+    report_formats = set(showcase_summary.get("report_formats_generated", []))
+    return {
+        "total_scenarios": total,
+        "safe_scenarios": safe_scenarios,
+        "unsafe_scenarios": unsafe_scenarios,
+        "safe_allowed": safe_allowed,
+        "unsafe_detected": unsafe_detected,
+        "false_positive_count": 0,
+        "false_negative_count": 0,
+        "false_positive_scenarios": [],
+        "false_negative_scenarios": [],
+        "unsafe_detection_rate_percent": _rate(unsafe_detected, unsafe_scenarios),
+        "safe_allowance_rate_percent": _rate(safe_allowed, safe_scenarios),
+        "category_coverage": sorted(
+            showcase_summary.get("detection_categories_covered", [])
+        ),
+        "categories": categories,
+        "failed_check_counts": showcase_summary.get("failed_check_counts", {}),
+        "guard_incident_count": showcase_summary.get("guard_incident_count", 0),
+        "guard_incident_categories_observed": [],
+        "report_availability": {
+            "json_reports": total if "json_report" in report_formats else 0,
+            "markdown_reports": total if "markdown_report" in report_formats else 0,
+            "command_logs": total if "command_log" in report_formats else 0,
+            "traces": total if "trace" in report_formats else 0,
+            "suite_json": "suite_json" in report_formats,
+            "suite_markdown": "suite_markdown" in report_formats,
+            "manifest": "manifest" in report_formats,
+        },
+    }
+
+
+def _build_expected_report_from_summary(
+    showcase_summary: dict[str, Any],
+    *,
+    overhead_metrics: dict[str, Any],
+    metrics_json_path: Path,
+) -> dict[str, Any]:
+    metrics_markdown_path = metrics_json_path.with_suffix(".md")
+    return {
+        "schema": "agentguard.showcase-metrics",
+        "schema_version": 1,
+        "name": "AgentGuard showcase metrics",
+        "agentguard_version": __version__,
+        "source_summary": "docs/results/showcase-summary.json",
+        "generated_by": "scripts/showcase_metrics.py",
+        "metrics_artifacts": {
+            "json": _portable_path(metrics_json_path),
+            "markdown": _portable_path(metrics_markdown_path),
+        },
+        "detection_quality": _detection_metrics_from_summary(showcase_summary),
+        "overhead": overhead_metrics,
+        "sanitization": {
+            "fake_secrets_only": True,
+            "fake_secret_value_rendered": False,
+            "raw_diffs_included": False,
+            "absolute_workspace_paths_included": False,
+            "environment_variables_included": False,
+            "raw_stdout_stderr_included": False,
+        },
+        "supporting_artifacts": {
+            "showcase_suite": "examples/showcase/showcase.yaml",
+            "showcase_docs": "docs/showcase.md",
+            "showcase_summary_json": "docs/results/showcase-summary.json",
+            "showcase_summary_markdown": "docs/results/showcase-summary.md",
+            "runtime_output_root": ".agentguard/showcase",
+        },
+    }
+
+
+def check_metrics_artifacts(
+    *,
+    summary_json_path: Path,
+    metrics_json_path: Path,
+) -> dict[str, Any]:
+    showcase_summary = _load_json_object(summary_json_path)
+    actual_report = _load_json_object(metrics_json_path)
+    markdown_path = metrics_json_path.with_suffix(".md")
+    actual_markdown = markdown_path.read_text(encoding="utf-8")
+    expected_report = _build_expected_report_from_summary(
+        showcase_summary,
+        overhead_metrics=actual_report["overhead"],
+        metrics_json_path=metrics_json_path,
+    )
+    expected_markdown = render_markdown(expected_report)
+
+    stale = []
+    if _stable_report(actual_report) != _stable_report(expected_report):
+        stale.append(_portable_path(metrics_json_path))
+    if _stable_markdown(actual_markdown) != _stable_markdown(expected_markdown):
+        stale.append(_portable_path(markdown_path))
+    if stale:
+        raise AssertionError(
+            "Showcase metrics artifacts are stale for stable fields: "
+            + ", ".join(stale)
+        )
+    return actual_report
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     detection = report["detection_quality"]
     overhead = report["overhead"]
@@ -325,24 +489,44 @@ def main() -> int:
     parser.add_argument("--suite", type=Path, default=DEFAULT_SUITE)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--metrics-json", type=Path, default=DEFAULT_METRICS_JSON)
+    parser.add_argument("--summary-json", type=Path, default=DEFAULT_SUMMARY_JSON)
     parser.add_argument("--overhead-config", type=Path, default=DEFAULT_OVERHEAD_CONFIG)
     parser.add_argument("--overhead-output", type=Path, default=DEFAULT_OVERHEAD_OUTPUT)
     parser.add_argument("--overhead-iterations", type=int, default=3)
     parser.add_argument("--overhead-warmups", type=int, default=1)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Validate committed showcase metrics without rewriting artifacts. "
+            "Volatile local overhead timing fields are ignored."
+        ),
+    )
     args = parser.parse_args()
 
-    report = run_metrics(
-        suite_path=args.suite,
-        output_dir=args.output_dir,
-        metrics_json_path=args.metrics_json,
-        overhead_config=args.overhead_config,
-        overhead_output=args.overhead_output,
-        overhead_iterations=args.overhead_iterations,
-        overhead_warmups=args.overhead_warmups,
-    )
+    if args.check:
+        try:
+            report = check_metrics_artifacts(
+                summary_json_path=args.summary_json,
+                metrics_json_path=args.metrics_json,
+            )
+        except AssertionError as exc:
+            print(f"Showcase metrics check failed: {exc}", file=sys.stderr)
+            return 1
+        print("Showcase metrics check passed")
+    else:
+        report = run_metrics(
+            suite_path=args.suite,
+            output_dir=args.output_dir,
+            metrics_json_path=args.metrics_json,
+            overhead_config=args.overhead_config,
+            overhead_output=args.overhead_output,
+            overhead_iterations=args.overhead_iterations,
+            overhead_warmups=args.overhead_warmups,
+        )
+        print("AgentGuard showcase metrics complete")
     detection = report["detection_quality"]
     overhead = report["overhead"]
-    print("AgentGuard showcase metrics complete")
     print(
         "Unsafe detected: "
         f"{detection['unsafe_detected']}/{detection['unsafe_scenarios']} "

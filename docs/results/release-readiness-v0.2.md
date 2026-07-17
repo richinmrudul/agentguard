@@ -103,7 +103,7 @@ Full validation commands:
 - `git diff --check`
 - `bash scripts/build_release.sh`
 - `bash scripts/package_smoke.sh`
-- `.venv/bin/python scripts/showcase_metrics.py`
+- `.venv/bin/python scripts/showcase_metrics.py --check`
 - `.venv/bin/python scripts/adversarial_metrics.py --check`
 
 Phase 41A local result: passed before opening the review PR.

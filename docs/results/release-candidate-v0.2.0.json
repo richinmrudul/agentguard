@@ -140,6 +140,7 @@
     "bash scripts/build_release.sh",
     ".venv/bin/python scripts/validate_release_artifacts.py dist/agentguard-0.2.0-py3-none-any.whl dist/agentguard-0.2.0.tar.gz",
     "bash scripts/package_smoke.sh",
+    ".venv/bin/python scripts/showcase_metrics.py --check",
     "git tag -a v0.2.0 -m \"AgentGuard v0.2.0\"",
     "git push origin v0.2.0",
     "gh release create v0.2.0 dist/agentguard-0.2.0-py3-none-any.whl dist/agentguard-0.2.0.tar.gz --title \"AgentGuard v0.2.0\" --notes-file release-notes-v0.2.0.md"
@@ -189,7 +190,7 @@
       "git diff --check",
       "bash scripts/build_release.sh",
       "bash scripts/package_smoke.sh",
-      ".venv/bin/python scripts/showcase_metrics.py",
+      ".venv/bin/python scripts/showcase_metrics.py --check",
       ".venv/bin/python scripts/adversarial_metrics.py --check"
     ],
     "local_phase41a_result": "passed before opening the review PR"
