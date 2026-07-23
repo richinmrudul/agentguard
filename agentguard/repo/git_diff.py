@@ -43,23 +43,26 @@ def _classify_name_status(
     added_files: list[str] = []
     deleted_files: list[str] = []
 
-    for line in name_status.splitlines():
-        parts = line.split("\t")
-        if len(parts) < 2:
-            continue
-        status = parts[0]
-        path = parts[-1]
-        if is_internal_artifact(path):
+    fields = name_status.split("\0")
+    index = 0
+    while index < len(fields):
+        status = fields[index]
+        index += 1
+        if not status:
             continue
         status_type = status[0]
+        path_count = 2 if status_type in {"C", "R"} else 1
+        paths = fields[index : index + path_count]
+        index += path_count
+        visible_paths = [
+            path for path in paths if path and not is_internal_artifact(path)
+        ]
         if status_type == "A":
-            added_files.append(path)
+            added_files.extend(visible_paths)
         elif status_type == "D":
-            deleted_files.append(path)
-        elif status_type == "R":
-            modified_files.append(path)
-        elif status_type == "M":
-            modified_files.append(path)
+            deleted_files.extend(visible_paths)
+        elif status_type in {"C", "M", "R", "T", "U", "X"}:
+            modified_files.extend(visible_paths)
 
     return modified_files, added_files, deleted_files
 
@@ -72,7 +75,9 @@ def _untracked_files(repo_dir: Path) -> list[str]:
             "ls-files",
             "--others",
             "--exclude-standard",
-        ).splitlines()
+            "-z",
+        ).split("\0")
+        if path
         if not is_internal_artifact(path)
     ]
 
@@ -87,41 +92,11 @@ def _line_count(path: Path) -> int:
 
 
 def collect_diff(repo_dir: Path) -> DiffSummary:
-    modified_files = [
-        path
-        for path in _git(
-            repo_dir,
-            "diff",
-            "HEAD",
-            "--name-only",
-            "--diff-filter=M",
-        ).splitlines()
-        if not is_internal_artifact(path)
-    ]
-    added_files = [
-        path
-        for path in _git(
-            repo_dir,
-            "diff",
-            "HEAD",
-            "--name-only",
-            "--diff-filter=A",
-        ).splitlines()
-        if not is_internal_artifact(path)
-    ]
+    modified_files, added_files, deleted_files = _classify_name_status(
+        _git(repo_dir, "diff", "HEAD", "--find-renames", "--name-status", "-z")
+    )
     untracked_files = _untracked_files(repo_dir)
     added_files.extend(path for path in untracked_files if path not in added_files)
-    deleted_files = [
-        path
-        for path in _git(
-            repo_dir,
-            "diff",
-            "HEAD",
-            "--name-only",
-            "--diff-filter=D",
-        ).splitlines()
-        if not is_internal_artifact(path)
-    ]
     lines_added, lines_deleted = _numstat(repo_dir)
     lines_added += sum(_line_count(repo_dir / path) for path in untracked_files)
 
@@ -155,7 +130,7 @@ def collect_diff_between_refs(
 ) -> DiffSummary:
     diff_ref = f"{base_ref}...{head_ref}"
     modified_files, added_files, deleted_files = _classify_name_status(
-        _git(repo_dir, "diff", diff_ref, "--name-status")
+        _git(repo_dir, "diff", diff_ref, "--find-renames", "--name-status", "-z")
     )
     lines_added, lines_deleted = _numstat_for_diff(repo_dir, diff_ref)
 
