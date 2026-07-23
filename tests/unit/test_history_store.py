@@ -1,6 +1,7 @@
 import csv
 import json
 import sqlite3
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 from typing import Optional
@@ -339,6 +340,75 @@ def test_csv_export_includes_header_and_rows(tmp_path: Path) -> None:
     assert exported.startswith("id,run_type,name,result,score,created_at")
     assert rows[0]["id"] == "run-1"
     assert rows[0]["failed_checks"] == "Tests passed"
+
+
+def test_csv_export_neutralizes_formula_capable_string_cells() -> None:
+    record = replace(
+        _record(),
+        id="=1+1",
+        run_type=" +SUM(1,1)",
+        name="\t-1+1",
+        result="\r\n@SUM(1,1)",
+        created_at="\n=created",
+        json_report_path=Path(" =report.json"),
+        markdown_report_path=Path("\x0b+report.md"),
+        command_log_path=Path("\x7f-report.json"),
+        manifest_path=Path("@manifest.json"),
+        trace_path=Path("\n=trace.jsonl"),
+        category="+category",
+        difficulty="-difficulty",
+        benchmark_id="@benchmark",
+        agent="=agent",
+        failed_checks=["@SUM(1,1)", "ordinary"],
+        guard_incident_path=Path("\t=incident.json"),
+    )
+
+    rows = list(csv.DictReader(StringIO(export_history_csv([record]))))
+
+    assert rows == [
+        {
+            "id": "'=1+1",
+            "run_type": "' +SUM(1,1)",
+            "name": "'\t-1+1",
+            "result": "'\r\n@SUM(1,1)",
+            "score": "100",
+            "created_at": "'\n=created",
+            "json_report_path": "' =report.json",
+            "markdown_report_path": "'\x0b+report.md",
+            "command_log_path": "'\x7f-report.json",
+            "manifest_path": "'@manifest.json",
+            "trace_path": "'\n=trace.jsonl",
+            "category": "'+category",
+            "difficulty": "'-difficulty",
+            "benchmark_id": "'@benchmark",
+            "benchmark_version": "1",
+            "agent": "'=agent",
+            "failed_checks": "'@SUM(1,1);ordinary",
+            "guard_blocked": "False",
+            "guard_violations_total": "0",
+            "guard_incident_path": "'\t=incident.json",
+            "time_to_first_violation_ms": "",
+        }
+    ]
+
+
+def test_csv_formula_safety_does_not_change_json_or_ordinary_csv_values() -> None:
+    record = replace(
+        _record(),
+        name="=1+1",
+        agent="ordinary-agent",
+        failed_checks=["+SUM(1,1)"],
+    )
+
+    csv_row = next(csv.DictReader(StringIO(export_history_csv([record]))))
+    json_row = json.loads(export_history_json([record]))[0]
+
+    assert csv_row["name"] == "'=1+1"
+    assert csv_row["agent"] == "ordinary-agent"
+    assert csv_row["failed_checks"] == "'+SUM(1,1)"
+    assert json_row["name"] == "=1+1"
+    assert json_row["agent"] == "ordinary-agent"
+    assert json_row["failed_checks"] == ["+SUM(1,1)"]
 
 
 def test_filters_apply_to_exported_records(tmp_path: Path) -> None:

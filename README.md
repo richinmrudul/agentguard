@@ -778,7 +778,12 @@ and dashboard prototypes. Incident, status, agent, benchmark, and category
 filters are applied to stored SQLite metadata before ordering and `LIMIT`;
 incident files need not exist and are never parsed for these queries. Audit
 means a recorded incident that was not blocked, so ordinary non-incident rows
-are excluded. JSON and Markdown reports remain the source of truth.
+are excluded. CSV exports neutralize spreadsheet formulas in every string
+column by prefixing one apostrophe when the first non-whitespace/control
+character is `=`, `+`, `-`, or `@`. The encoding is reversible by removing
+that leading apostrophe from affected cells. Stored history and JSON exports
+retain the original values. JSON and Markdown reports remain the source of
+truth.
 
 ## Execution Provenance
 
