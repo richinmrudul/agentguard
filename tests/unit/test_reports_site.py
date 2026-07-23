@@ -6,7 +6,11 @@ from typer.testing import CliRunner
 
 from agentguard.cli.main import app
 from agentguard.history.store import HistoryRecord, record_history
-from agentguard.reports.site import StaticSiteOptions, generate_static_report_site
+from agentguard.reports.site import (
+    SITE_OUTPUT_MARKER,
+    StaticSiteOptions,
+    generate_static_report_site,
+)
 
 
 runner = CliRunner()
@@ -140,7 +144,7 @@ def test_missing_and_corrupt_reports_are_listed_as_unavailable(
 def test_force_overwrite_behavior(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     site = tmp_path / "site"
-    site.mkdir()
+    generate_static_report_site(StaticSiteOptions(output=site))
     (site / "old.txt").write_text("old", encoding="utf-8")
 
     with pytest.raises(FileExistsError):
@@ -150,6 +154,76 @@ def test_force_overwrite_behavior(tmp_path: Path, monkeypatch) -> None:
 
     assert not (site / "old.txt").exists()
     assert (site / "index.html").exists()
+    assert (site / SITE_OUTPUT_MARKER).is_file()
+
+
+def test_force_rejects_non_site_directory_without_deleting_contents(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    output = tmp_path / "not-a-site"
+    output.mkdir()
+    valuable_file = output / "valuable-source.txt"
+    valuable_file.write_text("preserve me", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="without an AgentGuard static-site marker"):
+        generate_static_report_site(StaticSiteOptions(output=output, force=True))
+
+    assert valuable_file.read_text(encoding="utf-8") == "preserve me"
+
+
+@pytest.mark.parametrize("target_kind", ["cwd", "reports_parent", "filesystem_root"])
+def test_force_rejects_broad_targets_without_deleting_contents(
+    tmp_path: Path,
+    monkeypatch,
+    target_kind: str,
+) -> None:
+    project = tmp_path / "project"
+    reports_root = project / ".agentguard"
+    reports_root.mkdir(parents=True)
+    valuable_file = project / "valuable-source.txt"
+    valuable_file.write_text("preserve me", encoding="utf-8")
+    monkeypatch.chdir(project)
+    targets = {
+        "cwd": project,
+        "reports_parent": tmp_path,
+        "filesystem_root": Path(project.anchor),
+    }
+
+    with pytest.raises(ValueError):
+        generate_static_report_site(
+            StaticSiteOptions(
+                output=targets[target_kind],
+                reports_root=reports_root,
+                force=True,
+            )
+        )
+
+    assert valuable_file.read_text(encoding="utf-8") == "preserve me"
+
+
+def test_force_rejects_repository_root_without_deleting_contents(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    (repository / ".git").mkdir()
+    valuable_file = repository / "valuable-source.txt"
+    valuable_file.write_text("preserve me", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="repository root"):
+        generate_static_report_site(
+            StaticSiteOptions(
+                output=repository,
+                reports_root=tmp_path / "artifacts",
+                force=True,
+            )
+        )
+
+    assert valuable_file.read_text(encoding="utf-8") == "preserve me"
 
 
 def test_output_path_safety_rejects_reports_root_child(
@@ -177,6 +251,8 @@ def test_static_assets_generated(tmp_path: Path, monkeypatch) -> None:
 
 def test_cli_exit_codes(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
+    valuable_file = tmp_path / "valuable-source.txt"
+    valuable_file.write_text("preserve me", encoding="utf-8")
 
     ok = runner.invoke(app, ["reports", "site", "--output", str(tmp_path / "site")])
     exists = runner.invoke(app, ["reports", "site", "--output", str(tmp_path / "site")])
@@ -184,12 +260,15 @@ def test_cli_exit_codes(tmp_path: Path, monkeypatch) -> None:
         app,
         ["reports", "site", "--output", str(tmp_path / ".agentguard/site")],
     )
+    broad = runner.invoke(app, ["reports", "site", "--output", ".", "--force"])
 
     assert ok.exit_code == 0
     assert "Static report site:" in ok.output
     assert "incidents: 0" in ok.output
     assert exists.exit_code == 2
     assert unsafe.exit_code == 2
+    assert broad.exit_code == 2
+    assert valuable_file.read_text(encoding="utf-8") == "preserve me"
 
 
 def test_includes_traces_and_diagnostics_when_requested(
