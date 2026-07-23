@@ -66,6 +66,65 @@ def test_missing_command_list_uses_shlex_split(tmp_path: Path) -> None:
     assert events[0].blocked is False
 
 
+def test_unmatched_quote_without_command_list_is_ignored(tmp_path: Path) -> None:
+    (tmp_path / ".agentguard_agent_events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "command_attempt",
+                "command_text": 'echo "unterminated',
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert read_agent_events(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [None, "echo unsafe", 42, {"program": "echo"}, ["echo", 42]],
+)
+def test_wrong_command_types_are_ignored(
+    tmp_path: Path,
+    command: object,
+) -> None:
+    (tmp_path / ".agentguard_agent_events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "command_attempt",
+                "command": command,
+                "command_text": "echo fallback must not run",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert read_agent_events(tmp_path) == []
+
+
+def test_valid_command_list_accepts_unusual_display_quoting(tmp_path: Path) -> None:
+    command_text = 'printf "%s" "unterminated'
+    (tmp_path / ".agentguard_agent_events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "command_attempt",
+                "command": ["printf", "%s", "safe"],
+                "command_text": command_text,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    events = read_agent_events(tmp_path)
+
+    assert len(events) == 1
+    assert events[0].command == ["printf", "%s", "safe"]
+    assert events[0].command_text == command_text
+
+
 def test_malformed_json_line_is_ignored(tmp_path: Path) -> None:
     (tmp_path / ".agentguard_agent_events.jsonl").write_text(
         "{not json}\n"
@@ -82,6 +141,51 @@ def test_malformed_json_line_is_ignored(tmp_path: Path) -> None:
     events = read_agent_events(tmp_path)
 
     assert [event.command_text for event in events] == ["echo ok"]
+
+
+def test_mixed_valid_and_invalid_lines_retain_only_valid_events(
+    tmp_path: Path,
+) -> None:
+    event_lines = [
+        "{not json}",
+        json.dumps(
+            {
+                "type": "command_attempt",
+                "command_text": 'echo "unterminated',
+            }
+        ),
+        json.dumps(
+            {
+                "type": "command_attempt",
+                "command": "echo wrong type",
+                "command_text": "echo wrong type",
+            }
+        ),
+        json.dumps(
+            {
+                "type": "command_attempt",
+                "command_text": "echo fallback",
+            }
+        ),
+        json.dumps(
+            {
+                "type": "command_attempt",
+                "command": ["echo", "argv"],
+                "command_text": 'echo "unusual',
+            }
+        ),
+    ]
+    (tmp_path / ".agentguard_agent_events.jsonl").write_text(
+        "\n".join(event_lines) + "\n",
+        encoding="utf-8",
+    )
+
+    events = read_agent_events(tmp_path)
+
+    assert [event.command for event in events] == [
+        ["echo", "fallback"],
+        ["echo", "argv"],
+    ]
 
 
 def test_unsupported_event_type_is_ignored(tmp_path: Path) -> None:
