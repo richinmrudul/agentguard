@@ -261,9 +261,15 @@ def _command_attempt_event(
     if not isinstance(command_text, str) or not command_text:
         return None
 
-    command = _string_list(data.get("command"))
-    if command is None:
-        command = shlex.split(command_text)
+    if "command" in data:
+        command = _string_list(data["command"])
+        if command is None:
+            return None
+    else:
+        try:
+            command = shlex.split(command_text)
+        except ValueError:
+            return None
 
     blocked = data.get("blocked", False)
     if not isinstance(blocked, bool):
