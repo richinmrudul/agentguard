@@ -70,7 +70,7 @@ class AgentCommandAgent(Agent):
                 f"{shlex.join(display_argv)}"
             )
         else:
-            command_text = f"agent command: {raw_command_text}"
+            command_text = f"agent command: {shlex.join(display_argv)}"
         workdir = self._workdir(repo_dir)
         decision = evaluate_command_policy(
             command_text=(
