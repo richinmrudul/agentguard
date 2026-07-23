@@ -4,6 +4,10 @@ from typing import Optional, Union
 
 from agentguard.io import atomic_write_json
 
+
+MAX_EXTENDED_COMMAND_EVENTS = 201
+
+
 @dataclass
 class CommandEvent:
     command: list[str]
@@ -50,7 +54,7 @@ class CommandTracker:
         return [event.command_text for event in self._events]
 
     def extend(self, events: list[CommandEvent]) -> None:
-        self._events.extend(events)
+        self._events.extend(events[:MAX_EXTENDED_COMMAND_EVENTS])
 
     def record_executed(
         self,

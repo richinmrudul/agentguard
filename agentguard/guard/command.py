@@ -1,4 +1,3 @@
-import json
 import threading
 import time
 from dataclasses import dataclass, field
@@ -12,8 +11,14 @@ from agentguard.guard.filesystem import (
     GuardMode,
     ProcessController,
 )
-from agentguard.instrumentation.agent_event_reader import DEFAULT_AGENT_EVENT_FILE
+from agentguard.instrumentation.agent_event_reader import (
+    DEFAULT_AGENT_EVENT_FILE,
+    AgentEventStreamReader,
+)
 from agentguard.policy.command_policy import evaluate_command_policy
+
+
+MAX_RETAINED_COMMAND_VIOLATIONS = 100
 
 
 @dataclass(frozen=True)
@@ -39,6 +44,10 @@ class CommandGuardSummary:
     kill_required: bool = False
     graceful_timeout_seconds: float = DEFAULT_GRACEFUL_TIMEOUT_SECONDS
     event_file: str = DEFAULT_AGENT_EVENT_FILE
+    instrumentation_incomplete: bool = False
+    instrumentation_diagnostic: Optional[str] = None
+    events_dropped: int = 0
+    violations_dropped: int = 0
 
 
 class RuntimeCommandGuard:
@@ -60,9 +69,10 @@ class RuntimeCommandGuard:
         self.poll_interval_seconds = poll_interval_seconds
         self.event_file_name = event_file_name
         self.time_source = time_source
-        self._event_path = self.repo_dir / event_file_name
-        self._offset = 0
-        self._buffer = ""
+        self._reader = AgentEventStreamReader(
+            self.repo_dir,
+            event_file_name,
+        )
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -93,9 +103,15 @@ class RuntimeCommandGuard:
         return self.summary()
 
     def scan_once(self) -> list[CommandGuardViolation]:
-        events = self._read_new_events()
+        batch = self._reader.read_new()
+        events = batch.events
         violations = self._violations_for_events(events)
-        self._record_scan(len(events), violations)
+        self._record_scan(
+            len(events),
+            violations,
+            instrumentation_diagnostic=batch.diagnostic,
+            events_dropped=batch.events_dropped,
+        )
         return violations
 
     def summary(self) -> CommandGuardSummary:
@@ -107,39 +123,6 @@ class RuntimeCommandGuard:
             self.scan_once()
             if self.summary().terminated_agent:
                 return
-
-    def _read_new_events(self) -> list[dict[str, object]]:
-        try:
-            with self._event_path.open("r", encoding="utf-8") as file:
-                file.seek(self._offset)
-                chunk = file.read()
-                self._offset = file.tell()
-        except FileNotFoundError:
-            return []
-        except OSError:
-            return []
-
-        if not chunk:
-            return []
-        text = self._buffer + chunk
-        if text.endswith("\n"):
-            lines = text.splitlines()
-            self._buffer = ""
-        else:
-            lines = text.splitlines()
-            self._buffer = lines.pop() if lines else text
-
-        events: list[dict[str, object]] = []
-        for line in lines:
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(data, dict):
-                continue
-            if data.get("type") == "command_attempt":
-                events.append(data)
-        return events
 
     def _violations_for_events(
         self,
@@ -182,6 +165,9 @@ class RuntimeCommandGuard:
         self,
         event_count: int,
         violations: list[CommandGuardViolation],
+        *,
+        instrumentation_diagnostic: Optional[str],
+        events_dropped: int,
     ) -> None:
         with self._lock:
             existing = list(self._summary.violations)
@@ -189,7 +175,7 @@ class RuntimeCommandGuard:
                 (item.violation_type, item.command_text, tuple(item.matched_patterns))
                 for item in existing
             }
-            new_violations = [
+            candidate_violations = [
                 item
                 for item in violations
                 if (
@@ -199,20 +185,30 @@ class RuntimeCommandGuard:
                 )
                 not in known
             ]
+            available = max(
+                0,
+                MAX_RETAINED_COMMAND_VIOLATIONS - len(existing),
+            )
+            new_violations = candidate_violations[:available]
+            violations_dropped = (
+                self._summary.violations_dropped
+                + len(candidate_violations)
+                - len(new_violations)
+            )
             all_violations = [*existing, *new_violations]
-            triggered = bool(all_violations)
+            triggered = bool(all_violations or candidate_violations)
             first = self._summary.first_violation_time
-            if first is None and new_violations:
-                first = new_violations[0].observed_at
+            if first is None and candidate_violations:
+                first = candidate_violations[0].observed_at
             terminated = self._summary.terminated_agent
             if (
                 self.mode == GuardMode.ENFORCE
-                and new_violations
+                and candidate_violations
                 and self.process_controller is not None
             ):
                 terminated = True
                 self.process_controller.request_termination(
-                    f"Online command guard: {new_violations[0].message}"
+                    f"Online command guard: {candidate_violations[0].message}"
                 )
             self._summary = CommandGuardSummary(
                 mode=self.mode.value,
@@ -234,6 +230,10 @@ class RuntimeCommandGuard:
                     else DEFAULT_GRACEFUL_TIMEOUT_SECONDS
                 ),
                 event_file=self.event_file_name,
+                instrumentation_incomplete=instrumentation_diagnostic is not None,
+                instrumentation_diagnostic=instrumentation_diagnostic,
+                events_dropped=events_dropped,
+                violations_dropped=violations_dropped,
             )
 
     def _elapsed_seconds(self) -> float:

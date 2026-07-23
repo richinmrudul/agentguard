@@ -2079,6 +2079,14 @@ def _command_guard_summary_from_dict(data: object):
         kill_required=bool(data.get("kill_required")),
         graceful_timeout_seconds=float(data.get("graceful_timeout_seconds") or 0.0),
         event_file=str(data.get("event_file") or ".agentguard_agent_events.jsonl"),
+        instrumentation_incomplete=bool(data.get("instrumentation_incomplete")),
+        instrumentation_diagnostic=(
+            str(data["instrumentation_diagnostic"])
+            if data.get("instrumentation_diagnostic")
+            else None
+        ),
+        events_dropped=int(data.get("events_dropped") or 0),
+        violations_dropped=int(data.get("violations_dropped") or 0),
     )
 
 
