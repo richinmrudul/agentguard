@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
+from agentguard.artifact_paths import artifact_directory, validate_artifact_id
 from agentguard.config.loader import load_config
 from agentguard.config.yaml import load_yaml
 from agentguard.core.baseline import BaselineComparison, compare_suite_to_baseline
@@ -121,7 +122,10 @@ def _json_default(value: Any) -> str:
 
 def _suite_dir(suite_id: str, suites_root: Path) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
-    return suites_root / f"{suite_id}-{timestamp}-{uuid4().hex[:8]}"
+    return artifact_directory(
+        suites_root,
+        f"{suite_id}-{timestamp}-{uuid4().hex[:8]}",
+    )
 
 
 def _required_string(data: dict[str, Any], key: str) -> str:
@@ -174,6 +178,7 @@ def load_suite_config(
         raise ValueError("Suite config must be a YAML mapping.")
 
     suite_id = _required_string(data, "suite_id")
+    validate_artifact_id(suite_id, "Suite field 'suite_id'")
     description = _required_string(data, "description")
     raw_runs = data.get("runs")
     if not isinstance(raw_runs, list) or not raw_runs:

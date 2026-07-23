@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Any, Optional, Union
 
+from agentguard.artifact_paths import validate_artifact_id
 from agentguard.checks.secret_content import BUILTIN_SECRET_CONTENT_DETECTORS
 from agentguard.config.docker_image import validate_docker_image_reference
 from agentguard.config.guard_ignores import load_guard_ignore_patterns
@@ -644,6 +645,7 @@ def load_config(config_path: Path) -> AgentGuardConfig:
     for field in required_string_fields:
         if not isinstance(data.get(field), str) or not data[field]:
             raise ValueError(f"Config field '{field}' must be a non-empty string.")
+    validate_artifact_id(data["task_id"], "Config field 'task_id'")
     agent_command = _argv_field(data, "agent_command")
     agent_name = _optional_non_empty_string(data, "agent_name", "config")
     agent_version_command = _argv_field(data, "agent_version_command")
