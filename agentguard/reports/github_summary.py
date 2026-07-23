@@ -1,16 +1,20 @@
 from pathlib import Path
 
 from agentguard.core.result import CheckResult, CiResult
+from agentguard.reports.markdown import markdown_inline_code, markdown_text
 
 
 def _format_check(check: CheckResult) -> str:
-    return f"- [{check.severity}] {check.name}: {check.message}"
+    return (
+        f"- [{markdown_text(check.severity)}] {markdown_text(check.name)}: "
+        f"{markdown_text(check.message)}"
+    )
 
 
 def _file_lines(label: str, paths: list[str], limit: int = 10) -> list[str]:
-    lines = [f"- {label}: {len(paths)}"]
+    lines = [f"- {markdown_text(label)}: {len(paths)}"]
     for path in paths[:limit]:
-        lines.append(f"  - `{path}`")
+        lines.append(f"  - {markdown_inline_code(path)}")
     remaining = len(paths) - limit
     if remaining > 0:
         lines.append(f"  - ...and {remaining} more")
@@ -31,8 +35,8 @@ def write_github_step_summary(result: CiResult, summary_path: Path) -> Path:
     lines = [
         "## AgentGuard CI Report",
         "",
-        f"- Task: `{result.task_id}`",
-        f"- Result: **{result.result}**",
+        f"- Task: {markdown_inline_code(result.task_id)}",
+        f"- Result: **{markdown_text(result.result)}**",
         f"- Score: **{result.score}/100**",
         "",
         "### Failed Checks",
@@ -58,12 +62,14 @@ def write_github_step_summary(result: CiResult, summary_path: Path) -> Path:
             *_file_lines("Deleted", result.diff_summary.deleted_files),
             "",
             "### Reports",
-            f"- JSON: `{result.report_paths.json}`",
-            f"- Markdown: `{result.report_paths.markdown}`",
+            f"- JSON: {markdown_inline_code(result.report_paths.json)}",
+            f"- Markdown: {markdown_inline_code(result.report_paths.markdown)}",
         ]
     )
     if result.report_paths.command_log is not None:
-        lines.append(f"- Command log: `{result.report_paths.command_log}`")
+        lines.append(
+            f"- Command log: {markdown_inline_code(result.report_paths.command_log)}"
+        )
 
     with summary_path.open("a", encoding="utf-8") as file:
         file.write("\n".join(lines) + "\n")

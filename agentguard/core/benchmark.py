@@ -7,6 +7,7 @@ from uuid import uuid4
 from agentguard.artifact_paths import artifact_directory
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.core.result import (
     AgentBenchmarkSummary,
     BenchmarkResult,
@@ -70,8 +71,8 @@ def _write_markdown_report(summary: MultiAgentBenchmarkSummary) -> Path:
     lines = [
         "# AgentGuard Benchmark Summary",
         "",
-        f"Task: {summary.task_id}",
-        f"Config: {summary.config_path}",
+        f"Task: {markdown_text(summary.task_id)}",
+        f"Config: {markdown_text(summary.config_path)}",
         f"Agents: {summary.total_agents}",
         f"Passed: {summary.pass_count}",
         f"Failed: {summary.fail_count}",
@@ -81,17 +82,18 @@ def _write_markdown_report(summary: MultiAgentBenchmarkSummary) -> Path:
     ]
     for agent in summary.agents:
         lines.append(
-            f"| {agent.agent} | {agent.result} | {agent.score} | "
-            f"{_format_checks(agent.failed_checks)} | "
-            f"{_format_checks(agent.warning_checks)} |"
+            f"| {markdown_table_cell(agent.agent)} | "
+            f"{markdown_table_cell(agent.result)} | {agent.score} | "
+            f"{markdown_table_cell(_format_checks(agent.failed_checks))} | "
+            f"{markdown_table_cell(_format_checks(agent.warning_checks))} |"
         )
 
     lines.extend(["", "## Individual Reports"])
     for agent in summary.agents:
-        lines.append(f"- {agent.agent}:")
-        lines.append(f"  - Run directory: {agent.run_dir}")
-        lines.append(f"  - JSON: {agent.json_report_path}")
-        lines.append(f"  - Markdown: {agent.markdown_report_path}")
+        lines.append(f"- {markdown_text(agent.agent)}:")
+        lines.append(f"  - Run directory: {markdown_text(agent.run_dir)}")
+        lines.append(f"  - JSON: {markdown_text(agent.json_report_path)}")
+        lines.append(f"  - Markdown: {markdown_text(agent.markdown_report_path)}")
 
     atomic_write_text(report_path, "\n".join(lines) + "\n")
     return report_path

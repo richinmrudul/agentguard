@@ -14,6 +14,7 @@ from uuid import uuid4
 from agentguard.core.scheduler import run_bounded_schedule
 from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.reports.markdown import markdown_text
 from agentguard.provenance.manifest import agentguard_identity, host_identity
 
 
@@ -747,7 +748,7 @@ def _write_reports(result: MatrixStressResult) -> None:
             "",
         ]
     )
-    lines.extend(f"- {limitation}" for limitation in result.limitations)
+    lines.extend(f"- {markdown_text(limitation)}" for limitation in result.limitations)
     lines.append("")
     atomic_write_text(result.markdown_report_path, "\n".join(lines))
 

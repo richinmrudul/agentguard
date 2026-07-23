@@ -18,6 +18,7 @@ from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
 from agentguard.repo.git_diff import collect_diff, collect_diff_between_refs
 from agentguard.provenance.manifest import sanitize_text
+from agentguard.reports.markdown import markdown_text
 from agentguard.scoring.scorer import score_checks
 
 
@@ -84,14 +85,14 @@ def _write_markdown_report(result: CiResult) -> Path:
     lines = [
         "# AgentGuard CI Report",
         "",
-        f"Task: {result.task_id}",
-        f"Result: {result.result}",
+        f"Task: {markdown_text(result.task_id)}",
+        f"Result: {markdown_text(result.result)}",
         f"Score: {result.score}/100",
-        f"Config: {result.config_path}",
-        f"Repository: {result.repo_dir}",
+        f"Config: {markdown_text(result.config_path)}",
+        f"Repository: {markdown_text(result.repo_dir)}",
         "",
         "## Test Result",
-        f"- Command: {result.test_result.command}",
+        f"- Command: {markdown_text(result.test_result.command)}",
         f"- Exit code: {result.test_result.exit_code}",
         "",
         "## Diff Summary",
@@ -105,23 +106,24 @@ def _write_markdown_report(result: CiResult) -> Path:
     ]
     for check in result.check_results:
         lines.append(
-            f"- {_status(check.passed)} [{check.severity}] "
-            f"{check.name}: {check.message}"
+            f"- {_status(check.passed)} [{markdown_text(check.severity)}] "
+            f"{markdown_text(check.name)}: {markdown_text(check.message)}"
         )
         if not check.passed and check.evidence:
             lines.append("  Evidence:")
-            lines.extend(f"  - {evidence}" for evidence in check.evidence)
+            lines.extend(f"  - {markdown_text(evidence)}" for evidence in check.evidence)
 
     lines.extend(["", "## Modified Files"])
     if result.diff_summary.changed_files:
-        lines.extend(f"- {path}" for path in result.diff_summary.changed_files)
+        lines.extend(f"- {markdown_text(path)}" for path in result.diff_summary.changed_files)
     else:
         lines.append("- None")
 
     lines.extend(["", "## Timeline"])
     if result.timeline:
         lines.extend(
-            f"{event.order}. [{event.event_type}] {event.message}"
+            f"{event.order}. [{markdown_text(event.event_type)}] "
+            f"{markdown_text(event.message)}"
             for event in result.timeline
         )
     else:
@@ -129,11 +131,16 @@ def _write_markdown_report(result: CiResult) -> Path:
 
     lines.extend(["", "## Command Events"])
     if result.report_paths.command_log is not None:
-        lines.append(f"Command log: {result.report_paths.command_log}")
+        lines.append(
+            f"Command log: {markdown_text(result.report_paths.command_log)}"
+        )
     if result.command_events:
         for event in result.command_events:
             status = "executed" if event.executed else "blocked"
-            lines.append(f"- [{status}] {event.command_text}{_event_flags(event)}")
+            lines.append(
+                f"- [{status}] {markdown_text(event.command_text)}"
+                f"{markdown_text(_event_flags(event))}"
+            )
     else:
         lines.append("- None")
 
@@ -141,8 +148,8 @@ def _write_markdown_report(result: CiResult) -> Path:
         [
             "",
             "## Reports",
-            f"- JSON: {result.report_paths.json}",
-            f"- Markdown: {result.report_paths.markdown}",
+            f"- JSON: {markdown_text(result.report_paths.json)}",
+            f"- Markdown: {markdown_text(result.report_paths.markdown)}",
             "",
         ]
     )

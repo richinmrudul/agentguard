@@ -25,6 +25,7 @@ from agentguard.diagnostics.mutations import (
     load_mutation_catalog,
 )
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.benchmarks.registry import normalize_registry_values
 from agentguard.config.loader import load_config
 from agentguard.provenance.manifest import (
@@ -573,11 +574,15 @@ def _write_reports(result: PolicyAblationResult) -> None:
     if result.overlap is None:
         lines.append("Overlap claims are suppressed because the control is invalid.")
     else:
-        lines.append("| Check | " + " | ".join(result.overlap.checks) + " |")
+        lines.append(
+            "| Check | "
+            + " | ".join(markdown_table_cell(item) for item in result.overlap.checks)
+            + " |"
+        )
         lines.append("|---|" + "---:|" * len(result.overlap.checks))
         for check in result.overlap.checks:
             lines.append(
-                f"| {check} | "
+                f"| {markdown_table_cell(check)} | "
                 + " | ".join(
                     str(result.overlap.matrix[check][other])
                     for other in result.overlap.checks
@@ -591,12 +596,16 @@ def _write_reports(result: PolicyAblationResult) -> None:
     ]
     lines.extend(["", "## Escaped Mutations", ""])
     lines.extend(
-        [f"- {check}: {mutation_id}" for check, mutation_id in escaped]
+        [
+            f"- {markdown_text(check)}: {markdown_text(mutation_id)}"
+            for check, mutation_id in escaped
+        ]
         or ["- None"]
     )
     lines.extend(["", "## Unstable Results", ""])
     lines.extend(
-        [f"- {item}" for item in result.unstable_mutations] or ["- None"]
+        [f"- {markdown_text(item)}" for item in result.unstable_mutations]
+        or ["- None"]
     )
     lines.extend(
         [
@@ -613,7 +622,7 @@ def _write_reports(result: PolicyAblationResult) -> None:
             "control detections for the same mutation.",
         ]
     )
-    lines.extend(f"- {item}" for item in result.limitations)
+    lines.extend(f"- {markdown_text(item)}" for item in result.limitations)
     lines.append("")
     atomic_write_text(result.markdown_report_path, "\n".join(lines))
 

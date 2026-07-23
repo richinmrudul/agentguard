@@ -20,6 +20,7 @@ from agentguard.core.result import BenchmarkResult
 from agentguard.core.timing import StageTimingRecorder
 from agentguard.instrumentation.test_runner import _build_test_env
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.provenance.manifest import agentguard_identity, sha256_file
 from agentguard.repo.internal_artifacts import is_internal_artifact
 
@@ -379,9 +380,9 @@ def _markdown_report(data: dict[str, object]) -> str:
     lines = [
         "# AgentGuard Instrumentation Overhead",
         "",
-        f"- Created at: {data['created_at']}",
-        f"- Config: {data['config']['path']}",
-        f"- Agent: {data['agent']}",
+        f"- Created at: {markdown_text(data['created_at'])}",
+        f"- Config: {markdown_text(data['config']['path'])}",
+        f"- Agent: {markdown_text(data['agent'])}",
         f"- Iterations: {data['iterations']}",
         f"- Warmups: {data['warmups']}",
         "",
@@ -403,7 +404,8 @@ def _markdown_report(data: dict[str, object]) -> str:
     for stage, values in stages.items():
         assert isinstance(values, dict)
         lines.append(
-            f"{stage} | {float(values['mean_seconds']):.6f} | "
+            f"{markdown_table_cell(stage)} | "
+            f"{float(values['mean_seconds']):.6f} | "
             f"{float(values['percentage_of_mean_total']):.2f}%"
         )
     lines.extend(

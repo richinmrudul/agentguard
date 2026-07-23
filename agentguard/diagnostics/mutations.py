@@ -22,6 +22,7 @@ from agentguard.core.result import CheckResult, CommandResult, DiffSummary
 from agentguard.instrumentation.command_tracker import CommandEvent, CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.provenance.manifest import (
     agentguard_identity,
     host_identity,
@@ -834,7 +835,7 @@ def _write_reports(result: MutationAuditResult) -> None:
     )
     for category, metrics in result.per_category.items():
         lines.append(
-            f"| {category} | {metrics['total_mutations']} | "
+            f"| {markdown_table_cell(category)} | {metrics['total_mutations']} | "
             f"{metrics['expected_detections']} | "
             f"{metrics['observed_expected_detections']} | "
             f"{metrics['missed_detections']} | "
@@ -865,24 +866,30 @@ def _write_reports(result: MutationAuditResult) -> None:
             ", ".join(mutation.forbidden_detections) or "-",
             ", ".join(mutation.unexpected_detections) or "-",
         ]
-        lines.append("| " + " | ".join(values) + " |")
+        lines.append(
+            "| " + " | ".join(markdown_table_cell(value) for value in values) + " |"
+        )
     lines.extend(["", "## Evidence", ""])
     for mutation in result.mutations:
-        lines.append(f"### {mutation.id}")
+        lines.append(f"### {markdown_text(mutation.id)}")
         lines.append("")
         lines.append(
-            f"- Modified files: {', '.join(mutation.modified_files) or '-'}"
+            "- Modified files: "
+            f"{markdown_text(', '.join(mutation.modified_files) or '-')}"
         )
         lines.append(f"- Duration: {mutation.duration_seconds:.6f}s")
         if mutation.runtime_error:
-            lines.append(f"- Runtime error: {mutation.runtime_error}")
+            lines.append(f"- Runtime error: {markdown_text(mutation.runtime_error)}")
         for check, evidence in mutation.evidence.items():
-            lines.append(f"- {check}: {', '.join(evidence) or '(no evidence)'}")
+            lines.append(
+                f"- {markdown_text(check)}: "
+                f"{markdown_text(', '.join(evidence) or '(no evidence)')}"
+            )
         if not mutation.evidence and not mutation.runtime_error:
             lines.append("- Failed-check evidence: None")
         lines.append("")
     lines.extend(["## Limitations", ""])
-    lines.extend(f"- {limitation}" for limitation in result.limitations)
+    lines.extend(f"- {markdown_text(limitation)}" for limitation in result.limitations)
     lines.append("")
     atomic_write_text(result.markdown_report_path, "\n".join(lines))
 

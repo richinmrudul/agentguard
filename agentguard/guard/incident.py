@@ -8,6 +8,7 @@ from agentguard.guard.command import CommandGuardSummary
 from agentguard.guard.filesystem import LiveGuardSummary, LiveGuardViolation
 from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.provenance.manifest import sanitize_text
+from agentguard.reports.markdown import markdown_table_cell, markdown_text
 
 
 INCIDENT_SCHEMA_VERSION = 1
@@ -161,12 +162,12 @@ def render_guard_incident_markdown(incident: GuardIncident) -> str:
     lines = [
         "# AgentGuard Guard Incident",
         "",
-        f"- Run: {incident.run_id}",
-        f"- Task: {incident.task_id}",
-        f"- Agent: {incident.agent}",
-        f"- Mode: {incident.guard_mode}",
+        f"- Run: {markdown_text(incident.run_id)}",
+        f"- Task: {markdown_text(incident.task_id)}",
+        f"- Agent: {markdown_text(incident.agent)}",
+        f"- Mode: {markdown_text(incident.guard_mode)}",
         f"- Status: {status}",
-        f"- Blocking guard: {incident.blocking_guard or '-'}",
+        f"- Blocking guard: {markdown_text(incident.blocking_guard or '-')}",
         f"- Time to first violation: {_fmt_ms(incident.time_to_first_violation_ms)}",
         f"- Time to block: {_fmt_ms(incident.time_to_block_ms)}",
         "",
@@ -177,22 +178,25 @@ def render_guard_incident_markdown(incident: GuardIncident) -> str:
     for violation in incident.violations:
         lines.append(
             "| "
-            f"{violation.guard_type} | "
-            f"{violation.policy} | "
-            f"{violation.severity} | "
-            f"{violation.action} | "
+            f"{markdown_table_cell(violation.guard_type)} | "
+            f"{markdown_table_cell(violation.policy)} | "
+            f"{markdown_table_cell(violation.severity)} | "
+            f"{markdown_table_cell(violation.action)} | "
             f"{_fmt_ms(violation.elapsed_ms)} | "
-            f"{_escape_table(violation.evidence_summary)} |"
+            f"{markdown_table_cell(violation.evidence_summary)} |"
         )
     lines.extend(
         [
             "",
             "## Artifacts",
-            f"- JSON report: {incident.artifacts.get('report_json') or '-'}",
-            f"- Markdown report: {incident.artifacts.get('report_markdown') or '-'}",
-            f"- Command log: {incident.artifacts.get('command_log') or '-'}",
-            f"- Manifest: {incident.artifacts.get('manifest') or '-'}",
-            f"- Trace: {incident.artifacts.get('trace') or '-'}",
+            "- JSON report: "
+            f"{markdown_text(incident.artifacts.get('report_json') or '-')}",
+            "- Markdown report: "
+            f"{markdown_text(incident.artifacts.get('report_markdown') or '-')}",
+            "- Command log: "
+            f"{markdown_text(incident.artifacts.get('command_log') or '-')}",
+            f"- Manifest: {markdown_text(incident.artifacts.get('manifest') or '-')}",
+            f"- Trace: {markdown_text(incident.artifacts.get('trace') or '-')}",
             "",
             "## Limitations",
             "- Filesystem guard uses polling and may miss very short-lived changes.",
@@ -354,7 +358,3 @@ def _action(action: str) -> str:
 
 def _path(path: Optional[Path]) -> Optional[str]:
     return str(path) if path is not None else None
-
-
-def _escape_table(value: str) -> str:
-    return value.replace("|", "\\|").replace("\n", " ")

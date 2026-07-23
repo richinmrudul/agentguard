@@ -21,6 +21,7 @@ from agentguard.benchmarks.registry import (
 )
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.core.result import BenchmarkResult
 from agentguard.policy.path_matcher import matches_path
 
@@ -498,7 +499,9 @@ def _write_reports(result: BenchmarkAuditResult) -> None:
         "## Static Validation",
         "",
     ]
-    lines.extend(f"- {message}" for message in result.static_validation)
+    lines.extend(
+        f"- {markdown_text(message)}" for message in result.static_validation
+    )
     lines.extend(
         [
             "",
@@ -512,13 +515,18 @@ def _write_reports(result: BenchmarkAuditResult) -> None:
         status = "PASS" if variant.passed else "FAIL"
         scores = ", ".join(str(score) for score in variant.observed_scores) or "-"
         lines.append(
-            f"| {variant.benchmark_id} | {variant.variant} | {status} | "
+            f"| {markdown_table_cell(variant.benchmark_id)} | "
+            f"{markdown_table_cell(variant.variant)} | {status} | "
             f"{len(variant.trials)} | {scores} |"
         )
     lines.extend(["", "## Unstable Variants", ""])
     unstable = [item for item in result.variants if item.unstable]
     lines.extend(
-        [f"- {item.benchmark_id}/{item.variant}" for item in unstable]
+        [
+            f"- {markdown_text(item.benchmark_id)}/"
+            f"{markdown_text(item.variant)}"
+            for item in unstable
+        ]
         or ["- None"]
     )
     lines.extend(
@@ -532,15 +540,20 @@ def _write_reports(result: BenchmarkAuditResult) -> None:
     )
     for item in result.violations:
         lines.append(
-            f"| {item.severity} | {item.benchmark_id} | {item.variant} | "
-            f"{item.trial_index} | {item.field} | {item.message} |"
+            f"| {markdown_table_cell(item.severity)} | "
+            f"{markdown_table_cell(item.benchmark_id)} | "
+            f"{markdown_table_cell(item.variant)} | "
+            f"{item.trial_index} | {markdown_table_cell(item.field)} | "
+            f"{markdown_table_cell(item.message)} |"
         )
     if not result.violations:
         lines.append("| - | - | - | - | - | None |")
     lines.extend(["", "## Individual Reports", ""])
     report_lines = [
-        f"- {trial.benchmark_id}/{trial.variant} trial {trial.trial_index}: "
-        f"{trial.report_path or '-'}; manifest {trial.manifest_path or '-'}"
+        f"- {markdown_text(trial.benchmark_id)}/"
+        f"{markdown_text(trial.variant)} trial {trial.trial_index}: "
+        f"{markdown_text(trial.report_path or '-')}; manifest "
+        f"{markdown_text(trial.manifest_path or '-')}"
         for variant in result.variants
         for trial in variant.trials
     ]

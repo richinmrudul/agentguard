@@ -2,6 +2,7 @@ from pathlib import Path
 
 from agentguard.core.result import BenchmarkResult
 from agentguard.io import atomic_write_text
+from agentguard.reports.markdown import markdown_text
 
 
 def _status(passed: bool) -> str:
@@ -40,15 +41,15 @@ def _sandbox_lines(result: BenchmarkResult) -> list[str]:
     lines = [
         "",
         "## Sandbox",
-        f"- Type: {sandbox.type}",
+        f"- Type: {_escape_markdown(sandbox.type)}",
         f"- Timeout: {sandbox.timeout_seconds}s",
         f"- Max output: {sandbox.max_output_bytes} bytes",
     ]
     if sandbox.type == "docker":
         lines.extend(
             [
-                f"- Network: {sandbox.network}",
-                f"- Memory: {sandbox.memory or 'unlimited'}",
+                f"- Network: {_escape_markdown(sandbox.network)}",
+                f"- Memory: {_escape_markdown(sandbox.memory or 'unlimited')}",
                 f"- CPUs: {sandbox.cpus if sandbox.cpus is not None else 'unlimited'}",
                 f"- Read-only root: {sandbox.read_only}",
             ]
@@ -63,19 +64,21 @@ def _benchmark_lines(result: BenchmarkResult) -> list[str]:
 
     lines = ["", "## Benchmark"]
     if benchmark.id:
-        lines.append(f"- ID: {benchmark.id}")
+        lines.append(f"- ID: {_escape_markdown(benchmark.id)}")
     if benchmark.version:
-        lines.append(f"- Version: {benchmark.version}")
+        lines.append(f"- Version: {_escape_markdown(benchmark.version)}")
     if benchmark.category:
-        lines.append(f"- Category: {benchmark.category}")
+        lines.append(f"- Category: {_escape_markdown(benchmark.category)}")
     if benchmark.difficulty:
-        lines.append(f"- Difficulty: {benchmark.difficulty}")
+        lines.append(f"- Difficulty: {_escape_markdown(benchmark.difficulty)}")
     if benchmark.tags:
-        lines.append(f"- Tags: {', '.join(benchmark.tags)}")
+        lines.append(f"- Tags: {_escape_markdown(', '.join(benchmark.tags))}")
     if benchmark.expected_behavior:
-        lines.append(f"- Expected behavior: {benchmark.expected_behavior}")
+        lines.append(
+            f"- Expected behavior: {_escape_markdown(benchmark.expected_behavior)}"
+        )
     if benchmark.failure_mode:
-        lines.append(f"- Failure mode: {benchmark.failure_mode}")
+        lines.append(f"- Failure mode: {_escape_markdown(benchmark.failure_mode)}")
     return lines
 
 
@@ -86,14 +89,14 @@ def _guard_lines(result: BenchmarkResult) -> list[str]:
     lines = [
         "",
         "## Online Filesystem Guard",
-        f"- Mode: {summary.mode}",
+        f"- Mode: {_escape_markdown(summary.mode)}",
         f"- Triggered: {summary.triggered}",
         f"- Terminated agent: {summary.terminated_agent}",
         f"- Kill required: {summary.kill_required}",
         f"- Files observed: {summary.files_observed}",
         f"- Scans: {summary.scan_count}",
         f"- Duration: {summary.monitor_duration_seconds:.3f}s",
-        f"- Filesystem watcher mode: {summary.watcher_mode}",
+        f"- Filesystem watcher mode: {_escape_markdown(summary.watcher_mode)}",
         f"- Filesystem watcher events observed: {summary.watcher_events_observed}",
         "- Filesystem watcher event limit exceeded: "
         f"{summary.watcher_event_limit_exceeded}",
@@ -125,26 +128,25 @@ def _guard_lines(result: BenchmarkResult) -> list[str]:
         lines.append("- Violations:")
         lines.extend(
             "  - "
-            f"{violation.violation_type}: {_escape_markdown(violation.path)} "
-            f"({violation.action}) - {_escape_markdown(violation.message)}"
+            f"{_escape_markdown(violation.violation_type)}: "
+            f"{_escape_markdown(violation.path)} "
+            f"({_escape_markdown(violation.action)}) - "
+            f"{_escape_markdown(violation.message)}"
             for violation in summary.violations
         )
     if summary.watcher_events:
         lines.append("- Watcher events:")
         lines.extend(
             "  - "
-            f"{event.observed_at_sequence}: {event.event_type} "
-            f"{_escape_markdown(event.path)} ({event.source})"
+            f"{event.observed_at_sequence}: {_escape_markdown(event.event_type)} "
+            f"{_escape_markdown(event.path)} ({_escape_markdown(event.source)})"
             for event in summary.watcher_events[:10]
         )
     return lines
 
 
-def _escape_markdown(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace("\r", "\\r").replace("\n", "\\n")
-    for character in "`*_{}[]()#+-.!|>":
-        escaped = escaped.replace(character, f"\\{character}")
-    return escaped
+def _escape_markdown(value: object) -> str:
+    return markdown_text(value)
 
 
 def _command_guard_lines(result: BenchmarkResult) -> list[str]:
@@ -154,14 +156,14 @@ def _command_guard_lines(result: BenchmarkResult) -> list[str]:
     lines = [
         "",
         "## Online Command Guard",
-        f"- Mode: {summary.mode}",
+        f"- Mode: {_escape_markdown(summary.mode)}",
         f"- Triggered: {summary.triggered}",
         f"- Terminated agent: {summary.terminated_agent}",
         f"- Kill required: {summary.kill_required}",
         f"- Events observed: {summary.events_observed}",
         f"- Scans: {summary.scan_count}",
         f"- Duration: {summary.monitor_duration_seconds:.3f}s",
-        f"- Event file: {summary.event_file}",
+        f"- Event file: {_escape_markdown(summary.event_file)}",
     ]
     if summary.first_violation_time is not None:
         lines.append(f"- First violation time: {summary.first_violation_time:.6f}")
@@ -169,9 +171,11 @@ def _command_guard_lines(result: BenchmarkResult) -> list[str]:
         lines.append("- Violations:")
         lines.extend(
             "  - "
-            f"{violation.violation_type}: {violation.command_text} "
-            f"({', '.join(violation.matched_patterns)}; {violation.action}) "
-            f"- {violation.message}"
+            f"{_escape_markdown(violation.violation_type)}: "
+            f"{_escape_markdown(violation.command_text)} "
+            f"({_escape_markdown(', '.join(violation.matched_patterns))}; "
+            f"{_escape_markdown(violation.action)}) "
+            f"- {_escape_markdown(violation.message)}"
             for violation in summary.violations
         )
     return lines
@@ -196,10 +200,11 @@ def _guard_metric_lines(result: BenchmarkResult) -> list[str]:
     if result.report_paths.guard_incident_json is not None:
         lines.extend(
             [
-                f"- Incident JSON: {result.report_paths.guard_incident_json}",
+                "- Incident JSON: "
+                f"{_escape_markdown(result.report_paths.guard_incident_json)}",
                 (
                     "- Incident Markdown: "
-                    f"{result.report_paths.guard_incident_markdown or '-'}"
+                    f"{_escape_markdown(result.report_paths.guard_incident_markdown or '-')}"
                 ),
             ]
         )
@@ -216,21 +221,21 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     lines = [
         "# AgentGuard Report",
         "",
-        f"Task: {result.task_id}",
-        f"Agent: {result.agent}",
-        f"Result: {result.result}",
+        f"Task: {_escape_markdown(result.task_id)}",
+        f"Agent: {_escape_markdown(result.agent)}",
+        f"Result: {_escape_markdown(result.result)}",
         f"Score: {result.score}/100",
         "",
         "## Checks",
     ]
     for check in result.check_results:
         lines.append(
-            f"- {_status(check.passed)} [{check.severity}] "
-            f"{check.name}: {check.message}"
+            f"- {_status(check.passed)} [{_escape_markdown(check.severity)}] "
+            f"{_escape_markdown(check.name)}: {_escape_markdown(check.message)}"
         )
         if not check.passed and check.evidence:
             lines.append("  Evidence:")
-            lines.extend(f"  - {evidence}" for evidence in check.evidence)
+            lines.extend(f"  - {_escape_markdown(evidence)}" for evidence in check.evidence)
 
     lines.extend(_benchmark_lines(result))
     lines.extend(_sandbox_lines(result))
@@ -242,10 +247,13 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
             [
                 "",
                 "## Evaluation Profile",
-                f"- Profile: {result.profile_name} ({result.profile_id})",
-                f"- Model: {result.profile_model or '-'}",
-                f"- Task prompt source: {result.task_prompt_source}",
-                f"- Task prompt SHA-256: {result.task_prompt_sha256}",
+                f"- Profile: {_escape_markdown(result.profile_name)} "
+                f"({_escape_markdown(result.profile_id)})",
+                f"- Model: {_escape_markdown(result.profile_model or '-')}",
+                "- Task prompt source: "
+                f"{_escape_markdown(result.task_prompt_source)}",
+                "- Task prompt SHA-256: "
+                f"{_escape_markdown(result.task_prompt_sha256)}",
             ]
         )
     if result.report_paths.manifest is not None:
@@ -253,32 +261,39 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
             [
                 "",
                 "## Provenance",
-                f"- Execution ID: {result.execution_id or result.run_dir.name}",
-                f"- Manifest: {result.report_paths.manifest}",
-                f"- Trace: {result.report_paths.trace or '-'}",
+                "- Execution ID: "
+                f"{_escape_markdown(result.execution_id or result.run_dir.name)}",
+                f"- Manifest: {_escape_markdown(result.report_paths.manifest)}",
+                f"- Trace: {_escape_markdown(result.report_paths.trace or '-')}",
             ]
         )
         if result.parent_execution_id is not None:
             lines.append(
-                f"- Parent: {result.parent_execution_type or 'execution'} "
-                f"{result.parent_execution_id}"
+                "- Parent: "
+                f"{_escape_markdown(result.parent_execution_type or 'execution')} "
+                f"{_escape_markdown(result.parent_execution_id)}"
             )
 
     lines.extend(["", "## Modified Files"])
     if result.diff_summary.changed_files:
-        lines.extend(f"- {path}" for path in result.diff_summary.changed_files)
+        lines.extend(f"- {_escape_markdown(path)}" for path in result.diff_summary.changed_files)
     else:
         lines.append("- None")
 
     lines.extend(["", "## Timeline"])
     if result.timeline:
-        lines.extend(f"{event.order}. {event.message}" for event in result.timeline)
+        lines.extend(
+            f"{event.order}. {_escape_markdown(event.message)}"
+            for event in result.timeline
+        )
     else:
         lines.append("- None")
 
     lines.extend(["", "## Command Events"])
     if result.report_paths.command_log is not None:
-        lines.append(f"Command log: {result.report_paths.command_log}")
+        lines.append(
+            f"Command log: {_escape_markdown(result.report_paths.command_log)}"
+        )
     if result.command_events:
         for event in result.command_events:
             if event.blocked:
@@ -287,7 +302,10 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
                 status = "executed"
             else:
                 status = "simulated"
-            lines.append(f"- [{status}] {event.command_text}{_event_flags(event)}")
+            lines.append(
+                f"- [{status}] {_escape_markdown(event.command_text)}"
+                f"{_escape_markdown(_event_flags(event))}"
+            )
     else:
         lines.append("- None")
 
@@ -295,10 +313,10 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
         [
             "",
             "## Reports",
-            f"- JSON: {result.report_paths.json}",
-            f"- Markdown: {result.report_paths.markdown}",
-            f"- Manifest: {result.report_paths.manifest or '-'}",
-            f"- Trace: {result.report_paths.trace or '-'}",
+            f"- JSON: {_escape_markdown(result.report_paths.json)}",
+            f"- Markdown: {_escape_markdown(result.report_paths.markdown)}",
+            f"- Manifest: {_escape_markdown(result.report_paths.manifest or '-')}",
+            f"- Trace: {_escape_markdown(result.report_paths.trace or '-')}",
             "",
         ]
     )

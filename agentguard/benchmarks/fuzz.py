@@ -17,6 +17,11 @@ from agentguard.config.schema import (
 from agentguard.core.result import CheckResult, CommandResult, DiffSummary
 from agentguard.instrumentation.command_tracker import CommandEvent
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.reports.markdown import (
+    markdown_inline_code,
+    markdown_table_cell,
+    markdown_text,
+)
 from agentguard.scoring.scorer import score_checks
 
 
@@ -1531,10 +1536,10 @@ def _render_markdown(result: FuzzStudyResult) -> str:
     lines = [
         "# AgentGuard Benchmark Fuzz Study",
         "",
-        f"- Schema: `{result.schema}` v{result.schema_version}",
-        f"- Study ID: `{result.study_id}`",
-        f"- Seed: `{result.seed}`",
-        f"- Dimensions: {', '.join(result.dimensions)}",
+        f"- Schema: {markdown_inline_code(result.schema)} v{result.schema_version}",
+        f"- Study ID: {markdown_inline_code(result.study_id)}",
+        f"- Seed: {markdown_inline_code(result.seed)}",
+        f"- Dimensions: {markdown_text(', '.join(result.dimensions))}",
         f"- Variants: {result.total_variants}",
         f"- Passed/failed: {result.variants_passed}/{result.variants_failed}",
         f"- Controlled detection rate: {result.controlled_detection_rate:.2f}%",
@@ -1548,7 +1553,8 @@ def _render_markdown(result: FuzzStudyResult) -> str:
     ]
     for dimension, summary in result.per_dimension.items():
         lines.append(
-            f"| {dimension} | {summary['variants']} | {summary['runs']} | "
+            f"| {markdown_table_cell(dimension)} | {summary['variants']} | "
+            f"{summary['runs']} | "
             f"{float(summary['pass_rate']):.2f}% |"
         )
     lines.extend(
@@ -1562,7 +1568,8 @@ def _render_markdown(result: FuzzStudyResult) -> str:
     )
     for check in result.per_check:
         lines.append(
-            f"| {check.check} | {check.expected_opportunities} | "
+            f"| {markdown_table_cell(check.check)} | "
+            f"{check.expected_opportunities} | "
             f"{check.observed_detections} | {check.misses} | "
             f"{check.unexpected_detections} |"
         )
@@ -1589,7 +1596,8 @@ def _render_markdown(result: FuzzStudyResult) -> str:
         )
         for item in result.minimized_failures:
             lines.append(
-                f"| {item.variant_id} | {'yes' if item.reproduced else 'no'} | "
+                f"| {markdown_table_cell(item.variant_id)} | "
+                f"{'yes' if item.reproduced else 'no'} | "
                 f"{'yes' if item.failure_preserved else 'no'} | "
                 f"{item.original_complexity.weighted_sum} | "
                 f"{item.minimized_complexity.weighted_sum} | "
@@ -1602,11 +1610,11 @@ def _render_markdown(result: FuzzStudyResult) -> str:
         lines.append("")
         lines.append(
             "Non-minimizable failures: "
-            + ", ".join(result.non_minimizable_failures)
+            + markdown_text(", ".join(result.non_minimizable_failures))
         )
     if result.promotion_paths:
         lines.extend(["", "Promotion paths:"])
-        lines.extend(f"- {path}" for path in result.promotion_paths)
+        lines.extend(f"- {markdown_text(path)}" for path in result.promotion_paths)
     lines.extend(
         [
             "",
@@ -1615,8 +1623,10 @@ def _render_markdown(result: FuzzStudyResult) -> str:
         ]
     )
     for dimension, cases in result.boundary_cases.items():
-        lines.append(f"- {dimension}: {', '.join(cases)}")
+        lines.append(
+            f"- {markdown_text(dimension)}: {markdown_text(', '.join(cases))}"
+        )
     lines.extend(["", "## Limitations", ""])
-    lines.extend(f"- {item}" for item in result.limitations)
+    lines.extend(f"- {markdown_text(item)}" for item in result.limitations)
     lines.append("")
     return "\n".join(lines)
