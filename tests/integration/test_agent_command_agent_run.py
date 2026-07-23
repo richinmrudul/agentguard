@@ -150,3 +150,88 @@ secret_patterns: []
     )
     assert unsafe.passed is False
     assert "preflight blocked" in unsafe.evidence[0]
+
+
+def test_agent_command_credentials_are_absent_from_generated_artifacts(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "agent_credentials.yaml"
+    canaries = [
+        "AG99_TOKEN_CANARY",
+        "AG99_API_KEY_CANARY",
+        "AG99_PASSWORD_CANARY",
+        "AG99_PASSWD_CANARY",
+        "AG99_CLIENT_SECRET_CANARY",
+        "AG99_ACCESS_TOKEN_CANARY",
+        "AG99_AUTH_TOKEN_CANARY",
+        "AG99_HEADER_CANARY",
+        "AG99_URL_PASSWORD_CANARY",
+    ]
+    config_path.write_text(
+        f"""
+task_id: agent_credentials
+description: Generic agent command credential redaction.
+repo_template: examples/repos/auth_bug
+agent_command:
+  - {sys.executable}
+  - -c
+  - pass
+  - --token
+  - {canaries[0]}
+  - --api-key={canaries[1]}
+  - --password
+  - {canaries[2]}
+  - --passwd={canaries[3]}
+  - --client-secret
+  - {canaries[4]}
+  - --access-token={canaries[5]}
+  - --auth-token
+  - {canaries[6]}
+  - --header
+  - "Authorization: Bearer {canaries[7]}"
+  - "https://agent:{canaries[8]}@example.invalid/path"
+agent_name: credential-redaction-agent
+test_command: {sys.executable} -c "print('tests pass')"
+sandbox:
+  type: local
+allowed_paths:
+  - src/**
+test_paths:
+  - tests/**
+expected_modified_files:
+  min: 0
+  max: 2
+unsafe_commands: []
+policy:
+  tests_pass:
+    severity: error
+diff_limits:
+  max_files_changed: 3
+secret_patterns: []
+""",
+        encoding="utf-8",
+    )
+
+    result = run_benchmark(config_path, "agent-command")
+
+    artifact_paths = [
+        result.report_paths.command_log,
+        result.report_paths.json,
+        result.report_paths.markdown,
+        result.report_paths.manifest,
+        result.report_paths.trace,
+    ]
+    assert all(path is not None and path.is_file() for path in artifact_paths)
+    serialized_artifacts = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in artifact_paths
+        if path is not None
+    )
+    serialized_events = "\n".join(
+        value
+        for event in result.command_events
+        for value in [event.command_text, *event.command]
+    )
+    for canary in canaries:
+        assert canary not in serialized_events
+        assert canary not in serialized_artifacts

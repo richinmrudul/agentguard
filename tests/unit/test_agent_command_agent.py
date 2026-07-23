@@ -1,12 +1,14 @@
 from dataclasses import replace
 import os
 from pathlib import Path
+import shlex
 import sys
 import time
 
 from agentguard.agents.agent_command_agent import AgentCommandAgent
 from agentguard.config.loader import load_config
 from agentguard.instrumentation.command_tracker import CommandTracker
+from agentguard.policy.command_policy import evaluate_command_policy
 
 
 def _config(**overrides):
@@ -35,7 +37,7 @@ def test_agent_command_string_is_split_safely(tmp_path: Path) -> None:
         "from pathlib import Path; "
         "Path('quoted output.txt').write_text('ok', encoding='utf-8')",
     ]
-    assert event.command_text == f"agent command: {command}"
+    assert event.command_text == f"agent command: {shlex.join(shlex.split(command))}"
     assert event.exit_code == 0
 
 
@@ -149,6 +151,64 @@ def test_agent_command_preflight_enforce_blocks_before_execution(
     assert event.preflight_matched_patterns == [sys.executable]
     assert event.policy_mode == "enforce"
     assert event.agent_name == "blocked-demo-agent"
+
+
+def test_agent_command_redacts_credentials_but_preflight_receives_raw_text(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    tracker = CommandTracker()
+    canaries = {
+        "token": "AG99_TOKEN_CANARY",
+        "api_key": "AG99_API_KEY_CANARY",
+        "password": "AG99_PASSWORD_CANARY",
+        "passwd": "AG99_PASSWD_CANARY",
+        "client_secret": "AG99_CLIENT_SECRET_CANARY",
+        "access_token": "AG99_ACCESS_TOKEN_CANARY",
+        "auth_token": "AG99_AUTH_TOKEN_CANARY",
+        "header": "AG99_HEADER_CANARY",
+        "url": "AG99_URL_PASSWORD_CANARY",
+    }
+    argv = [
+        sys.executable,
+        "-c",
+        "pass",
+        "--token",
+        canaries["token"],
+        f"--api-key={canaries['api_key']}",
+        "--password",
+        canaries["password"],
+        f"--passwd={canaries['passwd']}",
+        "--client-secret",
+        canaries["client_secret"],
+        f"--access-token={canaries['access_token']}",
+        "--auth-token",
+        canaries["auth_token"],
+        "--header",
+        f"Authorization: Bearer {canaries['header']}",
+        f"https://agent:{canaries['url']}@example.invalid/path",
+    ]
+    evaluated_text: list[str] = []
+
+    def capture_policy(**kwargs):
+        evaluated_text.append(kwargs["command_text"])
+        return evaluate_command_policy(**kwargs)
+
+    monkeypatch.setattr(
+        "agentguard.agents.agent_command_agent.evaluate_command_policy",
+        capture_policy,
+    )
+
+    AgentCommandAgent(_config(agent_command=argv)).run(repo_dir, tracker)
+
+    raw_text = evaluated_text[0]
+    event = tracker.events[0]
+    assert all(canary in raw_text for canary in canaries.values())
+    assert all(canary not in event.command_text for canary in canaries.values())
+    assert all(canary not in " ".join(event.command) for canary in canaries.values())
+    assert event.command_text.count("[REDACTED]") == len(canaries)
 
 
 def test_agent_command_timeout_cleans_up_child_process(tmp_path: Path) -> None:
