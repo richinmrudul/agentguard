@@ -53,6 +53,32 @@ def test_local_command_agent_records_command_event(tmp_path: Path) -> None:
     assert event.duration_seconds is not None
 
 
+def test_local_command_agent_bounds_large_stdout_and_stderr(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    tracker = CommandTracker()
+    script = (
+        "import sys; "
+        "sys.stdout.write('out-start' + 'o' * 2000000 + 'out-end'); "
+        "sys.stderr.write('err-start' + 'e' * 2000000 + 'err-end')"
+    )
+
+    LocalCommandAgent(
+        _config(
+            agent_command=shlex.join([sys.executable, "-c", script]),
+            max_output_bytes=128,
+        )
+    ).run(repo_dir, tracker)
+
+    event = tracker.events[0]
+    assert event.stdout_truncated is True
+    assert event.stderr_truncated is True
+    assert len(event.stdout.encode("utf-8")) <= 128
+    assert len(event.stderr.encode("utf-8")) <= 128
+    assert event.stdout.endswith("out-end")
+    assert event.stderr.endswith("err-end")
+
+
 def test_local_command_agent_timeout_records_controlled_event(
     tmp_path: Path,
 ) -> None:

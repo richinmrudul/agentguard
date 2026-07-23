@@ -240,6 +240,32 @@ def test_agent_command_timeout_cleans_up_child_process(tmp_path: Path) -> None:
     assert event.process_cleanup_complete is True
 
 
+def test_agent_command_bounds_large_stdout_and_stderr(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    tracker = CommandTracker()
+    script = (
+        "import sys; "
+        "sys.stdout.write('out-start' + 'o' * 2000000 + 'out-end'); "
+        "sys.stderr.write('err-start' + 'e' * 2000000 + 'err-end')"
+    )
+
+    AgentCommandAgent(
+        _config(
+            agent_command=[sys.executable, "-c", script],
+            max_output_bytes=128,
+        )
+    ).run(repo_dir, tracker)
+
+    event = tracker.events[0]
+    assert event.stdout_truncated is True
+    assert event.stderr_truncated is True
+    assert len(event.stdout.encode("utf-8")) <= 128
+    assert len(event.stderr.encode("utf-8")) <= 128
+    assert event.stdout.endswith("out-end")
+    assert event.stderr.endswith("err-end")
+
+
 def _read_pid(path: Path) -> int:
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:

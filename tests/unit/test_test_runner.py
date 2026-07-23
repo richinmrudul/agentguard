@@ -65,13 +65,38 @@ def test_test_runner_timeout_cleans_up_child_process(tmp_path: Path) -> None:
     assert tracker.events[0].process_cleanup_complete is True
 
 
+def test_test_runner_timeout_keeps_large_output_bounded(tmp_path: Path) -> None:
+    tracker = CommandTracker()
+    runner = AgentGuardTestRunner(
+        tracker,
+        timeout_seconds=1,
+        max_output_bytes=160,
+    )
+    script = (
+        "import sys, time; "
+        "sys.stdout.write('o' * 2000000); sys.stdout.flush(); "
+        "sys.stderr.write('e' * 2000000); sys.stderr.flush(); "
+        "time.sleep(30)"
+    )
+
+    result = runner.run(tmp_path, shlex.join([sys.executable, "-c", script]))
+
+    assert result.timed_out is True
+    assert result.stdout_truncated is True
+    assert result.stderr_truncated is True
+    assert len(result.stdout.encode("utf-8")) <= 160
+    assert len(result.stderr.encode("utf-8")) <= 160
+    assert "timed out after 1 seconds" in result.stderr
+    assert result.process_cleanup_complete is True
+
+
 def test_test_runner_truncates_large_stdout(tmp_path: Path) -> None:
     tracker = CommandTracker()
     runner = AgentGuardTestRunner(tracker, max_output_bytes=80)
 
     result = runner.run(
         tmp_path,
-        f"{sys.executable} -c \"print('start' + 'x' * 200 + 'end')\"",
+        f"{sys.executable} -c \"print('start' + 'x' * 2000000 + 'end')\"",
     )
 
     assert result.exit_code == 0

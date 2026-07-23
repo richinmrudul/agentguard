@@ -14,6 +14,11 @@ from typing import Any, Optional, Union
 from agentguard import __version__
 from agentguard.config.schema import AgentGuardConfig, ScalarMetadata
 from agentguard.io import atomic_write_text
+from agentguard.instrumentation.output_limits import BoundedProcessOutput
+from agentguard.instrumentation.processes import (
+    popen_with_process_group,
+    terminate_process_tree,
+)
 from agentguard.policy.command_policy import evaluate_command_policy
 
 
@@ -354,31 +359,40 @@ def detect_agent_version(config: AgentGuardConfig) -> tuple[Optional[str], str, 
             if config.agent_environment_isolated
             else {**os.environ, **config.agent_environment}
         )
-        completed = subprocess.run(
+        process = popen_with_process_group(
             argv,
             cwd=config.agent_workdir_path or config.config_path.parent,
-            shell=False,
-            check=False,
-            capture_output=True,
-            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=environment,
-            timeout=min(config.command_timeout_seconds, VERSION_TIMEOUT_SECONDS),
+        )
+        capture = BoundedProcessOutput(
+            process,
+            VERSION_OUTPUT_LIMIT,
+            retain_tail=False,
+        )
+        returncode = capture.wait(
+            timeout=min(config.command_timeout_seconds, VERSION_TIMEOUT_SECONDS)
         )
     except FileNotFoundError:
         return None, "failed", "Agent version executable was not found."
     except subprocess.TimeoutExpired:
+        terminate_process_tree(process)
+        capture.wait()
+        capture.finish()
         return None, "failed", "Agent version command timed out."
     except (OSError, TypeError, ValueError) as error:
         return None, "failed", f"Agent version command failed: {type(error).__name__}."
 
-    output = (completed.stdout or completed.stderr or "")[:VERSION_OUTPUT_LIMIT]
+    captured = capture.finish()
+    output = captured.stdout.text or captured.stderr.text
     output = sanitize_text(output, _sensitive_values(config))
     version = next((line.strip() for line in output.splitlines() if line.strip()), None)
-    if completed.returncode != 0:
+    if returncode != 0:
         return (
             None,
             "failed",
-            f"Agent version command exited with status {completed.returncode}.",
+            f"Agent version command exited with status {returncode}.",
         )
     if not version:
         return None, "failed", "Agent version command produced no version output."
