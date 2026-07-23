@@ -193,7 +193,91 @@ filesystem_watcher:
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="unsupported key"):
+    with pytest.raises(ValueError, match=r"filesystem_watcher\.backend"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize(
+    ("field_path", "config_fragment", "suggestion"),
+    [
+        (
+            "forbiden_paths",
+            {"forbiden_paths": ["secrets/**"]},
+            "forbidden_paths",
+        ),
+        (
+            "policy.forbiden_paths",
+            {"policy": {"forbiden_paths": {"severity": "critical"}}},
+            "policy.forbidden_paths",
+        ),
+        (
+            "policy.forbidden_paths.severty",
+            {"policy": {"forbidden_paths": {"severty": "critical"}}},
+            "policy.forbidden_paths.severity",
+        ),
+        (
+            "diff_limits.max_file_changed",
+            {"diff_limits": {"max_file_changed": 1}},
+            "diff_limits.max_files_changed",
+        ),
+        (
+            "command_policy.mod",
+            {"command_policy": {"mod": "enforce"}},
+            "command_policy.mode",
+        ),
+        (
+            "sandbox.netwrok",
+            {"sandbox": {"netwrok": "none"}},
+            "sandbox.network",
+        ),
+        (
+            "sandbox.docker.privileged",
+            {"sandbox": {"docker": {"privileged": False}}},
+            None,
+        ),
+        (
+            "benchmark.dificulty",
+            {"benchmark": {"dificulty": "easy"}},
+            "benchmark.difficulty",
+        ),
+        (
+            "task.promt",
+            {"task": {"promt": "Do the task."}},
+            "task.prompt",
+        ),
+        (
+            "expected_modified_files.minimum",
+            {"expected_modified_files": {"min": 0, "max": 2, "minimum": 0}},
+            "expected_modified_files.min",
+        ),
+    ],
+)
+def test_config_rejects_unknown_controlled_fields(
+    tmp_path: Path,
+    field_path: str,
+    config_fragment: dict,
+    suggestion: str,
+) -> None:
+    data = {
+        "task_id": "task",
+        "description": "Task.",
+        "repo_template": "examples/repos/auth_bug",
+        "test_command": "pytest",
+        "expected_modified_files": {"min": 0, "max": 2},
+    }
+    data.update(config_fragment)
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=field_path.replace(".", r"\.")) as error:
+        load_config(config_path)
+
+    if suggestion is not None:
+        assert f"Did you mean '{suggestion}'?" in str(error.value)
+
+
+def test_all_example_configs_use_supported_fields() -> None:
+    for config_path in sorted(Path("examples/configs").glob("*.yaml")):
         load_config(config_path)
 
 
