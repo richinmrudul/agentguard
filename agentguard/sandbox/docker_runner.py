@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from agentguard.config.docker_image import validate_docker_image_reference
 from agentguard.config.schema import SandboxConfig
 from agentguard.core.result import CommandResult
 from agentguard.instrumentation.command_tracker import CommandTracker
@@ -152,6 +153,7 @@ class DockerCommandRunner:
             raise ValueError("DockerCommandRunner requires sandbox.type='docker'.")
         if not self.sandbox.image:
             raise ValueError("Docker sandbox requires an image.")
+        validate_docker_image_reference(self.sandbox.image)
         command = [
             "docker",
             "run",
@@ -175,7 +177,7 @@ class DockerCommandRunner:
             command.extend(["--cpus", str(self.sandbox.cpus)])
         if self.sandbox.read_only:
             command.extend(["--read-only", "--tmpfs", "/tmp"])
-        command.extend([self.sandbox.image, *inner_command])
+        command.extend(["--", self.sandbox.image, *inner_command])
         return command
 
     def run_argv(

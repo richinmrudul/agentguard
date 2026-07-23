@@ -72,7 +72,52 @@ def test_docker_command_includes_expected_container_options(tmp_path: Path) -> N
     assert command[command.index("--network") + 1] == "none"
     assert "--read-only" not in command
     assert "python:3.11-slim" in command
+    assert command[command.index("python:3.11-slim") - 1] == "--"
     assert command[-1] == "pytest"
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "--network=host",
+        "--privileged",
+        "--volume=/controlled/host/path:/host",
+        "--mount=type=bind,source=/controlled,target=/host",
+        "--device=/dev/example",
+    ],
+)
+def test_docker_command_rejects_option_like_images(
+    tmp_path: Path,
+    image: str,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    runner = DockerCommandRunner(
+        CommandTracker(),
+        SandboxConfig(type="docker", image=image, network="none"),
+    )
+
+    with pytest.raises(ValueError, match="sandbox.image"):
+        runner.build_command(repo_dir, ["alpine:3.20", "true"])
+
+
+def test_docker_command_places_image_after_option_boundary(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    image = "registry.example.com:5443/team/image:release"
+    runner = DockerCommandRunner(
+        CommandTracker(),
+        SandboxConfig(type="docker", image=image, network="none"),
+    )
+
+    command = runner.build_command(repo_dir, ["true"])
+
+    boundary = command.index("--")
+    assert command[command.index("--network") + 1] == "none"
+    assert command.index("--network") < boundary
+    assert command[boundary + 1 :] == [image, "true"]
 
 
 def test_docker_command_includes_configured_resource_limits(tmp_path: Path) -> None:

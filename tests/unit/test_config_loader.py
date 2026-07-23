@@ -305,6 +305,85 @@ def test_load_fix_auth_bug_docker_config() -> None:
     assert config.sandbox.timeout_seconds == 60
 
 
+@pytest.mark.parametrize(
+    "image",
+    [
+        "--network=host",
+        "--privileged",
+        "--volume=/controlled/host/path:/host",
+        "--mount=type=bind,source=/controlled,target=/host",
+        "--device=/dev/example",
+        "python:3.11\n--privileged",
+        "python image",
+        "https://registry.example.com/team/image:tag",
+        "UPPERCASE/image:tag",
+        "registry..example.com/team/image",
+        "registry.example.com:bad/team/image",
+        "registry.example.com:70000/team/image",
+        "python:",
+        "python@sha256:abc123",
+    ],
+)
+def test_config_rejects_invalid_docker_image_references(
+    tmp_path: Path,
+    image: str,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "task_id": "task",
+                "description": "Task.",
+                "repo_template": "examples/repos/auth_bug",
+                "test_command": "pytest",
+                "expected_modified_files": {"min": 1, "max": 2},
+                "sandbox": {"type": "docker", "image": image},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="sandbox.image"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "python",
+        "python:3.11-slim",
+        "docker.io/library/python:3.11-slim",
+        "ghcr.io/example/team/image:release_1.2",
+        "localhost:5000/team/image:tag",
+        (
+            "registry.example.com:5443/team/image@sha256:"
+            "0123456789abcdef0123456789abcdef"
+            "0123456789abcdef0123456789abcdef"
+        ),
+    ],
+)
+def test_config_accepts_supported_docker_image_references(
+    tmp_path: Path,
+    image: str,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "task_id": "task",
+                "description": "Task.",
+                "repo_template": "examples/repos/auth_bug",
+                "test_command": "pytest",
+                "expected_modified_files": {"min": 1, "max": 2},
+                "sandbox": {"type": "docker", "image": image},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_config(config_path).sandbox.image == image
+
+
 def test_load_docker_command_agent_config() -> None:
     config = load_config(Path("examples/configs/fix_auth_bug_docker_command_safe.yaml"))
 
