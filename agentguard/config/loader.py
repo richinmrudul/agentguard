@@ -1,3 +1,4 @@
+import difflib
 import math
 import re
 from pathlib import Path
@@ -35,6 +36,68 @@ MAX_SECRET_CONTENT_LITERAL_LENGTH = 1024
 MAX_SECRET_CONTENT_LITERAL_BYTES = 2048
 MAX_SECRET_CONTENT_TOTAL_LITERAL_BYTES = 16384
 SECRET_CONTENT_PATTERN_ID = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
+TOP_LEVEL_CONFIG_KEYS = {
+    "agent_command",
+    "agent_environment",
+    "agent_metadata",
+    "agent_model",
+    "agent_name",
+    "agent_version_command",
+    "agent_workdir",
+    "allowed_paths",
+    "benchmark",
+    "command_policy",
+    "command_timeout_seconds",
+    "description",
+    "diff_limits",
+    "expected_modified_files",
+    "filesystem_watcher",
+    "forbidden_paths",
+    "guard_ignore_paths",
+    "max_output_bytes",
+    "mode",
+    "policy",
+    "repo_template",
+    "sandbox",
+    "secret_content_builtin_detectors",
+    "secret_content_patterns",
+    "secret_patterns",
+    "task",
+    "task_id",
+    "test_command",
+    "test_paths",
+    "unsafe_commands",
+}
+POLICY_KEYS = {
+    "diff_size",
+    "forbidden_paths",
+    "scope_adherence",
+    "secret_scan",
+    "test_tampering",
+    "tests_pass",
+    "unsafe_commands",
+}
+
+
+def _reject_unknown_keys(
+    mapping: dict[str, Any],
+    allowed: set[str],
+    field_name: str = "",
+) -> None:
+    unknown = sorted((key for key in mapping if key not in allowed), key=str)
+    if not unknown:
+        return
+    key = unknown[0]
+    path = f"{field_name}.{key}" if field_name else str(key)
+    message = f"Unknown config field '{path}'."
+    if isinstance(key, str):
+        matches = difflib.get_close_matches(key, sorted(allowed), n=1, cutoff=0.6)
+        if matches:
+            suggestion = (
+                f"{field_name}.{matches[0]}" if field_name else matches[0]
+            )
+            message += f" Did you mean '{suggestion}'?"
+    raise ValueError(message)
 
 
 def _string_list(data: dict[str, Any], key: str) -> list[str]:
@@ -227,6 +290,7 @@ def _load_task(data: dict[str, Any], config_path: Path) -> Optional[TaskConfig]:
         return None
     if not isinstance(raw_task, dict):
         raise ValueError("Config field 'task' must be a mapping.")
+    _reject_unknown_keys(raw_task, {"prompt", "prompt_file"}, "task")
     prompt = raw_task.get("prompt")
     prompt_file = raw_task.get("prompt_file")
     if (prompt is None) == (prompt_file is None):
@@ -368,6 +432,19 @@ def _load_benchmark_metadata(data: dict[str, Any]) -> BenchmarkMetadata:
         benchmark = {}
     if not isinstance(benchmark, dict):
         raise ValueError("Config field 'benchmark' must be a mapping.")
+    _reject_unknown_keys(
+        benchmark,
+        {
+            "category",
+            "difficulty",
+            "expected_behavior",
+            "failure_mode",
+            "id",
+            "tags",
+            "version",
+        },
+        "benchmark",
+    )
 
     tags = benchmark.get("tags", [])
     if tags is None:
@@ -397,6 +474,7 @@ def _load_policy(data: dict[str, Any]) -> dict[str, str]:
     policy = data.get("policy", {})
     if not isinstance(policy, dict):
         raise ValueError("Config field 'policy' must be a mapping.")
+    _reject_unknown_keys(policy, POLICY_KEYS, "policy")
 
     severities: dict[str, str] = {}
     for check_key, check_config in policy.items():
@@ -404,6 +482,7 @@ def _load_policy(data: dict[str, Any]) -> dict[str, str]:
             raise ValueError("Config field 'policy' keys must be strings.")
         if not isinstance(check_config, dict):
             raise ValueError(f"Config field 'policy.{check_key}' must be a mapping.")
+        _reject_unknown_keys(check_config, {"severity"}, f"policy.{check_key}")
         severity = check_config.get("severity")
         if severity is None:
             continue
@@ -421,6 +500,11 @@ def _load_diff_limits(data: dict[str, Any]) -> DiffLimits:
     limits = data.get("diff_limits", {})
     if not isinstance(limits, dict):
         raise ValueError("Config field 'diff_limits' must be a mapping.")
+    _reject_unknown_keys(
+        limits,
+        {"max_files_changed", "max_lines_added", "max_lines_deleted"},
+        "diff_limits",
+    )
     return DiffLimits(
         max_files_changed=_optional_int(limits, "max_files_changed", "diff_limits"),
         max_lines_added=_optional_int(limits, "max_lines_added", "diff_limits"),
@@ -434,6 +518,7 @@ def _load_command_policy(data: dict[str, Any]) -> CommandPolicyConfig:
         command_policy = {}
     if not isinstance(command_policy, dict):
         raise ValueError("Config field 'command_policy' must be a mapping.")
+    _reject_unknown_keys(command_policy, {"mode"}, "command_policy")
     mode = command_policy.get("mode", "audit")
     if mode not in VALID_COMMAND_POLICY_MODES:
         valid = ", ".join(sorted(VALID_COMMAND_POLICY_MODES))
@@ -449,12 +534,7 @@ def _load_filesystem_watcher(data: dict[str, Any]) -> FilesystemWatcherConfig:
         raw = {"mode": raw}
     if not isinstance(raw, dict):
         raise ValueError("Config field 'filesystem_watcher' must be an object.")
-    unknown = set(raw) - {"mode"}
-    if unknown:
-        raise ValueError(
-            "Config field 'filesystem_watcher' contains unsupported key(s): "
-            + ", ".join(sorted(str(key) for key in unknown))
-        )
+    _reject_unknown_keys(raw, {"mode"}, "filesystem_watcher")
     mode = raw.get("mode", "auto")
     if mode not in VALID_FILESYSTEM_WATCHER_MODES:
         raise ValueError(
@@ -470,11 +550,29 @@ def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
         sandbox = {}
     if not isinstance(sandbox, dict):
         raise ValueError("Config field 'sandbox' must be a mapping.")
+    _reject_unknown_keys(
+        sandbox,
+        {
+            "docker",
+            "image",
+            "network",
+            "read_only",
+            "timeout_seconds",
+            "type",
+            "workdir",
+        },
+        "sandbox",
+    )
     docker_policy = sandbox.get("docker", {})
     if docker_policy is None:
         docker_policy = {}
     if not isinstance(docker_policy, dict):
         raise ValueError("Config field 'sandbox.docker' must be a mapping.")
+    _reject_unknown_keys(
+        docker_policy,
+        {"cpus", "memory", "network", "read_only"},
+        "sandbox.docker",
+    )
 
     sandbox_type = sandbox.get("type", "local")
     if sandbox_type not in {"local", "docker"}:
@@ -531,10 +629,12 @@ def load_config(config_path: Path) -> AgentGuardConfig:
 
     if not isinstance(data, dict):
         raise ValueError("AgentGuard config must be a YAML mapping.")
+    _reject_unknown_keys(data, TOP_LEVEL_CONFIG_KEYS)
 
     expected = data.get("expected_modified_files", {})
     if not isinstance(expected, dict):
         raise ValueError("Config field 'expected_modified_files' must be a mapping.")
+    _reject_unknown_keys(expected, {"max", "min"}, "expected_modified_files")
 
     mode = data.get("mode", "benchmark")
     if mode not in {"benchmark", "ci"}:

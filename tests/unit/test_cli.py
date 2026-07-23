@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 import agentguard.cli.main as cli_main
@@ -38,6 +39,35 @@ def test_execution_commands_report_missing_inputs_as_invalid(
 
     assert result.exit_code == 2
     assert "Error:" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_run_rejects_unknown_config_field_with_exit_code_2(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "task_id": "task",
+                "description": "Task.",
+                "repo_template": "examples/repos/auth_bug",
+                "test_command": "pytest",
+                "expected_modified_files": {"min": 0, "max": 2},
+                "forbiden_paths": ["secrets/**"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["run", str(config_path), "--agent", "mock-safe"],
+    )
+
+    assert result.exit_code == 2
+    assert "Unknown config field 'forbiden_paths'" in result.output
+    assert "Did you mean 'forbidden_paths'?" in result.output
     assert "Traceback" not in result.output
 
 

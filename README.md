@@ -668,6 +668,12 @@ polling. They do not change Git diff collection, allowed paths, post-hoc checks,
 scoring, command monitoring, or incident meaning. Broad, traversing, protected,
 or overlapping patterns are rejected, and escaping symlinks remain visible.
 
+AgentGuard validates configuration mappings strictly. Unknown top-level fields
+and unknown fields in controlled nested mappings fail before execution with the
+full dotted field path and, when a close supported name exists, a suggestion.
+This prevents misspelled safety settings from silently falling back to weaker
+defaults.
+
 When `diff_limits.max_lines_added` or `max_lines_deleted` is configured, the
 online filesystem guard also measures the current baseline-relative line delta.
 Values must exceed a limit to trigger; equality is allowed. Audit records
