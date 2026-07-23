@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from agentguard.checks.secret_content import BUILTIN_SECRET_CONTENT_DETECTORS
+from agentguard.config.docker_image import validate_docker_image_reference
 from agentguard.config.guard_ignores import load_guard_ignore_patterns
 from agentguard.config.schema import (
     VALID_BENCHMARK_DIFFICULTIES,
@@ -482,6 +483,8 @@ def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
     image = sandbox.get("image")
     if image is not None and (not isinstance(image, str) or not image):
         raise ValueError("Config field 'sandbox.image' must be a non-empty string.")
+    if isinstance(image, str):
+        validate_docker_image_reference(image)
     if sandbox_type == "docker" and image is None:
         raise ValueError("Config field 'sandbox.image' is required for docker sandbox.")
 
