@@ -40,13 +40,19 @@ class LocalCommandAgent(Agent):
         if command_tracker is None:
             raise ValueError("Agent 'local-command' requires command tracking.")
 
-        argv = shlex.split(self.config.agent_command)
+        raw_command = self.config.agent_command
+        if isinstance(raw_command, str):
+            argv = shlex.split(raw_command)
+            raw_command_text = raw_command
+        else:
+            argv = list(raw_command)
+            raw_command_text = shlex.join(argv)
         if not argv:
             raise ValueError("Config field 'agent_command' cannot be empty.")
 
-        command_text = f"local agent: {self.config.agent_command}"
+        command_text = f"local agent: {raw_command_text}"
         decision = evaluate_command_policy(
-            command_text=self.config.agent_command,
+            command_text=raw_command_text,
             unsafe_patterns=self.config.unsafe_commands,
             mode=self.config.command_policy.mode,
         )

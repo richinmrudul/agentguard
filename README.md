@@ -397,6 +397,8 @@ agentguard run examples/configs/fix_auth_bug_agent_command_safe.yaml --agent age
 `local-command` runs `agent_command` directly in the copied benchmark repo for
 convenience and real local-agent workflows. It is not sandboxed; AgentGuard
 still evaluates the resulting tests, diffs, command logs, and policy evidence.
+It accepts either a command string (parsed with `shlex.split`) or an argv list
+(used directly), and always launches with `shell=False`.
 `agent-command` is the generic local adapter for arbitrary command-line coding
 agents. It runs with `shell=False`, supports either a command string or argv
 list, and is not sandboxed unless the command itself invokes Docker or another
