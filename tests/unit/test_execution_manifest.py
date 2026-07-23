@@ -267,6 +267,23 @@ def test_version_command_success_and_failure_are_nonfatal(tmp_path: Path) -> Non
     assert "status 7" in (warning or "")
 
 
+def test_version_command_bounds_large_output(tmp_path: Path) -> None:
+    config = load_config(
+        _write_config(
+            tmp_path,
+            version_command=[
+                sys.executable,
+                "-c",
+                "print('agent 1.2.3'); print('x' * 2000000)",
+            ],
+        )
+    )
+
+    version, status, warning = detect_agent_version(config)
+
+    assert (version, status, warning) == ("agent 1.2.3", "detected", None)
+
+
 def test_version_command_failure_warns_without_failing_evaluation(
     tmp_path: Path,
 ) -> None:

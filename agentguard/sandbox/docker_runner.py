@@ -9,7 +9,7 @@ from agentguard.config.docker_image import validate_docker_image_reference
 from agentguard.config.schema import SandboxConfig
 from agentguard.core.result import CommandResult
 from agentguard.instrumentation.command_tracker import CommandTracker
-from agentguard.instrumentation.output_limits import limit_output
+from agentguard.instrumentation.output_limits import BoundedProcessOutput, limit_output
 from agentguard.instrumentation.processes import (
     PROCESS_TIMEOUT_TERMINATED_MESSAGE,
     ProcessCleanupResult,
@@ -202,25 +202,27 @@ class DockerCommandRunner:
                 docker_command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
             )
-            stdout, stderr = process.communicate(timeout=self.timeout_seconds)
-            exit_code = process.returncode
+            capture = BoundedProcessOutput(process, self.max_output_bytes)
+            exit_code = capture.wait(timeout=self.timeout_seconds)
+            captured = capture.finish()
+            stdout = captured.stdout.text
+            stderr = captured.stderr.text
         except FileNotFoundError:
             exit_code = 127
             stdout = ""
             stderr = "Docker is not installed or is not available on PATH."
+            captured = None
         except subprocess.TimeoutExpired:
             timed_out = True
             exit_code = 124
             cleanup = terminate_process_tree(process)
             docker_cleanup = self._remove_container(container_name)
             cleanup = self._combine_cleanup(cleanup, docker_cleanup)
-            stdout, stderr = process.communicate()
-            if isinstance(stdout, bytes):
-                stdout = stdout.decode(errors="replace")
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode(errors="replace")
+            capture.wait()
+            captured = capture.finish()
+            stdout = captured.stdout.text
+            stderr = captured.stderr.text
             stderr = (
                 f"{stderr}\nDocker command timed out after "
                 f"{self.timeout_seconds} seconds."
@@ -230,6 +232,12 @@ class DockerCommandRunner:
         duration_seconds = time.monotonic() - started
         limited_stdout = limit_output(stdout, self.max_output_bytes)
         limited_stderr = limit_output(stderr, self.max_output_bytes)
+        stdout_truncated = (
+            captured is not None and captured.stdout.truncated
+        ) or limited_stdout.truncated
+        stderr_truncated = (
+            captured is not None and captured.stderr.truncated
+        ) or limited_stderr.truncated
 
         self.command_tracker.record_executed(
             command=docker_command,
@@ -240,8 +248,8 @@ class DockerCommandRunner:
             stderr=limited_stderr.text,
             duration_seconds=duration_seconds,
             timed_out=timed_out,
-            stdout_truncated=limited_stdout.truncated,
-            stderr_truncated=limited_stderr.truncated,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
             preflight_matched_patterns=preflight_matched_patterns,
             policy_mode=policy_mode,
             process_cleanup_attempted=cleanup.attempted,
@@ -255,8 +263,8 @@ class DockerCommandRunner:
             stderr=limited_stderr.text,
             duration_seconds=duration_seconds,
             timed_out=timed_out,
-            stdout_truncated=limited_stdout.truncated,
-            stderr_truncated=limited_stderr.truncated,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
             process_cleanup_attempted=cleanup.attempted,
             process_cleanup_complete=cleanup.complete,
             process_cleanup_message=cleanup.message,

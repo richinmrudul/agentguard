@@ -10,7 +10,7 @@ from agentguard.config.schema import AgentGuardConfig
 from agentguard.core.result import CommandResult
 from agentguard.guard.filesystem import ProcessController
 from agentguard.instrumentation.command_tracker import CommandTracker
-from agentguard.instrumentation.output_limits import limit_output
+from agentguard.instrumentation.output_limits import BoundedProcessOutput, limit_output
 from agentguard.instrumentation.processes import (
     PROCESS_TIMEOUT_TERMINATED_MESSAGE,
     ProcessCleanupResult,
@@ -162,15 +162,15 @@ class AgentCommandAgent(Agent):
                 cwd=workdir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
                 env=self._env(repo_dir),
             )
+            capture = BoundedProcessOutput(process, self.config.max_output_bytes)
             if process_controller is not None:
                 process_controller.attach(process)
-            stdout, stderr = process.communicate(
-                timeout=self.config.command_timeout_seconds
-            )
-            exit_code = process.returncode
+            exit_code = capture.wait(timeout=self.config.command_timeout_seconds)
+            captured = capture.finish()
+            stdout = captured.stdout.text
+            stderr = captured.stderr.text
             if (
                 process_controller is not None
                 and process_controller.termination_requested
@@ -191,19 +191,16 @@ class AgentCommandAgent(Agent):
             exit_code = 127
             stdout = ""
             stderr = f"Agent command executable not found: {error.filename}"
-        except subprocess.TimeoutExpired as error:
+            captured = None
+        except subprocess.TimeoutExpired:
             timed_out = True
             exit_code = 124
             if process is not None and process.poll() is None:
                 cleanup = terminate_process_tree(process)
-                stdout, stderr = process.communicate()
-            else:
-                stdout = error.stdout or ""
-                stderr = error.stderr or ""
-            if isinstance(stdout, bytes):
-                stdout = stdout.decode(errors="replace")
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode(errors="replace")
+            capture.wait()
+            captured = capture.finish()
+            stdout = captured.stdout.text
+            stderr = captured.stderr.text
             stderr = (
                 f"{stderr}\nAgent command timed out after "
                 f"{self.config.command_timeout_seconds} seconds."
@@ -227,6 +224,12 @@ class AgentCommandAgent(Agent):
         stderr = sanitize_text(stderr, sensitive_values)
         limited_stdout = limit_output(stdout, self.config.max_output_bytes)
         limited_stderr = limit_output(stderr, self.config.max_output_bytes)
+        stdout_truncated = (
+            captured is not None and captured.stdout.truncated
+        ) or limited_stdout.truncated
+        stderr_truncated = (
+            captured is not None and captured.stderr.truncated
+        ) or limited_stderr.truncated
         command_tracker.record_executed(
             command=display_argv,
             command_text=command_text,
@@ -236,8 +239,8 @@ class AgentCommandAgent(Agent):
             stderr=limited_stderr.text,
             duration_seconds=duration_seconds,
             timed_out=timed_out,
-            stdout_truncated=limited_stdout.truncated,
-            stderr_truncated=limited_stderr.truncated,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
             preflight_matched_patterns=preflight_matched_patterns,
             policy_mode=policy_mode,
             agent_name=self.config.agent_name,
@@ -252,8 +255,8 @@ class AgentCommandAgent(Agent):
             stderr=limited_stderr.text,
             duration_seconds=duration_seconds,
             timed_out=timed_out,
-            stdout_truncated=limited_stdout.truncated,
-            stderr_truncated=limited_stderr.truncated,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
             process_cleanup_attempted=cleanup.attempted,
             process_cleanup_complete=cleanup.complete,
             process_cleanup_message=cleanup.message,

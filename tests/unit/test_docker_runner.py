@@ -1,4 +1,5 @@
 from dataclasses import replace
+import io
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -26,23 +27,21 @@ class FakeProcess:
         timeout: bool = False,
     ) -> None:
         self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
+        self.stdout = io.BytesIO(stdout.encode())
+        self.stderr = io.BytesIO(stderr.encode())
         self.timeout = timeout
         self.pid = 12345
-        self._communicated = False
+        self._waited = False
 
-    def communicate(self, timeout=None):
-        if self.timeout and not self._communicated:
-            self._communicated = True
+    def wait(self, timeout=None):
+        if self.timeout and not self._waited:
+            self._waited = True
             raise subprocess.TimeoutExpired(
                 cmd=["docker"],
                 timeout=timeout,
-                output=self.stdout.encode(),
-                stderr=self.stderr.encode(),
             )
         self.returncode = -9 if self.timeout else self.returncode
-        return self.stdout, self.stderr
+        return self.returncode
 
     def poll(self):
         return self.returncode
@@ -342,8 +341,8 @@ def test_docker_command_runner_truncates_output(
     def fake_popen(command, **kwargs):
         return FakeProcess(
             returncode=0,
-            stdout="start" + ("x" * 200) + "end",
-            stderr="",
+            stdout="start" + ("x" * 2000000) + "stdout-end",
+            stderr="start" + ("e" * 2000000) + "stderr-end",
         )
 
     monkeypatch.setattr(
@@ -362,7 +361,9 @@ def test_docker_command_runner_truncates_output(
     assert result.stdout_truncated is True
     assert len(result.stdout.encode("utf-8")) <= 80
     assert result.stdout.startswith("[agentguard] Output truncated")
-    assert "end" in result.stdout
+    assert result.stdout.endswith("stdout-end")
+    assert result.stderr.endswith("stderr-end")
+    assert result.stderr_truncated is True
     assert tracker.events[0].stdout_truncated is True
 
 

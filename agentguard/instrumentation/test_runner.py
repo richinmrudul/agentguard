@@ -7,7 +7,7 @@ from pathlib import Path
 
 from agentguard.core.result import CommandResult
 from agentguard.instrumentation.command_tracker import CommandTracker
-from agentguard.instrumentation.output_limits import limit_output
+from agentguard.instrumentation.output_limits import BoundedProcessOutput, limit_output
 from agentguard.instrumentation.processes import (
     PROCESS_TIMEOUT_TERMINATED_MESSAGE,
     ProcessCleanupResult,
@@ -64,20 +64,19 @@ class TestRunner:
                 cwd=repo_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
                 env=env,
             )
-            stdout, stderr = process.communicate(timeout=self.timeout_seconds)
-            exit_code = process.returncode
+            capture = BoundedProcessOutput(process, self.max_output_bytes)
+            exit_code = capture.wait(timeout=self.timeout_seconds)
         except subprocess.TimeoutExpired:
             timed_out = True
             exit_code = 124
             cleanup = terminate_process_tree(process)
-            stdout, stderr = process.communicate()
-            if isinstance(stdout, bytes):
-                stdout = stdout.decode(errors="replace")
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode(errors="replace")
+            capture.wait()
+        captured = capture.finish()
+        stdout = captured.stdout.text
+        stderr = captured.stderr.text
+        if timed_out:
             stderr = (
                 f"{stderr}\nCommand timed out after "
                 f"{self.timeout_seconds} seconds."
@@ -87,6 +86,8 @@ class TestRunner:
         duration_seconds = time.monotonic() - started
         limited_stdout = limit_output(stdout, self.max_output_bytes)
         limited_stderr = limit_output(stderr, self.max_output_bytes)
+        stdout_truncated = captured.stdout.truncated or limited_stdout.truncated
+        stderr_truncated = captured.stderr.truncated or limited_stderr.truncated
         self.command_tracker.record_executed(
             command=argv,
             command_text=command,
@@ -96,8 +97,8 @@ class TestRunner:
             stderr=limited_stderr.text,
             duration_seconds=duration_seconds,
             timed_out=timed_out,
-            stdout_truncated=limited_stdout.truncated,
-            stderr_truncated=limited_stderr.truncated,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
             process_cleanup_attempted=cleanup.attempted,
             process_cleanup_complete=cleanup.complete,
             process_cleanup_message=cleanup.message,
@@ -109,8 +110,8 @@ class TestRunner:
             stderr=limited_stderr.text,
             duration_seconds=duration_seconds,
             timed_out=timed_out,
-            stdout_truncated=limited_stdout.truncated,
-            stderr_truncated=limited_stderr.truncated,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
             process_cleanup_attempted=cleanup.attempted,
             process_cleanup_complete=cleanup.complete,
             process_cleanup_message=cleanup.message,
