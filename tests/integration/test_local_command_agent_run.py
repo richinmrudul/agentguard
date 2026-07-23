@@ -3,6 +3,10 @@ import json
 import shlex
 import sys
 
+import pytest
+from typer.testing import CliRunner
+
+from agentguard.cli.main import app
 from agentguard.core.orchestrator import run_benchmark
 
 
@@ -159,3 +163,51 @@ secret_patterns: []
     assert result.report_paths.markdown.exists()
     assert "Traceback" not in result.report_paths.markdown.read_text()
     assert "No closing quotation" not in result.report_paths.json.read_text()
+
+
+@pytest.mark.parametrize("as_argv_list", [False, True])
+def test_local_command_cli_executes_string_and_argv_list_configs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    as_argv_list: bool,
+) -> None:
+    repo_template = Path("examples/repos/auth_bug").resolve()
+    argv = [sys.executable, "agent_scripts/safe_agent.py"]
+    agent_command: object = argv if as_argv_list else shlex.join(argv)
+    config_path = tmp_path / f"local-command-{as_argv_list}.yaml"
+    config_path.write_text(
+        f"""
+task_id: local_command_shape_{str(as_argv_list).lower()}
+description: Local command accepts its documented configuration shape.
+repo_template: {repo_template}
+agent_command: {json.dumps(agent_command)}
+test_command: {sys.executable} -m pytest -q
+sandbox:
+  type: local
+allowed_paths:
+  - src/**
+test_paths:
+  - tests/**
+expected_modified_files:
+  min: 1
+  max: 1
+unsafe_commands: []
+policy:
+  tests_pass:
+    severity: error
+diff_limits:
+  max_files_changed: 1
+secret_patterns: []
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(
+        app,
+        ["run", str(config_path), "--agent", "local-command"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Result: PASS" in result.output
+    assert "AttributeError" not in result.output

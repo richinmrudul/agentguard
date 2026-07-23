@@ -53,6 +53,31 @@ def test_local_command_agent_records_command_event(tmp_path: Path) -> None:
     assert event.duration_seconds is not None
 
 
+def test_local_command_agent_uses_argv_list_without_resplitting(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    tracker = CommandTracker()
+    output = repo_dir / "argument.txt"
+    argv = [
+        sys.executable,
+        "-c",
+        (
+            "from pathlib import Path; import sys; "
+            f"Path({str(output)!r}).write_text(sys.argv[1])"
+        ),
+        "value with spaces and 'quotes'",
+    ]
+
+    LocalCommandAgent(_config(agent_command=argv)).run(repo_dir, tracker)
+
+    assert output.read_text() == "value with spaces and 'quotes'"
+    assert tracker.events[0].command == argv
+    assert tracker.events[0].command_text == f"local agent: {shlex.join(argv)}"
+    assert tracker.events[0].exit_code == 0
+
+
 def test_local_command_agent_bounds_large_stdout_and_stderr(tmp_path: Path) -> None:
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()

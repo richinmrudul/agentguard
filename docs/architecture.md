@@ -259,16 +259,17 @@ Current adapters include:
 
 - Mock agents for deterministic tests and demos.
 - `custom-command` for Docker-backed configured commands.
-- `local-command` for a configured local command string in the copied benchmark
-  repo.
+- `local-command` for a configured local command string or argv list in the
+  copied benchmark repo.
 - `agent-command` for a generic local command-line coding agent configured with
   `agent_command`, optional `agent_name`, optional `agent_environment`, and
   optional `agent_workdir`. Configs may also declare `agent_version_command`,
   `agent_model`, and scalar `agent_metadata` for provenance.
 
-`agent-command` runs with `shell=False`. String commands are parsed with
-`shlex.split`; list commands are used as argv directly. By default it runs in
-the copied benchmark repo, but `agent_workdir: config_dir` runs it relative to
+`local-command` and `agent-command` run with `shell=False`. String commands are
+parsed with `shlex.split`; list commands are used as argv directly.
+`local-command` always runs in the copied benchmark repo. `agent-command` uses
+that location by default, while `agent_workdir: config_dir` runs it relative to
 the config file directory.
 
 ### External-Agent Evaluation Profiles
