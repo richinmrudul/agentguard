@@ -627,6 +627,11 @@ AgentGuard writes local artifacts under `.agentguard/` by default:
 - Timeline data embedded in reports
 - Run history index: `.agentguard/history.db`
 
+Changed-file summaries represent detected Git renames with both the source and
+destination paths in `modified_files` and `changed_files`, so path policies
+evaluate both sides. An unstaged filesystem rename appears as a deleted source
+plus an untracked destination, with the same two paths visible to policy checks.
+
 Regression baselines are written wherever you pass `--save-baseline`; the
 examples use `baselines/core.json`.
 
