@@ -1,10 +1,13 @@
 import json
 import shlex
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
+from agentguard.config.loader import load_config
 from agentguard.core.orchestrator import run_benchmark
+from agentguard.guard.command import RuntimeCommandGuard
 from agentguard.guard.filesystem import GuardMode
 
 
@@ -191,6 +194,93 @@ def test_command_guard_kill_fallback(tmp_path: Path, monkeypatch) -> None:
 
     assert result.command_guard_summary.terminated_agent is True
     assert result.command_guard_summary.kill_required is True
+
+
+def test_command_guard_bounds_events_violations_and_report_data(
+    tmp_path: Path,
+) -> None:
+    config = load_config(
+        _write_config(tmp_path, "print('unused')\n")
+    )
+    repo_dir = tmp_path / "repo"
+    event_path = repo_dir / ".agentguard_agent_events.jsonl"
+    event_path.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "type": "command_attempt",
+                    "command_text": (
+                        f"rm -rf AGENTGUARD_EVENT_CANARY_{index:03d}"
+                    ),
+                }
+            )
+            + "\n"
+            for index in range(500)
+        ),
+        encoding="utf-8",
+    )
+    guard = RuntimeCommandGuard(
+        repo_dir=repo_dir,
+        config=config,
+        mode=GuardMode.AUDIT,
+    )
+
+    guard.scan_once()
+    summary = guard.summary()
+    serialized = json.dumps(asdict(summary))
+
+    assert summary.triggered is True
+    assert summary.events_observed == 200
+    assert summary.events_dropped == 1
+    assert len(summary.violations) == 100
+    assert summary.violations_dropped == 100
+    assert summary.instrumentation_incomplete is True
+    assert "event count limit exceeded" in (
+        summary.instrumentation_diagnostic or ""
+    )
+    assert len(serialized.encode("utf-8")) < 100_000
+    assert "AGENTGUARD_EVENT_CANARY_499" not in serialized
+
+
+def test_symlink_event_source_reports_incomplete_without_aborting_run(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text(
+        json.dumps(
+            {
+                "type": "command_attempt",
+                "command_text": "AGENTGUARD_EVENT_CANARY_OUTSIDE_REPORT",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    agent_python = (
+        "from pathlib import Path\n"
+        "Path('.agentguard_agent_events.jsonl').symlink_to("
+        f"{str(outside)!r})\n"
+    )
+    config = _write_config(tmp_path, agent_python)
+
+    result = run_benchmark(
+        config,
+        "local-command",
+        guard_mode=GuardMode.AUDIT,
+        guard_poll_interval_seconds=0.01,
+    )
+    report_text = result.report_paths.json.read_text(encoding="utf-8")
+
+    assert result.test_result.exit_code == 0
+    assert result.report_paths.markdown.exists()
+    assert result.command_guard_summary.instrumentation_incomplete is True
+    assert any(
+        event.command_text == "Agent event instrumentation incomplete"
+        for event in result.command_events
+    )
+    assert "AGENTGUARD_EVENT_CANARY_OUTSIDE_REPORT" not in report_text
 
 
 def _write_config(

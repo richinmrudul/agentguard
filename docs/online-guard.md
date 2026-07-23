@@ -115,6 +115,15 @@ checks and command preflight matching. In `audit` mode, matching command events
 are recorded while the agent continues. In `enforce` mode, the first matching
 event terminates supported local agent processes.
 
+The event channel accepts only a no-follow regular file within the prepared
+repository. Post-hoc and online readers share hard limits of 1 MiB total input,
+8 KiB per JSONL line, 200 accepted events, and 100 retained live violations.
+Readers drain incrementally and never retain an unterminated line beyond the
+line limit. Symlinks, replacement races, non-regular sources, and limit
+overflows produce a bounded `Agent event instrumentation incomplete` diagnostic
+in reports; they do not abort independent tests, diff collection, or report
+generation.
+
 This is event/log based enforcement. It is not syscall interception, shell
 auditing, or a kernel sandbox. Commands that an agent executes without
 instrumentation and without writing an AgentGuard command event cannot be
