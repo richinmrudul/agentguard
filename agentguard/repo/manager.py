@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from agentguard.artifact_paths import artifact_directory
 from agentguard.config.schema import AgentGuardConfig
 
 
@@ -22,7 +23,7 @@ class RepoManager:
     def prepare(self, config: AgentGuardConfig, agent_name: str) -> PreparedRepo:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
         run_id = f"{config.task_id}-{agent_name}-{timestamp}-{uuid4().hex[:8]}"
-        run_dir = self.runs_root / run_id
+        run_dir = artifact_directory(self.runs_root, run_id)
         repo_dir = run_dir / "repo"
 
         if config.repo_template is None:

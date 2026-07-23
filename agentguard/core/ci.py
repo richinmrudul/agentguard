@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
+from agentguard.artifact_paths import artifact_directory
 from agentguard.config.loader import load_config
 from agentguard.checks.secret_content import with_secret_content_scan
 from agentguard.core.orchestrator import default_checks
@@ -49,7 +50,7 @@ def detect_repo_dir(start_dir: Optional[Path] = None) -> Path:
 def _run_dir(task_id: str, repo_dir: Path, ci_root: Path) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     root = ci_root if ci_root.is_absolute() else repo_dir / ci_root
-    return root / f"{task_id}-{timestamp}-{uuid4().hex[:8]}"
+    return artifact_directory(root, f"{task_id}-{timestamp}-{uuid4().hex[:8]}")
 
 
 def _write_json_report(result: CiResult) -> Path:

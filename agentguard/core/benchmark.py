@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from agentguard.artifact_paths import artifact_directory
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.core.result import (
@@ -48,7 +49,10 @@ def _agent_summary(result: BenchmarkResult) -> AgentBenchmarkSummary:
 
 def _summary_dir(task_id: str, benchmarks_root: Path) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
-    return benchmarks_root / f"{task_id}-{timestamp}-{uuid4().hex[:8]}"
+    return artifact_directory(
+        benchmarks_root,
+        f"{task_id}-{timestamp}-{uuid4().hex[:8]}",
+    )
 
 
 def _write_json_report(summary: MultiAgentBenchmarkSummary) -> Path:

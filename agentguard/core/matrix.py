@@ -11,6 +11,7 @@ from typing import Any, Callable, Optional
 from urllib.parse import quote
 from uuid import uuid4
 
+from agentguard.artifact_paths import artifact_directory
 from agentguard.config.loader import load_config
 from agentguard.core.baseline import BaselineComparison, compare_suite_to_baseline
 from agentguard.core.matrix_checkpoint import (
@@ -286,6 +287,10 @@ def validate_matrix_workers(workers: int) -> int:
 def _matrix_id(suite_id: str) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     return f"{suite_id}-{timestamp}-{uuid4().hex[:8]}"
+
+
+def _matrix_dir(matrix_id: str, matrices_root: Path) -> Path:
+    return artifact_directory(matrices_root, matrix_id)
 
 
 def _checkpoint_attempts(
@@ -1352,7 +1357,7 @@ def run_matrix(
         profile_identity=active_profile_identity,
     )
     identity = agentguard_identity()
-    report_dir = matrices_root / matrix_id
+    report_dir = _matrix_dir(matrix_id, matrices_root)
     active_checkpoint_path = checkpoint_path or resume_path
     if active_checkpoint_path is not None:
         report_dir = report_dir.expanduser().resolve()
