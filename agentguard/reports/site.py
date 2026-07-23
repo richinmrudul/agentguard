@@ -27,6 +27,8 @@ ABSOLUTE_PATH_PATTERN = re.compile(
     r"(?<![\w.-])(?:/[^\s,;:'\")\]}<>]+|[A-Za-z]:\\[^\s,;:'\")\]}<>]+)"
 )
 RAW_DIFF_MARKER_PATTERN = re.compile(r"diff --git", re.IGNORECASE)
+SITE_OUTPUT_MARKER = ".agentguard-static-site"
+SITE_OUTPUT_MARKER_CONTENT = "agentguard-static-site-v1\n"
 
 
 @dataclass(frozen=True)
@@ -118,10 +120,12 @@ def generate_static_report_site(options: StaticSiteOptions) -> StaticSiteResult:
     output = options.output.expanduser()
     reports_root = options.reports_root.expanduser()
     _validate_output_path(output, reports_root)
-    if output.exists() and any(output.iterdir()) and not options.force:
+    output_has_entries = output.exists() and any(output.iterdir())
+    if output_has_entries and not options.force:
         raise FileExistsError(f"output path already exists: {output}")
 
-    if output.exists() and options.force:
+    if output_has_entries and options.force:
+        _validate_owned_site_output(output)
         shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
     (output / "assets").mkdir()
@@ -170,6 +174,7 @@ def generate_static_report_site(options: StaticSiteOptions) -> StaticSiteResult:
 
     for relative_path, content in pages.items():
         atomic_write_text(output / relative_path, content)
+    atomic_write_text(output / SITE_OUTPUT_MARKER, SITE_OUTPUT_MARKER_CONTENT)
 
     return StaticSiteResult(
         output_path=output,
@@ -1638,10 +1643,34 @@ def html(value: object) -> str:
 def _validate_output_path(output: Path, reports_root: Path) -> None:
     resolved_output = output.resolve()
     resolved_reports = reports_root.resolve()
+    resolved_cwd = Path.cwd().resolve()
+    if resolved_output == Path(resolved_output.anchor):
+        raise ValueError("output path cannot be a filesystem root")
+    if resolved_output == resolved_cwd:
+        raise ValueError("output path cannot be the current working directory")
+    if (resolved_output / ".git").exists():
+        raise ValueError("output path cannot be a repository root")
+    if _is_relative_to(resolved_reports, resolved_output):
+        raise ValueError(
+            "output path cannot contain the reports root; choose a separate path"
+        )
     if _is_relative_to(resolved_output, resolved_reports):
         raise ValueError(
             "output path cannot be inside reports root; choose a path outside "
             f"{reports_root}"
+        )
+
+
+def _validate_owned_site_output(output: Path) -> None:
+    marker = output / SITE_OUTPUT_MARKER
+    try:
+        marker_content = marker.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        marker_content = ""
+    if marker.is_symlink() or marker_content != SITE_OUTPUT_MARKER_CONTENT:
+        raise ValueError(
+            "refusing to replace a non-empty directory without an "
+            "AgentGuard static-site marker"
         )
 
 
