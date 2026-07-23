@@ -14,6 +14,7 @@ from agentguard.config.schema import (
 from agentguard.core.result import CheckResult, CommandResult, DiffSummary
 from agentguard.instrumentation.command_tracker import CommandEvent
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.policy.evaluation import (
     PolicyEvaluationContext,
     evaluate_policy_checks,
@@ -401,18 +402,20 @@ def _write_replay_reports(result: ReplayResult) -> None:
     lines = [
         "# AgentGuard Trace Replay",
         "",
-        f"- Replay ID: {result.replay_id}",
-        f"- Trace ID: {result.trace_id}",
+        f"- Replay ID: {markdown_text(result.replay_id)}",
+        f"- Trace ID: {markdown_text(result.trace_id)}",
         f"- Trace schema: {result.trace_schema_version}",
         f"- Replayable: {result.replayability.replayable}",
-        f"- Equivalence: {result.equivalence}",
-        f"- Original AgentGuard: {result.original_agentguard_version}",
-        f"- Replay AgentGuard: {result.replay_agentguard_version}",
-        f"- Policy snapshot SHA-256: {result.policy_snapshot_hash}",
-        f"- Recorded result/score: {result.recorded_result} / {result.recorded_score}",
+        f"- Equivalence: {markdown_text(result.equivalence)}",
+        "- Original AgentGuard: "
+        f"{markdown_text(result.original_agentguard_version)}",
+        f"- Replay AgentGuard: {markdown_text(result.replay_agentguard_version)}",
+        f"- Policy snapshot SHA-256: {markdown_text(result.policy_snapshot_hash)}",
+        f"- Recorded result/score: {markdown_text(result.recorded_result)} / "
+        f"{result.recorded_score}",
         (
             f"- Recomputed result/score: "
-            f"{result.recomputed_result} / {result.recomputed_score}"
+            f"{markdown_text(result.recomputed_result)} / {result.recomputed_score}"
         ),
         f"- Replay duration: {result.replay_duration_seconds:.6f}s",
         (
@@ -434,15 +437,16 @@ def _write_replay_reports(result: ReplayResult) -> None:
     ]
     for comparison in result.comparisons:
         lines.append(
-            f"| {comparison.name} | {comparison.classification} | "
+            f"| {markdown_table_cell(comparison.name)} | "
+            f"{markdown_table_cell(comparison.classification)} | "
             f"{comparison.recorded.passed if comparison.recorded else '-'} | "
             f"{comparison.recomputed.passed if comparison.recomputed else '-'} | "
-            f"{', '.join(comparison.differences) or '-'} |"
+            f"{markdown_table_cell(', '.join(comparison.differences) or '-')} |"
         )
     lines.extend(["", "## Divergences", ""])
     if result.divergences:
         lines.extend(
-            f"- {item.field}: {item.classification}"
+            f"- {markdown_text(item.field)}: {markdown_text(item.classification)}"
             for item in result.divergences
         )
     else:
@@ -452,7 +456,10 @@ def _write_replay_reports(result: ReplayResult) -> None:
             "",
             "## Source Verification",
             "",
-            *[f"- {message}" for message in result.source_verification],
+            *[
+                f"- {markdown_text(message)}"
+                for message in result.source_verification
+            ],
             "",
             "Replay reconstructs policy evaluation from captured evidence. "
             "It does not rerun or reproduce agent behavior.",

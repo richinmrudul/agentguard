@@ -9,6 +9,11 @@ from typing import Any, Optional
 
 from agentguard import __version__
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.reports.markdown import (
+    markdown_inline_code,
+    markdown_table_cell,
+    markdown_text,
+)
 
 
 EVALUATION_REPORT_SCHEMA = "agentguard.evaluation-report"
@@ -372,9 +377,9 @@ def _render_markdown(
     lines = [
         "# AgentGuard Evaluation Report",
         "",
-        f"Generated: {generated_at}",
+        f"Generated: {markdown_text(generated_at)}",
         f"AgentGuard version: {__version__}",
-        f"AgentGuard commit: `{commit or 'unavailable'}`",
+        f"AgentGuard commit: {markdown_inline_code(commit or 'unavailable')}",
         "",
         "This report consolidates existing sanitized AgentGuard result summaries. "
         "It does not run external agents, does not read raw `.agentguard/` "
@@ -395,8 +400,8 @@ def _render_markdown(
             + " | ".join(
                 [
                     _label(source.key),
-                    f"`{source.relative_path}`",
-                    f"`{source.sha256}`",
+                    markdown_table_cell(source.relative_path),
+                    markdown_table_cell(source.sha256),
                     _fmt(source.schema or "generic"),
                 ]
             )
@@ -834,7 +839,7 @@ def _fmt(value: Any) -> str:
         return str(value)
     if isinstance(value, list):
         return ", ".join(_fmt(item) for item in value)
-    return _bounded(_sanitize(str(value)))
+    return markdown_table_cell(_bounded(_sanitize(str(value))))
 
 
 def _yes_no(value: Any) -> str:

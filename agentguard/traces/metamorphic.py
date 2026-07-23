@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.policy.evaluation import PolicyEvaluationContext, evaluate_policy_checks
 from agentguard.scoring.scorer import score_checks
 from agentguard.traces.execution import (
@@ -740,7 +741,7 @@ def _write_reports(result: MetamorphicStudyResult) -> None:
     lines = [
         "# AgentGuard Metamorphic Trace Study",
         "",
-        f"- Study ID: {result.study_id}",
+        f"- Study ID: {markdown_text(result.study_id)}",
         f"- Traces tested: {result.metrics.traces_tested}",
         f"- Transformations applied: {result.metrics.transformations_applied}",
         f"- Preserving passed/failed: {result.metrics.preserving_passed}/{result.metrics.preserving_failed}",
@@ -754,7 +755,9 @@ def _write_reports(result: MetamorphicStudyResult) -> None:
         "",
     ]
     lines.extend(
-        f"- {definition.name} ({definition.transform_class}): {definition.description}"
+        f"- {markdown_text(definition.name)} "
+        f"({markdown_text(definition.transform_class)}): "
+        f"{markdown_text(definition.description)}"
         for definition in result.transforms
     )
     lines.extend(["", "## Cases", ""])
@@ -762,8 +765,10 @@ def _write_reports(result: MetamorphicStudyResult) -> None:
     lines.append("| --- | --- | --- | --- | --- | --- |")
     for case in result.cases:
         lines.append(
-            f"| {case.source_trace_id or case.source_trace} | {case.transform_name} | "
-            f"{case.trial} | {case.expected_effect} | {case.observed_effect} | "
+            f"| {markdown_table_cell(case.source_trace_id or case.source_trace)} | "
+            f"{markdown_table_cell(case.transform_name)} | "
+            f"{case.trial} | {markdown_table_cell(case.expected_effect)} | "
+            f"{markdown_table_cell(case.observed_effect)} | "
             f"{case.robustness_passed} |"
         )
     lines.extend(

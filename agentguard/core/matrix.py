@@ -63,6 +63,7 @@ from agentguard.guard.aggregation import (
     aggregate_matrix_guard,
 )
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.provenance.manifest import (
     ChildExecution,
     ExecutionManifest,
@@ -853,16 +854,7 @@ def _reliability_lines(summary: MatrixReliabilitySummary) -> list[str]:
 
 
 def _escape_markdown_table(value: object) -> str:
-    text = str(value)
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("\r\n", "\n")
-        .replace("\r", "\n")
-        .replace("\n", "&#10;")
-        .replace("|", "\\|")
-    )
+    return markdown_table_cell(value)
 
 
 def _guard_timing_line(
@@ -976,14 +968,14 @@ def _write_markdown_report(result: MatrixResult) -> Path:
     lines = [
         "# AgentGuard Matrix Summary",
         "",
-        f"Matrix: {result.matrix_id}",
-        f"Suite: {result.suite_id}",
-        f"Suite config: {result.suite_path}",
-        f"Agents: {', '.join(result.agents)}",
+        f"Matrix: {markdown_text(result.matrix_id)}",
+        f"Suite: {markdown_text(result.suite_id)}",
+        f"Suite config: {markdown_text(result.suite_path)}",
+        f"Agents: {markdown_text(', '.join(result.agents))}",
         f"Trials per combination: {result.trials}",
         f"Requested workers: {result.requested_workers}",
         f"Effective workers: {result.effective_workers}",
-        f"Execution mode: {result.execution_mode}",
+        f"Execution mode: {markdown_text(result.execution_mode)}",
         f"Execution duration: {result.duration_seconds:.3f} seconds",
         f"Attempts planned: {result.attempts_planned}",
         f"Attempts executed: {result.attempts_executed}",
@@ -993,14 +985,15 @@ def _write_markdown_report(result: MatrixResult) -> Path:
         f"Failed: {result.failed}",
         f"Pass rate: {result.pass_rate}%",
         f"Average score: {result.average_score}",
-        f"Guard mode: {result.guard_mode}",
+        f"Guard mode: {markdown_text(result.guard_mode)}",
         f"Guard poll interval: {result.guard_poll_interval_seconds} seconds",
     ]
     if result.profile_id is not None:
         lines.extend(
             [
-                f"Profile: {result.profile_name} ({result.profile_id})",
-                f"Model: {result.profile_model or '-'}",
+                f"Profile: {markdown_text(result.profile_name)} "
+                f"({markdown_text(result.profile_id)})",
+                f"Model: {markdown_text(result.profile_model or '-')}",
             ]
         )
     if result.checkpoint_path is not None:
@@ -1009,10 +1002,10 @@ def _write_markdown_report(result: MatrixResult) -> Path:
                 "",
                 "## Checkpoint and Resume",
                 "",
-                f"Checkpoint: {result.checkpoint_path}",
-                f"Checkpoint ID: {result.checkpoint_id}",
-                f"Status: {result.checkpoint_status}",
-                f"Resumed from: {result.resumed_from or '-'}",
+                f"Checkpoint: {markdown_text(result.checkpoint_path)}",
+                f"Checkpoint ID: {markdown_text(result.checkpoint_id)}",
+                f"Status: {markdown_text(result.checkpoint_status)}",
+                f"Resumed from: {markdown_text(result.resumed_from or '-')}",
                 f"Attempts reused: {result.attempts_reused}",
                 f"Attempts skipped: {result.attempts_skipped}",
                 (
@@ -1030,7 +1023,7 @@ def _write_markdown_report(result: MatrixResult) -> Path:
             ]
         )
         lines.extend(
-            f"- {warning}" for warning in result.compatibility_warnings
+            f"- {markdown_text(warning)}" for warning in result.compatibility_warnings
         )
         if not result.compatibility_warnings:
             lines.append("- None")
@@ -1050,10 +1043,13 @@ def _write_markdown_report(result: MatrixResult) -> Path:
         ]
     )
     if result.filters.has_filters():
-        lines.append(f"Filters: {format_suite_filters(result.filters)}")
+        lines.append(f"Filters: {markdown_text(format_suite_filters(result.filters))}")
     lines.extend(["", *_guard_incident_lines(result.guard_summary)])
     if result.reliability_baseline_path is not None:
-        lines.append(f"Reliability baseline: {result.reliability_baseline_path}")
+        lines.append(
+            "Reliability baseline: "
+            f"{markdown_text(result.reliability_baseline_path)}"
+        )
     if result.reliability is not None:
         lines.extend(["", "## Reliability", "", *_reliability_lines(result.reliability)])
         lines.extend(
@@ -1074,7 +1070,7 @@ def _write_markdown_report(result: MatrixResult) -> Path:
         )
         for agent, summary in result.per_agent_reliability.items():
             lines.append(
-                f"| {agent} | {summary.attempts} | "
+                f"| {markdown_table_cell(agent)} | {summary.attempts} | "
                 f"{result.per_agent[agent].functional_passed} | "
                 f"{result.per_agent[agent].policy_compliant_passed} | "
                 f"{result.per_agent[agent].unsafe_functional_successes} | "
@@ -1104,8 +1100,9 @@ def _write_markdown_report(result: MatrixResult) -> Path:
         )
         for summary in result.combinations.values():
             lines.append(
-                f"| {summary.task_id} | {summary.benchmark_id or '-'} | "
-                f"{summary.agent} | {summary.trials} | {summary.passed} | "
+                f"| {markdown_table_cell(summary.task_id)} | "
+                f"{markdown_table_cell(summary.benchmark_id or '-')} | "
+                f"{markdown_table_cell(summary.agent)} | {summary.trials} | "
                 f"{summary.failed} | {summary.success_rate}% | "
                 f"{summary.average_score} | {summary.minimum_score} | "
                 f"{summary.maximum_score} | {summary.score_standard_deviation} | "
@@ -1131,17 +1128,25 @@ def _write_markdown_report(result: MatrixResult) -> Path:
     )
     for row in result.runs:
         lines.append(
-            f"| {row.task_id} | {row.benchmark_id or '-'} | "
-            f"{row.category or '-'} | {row.difficulty or '-'} | {row.agent} | "
+            f"| {markdown_table_cell(row.task_id)} | "
+            f"{markdown_table_cell(row.benchmark_id or '-')} | "
+            f"{markdown_table_cell(row.category or '-')} | "
+            f"{markdown_table_cell(row.difficulty or '-')} | "
+            f"{markdown_table_cell(row.agent)} | "
             f"{row.trial_index}/{row.trial_count} | "
-            f"{'PASS' if row.functional_passed else 'FAIL'} | {row.result} | "
+            f"{'PASS' if row.functional_passed else 'FAIL'} | "
+            f"{markdown_table_cell(row.result)} | "
             f"{row.score} | "
-            f"{row.task_prompt_source or '-'} "
-            f"{row.task_prompt_sha256 or '-'} | "
-            f"{_format_checks(row.failed_checks)} |"
+            f"{markdown_table_cell(row.task_prompt_source or '-')} "
+            f"{markdown_table_cell(row.task_prompt_sha256 or '-')} | "
+            f"{markdown_table_cell(_format_checks(row.failed_checks))} |"
         )
         if row.error:
-            lines.append(f"\nExecution error for {row.task_id} / {row.agent}: {row.error}")
+            lines.append(
+                "\nExecution error for "
+                f"{markdown_text(row.task_id)} / {markdown_text(row.agent)}: "
+                f"{markdown_text(row.error)}"
+            )
 
     if result.baseline_comparison is not None:
         comparison = result.baseline_comparison
@@ -1150,11 +1155,13 @@ def _write_markdown_report(result: MatrixResult) -> Path:
                 "",
                 "## Baseline Comparison",
                 "",
-                f"Baseline: {comparison.baseline_path}",
+                f"Baseline: {markdown_text(comparison.baseline_path)}",
                 f"Regressions: {'yes' if comparison.has_regressions else 'no'}",
             ]
         )
-        lines.extend(f"- {message}" for message in comparison.regressions)
+        lines.extend(
+            f"- {markdown_text(message)}" for message in comparison.regressions
+        )
         if not comparison.regressions:
             lines.append("- None")
 
@@ -1168,7 +1175,7 @@ def _write_markdown_report(result: MatrixResult) -> Path:
                 "",
                 (
                     f"Reliability baseline: "
-                    f"{comparison.baseline_path or result.reliability_baseline_path or '-'}"
+                    f"{markdown_text(comparison.baseline_path or result.reliability_baseline_path or '-')}"
                 ),
                 (
                     "Minimum success rate: "
@@ -1193,40 +1200,52 @@ def _write_markdown_report(result: MatrixResult) -> Path:
                 "",
             ]
         )
-        lines.extend(f"- {detail.message}" for detail in comparison.regressions)
+        lines.extend(
+            f"- {markdown_text(detail.message)}"
+            for detail in comparison.regressions
+        )
         if not comparison.regressions:
             lines.append("- None")
         lines.extend(["", "### Missing Combinations", ""])
-        lines.extend(f"- {key}" for key in comparison.missing_combinations)
+        lines.extend(
+            f"- {markdown_text(key)}" for key in comparison.missing_combinations
+        )
         if not comparison.missing_combinations:
             lines.append("- None")
         lines.extend(["", "### New Combinations", ""])
-        lines.extend(f"- {key}" for key in comparison.new_combinations)
+        lines.extend(
+            f"- {markdown_text(key)}" for key in comparison.new_combinations
+        )
         if not comparison.new_combinations:
             lines.append("- None")
         lines.extend(["", "### Version Mismatches", ""])
-        lines.extend(f"- {message}" for message in comparison.version_mismatches)
+        lines.extend(
+            f"- {markdown_text(message)}"
+            for message in comparison.version_mismatches
+        )
         if not comparison.version_mismatches:
             lines.append("- None")
 
     lines.extend(["", "## Individual Reports", ""])
     for row in result.runs:
         lines.append(
-            f"- {row.task_id} / {row.agent} / "
+            f"- {markdown_text(row.task_id)} / {markdown_text(row.agent)} / "
             f"trial {row.trial_index}/{row.trial_count}:"
         )
-        lines.append(f"  - Run directory: {row.run_dir or '-'}")
-        lines.append(f"  - JSON: {row.json_report_path or '-'}")
-        lines.append(f"  - Markdown: {row.markdown_report_path or '-'}")
-        lines.append(f"  - Manifest: {row.manifest_path or '-'}")
+        lines.append(f"  - Run directory: {markdown_text(row.run_dir or '-')}")
+        lines.append(f"  - JSON: {markdown_text(row.json_report_path or '-')}")
+        lines.append(
+            f"  - Markdown: {markdown_text(row.markdown_report_path or '-')}"
+        )
+        lines.append(f"  - Manifest: {markdown_text(row.manifest_path or '-')}")
 
     lines.extend(
         [
             "",
             "## Provenance",
             "",
-            f"- Execution ID: {result.matrix_id}",
-            f"- Manifest: {result.manifest_path or '-'}",
+            f"- Execution ID: {markdown_text(result.matrix_id)}",
+            f"- Manifest: {markdown_text(result.manifest_path or '-')}",
             f"- Child executions: {len([row for row in result.runs if row.execution_id])}",
         ]
     )

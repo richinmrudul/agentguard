@@ -20,6 +20,7 @@ from agentguard.guard.filesystem import (
 )
 from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.provenance.manifest import (
     ChildExecution,
     ExecutionManifest,
@@ -305,7 +306,7 @@ def _format_count_lines(counts: dict[str, int]) -> list[str]:
     if not counts:
         return ["- None"]
     return [
-        f"- {name}: {count}"
+        f"- {markdown_text(name)}: {count}"
         for name, count in sorted(counts.items(), key=lambda item: -item[1])
     ]
 
@@ -335,30 +336,32 @@ def _write_markdown_report(result: SuiteResult) -> Path:
         "",
         "## Summary",
         "",
-        f"Suite: {result.suite_id}",
-        f"Description: {result.description}",
-        f"Suite config: {result.suite_path}",
+        f"Suite: {markdown_text(result.suite_id)}",
+        f"Description: {markdown_text(result.description)}",
+        f"Suite config: {markdown_text(result.suite_path)}",
         f"Runs: {result.total_runs}",
         f"Passed: {result.passed}",
         f"Failed: {result.failed}",
         f"Pass rate: {result.pass_rate}%",
         f"Average score: {result.average_score}",
-        f"Guard mode: {result.guard_mode}",
+        f"Guard mode: {markdown_text(result.guard_mode)}",
         f"Guard poll interval: {result.guard_poll_interval_seconds} seconds",
     ]
     if result.filters.has_filters():
-        lines.append(f"Filters: {format_suite_filters(result.filters)}")
+        lines.append(f"Filters: {markdown_text(format_suite_filters(result.filters))}")
     lines.extend([
         "",
         "## Best/Worst Runs",
         "",
         (
-            f"Best run: {result.best_run.task_id} / {result.best_run.agent} / "
-            f"{result.best_run.result} / {result.best_run.score}"
+            f"Best run: {markdown_text(result.best_run.task_id)} / "
+            f"{markdown_text(result.best_run.agent)} / "
+            f"{markdown_text(result.best_run.result)} / {result.best_run.score}"
         ),
         (
-            f"Worst run: {result.worst_run.task_id} / {result.worst_run.agent} / "
-            f"{result.worst_run.result} / {result.worst_run.score}"
+            f"Worst run: {markdown_text(result.worst_run.task_id)} / "
+            f"{markdown_text(result.worst_run.agent)} / "
+            f"{markdown_text(result.worst_run.result)} / {result.worst_run.score}"
         ),
         "",
         "## Failed Check Counts",
@@ -379,11 +382,14 @@ def _write_markdown_report(result: SuiteResult) -> Path:
     ])
     for run in result.runs:
         lines.append(
-            f"| {run.task_id} | {run.category or '-'} | "
-            f"{run.difficulty or '-'} | {run.agent} | {run.result} | "
+            f"| {markdown_table_cell(run.task_id)} | "
+            f"{markdown_table_cell(run.category or '-')} | "
+            f"{markdown_table_cell(run.difficulty or '-')} | "
+            f"{markdown_table_cell(run.agent)} | "
+            f"{markdown_table_cell(run.result)} | "
             f"{run.score} | "
-            f"{_format_checks(run.failed_checks)} | "
-            f"{_format_checks(run.warning_checks)} |"
+            f"{markdown_table_cell(_format_checks(run.failed_checks))} | "
+            f"{markdown_table_cell(_format_checks(run.warning_checks))} |"
         )
 
     if result.baseline_comparison is not None:
@@ -393,7 +399,7 @@ def _write_markdown_report(result: SuiteResult) -> Path:
                 "",
                 "## Baseline Comparison",
                 "",
-                f"Baseline: {comparison.baseline_path}",
+                f"Baseline: {markdown_text(comparison.baseline_path)}",
                 f"Regressions: {'yes' if comparison.has_regressions else 'no'}",
                 f"Unchanged runs: {comparison.unchanged_count}",
                 "",
@@ -402,7 +408,7 @@ def _write_markdown_report(result: SuiteResult) -> Path:
             ]
         )
         lines.extend(
-            f"- {message}" for message in comparison.version_mismatches
+            f"- {markdown_text(message)}" for message in comparison.version_mismatches
         )
         if not comparison.version_mismatches:
             lines.append("- None")
@@ -414,32 +420,35 @@ def _write_markdown_report(result: SuiteResult) -> Path:
             ]
         )
         lines.extend(
-            f"- {message}" for message in comparison.regressions
+            f"- {markdown_text(message)}" for message in comparison.regressions
         )
         if not comparison.regressions:
             lines.append("- None")
         lines.extend(["", "### Improvements", ""])
         lines.extend(
-            f"- {message}" for message in comparison.improvements
+            f"- {markdown_text(message)}" for message in comparison.improvements
         )
         if not comparison.improvements:
             lines.append("- None")
 
     lines.extend(["", "## Individual Reports"])
     for run in result.runs:
-        lines.append(f"- {run.task_id} / {run.agent}:")
-        lines.append(f"  - Run directory: {run.run_dir}")
-        lines.append(f"  - JSON: {run.json_report_path}")
-        lines.append(f"  - Markdown: {run.markdown_report_path}")
-        lines.append(f"  - Manifest: {run.manifest_path or '-'}")
+        lines.append(
+            f"- {markdown_text(run.task_id)} / {markdown_text(run.agent)}:"
+        )
+        lines.append(f"  - Run directory: {markdown_text(run.run_dir)}")
+        lines.append(f"  - JSON: {markdown_text(run.json_report_path)}")
+        lines.append(f"  - Markdown: {markdown_text(run.markdown_report_path)}")
+        lines.append(f"  - Manifest: {markdown_text(run.manifest_path or '-')}")
 
     lines.extend(
         [
             "",
             "## Provenance",
             "",
-            f"- Execution ID: {result.json_report_path.parent.name}",
-            f"- Manifest: {result.manifest_path or '-'}",
+            "- Execution ID: "
+            f"{markdown_text(result.json_report_path.parent.name)}",
+            f"- Manifest: {markdown_text(result.manifest_path or '-')}",
             f"- Child executions: {len(result.runs)}",
         ]
     )

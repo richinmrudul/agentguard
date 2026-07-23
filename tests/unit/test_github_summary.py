@@ -81,3 +81,42 @@ def test_github_step_summary_appends_compact_markdown(tmp_path: Path) -> None:
     assert "- Added: 1" in content
     assert "- Deleted: 1" in content
     assert f"- Command log: `{tmp_path / 'command_log.json'}`" in content
+
+
+def test_github_step_summary_escapes_inline_code_and_report_fields(
+    tmp_path: Path,
+) -> None:
+    result = _ci_result(tmp_path)
+    result = CiResult(
+        **{
+            **result.__dict__,
+            "task_id": "task`code`\n## forged",
+            "diff_summary": DiffSummary(
+                modified_files=["src/a`b|c.py\n- forged"],
+                added_files=[],
+                deleted_files=[],
+                lines_added=0,
+                lines_deleted=0,
+                unified_diff="",
+            ),
+            "check_results": [
+                CheckResult(
+                    name="Check <details>",
+                    passed=False,
+                    severity="error",
+                    message="message\n> forged",
+                    evidence=[],
+                )
+            ],
+        }
+    )
+
+    summary = write_github_step_summary(
+        result, tmp_path / "summary.md"
+    ).read_text(encoding="utf-8")
+
+    assert "- Task: ``task`code`\\n## forged``" in summary
+    assert "\n## forged" not in summary
+    assert "<details>" not in summary
+    assert "&lt;details>" in summary
+    assert "src/a`b|c.py\\n- forged" in summary

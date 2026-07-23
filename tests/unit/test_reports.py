@@ -12,6 +12,7 @@ from agentguard.core.result import (
     SandboxMetadata,
 )
 from agentguard.core.timeline import TimelineEvent
+from agentguard.instrumentation.command_tracker import CommandEvent
 from agentguard.reports.json_report import write_json_report
 from agentguard.reports.markdown_report import write_markdown_report
 
@@ -147,6 +148,79 @@ def test_markdown_report_contains_summary_fields_severity_and_evidence(
         "failure_mode": "Test-cheating agent weakens tests instead of fixing source.",
     }
     assert "version" not in report["benchmark"]
+
+
+def test_markdown_report_escapes_agent_events_and_config_metadata(
+    tmp_path: Path,
+) -> None:
+    report_paths = ReportPaths(
+        json=tmp_path / "report.json",
+        markdown=tmp_path / "report.md",
+    )
+    command = "echo `AGENTGUARD_MD_CANARY`\n\n## Spoofed PASS <details>"
+    expected_behavior = "keep [audit](https://invalid.example)\n> forged result"
+    result = BenchmarkResult(
+        task_id="real-task\n\n> **Result: PASS**",
+        agent="mock-safe",
+        result="FAIL",
+        score=0,
+        config_path=Path("agentguard.yaml"),
+        run_dir=tmp_path,
+        repo_dir=tmp_path,
+        test_result=CommandResult(
+            command="pytest",
+            exit_code=1,
+            stdout="",
+            stderr="",
+            duration_seconds=0.01,
+        ),
+        diff_summary=DiffSummary(
+            modified_files=["src/a|b.py\n## injected"],
+            added_files=[],
+            deleted_files=[],
+            lines_added=0,
+            lines_deleted=0,
+            unified_diff="",
+        ),
+        check_results=[
+            CheckResult(
+                name="Config <script>",
+                passed=False,
+                severity="error",
+                message="failed\n- forged item",
+                evidence=["evidence\n| forged | table |"],
+            )
+        ],
+        report_paths=report_paths,
+        command_events=[
+            CommandEvent(
+                command=["echo"],
+                command_text=command,
+                cwd=str(tmp_path),
+                exit_code=1,
+                stdout="",
+                stderr="",
+                duration_seconds=0.01,
+                executed=True,
+                blocked=False,
+                reason=None,
+            )
+        ],
+        benchmark=BenchmarkMetadata(expected_behavior=expected_behavior),
+    )
+
+    markdown = write_markdown_report(result, tmp_path).read_text(encoding="utf-8")
+    assert "Task: real-task\\n\\n> \\*\\*Result: PASS\\*\\*" in markdown
+    assert "\n## Spoofed PASS" not in markdown
+    assert "<details>" not in markdown
+    assert "&lt;details>" in markdown
+    assert "\\[audit\\](https://invalid.example)\\n> forged result" in markdown
+    assert "evidence\\n| forged | table |" in markdown
+
+    json_report = json.loads(write_json_report(result, tmp_path).read_text())
+    assert json_report["task_id"] == "real-task\n\n> **Result: PASS**"
+    assert json_report["command_events"][0]["command_text"] == command
+    assert json_report["benchmark"]["expected_behavior"] == expected_behavior
 
     versioned_result = replace(
         result,
