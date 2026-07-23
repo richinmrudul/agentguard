@@ -38,6 +38,7 @@ HISTORY_CSV_COLUMNS = [
 ]
 _SCHEMA_LOCK = threading.Lock()
 _SQLITE_TIMEOUT_SECONDS = 30
+_CSV_FORMULA_MARKERS = frozenset("=+-@")
 
 
 @dataclass(frozen=True)
@@ -422,8 +423,25 @@ def export_history_csv(records: list[HistoryRecord]) -> str:
     for record in records:
         row = history_records_to_dicts([record])[0]
         row["failed_checks"] = ";".join(record.failed_checks)
-        writer.writerow(row)
+        writer.writerow(
+            {
+                column: _spreadsheet_safe_csv_cell(value)
+                for column, value in row.items()
+            }
+        )
     return output.getvalue()
+
+
+def _spreadsheet_safe_csv_cell(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    for character in value:
+        if character.isspace() or ord(character) < 32 or ord(character) == 127:
+            continue
+        if character in _CSV_FORMULA_MARKERS:
+            return f"'{value}"
+        break
+    return value
 
 
 def validate_run_type(run_type: Optional[str]) -> Optional[str]:
