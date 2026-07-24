@@ -4,6 +4,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+import agentguard.reports.browser as report_browser
 from agentguard.cli.main import app
 from agentguard.reports.browser import (
     discover_reports,
@@ -90,6 +91,46 @@ def test_limit_works_through_cli(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 0
     assert "new_task" in result.output
     assert "fix_auth_bug" not in result.output
+
+
+def test_limit_bounds_full_report_parsing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    for index in range(50):
+        _write_run_report(tmp_path, f"run-{index}", mtime=index + 1)
+    parsed = 0
+    original = report_browser._load_report_item
+
+    def counting_loader(path, report_type, root):
+        nonlocal parsed
+        parsed += 1
+        return original(path, report_type, root)
+
+    monkeypatch.setattr(report_browser, "_load_report_item", counting_loader)
+
+    reports = discover_reports(limit=3)
+
+    assert parsed == 3
+    assert [report.id for report in reports] == ["run-49", "run-48", "run-47"]
+
+
+def test_oversized_reports_are_skipped_and_show_fails_cleanly(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(report_browser, "MAX_REPORT_BYTES", 32)
+    report_path = _write_run_report(tmp_path, "oversized")
+
+    assert discover_reports() == []
+
+    result = runner.invoke(app, ["reports", "show", str(report_path)])
+
+    assert result.exit_code == 2
+    assert "report exceeds the 32-byte read limit" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_invalid_json_is_skipped(tmp_path: Path, monkeypatch) -> None:

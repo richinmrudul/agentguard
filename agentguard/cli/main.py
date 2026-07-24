@@ -2260,7 +2260,7 @@ def reports_list(
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="--type") from error
 
-    reports = discover_reports(report_type=validated_type)[:limit]
+    reports = discover_reports(report_type=validated_type, limit=limit)
     typer.echo(format_reports_table(reports))
 
 
