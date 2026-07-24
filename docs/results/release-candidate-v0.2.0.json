@@ -58,10 +58,10 @@
   ],
   "docs_checklist_status": {
     "changelog_v0_2_0_section": true,
-    "readiness_artifact_current": true,
-    "release_candidate_artifact_current": true,
-    "release_checklist_post_merge_commands": true,
-    "release_process_post_merge_commands": true
+    "readiness_artifact_records_release": true,
+    "release_checklist_is_version_generic": true,
+    "release_process_is_version_generic": true,
+    "release_status_artifact_current": true
   },
   "included": [
     "local and Docker-backed benchmark execution",
@@ -86,9 +86,6 @@
     "PyPI publishing is deferred and no upload command is included."
   ],
   "not_performed_by_this_pr": [
-    "git tag creation",
-    "git tag push",
-    "GitHub release creation",
     "PyPI publication"
   ],
   "package_build_validation": {
@@ -111,9 +108,10 @@
       "readme": true,
       "requires_python": true,
       "runtime_dependencies": true,
-      "version": true
+      "version_advanced_after_release": true
     },
     "console_script": "agentguard.cli.main:app",
+    "current_version": "0.2.1",
     "license": "MIT",
     "name": "agentguard",
     "requires_python": ">=3.9",
@@ -134,17 +132,6 @@
     "local_phase41a_result": "passed before opening the review PR",
     "requires_network_for_temp_venv_dependencies": true
   },
-  "post_merge_release_commands": [
-    "git switch main",
-    "git pull --ff-only origin main",
-    "bash scripts/build_release.sh",
-    ".venv/bin/python scripts/validate_release_artifacts.py dist/agentguard-0.2.0-py3-none-any.whl dist/agentguard-0.2.0.tar.gz",
-    "bash scripts/package_smoke.sh",
-    ".venv/bin/python scripts/showcase_metrics.py --check",
-    "git tag -a v0.2.0 -m \"AgentGuard v0.2.0\"",
-    "git push origin v0.2.0",
-    "gh release create v0.2.0 dist/agentguard-0.2.0-py3-none-any.whl dist/agentguard-0.2.0.tar.gz --title \"AgentGuard v0.2.0\" --notes-file release-notes-v0.2.0.md"
-  ],
   "post_v0_1_feature_summary": [
     "adversarial-core benchmark pack foundation",
     "adversarial benchmark metrics validation",
@@ -155,7 +142,7 @@
     "adversarial secret-detector benchmark coverage",
     "updated adversarial metrics and pack summaries"
   ],
-  "recommendation": "ready to tag after merge with caveats",
+  "recommendation": "GitHub release published; PyPI deferred",
   "release": "v0.2.0",
   "schema": "agentguard.release-candidate",
   "schema_version": 1,
@@ -175,7 +162,7 @@
     "total_scenarios": 6,
     "unsafe_scenarios_detected": 5
   },
-  "status": "release candidate",
+  "status": "released",
   "test_summary": {
     "focused_commands": [
       "tests/unit/test_release_validation.py",

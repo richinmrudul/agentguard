@@ -1,19 +1,19 @@
-# v0.2.0 Release Candidate
+# v0.2.0 Release Status
 
-Status: **release candidate**
-Recommendation: **ready to tag after merge with caveats**
+Status: **released**
+Recommendation: **GitHub release published; PyPI deferred**
 
-AgentGuard v0.2.0 is ready for a maintainer to tag after this
-release-candidate PR merges, assuming required CI remains green. This artifact
-is stable and intentionally omits timestamps, hostnames, raw command output,
-absolute paths, and package build artifacts.
+AgentGuard v0.2.0 was tagged and published as a GitHub release on July 17,
+2026. This artifact is stable and intentionally omits timestamps, hostnames,
+raw command output, absolute paths, and package build artifacts.
 
-This PR does not create a tag, GitHub release, PyPI upload, wheel, or source
-distribution artifact. v0.2.0 has not been tagged or released yet.
+This post-release status update does not recreate the tag or GitHub release and
+does not publish to PyPI.
 
 ## Version And Package Metadata
 
 - Package: `agentguard` `0.2.0`
+- Current development version: `0.2.1`
 - Python: `>=3.9`; tested classifiers for 3.9, 3.10, 3.11, 3.12
 - License: `MIT`
 - Console script: `agentguard.cli.main:app`
@@ -85,27 +85,6 @@ These are curated local-demo metrics, not scientific benchmark results.
 - Curated showcase metrics and adversarial metrics are local validation signals, not scientific benchmark results.
 - PyPI publishing is deferred and no upload command is included.
 
-## Post-Merge Release Commands
-
-Run these only after this PR merges and the maintainer confirms the target
-commit and CI status:
-
-1. `git switch main`
-2. `git pull --ff-only origin main`
-3. `bash scripts/build_release.sh`
-4. `.venv/bin/python scripts/validate_release_artifacts.py dist/agentguard-0.2.0-py3-none-any.whl dist/agentguard-0.2.0.tar.gz`
-5. `bash scripts/package_smoke.sh`
-6. `.venv/bin/python scripts/showcase_metrics.py --check`
-7. `git tag -a v0.2.0 -m "AgentGuard v0.2.0"`
-8. `git push origin v0.2.0`
-9. `gh release create v0.2.0 dist/agentguard-0.2.0-py3-none-any.whl dist/agentguard-0.2.0.tar.gz --title "AgentGuard v0.2.0" --notes-file release-notes-v0.2.0.md`
-
-Prepare `release-notes-v0.2.0.md` from `CHANGELOG.md` before
-running the GitHub release command.
-
 ## Not Performed By This PR
 
-- git tag creation
-- git tag push
-- GitHub release creation
 - PyPI publication

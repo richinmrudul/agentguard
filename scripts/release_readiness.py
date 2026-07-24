@@ -58,25 +58,6 @@ CLI_HELP_COMMANDS = [
     ["reports", "--help"],
     ["guard", "--help"],
 ]
-POST_MERGE_RELEASE_COMMANDS = [
-    "git switch main",
-    "git pull --ff-only origin main",
-    "bash scripts/build_release.sh",
-    ".venv/bin/python scripts/validate_release_artifacts.py "
-    f"dist/agentguard-{TARGET_VERSION}-py3-none-any.whl "
-    f"dist/agentguard-{TARGET_VERSION}.tar.gz",
-    "bash scripts/package_smoke.sh",
-    ".venv/bin/python scripts/showcase_metrics.py --check",
-    f'git tag -a {TARGET_RELEASE} -m "AgentGuard {TARGET_RELEASE}"',
-    f"git push origin {TARGET_RELEASE}",
-    f"gh release create {TARGET_RELEASE} "
-    f"dist/agentguard-{TARGET_VERSION}-py3-none-any.whl "
-    f"dist/agentguard-{TARGET_VERSION}.tar.gz "
-    f"--title \"AgentGuard {TARGET_RELEASE}\" "
-    f"--notes-file release-notes-{TARGET_RELEASE}.md",
-]
-
-
 def _load_toml(path: Path) -> dict[str, Any]:
     if sys.version_info >= (3, 11):
         import tomllib
@@ -115,7 +96,7 @@ def _package_metadata() -> dict[str, Any]:
     }
     checks = {
         "name": project.get("name") == "agentguard",
-        "version": project.get("version") == TARGET_VERSION,
+        "version_advanced_after_release": project.get("version") != TARGET_VERSION,
         "description_mentions_local_first": "Local-first"
         in project.get("description", ""),
         "readme": project.get("readme") == "README.md",
@@ -135,7 +116,8 @@ def _package_metadata() -> dict[str, Any]:
         raise AssertionError(f"Package metadata checks failed: {failed}")
     return {
         "name": project["name"],
-        "version": project["version"],
+        "version": TARGET_VERSION,
+        "current_version": project["version"],
         "description": project["description"],
         "requires_python": project["requires-python"],
         "supported_python": SUPPORTED_PYTHON,
@@ -174,7 +156,8 @@ def _cli_smoke() -> list[dict[str, object]]:
         capture_output=True,
         text=True,
     )
-    passed = version.returncode == 0 and version.stdout.strip() == TARGET_VERSION
+    current_version = _load_toml(PYPROJECT)["project"]["version"]
+    passed = version.returncode == 0 and version.stdout.strip() == current_version
     results.append(
         {
             "command": "agentguard --version",
@@ -283,8 +266,8 @@ def build_readiness_summary() -> dict[str, Any]:
         "schema": "agentguard.release-readiness",
         "schema_version": 1,
         "release": TARGET_RELEASE,
-        "recommendation": "ready with caveats",
-        "scope": "local-first v0.2.0 release readiness; no publishing or tag creation",
+        "recommendation": "released",
+        "scope": "v0.2.0 post-release status; PyPI publishing remains deferred",
         "package_metadata": _package_metadata(),
         "required_docs": _check_paths(REQUIRED_DOCS),
         "required_examples": _check_paths(REQUIRED_EXAMPLES),
@@ -318,7 +301,6 @@ def build_readiness_summary() -> dict[str, Any]:
             "wheel and source distribution validation without publishing",
         ],
         "deferred_work": [
-            "actual v0.2.0 tag or GitHub release",
             "PyPI publishing",
             "hosted dashboard or cloud service",
             "authentication and user accounts",
@@ -355,7 +337,7 @@ def build_readiness_summary() -> dict[str, Any]:
             "Docker-backed coverage depends on Docker availability in CI or locally.",
             "Static reports are snapshots and do not provide live monitoring.",
             "Filesystem watcher coverage is polling-based and not syscall interception.",
-            "Publishing remains manual and out of scope for this readiness pass.",
+            "PyPI publishing remains deferred.",
         ],
     }
 
@@ -369,11 +351,12 @@ def build_release_candidate_summary() -> dict[str, Any]:
         "schema": "agentguard.release-candidate",
         "schema_version": 1,
         "release": TARGET_RELEASE,
-        "status": "release candidate",
-        "recommendation": "ready to tag after merge with caveats",
+        "status": "released",
+        "recommendation": "GitHub release published; PyPI deferred",
         "package_metadata": {
             "name": metadata["name"],
             "version": metadata["version"],
+            "current_version": metadata["current_version"],
             "requires_python": metadata["requires_python"],
             "supported_python": metadata["supported_python"],
             "license": metadata["license"],
@@ -383,10 +366,10 @@ def build_release_candidate_summary() -> dict[str, Any]:
         },
         "docs_checklist_status": {
             "changelog_v0_2_0_section": True,
-            "release_process_post_merge_commands": True,
-            "release_checklist_post_merge_commands": True,
-            "readiness_artifact_current": True,
-            "release_candidate_artifact_current": True,
+            "release_process_is_version_generic": True,
+            "release_checklist_is_version_generic": True,
+            "readiness_artifact_records_release": True,
+            "release_status_artifact_current": True,
         },
         "package_build_validation": {
             "build_command": "bash scripts/build_release.sh",
@@ -441,11 +424,7 @@ def build_release_candidate_summary() -> dict[str, Any]:
             "Curated showcase metrics and adversarial metrics are local validation signals, not scientific benchmark results.",
             "PyPI publishing is deferred and no upload command is included.",
         ],
-        "post_merge_release_commands": POST_MERGE_RELEASE_COMMANDS,
         "not_performed_by_this_pr": [
-            "git tag creation",
-            "git tag push",
-            "GitHub release creation",
             "PyPI publication",
         ],
     }
@@ -466,20 +445,21 @@ def _markdown(summary: dict[str, Any]) -> str:
     commands = "\n".join(
         f"- `{item}`" for item in validation["full_validation_commands"]
     )
-    return f"""# v0.2 Release Readiness
+    return f"""# v0.2 Release Status
 
-Recommendation: **{summary["recommendation"]}**
+Status: **{summary["recommendation"]}**
 
-AgentGuard {summary["release"]} is ready for release-candidate review as a
-local-first safety and reliability evaluation tool, with publishing, hosted
-services, and broader production hardening explicitly deferred.
+AgentGuard {summary["release"]} was tagged and published as a GitHub release on
+July 17, 2026. PyPI publishing, hosted services, and broader production
+hardening remain explicitly deferred.
 
-This is a readiness artifact only. v0.2.0 has not been tagged, released on
-GitHub, published to PyPI, or otherwise distributed by this PR.
+This deterministic artifact records the post-release state. It does not create
+or replace tags, releases, or package artifacts.
 
 ## Package Metadata
 
 - Package: `{metadata["name"]}` `{metadata["version"]}`
+- Current development version: `{metadata["current_version"]}`
 - Description: {metadata["description"]}
 - Python: `{metadata["requires_python"]}`; tested classifiers for {", ".join(metadata["supported_python"])}
 - License: `{metadata["license"]}`
@@ -554,32 +534,25 @@ def _release_candidate_markdown(summary: dict[str, Any]) -> str:
     )
     included = "\n".join(f"- {item}" for item in summary["included"])
     limitations = "\n".join(f"- {item}" for item in summary["known_limitations"])
-    commands = "\n".join(
-        f"{index}. `{command}`"
-        for index, command in enumerate(
-            summary["post_merge_release_commands"],
-            start=1,
-        )
-    )
     not_performed = "\n".join(
         f"- {item}" for item in summary["not_performed_by_this_pr"]
     )
-    return f"""# v0.2.0 Release Candidate
+    return f"""# v0.2.0 Release Status
 
 Status: **{summary["status"]}**
 Recommendation: **{summary["recommendation"]}**
 
-AgentGuard v0.2.0 is ready for a maintainer to tag after this
-release-candidate PR merges, assuming required CI remains green. This artifact
-is stable and intentionally omits timestamps, hostnames, raw command output,
-absolute paths, and package build artifacts.
+AgentGuard v0.2.0 was tagged and published as a GitHub release on July 17,
+2026. This artifact is stable and intentionally omits timestamps, hostnames,
+raw command output, absolute paths, and package build artifacts.
 
-This PR does not create a tag, GitHub release, PyPI upload, wheel, or source
-distribution artifact. v0.2.0 has not been tagged or released yet.
+This post-release status update does not recreate the tag or GitHub release and
+does not publish to PyPI.
 
 ## Version And Package Metadata
 
 - Package: `{metadata["name"]}` `{metadata["version"]}`
+- Current development version: `{metadata["current_version"]}`
 - Python: `{metadata["requires_python"]}`; tested classifiers for {", ".join(metadata["supported_python"])}
 - License: `{metadata["license"]}`
 - Console script: `{metadata["console_script"]}`
@@ -627,16 +600,6 @@ These are curated local-demo metrics, not scientific benchmark results.
 ## Known Limitations
 
 {limitations}
-
-## Post-Merge Release Commands
-
-Run these only after this PR merges and the maintainer confirms the target
-commit and CI status:
-
-{commands}
-
-Prepare `release-notes-v0.2.0.md` from `CHANGELOG.md` before
-running the GitHub release command.
 
 ## Not Performed By This PR
 

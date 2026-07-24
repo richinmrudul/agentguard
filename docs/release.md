@@ -1,49 +1,40 @@
 # Release Process
 
-This document describes release validation for AgentGuard v0.2.0. AgentGuard
-v0.1.0 has already been released; the current release-readiness phase prepares
-v0.2.0 review artifacts but does not publish a package, create a git tag, or
-create a GitHub release.
+AgentGuard v0.2.0 was tagged and published as a GitHub release on July 17,
+2026. This document describes the version-generic validation and publication
+process for a future release. PyPI publishing remains deferred.
 
 ## Local Validation
 
 Run from the repository root with the development environment installed:
 
 ```bash
-.venv/bin/python scripts/release_readiness.py
 .venv/bin/python -m pytest
 .venv/bin/python -m ruff check .
 git diff --check
 bash scripts/build_release.sh
 bash scripts/package_smoke.sh
 .venv/bin/python scripts/showcase_metrics.py --check
+.venv/bin/python scripts/adversarial_metrics.py --check
 ```
 
-`release_readiness.py` validates package metadata, required docs and examples,
-CLI help rendering, committed showcase metrics, adversarial metrics, watcher
-coverage notes, and supported/deferred scope. It writes the stable review
-artifacts `docs/results/release-readiness-v0.2.json` and
-`docs/results/release-readiness-v0.2.md`, plus
-`docs/results/release-candidate-v0.2.0.json` and
-`docs/results/release-candidate-v0.2.0.md`, without timestamps, hostnames, raw
-command output, absolute paths, or secret values.
-
 `build_release.sh` creates a wheel and source distribution under `dist/`,
-validates their metadata and members, prints their paths, and never publishes
-them. `package_smoke.sh` builds and installs the wheel in a disposable virtual
+checks that the current version is not already tagged at a different commit,
+validates package metadata and members, and never publishes artifacts.
+`package_smoke.sh` builds and installs the wheel in a disposable virtual
 environment outside the source checkout, verifies the installed console entry
 point, and runs a non-Docker benchmark using copied repository examples.
-`showcase_metrics.py --check` validates committed stable showcase metrics
-without rewriting timing-sensitive local overhead artifacts.
 
-Inspect the generated artifacts before a release:
+Inspect the generated artifacts before a release. Set `VERSION` to the version
+already declared in `pyproject.toml` and `agentguard/__init__.py`:
 
 ```bash
-unzip -l dist/agentguard-0.2.0-py3-none-any.whl
-tar -tzf dist/agentguard-0.2.0.tar.gz
+VERSION=$(.venv/bin/agentguard --version)
+unzip -l "dist/agentguard-${VERSION}-py3-none-any.whl"
+tar -tzf "dist/agentguard-${VERSION}.tar.gz"
 .venv/bin/python scripts/validate_release_artifacts.py \
-  dist/agentguard-0.2.0-py3-none-any.whl \
-  dist/agentguard-0.2.0.tar.gz
+  "dist/agentguard-${VERSION}-py3-none-any.whl" \
+  "dist/agentguard-${VERSION}.tar.gz"
 ```
 
 The wheel must contain the `agentguard` package, console entry-point metadata,
@@ -54,10 +45,10 @@ not distribution payload.
 
 ## CI Expectations
 
-A release-readiness pull request should complete these jobs:
+A release pull request should complete these jobs:
 
 - Python 3.9, 3.10, 3.11, and 3.12 non-Docker compatibility tests.
-- Ruff on Python 3.11.
+- Ruff and the coverage quality gate on Python 3.11.
 - The complete Docker-backed integration suite on Python 3.11.
 - Wheel and source-distribution build, content validation, isolated wheel
   installation, installed CLI smoke checks, and artifact upload.
@@ -65,34 +56,35 @@ A release-readiness pull request should complete these jobs:
 GitHub Actions artifacts are for review only. CI has read-only repository
 permissions and no package publishing credentials.
 
-## Post-Merge Release Commands
+## Release Commands
 
-After the release-candidate PR is reviewed, merged, and required CI checks are
-green, a maintainer can cut v0.2.0 with these manual commands:
+After the release PR is reviewed, merged, and required CI checks are green,
+a maintainer may publish the already-reviewed version:
 
 ```bash
 git switch main
 git pull --ff-only origin main
+VERSION=$(.venv/bin/agentguard --version)
 bash scripts/build_release.sh
 .venv/bin/python scripts/validate_release_artifacts.py \
-  dist/agentguard-0.2.0-py3-none-any.whl \
-  dist/agentguard-0.2.0.tar.gz
+  "dist/agentguard-${VERSION}-py3-none-any.whl" \
+  "dist/agentguard-${VERSION}.tar.gz"
 bash scripts/package_smoke.sh
 .venv/bin/python scripts/showcase_metrics.py --check
-git tag -a v0.2.0 -m "AgentGuard v0.2.0"
-git push origin v0.2.0
+.venv/bin/python scripts/adversarial_metrics.py --check
+git tag -a "v${VERSION}" -m "AgentGuard v${VERSION}"
+git push origin "v${VERSION}"
 ```
 
-Prepare release notes from the v0.2.0 section of `CHANGELOG.md`, then create a
-GitHub release from the pushed tag and attach the validated wheel and source
-distribution:
+Prepare release notes from the matching section of `CHANGELOG.md`, then create
+the GitHub release from the pushed tag and attach the validated distributions:
 
 ```bash
-gh release create v0.2.0 \
-  dist/agentguard-0.2.0-py3-none-any.whl \
-  dist/agentguard-0.2.0.tar.gz \
-  --title "AgentGuard v0.2.0" \
-  --notes-file release-notes-v0.2.0.md
+gh release create "v${VERSION}" \
+  "dist/agentguard-${VERSION}-py3-none-any.whl" \
+  "dist/agentguard-${VERSION}.tar.gz" \
+  --title "AgentGuard v${VERSION}" \
+  --notes-file "release-notes-v${VERSION}.md"
 ```
 
 Do not run these commands from a feature branch. Each tag and GitHub release
@@ -101,8 +93,7 @@ repository performs those operations automatically.
 
 ## Publishing Status
 
-PyPI publishing is intentionally deferred to a later phase. Before enabling it,
-choose the PyPI project ownership and authentication model, add a trusted
-publishing workflow with narrowly scoped permissions, and validate the release
-against a non-production index. This repository currently contains no PyPI
-upload command or publishing credential.
+PyPI publishing is intentionally deferred. Before enabling it, choose the PyPI
+project ownership and authentication model, add a trusted publishing workflow
+with narrowly scoped permissions, and validate against a non-production index.
+This repository currently contains no PyPI upload command or credential.

@@ -11,8 +11,19 @@ and uses semantic versioning.
 
 - Advanced the package and CLI release identity to `0.2.1` for post-v0.2.0
   bug fixes, reliability improvements, validation, and polish.
+- Isolated local subprocess environments, tightened configuration validation,
+  resolved suite-relative paths consistently, and restored matrix report
+  browsing.
+- Pinned the supported Ruff version so local and CI lint behavior agree.
 
-## v0.2.0 - Release Candidate
+### Fixed
+
+- Hardened report generation, history CSV exports, artifact paths, agent event
+  ingestion, subprocess output handling, Docker image validation, command
+  redaction, static-site replacement, and staged rename inspection.
+- Bounded recent-report parsing to avoid loading unbounded report histories.
+
+## v0.2.0 - 2026-07-17
 
 ### Added
 
@@ -35,9 +46,8 @@ and uses semantic versioning.
 
 ### Changed
 
-- Release readiness artifacts now target v0.2.0 and summarize the post-v0.1.0
-  feature set without creating a tag, release, package upload, wheel, or source
-  distribution artifact.
+- Release readiness artifacts summarize the post-v0.1.0 feature set recorded
+  for the v0.2.0 release.
 - Detection-quality and benchmark docs now distinguish the polished showcase
   from the broader adversarial-core evaluation pack.
 - Online guard docs now document watcher modes, polling limitations, symlink
@@ -72,8 +82,7 @@ and uses semantic versioning.
   included.
 - The adversarial-core pack is an initial local-first coverage pack, not a
   broad benchmark corpus or leaderboard.
-- PyPI publishing remains deferred; v0.2.0 artifacts are review targets only
-  until a maintainer explicitly cuts a release later.
+- PyPI publishing remains deferred.
 
 ## v0.1.0 - Released
 

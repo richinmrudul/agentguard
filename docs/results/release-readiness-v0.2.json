@@ -78,7 +78,6 @@
     }
   ],
   "deferred_work": [
-    "actual v0.2.0 tag or GitHub release",
     "PyPI publishing",
     "hosted dashboard or cloud service",
     "authentication and user accounts",
@@ -96,7 +95,7 @@
     "Docker-backed coverage depends on Docker availability in CI or locally.",
     "Static reports are snapshots and do not provide live monitoring.",
     "Filesystem watcher coverage is polling-based and not syscall interception.",
-    "Publishing remains manual and out of scope for this readiness pass."
+    "PyPI publishing remains deferred."
   ],
   "package_metadata": {
     "checks": {
@@ -110,9 +109,10 @@
       "readme": true,
       "requires_python": true,
       "runtime_dependencies": true,
-      "version": true
+      "version_advanced_after_release": true
     },
     "console_script": "agentguard.cli.main:app",
+    "current_version": "0.2.1",
     "description": "Local-first safety and reliability evaluation framework for AI coding agents.",
     "license": "MIT",
     "name": "agentguard",
@@ -139,7 +139,7 @@
     "adversarial secret-detector benchmark coverage",
     "updated adversarial metrics and pack summaries"
   ],
-  "recommendation": "ready with caveats",
+  "recommendation": "released",
   "release": "v0.2.0",
   "required_docs": [
     {
@@ -241,7 +241,7 @@
   ],
   "schema": "agentguard.release-readiness",
   "schema_version": 1,
-  "scope": "local-first v0.2.0 release readiness; no publishing or tag creation",
+  "scope": "v0.2.0 post-release status; PyPI publishing remains deferred",
   "showcase_metrics": {
     "categories": [
       "diff_limit",

@@ -15,6 +15,10 @@ from typer.testing import CliRunner
 
 from agentguard import __version__
 from agentguard.cli.main import app
+from scripts.release_readiness import (
+    build_readiness_summary,
+    build_release_candidate_summary,
+)
 from scripts.validate_release_artifacts import validate_version_tag
 
 
@@ -28,6 +32,8 @@ LICENSE = ROOT / "LICENSE"
 CHANGELOG = ROOT / "CHANGELOG.md"
 README = ROOT / "README.md"
 RELEASE_DOC = ROOT / "docs/release.md"
+RELEASE_CHECKLIST = ROOT / "docs/release-checklist.md"
+PORTFOLIO = ROOT / "docs/portfolio.md"
 EVALUATION_DOC = ROOT / "docs/evaluation.md"
 READINESS_JSON = ROOT / "docs/results/release-readiness-v0.2.json"
 READINESS_MD = ROOT / "docs/results/release-readiness-v0.2.md"
@@ -128,12 +134,14 @@ def test_release_readiness_documents_and_license_agree() -> None:
     changelog = CHANGELOG.read_text(encoding="utf-8")
     readme = README.read_text(encoding="utf-8")
     release_doc = RELEASE_DOC.read_text(encoding="utf-8")
+    release_checklist = RELEASE_CHECKLIST.read_text(encoding="utf-8")
+    portfolio = PORTFOLIO.read_text(encoding="utf-8")
     evaluation_doc = EVALUATION_DOC.read_text(encoding="utf-8")
 
     assert license_text.startswith("MIT License\n")
     assert "Copyright (c) 2026 Richin Mrudul" in license_text
     assert "## Unreleased" in changelog
-    assert "## v0.2.0 - Release Candidate" in changelog
+    assert "## v0.2.0 - 2026-07-17" in changelog
     assert "## v0.1.0 - Released" in changelog
     for heading in (
         "### Added",
@@ -155,8 +163,6 @@ def test_release_readiness_documents_and_license_agree() -> None:
         assert target in readme
     assert "no external-agent benchmark results are" in evaluation_doc
     assert "published with v0.1.0" in evaluation_doc
-    assert "release_readiness.py" in release_doc
-
     forbidden_publish_commands = (
         "twine upload",
         "uv publish",
@@ -165,18 +171,22 @@ def test_release_readiness_documents_and_license_agree() -> None:
         "poetry publish",
     )
     assert not any(command in release_doc for command in forbidden_publish_commands)
-    for command in (
-        "git switch main",
-        "git pull --ff-only origin main",
-        ".venv/bin/python scripts/showcase_metrics.py --check",
+    for document in (readme, release_doc, portfolio):
+        assert "v0.2.0" in document
+    for document in (readme, portfolio):
+        assert "published" in document
+    for stale_instruction in (
         'git tag -a v0.2.0 -m "AgentGuard v0.2.0"',
         "git push origin v0.2.0",
         "gh release create v0.2.0",
+        "v0.2.0 has not been tagged",
+        "no v0.2.0 GitHub release",
     ):
-        assert command in release_doc
-    assert "AgentGuard v0.2.0 has been tagged" in readme
-    assert "no v0.2.0 GitHub release or PyPI publication" in readme
-    assert "does not publish a package, create a git tag" in release_doc
+        assert stale_instruction not in "\n".join(
+            (readme, release_doc, release_checklist, portfolio)
+        )
+    assert 'git tag -a "v${VERSION}"' in release_doc
+    assert 'gh release create "v${VERSION}"' in release_doc
     assert "No command in this\nrepository performs those operations automatically." in release_doc
 
 
@@ -184,12 +194,15 @@ def test_release_readiness_script_and_artifacts_are_valid() -> None:
     assert READINESS_SCRIPT.exists()
     artifact = json_load(READINESS_JSON)
     markdown = READINESS_MD.read_text(encoding="utf-8")
+    generated = build_readiness_summary()
 
+    assert artifact == generated
     assert artifact["schema"] == "agentguard.release-readiness"
     assert artifact["schema_version"] == 1
     assert artifact["release"] == "v0.2.0"
-    assert artifact["recommendation"] == "ready with caveats"
+    assert artifact["recommendation"] == "released"
     assert artifact["package_metadata"]["version"] == "0.2.0"
+    assert artifact["package_metadata"]["current_version"] == __version__
     assert artifact["package_metadata"]["console_script"] == (
         "agentguard.cli.main:app"
     )
@@ -213,20 +226,24 @@ def test_release_readiness_script_and_artifacts_are_valid() -> None:
         item.get("help_rendered") or item.get("version_matches_package")
         for item in artifact["cli_smoke"]
     )
-    assert "Recommendation: **ready with caveats**" in markdown
+    assert "Status: **released**" in markdown
+    assert "published as a GitHub release" in markdown
     assert "PyPI publishing" in markdown
 
 
 def test_release_candidate_artifacts_are_valid() -> None:
     artifact = json_load(RELEASE_CANDIDATE_JSON)
     markdown = RELEASE_CANDIDATE_MD.read_text(encoding="utf-8")
+    generated = build_release_candidate_summary()
 
+    assert artifact == generated
     assert artifact["schema"] == "agentguard.release-candidate"
     assert artifact["schema_version"] == 1
     assert artifact["release"] == "v0.2.0"
-    assert artifact["status"] == "release candidate"
-    assert artifact["recommendation"] == "ready to tag after merge with caveats"
+    assert artifact["status"] == "released"
+    assert artifact["recommendation"] == "GitHub release published; PyPI deferred"
     assert artifact["package_metadata"]["version"] == "0.2.0"
+    assert artifact["package_metadata"]["current_version"] == __version__
     assert artifact["package_metadata"]["console_script"] == (
         "agentguard.cli.main:app"
     )
@@ -237,20 +254,11 @@ def test_release_candidate_artifacts_are_valid() -> None:
     assert "No syscall-level interception is included." in artifact[
         "known_limitations"
     ]
-    assert "git tag creation" in artifact["not_performed_by_this_pr"]
-    for command in (
-        "git switch main",
-        "git pull --ff-only origin main",
-        "bash scripts/build_release.sh",
-        ".venv/bin/python scripts/showcase_metrics.py --check",
-        'git tag -a v0.2.0 -m "AgentGuard v0.2.0"',
-        "git push origin v0.2.0",
-    ):
-        assert command in artifact["post_merge_release_commands"]
-        assert command in markdown
+    assert artifact["not_performed_by_this_pr"] == ["PyPI publication"]
+    assert "post_merge_release_commands" not in artifact
     assert artifact["adversarial_metrics"]["total_scenarios"] == 10
-    assert "v0.2.0 has not been tagged" in markdown
-    assert "gh release create v0.2.0" in markdown
+    assert "published as a GitHub release" in markdown
+    assert "gh release create v0.2.0" not in markdown
     assert "PyPI publication" in markdown
 
 

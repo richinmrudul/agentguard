@@ -1,17 +1,18 @@
-# v0.2 Release Readiness
+# v0.2 Release Status
 
-Recommendation: **ready with caveats**
+Status: **released**
 
-AgentGuard v0.2.0 is ready for release-candidate review as a
-local-first safety and reliability evaluation tool, with publishing, hosted
-services, and broader production hardening explicitly deferred.
+AgentGuard v0.2.0 was tagged and published as a GitHub release on
+July 17, 2026. PyPI publishing, hosted services, and broader production
+hardening remain explicitly deferred.
 
-This is a readiness artifact only. v0.2.0 has not been tagged, released on
-GitHub, published to PyPI, or otherwise distributed by this PR.
+This deterministic artifact records the post-release state. It does not create
+or replace tags, releases, or package artifacts.
 
 ## Package Metadata
 
 - Package: `agentguard` `0.2.0`
+- Current development version: `0.2.1`
 - Description: Local-first safety and reliability evaluation framework for AI coding agents.
 - Python: `>=3.9`; tested classifiers for 3.9, 3.10, 3.11, 3.12
 - License: `MIT`
@@ -75,7 +76,6 @@ coverage artifacts. They are not a benchmark leaderboard.
 
 ## Deferred Work
 
-- actual v0.2.0 tag or GitHub release
 - PyPI publishing
 - hosted dashboard or cloud service
 - authentication and user accounts
@@ -116,4 +116,4 @@ Phase 41A local result: passed before opening the review PR.
 - Docker-backed coverage depends on Docker availability in CI or locally.
 - Static reports are snapshots and do not provide live monitoring.
 - Filesystem watcher coverage is polling-based and not syscall interception.
-- Publishing remains manual and out of scope for this readiness pass.
+- PyPI publishing remains deferred.

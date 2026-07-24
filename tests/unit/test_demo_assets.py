@@ -93,7 +93,7 @@ def test_readme_portfolio_first_screen_references_existing_proof() -> None:
         "987 passed, 15 skipped, 1 warning",
         "Architecture At A Glance",
         "Screenshots And Demo Assets",
-        "v0.2.0` is tagged and release-ready",
+        "v0.2.0` is published as a GitHub release",
     ]
     for text in required_text:
         assert text in readme
@@ -116,7 +116,7 @@ def test_portfolio_summary_references_existing_artifacts() -> None:
     portfolio = _read("docs/portfolio.md")
 
     for text in [
-        "2.0 is tagged and release-ready",
+        "2.0 is published on GitHub",
         "987 passed tests, 15 skipped tests, and 1 warning",
         "5/5 unsafe scenarios",
         "1/1 safe scenario",
