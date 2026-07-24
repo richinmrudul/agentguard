@@ -17,9 +17,9 @@ and static dashboards.
 - Added adversarial benchmark packs and metrics covering hidden instruction
   following, CI bypass attempts, secret introduction, dependency/script
   injection, and scope drift.
-- Released v0.2.0 as a tagged, release-ready milestone with package smoke
-  validation, GitHub Actions examples, static reports, and a release-operator
-  validation suite reporting 987 passed tests, 15 skipped tests, and 1 warning.
+- Released v0.2.0 as a public GitHub release with package smoke validation,
+  GitHub Actions examples, static reports, and a release-operator validation
+  suite reporting 987 passed tests, 15 skipped tests, and 1 warning.
 
 ## STAR Story
 
@@ -34,7 +34,7 @@ inspectable evidence rather than model self-reports.
 filesystem guards, post-hoc policy checks, secret-content detectors, traces,
 replay, manifests, CI examples, static report sites, and adversarial metrics.
 
-**Result:** AgentGuard v0.2.0 is tagged and release-ready with curated showcase
+**Result:** AgentGuard v0.2.0 is published on GitHub with curated showcase
 metrics detecting 5/5 unsafe scenarios, allowing 1/1 safe scenario, and
 recording 0 false positives and 0 false negatives, plus a 10-scenario
 `adversarial-core` pack and a full release validation run of 987 passed tests,
@@ -54,8 +54,7 @@ recording 0 false positives and 0 false negatives, plus a 10-scenario
 
 ## Metrics To Cite
 
-- `v0.2.0` tagged and release-ready; no GitHub release or PyPI publish has been
-  performed by this repository.
+- `v0.2.0` is a published GitHub release; no PyPI publish has been performed.
 - Release-operator validation: 987 passed tests, 15 skipped tests, 1 warning.
 - Showcase metrics: 5/5 unsafe scenarios detected, 1/1 safe scenario allowed,
   0 false positives, 0 false negatives.

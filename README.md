@@ -24,8 +24,8 @@ evidence instead of trusting the agent's explanation.
 
 ## Current Proof
 
-- `v0.2.0` is tagged and release-ready from `main`; no GitHub release or PyPI
-  publication has been performed by this repository.
+- `v0.2.0` is published as a GitHub release; PyPI publication remains
+  deferred.
 - Latest release-operator validation reported `987 passed, 15 skipped, 1 warning`
   for the full pytest suite.
 - The curated showcase detects 5/5 unsafe scenarios, allows 1/1 safe scenario,
@@ -947,11 +947,10 @@ Repository examples, docs, tests, workflows, generated `.agentguard` data,
 local databases, caches, and development scripts are excluded from both
 artifacts.
 
-AgentGuard v0.2.0 has been tagged from the release-ready source tree. The
-repository still has no v0.2.0 GitHub release or PyPI publication; those remain
-manual maintainer actions. See the [release process](docs/release.md) for the
-manual release commands and the [changelog](CHANGELOG.md) for v0.2.0 release
-notes.
+AgentGuard v0.2.0 was tagged and published as a GitHub release on July 17,
+2026. PyPI publication remains deferred. See the
+[release process](docs/release.md) for the version-generic release procedure
+and the [changelog](CHANGELOG.md) for released and unreleased changes.
 
 ## Deterministic Evidence
 

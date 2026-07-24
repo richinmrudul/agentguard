@@ -204,7 +204,7 @@ def validate_artifacts(wheel_path: Path, sdist_path: Path) -> None:
 
 def validate_release_readiness(root: Path) -> None:
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
-    if "## v0.2.0 - Release Candidate" not in changelog:
+    if "## v0.2.0 - 2026-07-17" not in changelog:
         raise AssertionError("CHANGELOG.md is missing the v0.2.0 section")
     combined = []
     for relative_path in REQUIRED_RELEASE_READINESS_ARTIFACTS:
@@ -223,6 +223,8 @@ def validate_release_readiness(root: Path) -> None:
         raise AssertionError("release-readiness-v0.2.json has wrong release")
     if readiness.get("package_metadata", {}).get("version") != "0.2.0":
         raise AssertionError("release-readiness-v0.2.json has wrong package version")
+    if readiness.get("recommendation") != "released":
+        raise AssertionError("release-readiness-v0.2.json has wrong release status")
     for marker in FORBIDDEN_RELEASE_MARKERS:
         if marker in "\n".join(combined):
             raise AssertionError(f"Release readiness artifacts contain {marker!r}")

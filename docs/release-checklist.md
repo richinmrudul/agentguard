@@ -1,27 +1,19 @@
 # Release Checklist
 
-This checklist governs a release decision after the release-candidate pull
-request is reviewed and merged. Completing it does not itself publish anything.
+This checklist governs a future release decision after its pull request is
+reviewed and merged. Completing it does not itself publish anything.
 
 ## Required CI Checks
 
-- [ ] Python 3.9 compatibility and non-Docker tests pass.
-- [ ] Python 3.10 compatibility and non-Docker tests pass.
-- [ ] Python 3.11 compatibility and non-Docker tests pass.
-- [ ] Python 3.12 compatibility and non-Docker tests pass.
-- [ ] Ruff passes.
-- [ ] Coverage quality gate passes at or above 88%.
-- [ ] Full Python 3.11 integration job passes with Docker available.
+- [ ] Python 3.9 through 3.12 compatibility and non-Docker tests pass.
+- [ ] Ruff and the coverage quality gate pass.
+- [ ] Full Python 3.11 integration passes with Docker available.
 - [ ] Wheel and source distribution build and validate.
 - [ ] Installed console entry point works outside the source checkout.
 - [ ] Repository-example package smoke passes.
 
 ## Artifact Review
 
-- [ ] Regenerate and review `docs/results/release-readiness-v0.2.json` and
-  `docs/results/release-readiness-v0.2.md`.
-- [ ] Regenerate and review `docs/results/release-candidate-v0.2.0.json` and
-  `docs/results/release-candidate-v0.2.0.md`.
 - [ ] Inspect wheel and source distribution member lists.
 - [ ] Confirm no `.agentguard`, coverage, cache, build, local database, secret,
   test, documentation, example, or workflow artifacts are unintentionally
@@ -35,11 +27,12 @@ request is reviewed and merged. Completing it does not itself publish anything.
 
 - [ ] Confirm the version agrees in `pyproject.toml`, `agentguard/__init__.py`,
   CLI output, changelog, and release notes.
+- [ ] Confirm the version has not already been tagged at another commit.
 - [ ] Confirm the supported Python classifiers remain 3.9 through 3.12.
 - [ ] Confirm the SPDX license expression and license file are correct.
 - [ ] Review `CHANGELOG.md` for user-visible changes and migration notes.
-- [ ] Review the release-candidate metrics without promoting machine-specific
-  or synthetic measurements into general claims.
+- [ ] Review metrics without promoting machine-specific or synthetic
+  measurements into general claims.
 
 ## Security Review
 
@@ -62,24 +55,25 @@ request is reviewed and merged. Completing it does not itself publish anything.
 - [ ] Validate and inspect artifacts before any upload.
 - [ ] Prepare draft release notes from the changelog and reviewed PRs.
 - [ ] Obtain an explicit human publish decision.
-- [ ] Create a tag and GitHub release only after that approval:
+- [ ] Set `VERSION` from the reviewed package and create the tag and GitHub
+  release only after that approval:
 
 ```bash
 git switch main
 git pull --ff-only origin main
+VERSION=$(.venv/bin/agentguard --version)
 bash scripts/build_release.sh
 .venv/bin/python scripts/validate_release_artifacts.py \
-  dist/agentguard-0.2.0-py3-none-any.whl \
-  dist/agentguard-0.2.0.tar.gz
+  "dist/agentguard-${VERSION}-py3-none-any.whl" \
+  "dist/agentguard-${VERSION}.tar.gz"
 bash scripts/package_smoke.sh
-.venv/bin/python scripts/showcase_metrics.py --check
-git tag -a v0.2.0 -m "AgentGuard v0.2.0"
-git push origin v0.2.0
-gh release create v0.2.0 \
-  dist/agentguard-0.2.0-py3-none-any.whl \
-  dist/agentguard-0.2.0.tar.gz \
-  --title "AgentGuard v0.2.0" \
-  --notes-file release-notes-v0.2.0.md
+git tag -a "v${VERSION}" -m "AgentGuard v${VERSION}"
+git push origin "v${VERSION}"
+gh release create "v${VERSION}" \
+  "dist/agentguard-${VERSION}-py3-none-any.whl" \
+  "dist/agentguard-${VERSION}.tar.gz" \
+  --title "AgentGuard v${VERSION}" \
+  --notes-file "release-notes-v${VERSION}.md"
 ```
 
 ## Manual Publish Decision
