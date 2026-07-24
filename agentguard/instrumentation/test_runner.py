@@ -16,6 +16,25 @@ from agentguard.instrumentation.processes import (
     terminate_process_tree,
 )
 
+INHERITED_SUBPROCESS_ENV_NAMES = (
+    "COLORTERM",
+    "COMSPEC",
+    "FORCE_COLOR",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "NO_COLOR",
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "TEMP",
+    "TERM",
+    "TMP",
+    "TMPDIR",
+    "VIRTUAL_ENV",
+    "WINDIR",
+)
+
 
 def _argv(command: str) -> list[str]:
     parts = shlex.split(command)
@@ -25,15 +44,14 @@ def _argv(command: str) -> list[str]:
 
 
 def _build_test_env(repo_dir: Path) -> dict[str, str]:
-    env = os.environ.copy()
+    env = {
+        name: os.environ[name]
+        for name in INHERITED_SUBPROCESS_ENV_NAMES
+        if name in os.environ
+    }
     src_path = (repo_dir / "src").resolve()
     if src_path.exists():
-        existing_pythonpath = env.get("PYTHONPATH")
-        env["PYTHONPATH"] = (
-            str(src_path)
-            if not existing_pythonpath
-            else f"{src_path}{os.pathsep}{existing_pythonpath}"
-        )
+        env["PYTHONPATH"] = str(src_path)
     return env
 
 

@@ -53,6 +53,36 @@ def test_local_command_agent_records_command_event(tmp_path: Path) -> None:
     assert event.duration_seconds is not None
 
 
+def test_local_command_agent_excludes_ambient_environment_and_redacts_configured_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    tracker = CommandTracker()
+    ambient = "AGENTGUARD_AMBIENT_CANARY_116"
+    configured = "AGENTGUARD_CONFIGURED_CANARY_116"
+    monkeypatch.setenv("AGENTGUARD_AMBIENT_SECRET", ambient)
+    script = (
+        "import os; "
+        "print(os.environ.get('AGENTGUARD_AMBIENT_SECRET', 'absent')); "
+        "print(os.environ['AGENTGUARD_CONFIGURED_SECRET'])"
+    )
+
+    LocalCommandAgent(
+        _config(
+            agent_command=shlex.join([sys.executable, "-c", script]),
+            agent_environment={"AGENTGUARD_CONFIGURED_SECRET": configured},
+        )
+    ).run(repo_dir, tracker)
+
+    event = tracker.events[0]
+    assert event.exit_code == 0
+    assert event.stdout.splitlines() == ["absent", "[REDACTED]"]
+    assert ambient not in event.stdout
+    assert configured not in event.stdout
+
+
 def test_local_command_agent_uses_argv_list_without_resplitting(
     tmp_path: Path,
 ) -> None:
