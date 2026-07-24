@@ -9,6 +9,8 @@ from io import StringIO
 from pathlib import Path
 from typing import Optional
 
+from agentguard.terminal import sanitize_terminal_text
+
 
 DEFAULT_HISTORY_DB_PATH = Path(".agentguard/history.db")
 VALID_RUN_TYPES = {"run", "suite", "matrix", "ci"}
@@ -425,7 +427,11 @@ def export_history_csv(records: list[HistoryRecord]) -> str:
         row["failed_checks"] = ";".join(record.failed_checks)
         writer.writerow(
             {
-                column: _spreadsheet_safe_csv_cell(value)
+                column: _spreadsheet_safe_csv_cell(
+                    sanitize_terminal_text(value, preserve_newlines=False)
+                    if isinstance(value, str)
+                    else value
+                )
                 for column, value in row.items()
             }
         )
