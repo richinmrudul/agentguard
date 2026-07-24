@@ -6,6 +6,8 @@ from heapq import nlargest
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from agentguard.terminal import sanitize_terminal_text
+
 
 REPORT_TYPES = {"run", "suite", "matrix", "ci"}
 MAX_REPORT_BYTES = 16 * 1024 * 1024
@@ -120,17 +122,19 @@ def format_reports_table(reports: list[ReportItem]) -> str:
                 ]
             )
         )
-    return "\n".join(lines)
+    return sanitize_terminal_text("\n".join(lines))
 
 
 def format_report_summary(report: ReportItem) -> str:
     if report.type == "matrix":
-        return _format_matrix_summary(report)
-    if report.type == "suite":
-        return _format_suite_summary(report)
-    if report.type == "ci":
-        return _format_ci_summary(report)
-    return _format_run_summary(report)
+        summary = _format_matrix_summary(report)
+    elif report.type == "suite":
+        summary = _format_suite_summary(report)
+    elif report.type == "ci":
+        summary = _format_ci_summary(report)
+    else:
+        summary = _format_run_summary(report)
+    return sanitize_terminal_text(summary)
 
 
 def _load_report_item(

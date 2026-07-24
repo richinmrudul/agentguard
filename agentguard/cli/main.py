@@ -7,6 +7,7 @@ import typer
 import yaml
 
 from agentguard import __version__
+from agentguard.cli.output import safe_echo
 from agentguard.benchmarks.registry import (
     DEFAULT_REGISTRY_PATH,
     BenchmarkRegistryEntry,
@@ -182,21 +183,21 @@ app.add_typer(guard_app, name="guard")
 
 def _echo_matrix_guard_summary(result: MatrixResult) -> None:
     summary = result.guard_summary
-    typer.echo("Guard incidents:")
-    typer.echo(f"- Incident runs: {summary.incident_runs}")
-    typer.echo(f"- Blocked runs: {summary.blocked_runs}")
-    typer.echo(f"- Audit-only runs: {summary.audit_only_runs}")
-    typer.echo(f"- Total violations: {summary.violations_total}")
-    typer.echo(f"- Filesystem violations: {summary.filesystem_violations}")
-    typer.echo(f"- Command violations: {summary.command_violations}")
+    safe_echo("Guard incidents:")
+    safe_echo(f"- Incident runs: {summary.incident_runs}")
+    safe_echo(f"- Blocked runs: {summary.blocked_runs}")
+    safe_echo(f"- Audit-only runs: {summary.audit_only_runs}")
+    safe_echo(f"- Total violations: {summary.violations_total}")
+    safe_echo(f"- Filesystem violations: {summary.filesystem_violations}")
+    safe_echo(f"- Command violations: {summary.command_violations}")
     timing = summary.time_to_first_violation
     if timing.samples:
-        typer.echo(f"- Time to first violation p95: {timing.p95_ms} ms")
+        safe_echo(f"- Time to first violation p95: {timing.p95_ms} ms")
 
 
 def _version_callback(value: bool) -> None:
     if value:
-        typer.echo(__version__)
+        safe_echo(__version__)
         raise typer.Exit()
 
 
@@ -216,7 +217,7 @@ def main(
 @app.command()
 def version() -> None:
     """Print the AgentGuard version."""
-    typer.echo(__version__)
+    safe_echo(__version__)
 
 
 @app.command("benchmark-overhead")
@@ -285,7 +286,7 @@ def benchmark_overhead_command(
             write_manifest_enabled=not no_manifest,
         )
     except (FileExistsError, OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
     summary = result.data["summary"]
@@ -305,31 +306,31 @@ def benchmark_overhead_command(
     assert isinstance(slowdown, dict)
     assert isinstance(throughput, dict)
 
-    typer.echo("AgentGuard Instrumentation Overhead")
-    typer.echo(f"Workload/config: {config['task_id']} / {config['path']}")
-    typer.echo(f"Agent: {result.data['agent']}")
-    typer.echo(
+    safe_echo("AgentGuard Instrumentation Overhead")
+    safe_echo(f"Workload/config: {config['task_id']} / {config['path']}")
+    safe_echo(f"Agent: {result.data['agent']}")
+    safe_echo(
         f"Iterations: {result.data['iterations']} measured, "
         f"{result.data['warmups']} warmups"
     )
-    typer.echo(f"Direct median: {float(direct['median']):.6f}s")
-    typer.echo(f"AgentGuard median: {float(guarded['median']):.6f}s")
-    typer.echo(
+    safe_echo(f"Direct median: {float(direct['median']):.6f}s")
+    safe_echo(f"AgentGuard median: {float(guarded['median']):.6f}s")
+    safe_echo(
         f"Median absolute overhead: {float(overhead['median']):.6f}s"
     )
-    typer.echo(
+    safe_echo(
         f"Median relative overhead: {float(relative['median']):.2f}%"
     )
-    typer.echo(f"Slowdown ratio: {float(slowdown['median']):.3f}x")
-    typer.echo(
+    safe_echo(f"Slowdown ratio: {float(slowdown['median']):.3f}x")
+    safe_echo(
         "Throughput: "
         f"direct {float(throughput['direct_median']):.2f} runs/minute, "
         "AgentGuard "
         f"{float(throughput['agentguard_median']):.2f} runs/minute"
     )
-    typer.echo(f"JSON output: {result.paths.json}")
-    typer.echo(f"Markdown output: {result.paths.markdown}")
-    typer.echo(
+    safe_echo(f"JSON output: {result.paths.json}")
+    safe_echo(f"Markdown output: {result.paths.markdown}")
+    safe_echo(
         "Limitations: machine/workload specific; filesystem caches are not "
         "fully controlled; no universal performance claim is implied."
     )
@@ -378,32 +379,32 @@ def diagnostics_mutations_command(
             strict=strict,
         )
     except (OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo("AgentGuard Policy Mutation Audit")
-    typer.echo(f"Mutations: {result.total_mutations}")
-    typer.echo(f"Safe mutations: {result.safe_mutations}")
-    typer.echo(f"Unsafe mutations: {result.unsafe_mutations}")
-    typer.echo(
+    safe_echo("AgentGuard Policy Mutation Audit")
+    safe_echo(f"Mutations: {result.total_mutations}")
+    safe_echo(f"Safe mutations: {result.safe_mutations}")
+    safe_echo(f"Unsafe mutations: {result.unsafe_mutations}")
+    safe_echo(
         "Controlled mutation detection rate: "
         f"{result.controlled_mutation_detection_rate:.2f}%"
     )
-    typer.echo(f"Safe-fixture pass rate: {result.safe_fixture_pass_rate:.2f}%")
-    typer.echo(f"Missed detections: {result.missed_detections}")
-    typer.echo(f"Forbidden detections: {result.forbidden_detections}")
-    typer.echo(f"Unexpected detections: {result.unexpected_detections}")
-    typer.echo("")
-    typer.echo("Check | Expected | Observed | Misses | Unexpected")
-    typer.echo("--- | ---: | ---: | ---: | ---:")
+    safe_echo(f"Safe-fixture pass rate: {result.safe_fixture_pass_rate:.2f}%")
+    safe_echo(f"Missed detections: {result.missed_detections}")
+    safe_echo(f"Forbidden detections: {result.forbidden_detections}")
+    safe_echo(f"Unexpected detections: {result.unexpected_detections}")
+    safe_echo("")
+    safe_echo("Check | Expected | Observed | Misses | Unexpected")
+    safe_echo("--- | ---: | ---: | ---: | ---:")
     for check in result.per_check:
-        typer.echo(
+        safe_echo(
             f"{check.check} | {check.expected_detections} | "
             f"{check.observed_detections} | {check.misses} | "
             f"{check.unexpected_detections}"
         )
-    typer.echo(f"JSON report path: {result.json_report_path}")
-    typer.echo(f"Markdown report path: {result.markdown_report_path}")
+    safe_echo(f"JSON report path: {result.json_report_path}")
+    safe_echo(f"Markdown report path: {result.markdown_report_path}")
     if result.has_failures and not allow_detection_failures:
         raise typer.Exit(1)
 
@@ -495,47 +496,47 @@ def benchmarks_fuzz_command(
             promotion_prefix=promotion_prefix,
         )
     except (FileExistsError, OSError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo("AgentGuard Benchmark Fuzz Study")
-    typer.echo(f"Dimensions: {', '.join(result.dimensions)}")
-    typer.echo(f"Variants generated: {result.total_variants}")
-    typer.echo(
+    safe_echo("AgentGuard Benchmark Fuzz Study")
+    safe_echo(f"Dimensions: {', '.join(result.dimensions)}")
+    safe_echo(f"Variants generated: {result.total_variants}")
+    safe_echo(
         f"Variants passed/failed: {result.variants_passed}/"
         f"{result.variants_failed}"
     )
-    typer.echo("Detection coverage by dimension:")
+    safe_echo("Detection coverage by dimension:")
     for dimension, summary in result.per_dimension.items():
-        typer.echo(
+        safe_echo(
             f"- {dimension}: {float(summary['pass_rate']):.2f}% "
             f"({summary['passed_runs']}/{summary['runs']} runs)"
         )
-    typer.echo(
+    safe_echo(
         "Missed/forbidden detections: "
         f"{result.missed_expected_detections}/"
         f"{result.forbidden_unexpected_detections}"
     )
-    typer.echo(
+    safe_echo(
         "Controlled detection rate: "
         f"{result.controlled_detection_rate:.2f}%"
     )
-    typer.echo(f"Safe-variant pass rate: {result.safe_variant_pass_rate:.2f}%")
+    safe_echo(f"Safe-variant pass rate: {result.safe_variant_pass_rate:.2f}%")
     if result.minimized_failures:
-        typer.echo(f"Minimized failures: {len(result.minimized_failures)}")
+        safe_echo(f"Minimized failures: {len(result.minimized_failures)}")
         for item in result.minimized_failures:
-            typer.echo(
+            safe_echo(
                 f"- {item.variant_id}: reduction "
                 f"{item.reduction_percentage:.2f}%, "
                 f"steps {item.steps_accepted}/{item.steps_attempted}, "
                 f"preserved {'yes' if item.failure_preserved else 'no'}"
             )
     if result.promotion_paths:
-        typer.echo("Promotion paths:")
+        safe_echo("Promotion paths:")
         for path in result.promotion_paths:
-            typer.echo(f"- {path}")
-    typer.echo(f"JSON report path: {result.json_report_path}")
-    typer.echo(f"Markdown report path: {result.markdown_report_path}")
+            safe_echo(f"- {path}")
+    safe_echo(f"JSON report path: {result.json_report_path}")
+    safe_echo(f"Markdown report path: {result.markdown_report_path}")
     if result.has_failures and not allow_fuzz_failures:
         raise typer.Exit(1)
 
@@ -593,48 +594,48 @@ def diagnostics_ablation_command(
             force=force,
         )
     except (FileExistsError, OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo("AgentGuard Policy Ablation Study")
-    typer.echo(
+    safe_echo("AgentGuard Policy Ablation Study")
+    safe_echo(
         f"Control valid: {'yes' if result.control_validity.valid else 'no'}"
     )
-    typer.echo(
+    safe_echo(
         "Controlled mutation detection rate: "
         f"{float(result.control_metrics['controlled_mutation_detection_rate']):.2f}%"
     )
-    typer.echo(
+    safe_echo(
         "Safe-fixture pass rate: "
         f"{float(result.control_metrics['safe_fixture_pass_rate']):.2f}%"
     )
-    typer.echo("")
-    typer.echo(
+    safe_echo("")
+    safe_echo(
         "Disabled Check | Escaped Mutations | Detection Delta | "
         "Newly Passing Unsafe | Safe Pass Delta"
     )
-    typer.echo("--- | ---: | ---: | ---: | ---:")
+    safe_echo("--- | ---: | ---: | ---: | ---:")
     for condition in result.conditions[1:]:
-        typer.echo(
+        safe_echo(
             f"{condition.disabled_check} | "
             f"{len(condition.escaped_unsafe_mutations)} | "
             f"{condition.detection_rate_delta_percentage_points:+.2f} pp | "
             f"{len(condition.newly_passing_unsafe_mutations)} | "
             f"{condition.safe_fixture_pass_rate_delta_percentage_points:+.2f} pp"
         )
-    typer.echo("")
-    typer.echo("Unique contribution:")
+    safe_echo("")
+    safe_echo("Unique contribution:")
     if result.check_contributions is None:
-        typer.echo("suppressed because the control is invalid")
+        safe_echo("suppressed because the control is invalid")
     else:
         for contribution in result.check_contributions:
-            typer.echo(
+            safe_echo(
                 f"{contribution.check}: "
                 f"{contribution.detections_uniquely_attributable} unique, "
                 f"{contribution.detections_redundantly_covered} redundant"
             )
-    typer.echo(f"JSON report path: {result.json_report_path}")
-    typer.echo(f"Markdown report path: {result.markdown_report_path}")
+    safe_echo(f"JSON report path: {result.json_report_path}")
+    safe_echo(f"Markdown report path: {result.markdown_report_path}")
     if result.has_study_failures and not allow_study_failures:
         raise typer.Exit(1)
 
@@ -716,40 +717,40 @@ def diagnostics_matrix_stress_command(
             unsafe_large_run=unsafe_large_run,
         )
     except (FileExistsError, OSError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
     summary = result.scaling_summary
-    typer.echo("AgentGuard Matrix Stress Study")
-    typer.echo(
+    safe_echo("AgentGuard Matrix Stress Study")
+    safe_echo(
         "Attempted sizes: " + ", ".join(str(value) for value in result.attempts)
     )
-    typer.echo(
+    safe_echo(
         "Workers: " + ", ".join(str(value) for value in result.workers)
     )
-    typer.echo(f"Repetitions: {result.repetitions}")
-    typer.echo(
+    safe_echo(f"Repetitions: {result.repetitions}")
+    safe_echo(
         "Maximum validated attempts: "
         f"{summary['maximum_validated_attempts'] or '-'}"
     )
-    typer.echo(
+    safe_echo(
         "Best measured speedup: "
         f"{float(summary['best_measured_speedup']):.2f}x "
         f"at {summary['best_speedup_workers']} workers"
     )
-    typer.echo(
+    safe_echo(
         "Best throughput worker count: "
         f"{summary['best_throughput_workers']}"
     )
-    typer.echo(
+    safe_echo(
         f"Integrity status: {'PASS' if result.integrity_passed else 'FAIL'}"
     )
-    typer.echo(
+    safe_echo(
         f"Maximum traced Python memory: "
         f"{summary['maximum_peak_memory_bytes']} bytes"
     )
-    typer.echo(f"JSON report path: {result.json_report_path}")
-    typer.echo(f"Markdown report path: {result.markdown_report_path}")
+    safe_echo(f"JSON report path: {result.json_report_path}")
+    safe_echo(f"Markdown report path: {result.markdown_report_path}")
     if not result.integrity_passed and not allow_study_failures:
         raise typer.Exit(1)
 
@@ -761,7 +762,7 @@ def manifest_verify(
     """Validate a manifest and verify referenced configuration hashes."""
     result = verify_manifest(path)
     for message in result.messages:
-        typer.echo(message)
+        safe_echo(message)
     if result.exit_code:
         raise typer.Exit(result.exit_code)
 
@@ -777,9 +778,9 @@ def manifest_show(
         if result.exit_code == 2:
             raise ValueError(result.messages[0])
     except (OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(provenance_summary(data))
+    safe_echo(provenance_summary(data))
 
 
 @trace_app.command("export")
@@ -808,9 +809,9 @@ def trace_export(
             TraceExportOptions(include_diff=include_diff, force=force),
         )
     except (FileExistsError, OSError, TypeError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(f"Trace exported: {path}")
+    safe_echo(f"Trace exported: {path}")
 
 
 @trace_app.command("show")
@@ -824,9 +825,9 @@ def trace_show(
         if verification.exit_code == 2:
             raise ValueError(verification.messages[0])
     except (OSError, TypeError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(trace_summary(trace))
+    safe_echo(trace_summary(trace))
 
 
 @guard_app.command("show")
@@ -839,9 +840,9 @@ def guard_show(
         if not isinstance(data, dict):
             raise ValueError("incident JSON must be an object")
     except (OSError, json.JSONDecodeError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(incident_summary(data))
+    safe_echo(incident_summary(data))
 
 
 @guard_app.command("list")
@@ -884,11 +885,11 @@ def guard_list(
         category=category,
     )
     if not records:
-        typer.echo("No guard incidents found.")
+        safe_echo("No guard incidents found.")
         return
     for record in records:
         blocked = "blocked" if record.guard_blocked else "audit"
-        typer.echo(
+        safe_echo(
             f"{record.created_at}  {record.name}  {record.agent or '-'}  "
             f"{blocked}  {record.guard_violations_total} violation(s)  "
             f"{record.guard_incident_path}"
@@ -907,7 +908,7 @@ def trace_verify(
     """Verify trace structure, hash chain, root hash, and source artifacts."""
     result = verify_execution_trace(path, strict_sources=strict_sources)
     for message in result.messages:
-        typer.echo(message)
+        safe_echo(message)
     if result.exit_code:
         raise typer.Exit(result.exit_code)
 
@@ -929,9 +930,9 @@ def trace_replayability(
         )
         trace = load_execution_trace(path)
     except (OSError, TypeError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(replayability_summary(trace, status))
+    safe_echo(replayability_summary(trace, status))
     if not status.replayable:
         raise typer.Exit(1)
 
@@ -974,20 +975,20 @@ def trace_replay(
             force=force,
         )
     except (FileExistsError, OSError, TypeError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo("AgentGuard Trace Replay")
-    typer.echo(f"Trace: {result.trace_id}")
-    typer.echo(f"Equivalence: {result.equivalence}")
-    typer.echo(
+    safe_echo("AgentGuard Trace Replay")
+    safe_echo(f"Trace: {result.trace_id}")
+    safe_echo(f"Equivalence: {result.equivalence}")
+    safe_echo(
         f"Recorded: {result.recorded_result} / {result.recorded_score}"
     )
-    typer.echo(
+    safe_echo(
         f"Recomputed: {result.recomputed_result} / {result.recomputed_score}"
     )
-    typer.echo(f"JSON report: {result.report_paths.json}")
-    typer.echo(f"Markdown report: {result.report_paths.markdown}")
-    typer.echo("External execution: none")
+    safe_echo(f"JSON report: {result.report_paths.json}")
+    safe_echo(f"Markdown report: {result.report_paths.markdown}")
+    safe_echo("External execution: none")
     if (
         result.equivalence != "exact"
         and require_equivalence
@@ -1042,9 +1043,9 @@ def trace_metamorphic(
             strict_sources=strict_sources,
         )
     except (FileExistsError, FileNotFoundError, OSError, TypeError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(metamorphic_summary(result))
+    safe_echo(metamorphic_summary(result))
     failures = [
         case for case in result.cases if not case.robustness_passed
     ]
@@ -1061,9 +1062,9 @@ def evaluate_validate(
     try:
         plan = validate_evaluation(profile, suite)
     except (OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(
+    safe_echo(
         f"Valid evaluation: {plan.profile.name} / {plan.suite_id} / "
         f"{len(plan.runs)} benchmark(s)"
     )
@@ -1170,16 +1171,16 @@ def evaluation_report(
             )
         )
     except (FileExistsError, OSError, EvaluationReportError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo(f"Evaluation report: {result.markdown_path}")
-    typer.echo(f"Summary JSON: {result.summary_json_path}")
-    typer.echo(f"Sources: {len(result.sources)}")
+    safe_echo(f"Evaluation report: {result.markdown_path}")
+    safe_echo(f"Summary JSON: {result.summary_json_path}")
+    safe_echo(f"Sources: {len(result.sources)}")
     if result.missing_sections:
-        typer.echo("Unavailable: " + ", ".join(result.missing_sections))
+        safe_echo("Unavailable: " + ", ".join(result.missing_sections))
     if result.omitted_sections:
-        typer.echo("Omitted: " + ", ".join(result.omitted_sections))
+        safe_echo("Omitted: " + ", ".join(result.omitted_sections))
 
 
 @evaluate_app.command("dry-run")
@@ -1203,9 +1204,9 @@ def evaluate_dry_run(
             workers=workers,
         )
     except (OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(format_evaluation_plan(plan))
+    safe_echo(format_evaluation_plan(plan))
     missing = [
         name for name in plan.profile.environment if name not in os.environ
     ]
@@ -1265,8 +1266,8 @@ def evaluate_run(
             workers=workers,
         )
         if not yes:
-            typer.echo(format_evaluation_plan(plan))
-            typer.echo("Execution not confirmed; rerun with --yes.", err=True)
+            safe_echo(format_evaluation_plan(plan))
+            safe_echo("Execution not confirmed; rerun with --yes.", err=True)
             raise typer.Exit(2)
         result = run_evaluation(
             profile,
@@ -1292,41 +1293,41 @@ def evaluate_run(
     except typer.Exit:
         raise
     except KeyboardInterrupt as error:
-        typer.echo("External agent evaluation interrupted.", err=True)
+        safe_echo("External agent evaluation interrupted.", err=True)
         active_checkpoint = resume or checkpoint
         if active_checkpoint is not None:
             resolved = active_checkpoint.expanduser().resolve()
-            typer.echo(f"Checkpoint marked interrupted: {resolved}", err=True)
+            safe_echo(f"Checkpoint marked interrupted: {resolved}", err=True)
         raise typer.Exit(130) from error
     except (OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo("AgentGuard External Agent Evaluation")
-    typer.echo(f"Profile: {result.profile_name} ({result.profile_id})")
-    typer.echo(f"Model: {result.profile_model or '-'}")
-    typer.echo(f"Guard mode: {result.guard_mode}")
-    typer.echo(
+    safe_echo("AgentGuard External Agent Evaluation")
+    safe_echo(f"Profile: {result.profile_name} ({result.profile_id})")
+    safe_echo(f"Model: {result.profile_model or '-'}")
+    safe_echo(f"Guard mode: {result.guard_mode}")
+    safe_echo(
         f"Guard poll interval: {result.guard_poll_interval_seconds} seconds"
     )
     _echo_matrix_guard_summary(result)
-    typer.echo(f"Attempts: {result.attempts_executed}")
+    safe_echo(f"Attempts: {result.attempts_executed}")
     if result.checkpoint_path is not None:
-        typer.echo(f"Checkpoint: {result.checkpoint_path}")
-        typer.echo(f"Attempts reused: {result.attempts_reused}")
-    typer.echo(
+        safe_echo(f"Checkpoint: {result.checkpoint_path}")
+        safe_echo(f"Attempts reused: {result.attempts_reused}")
+    safe_echo(
         f"Functional success: {result.functional_passed}/"
         f"{result.attempts_executed} ({result.functional_success_rate}%)"
     )
-    typer.echo(
+    safe_echo(
         f"Policy-compliant success: {result.policy_compliant_passed}/"
         f"{result.attempts_executed} ({result.policy_compliant_success_rate}%)"
     )
-    typer.echo(
+    safe_echo(
         f"Unsafe functional successes: {result.unsafe_functional_successes}"
     )
-    typer.echo(f"Matrix JSON report path: {result.json_report_path}")
-    typer.echo(f"Matrix Markdown report path: {result.markdown_report_path}")
-    typer.echo(f"Matrix manifest path: {result.manifest_path or '-'}")
+    safe_echo(f"Matrix JSON report path: {result.json_report_path}")
+    safe_echo(f"Matrix Markdown report path: {result.markdown_report_path}")
+    safe_echo(f"Matrix manifest path: {result.manifest_path or '-'}")
     if result.failed and not allow_failures:
         raise typer.Exit(1)
 
@@ -1472,28 +1473,28 @@ def _echo_gate_summary(result, baseline_path: Path, gate_result: str) -> None:
     comparison = result.baseline_comparison
     has_regressions = bool(comparison and comparison.has_regressions)
     version_mismatches = comparison.version_mismatches if comparison else []
-    typer.echo("AgentGuard Gate Summary")
-    typer.echo(f"Suite: {result.suite_id}")
-    typer.echo(f"Baseline: {baseline_path}")
-    typer.echo(f"Runs: {result.total_runs}")
-    typer.echo(f"Passed: {result.passed}")
-    typer.echo(f"Failed: {result.failed}")
-    typer.echo(f"Pass rate: {result.pass_rate}%")
-    typer.echo(f"Average score: {result.average_score}")
-    typer.echo(f"Regressions: {'yes' if has_regressions else 'no'}")
-    typer.echo(f"Version mismatches: {'yes' if version_mismatches else 'no'}")
+    safe_echo("AgentGuard Gate Summary")
+    safe_echo(f"Suite: {result.suite_id}")
+    safe_echo(f"Baseline: {baseline_path}")
+    safe_echo(f"Runs: {result.total_runs}")
+    safe_echo(f"Passed: {result.passed}")
+    safe_echo(f"Failed: {result.failed}")
+    safe_echo(f"Pass rate: {result.pass_rate}%")
+    safe_echo(f"Average score: {result.average_score}")
+    safe_echo(f"Regressions: {'yes' if has_regressions else 'no'}")
+    safe_echo(f"Version mismatches: {'yes' if version_mismatches else 'no'}")
     if version_mismatches:
-        typer.echo("Benchmark version mismatches:")
+        safe_echo("Benchmark version mismatches:")
         for message in version_mismatches:
-            typer.echo(f"- {message}")
+            safe_echo(f"- {message}")
     if comparison and comparison.regressions:
-        typer.echo("Regression details:")
+        safe_echo("Regression details:")
         for message in comparison.regressions:
-            typer.echo(f"- {message}")
-    typer.echo(f"Gate result: {gate_result}")
-    typer.echo(f"Suite JSON report path: {result.json_report_path}")
-    typer.echo(f"Suite Markdown report path: {result.markdown_report_path}")
-    typer.echo(f"Suite manifest path: {result.manifest_path or '-'}")
+            safe_echo(f"- {message}")
+    safe_echo(f"Gate result: {gate_result}")
+    safe_echo(f"Suite JSON report path: {result.json_report_path}")
+    safe_echo(f"Suite Markdown report path: {result.markdown_report_path}")
+    safe_echo(f"Suite manifest path: {result.manifest_path or '-'}")
 
 
 @benchmarks_app.command("list")
@@ -1508,10 +1509,10 @@ def benchmarks_list(
     try:
         benchmark_registry = load_benchmark_registry(registry)
     except (OSError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo(_format_registry_table(benchmark_registry.benchmarks))
+    safe_echo(_format_registry_table(benchmark_registry.benchmarks))
 
 
 @benchmarks_app.command("show")
@@ -1527,15 +1528,15 @@ def benchmarks_show(
     try:
         benchmark_registry = load_benchmark_registry(registry)
     except (OSError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
     benchmark = find_benchmark(benchmark_registry, benchmark_id)
     if benchmark is None:
-        typer.echo(f"Error: benchmark not found: {benchmark_id}", err=True)
+        safe_echo(f"Error: benchmark not found: {benchmark_id}", err=True)
         raise typer.Exit(2)
 
-    typer.echo(_format_registry_entry(benchmark))
+    safe_echo(_format_registry_entry(benchmark))
 
 
 @benchmarks_app.command("generate-suite")
@@ -1601,11 +1602,11 @@ def benchmarks_generate_suite(
         )
         written_path = write_generated_suite(suite_data, output, force=force)
     except (OSError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo(f"Generated suite: {written_path}")
-    typer.echo(f"Runs: {len(suite_data['runs'])}")
+    safe_echo(f"Generated suite: {written_path}")
+    safe_echo(f"Runs: {len(suite_data['runs'])}")
 
 
 @benchmark_pack_app.command("export")
@@ -1646,13 +1647,13 @@ def benchmarks_pack_export(
             force=force,
         )
     except (FileExistsError, OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(f"Pack exported: {result['path']}")
-    typer.echo(f"Pack ID: {result['pack_id']}")
-    typer.echo(f"Benchmarks: {result['benchmark_count']}")
-    typer.echo(f"Files: {result['file_count']}")
-    typer.echo(f"Root digest: {result['root_digest']}")
+    safe_echo(f"Pack exported: {result['path']}")
+    safe_echo(f"Pack ID: {result['pack_id']}")
+    safe_echo(f"Benchmarks: {result['benchmark_count']}")
+    safe_echo(f"Files: {result['file_count']}")
+    safe_echo(f"Root digest: {result['root_digest']}")
 
 
 @benchmark_pack_app.command("inspect")
@@ -1663,29 +1664,29 @@ def benchmarks_pack_inspect(
     try:
         result = inspect_benchmark_pack(pack)
     except BenchmarkPackIntegrityError as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from error
     except (OSError, BenchmarkPackError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo("AgentGuard Benchmark Pack")
-    typer.echo(f"Pack ID: {result['pack_id']}")
-    typer.echo(f"Pack version: {result['pack_version']}")
-    typer.echo(f"Root digest: {result['root_digest']}")
-    typer.echo("Benchmarks:")
+    safe_echo("AgentGuard Benchmark Pack")
+    safe_echo(f"Pack ID: {result['pack_id']}")
+    safe_echo(f"Pack version: {result['pack_version']}")
+    safe_echo(f"Root digest: {result['root_digest']}")
+    safe_echo("Benchmarks:")
     for benchmark in result["benchmarks"]:
-        typer.echo(f"- {benchmark['id']}@{benchmark['version']}")
-    typer.echo("Files:")
+        safe_echo(f"- {benchmark['id']}@{benchmark['version']}")
+    safe_echo("Files:")
     for file in result["files"]:
-        typer.echo(f"- {file['path']} {file['sha256']} {file['size']} bytes")
-    typer.echo("Docs:")
+        safe_echo(f"- {file['path']} {file['sha256']} {file['size']} bytes")
+    safe_echo("Docs:")
     docs = result["docs"]
     if docs:
         for doc in docs:
-            typer.echo(f"- {doc}")
+            safe_echo(f"- {doc}")
     else:
-        typer.echo("- none")
-    typer.echo(f"Contracts: {result['contract_status']}")
+        safe_echo("- none")
+    safe_echo(f"Contracts: {result['contract_status']}")
 
 
 @benchmark_pack_app.command("verify")
@@ -1696,16 +1697,16 @@ def benchmarks_pack_verify(
     try:
         result = verify_benchmark_pack(pack)
     except BenchmarkPackIntegrityError as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from error
     except (OSError, BenchmarkPackError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo("Benchmark pack verification: PASS")
-    typer.echo(f"Pack ID: {result.manifest['pack_id']}")
-    typer.echo(f"Benchmarks: {len(result.manifest['benchmarks'])}")
-    typer.echo(f"Files: {len(result.files)}")
-    typer.echo(f"Root digest: {result.root_digest}")
+    safe_echo("Benchmark pack verification: PASS")
+    safe_echo(f"Pack ID: {result.manifest['pack_id']}")
+    safe_echo(f"Benchmarks: {len(result.manifest['benchmarks'])}")
+    safe_echo(f"Files: {len(result.files)}")
+    safe_echo(f"Root digest: {result.root_digest}")
 
 
 @benchmark_pack_app.command("keygen")
@@ -1730,13 +1731,13 @@ def benchmarks_pack_keygen(
     try:
         result = generate_hmac_keypair(output_dir, name, force=force)
     except (FileExistsError, OSError, ValueError, BenchmarkPackError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(f"Key ID: {result.key_id}")
-    typer.echo(f"Private key: {result.private_key_path}")
-    typer.echo(f"Verification key: {result.public_key_path}")
-    typer.echo("Warning: HMAC keys are shared secrets. Do not commit private keys.")
-    typer.echo(
+    safe_echo(f"Key ID: {result.key_id}")
+    safe_echo(f"Private key: {result.private_key_path}")
+    safe_echo(f"Verification key: {result.public_key_path}")
+    safe_echo("Warning: HMAC keys are shared secrets. Do not commit private keys.")
+    safe_echo(
         "Warning: the verification key also contains HMAC secret material; "
         "commit it only for intentionally shared local CI trust."
     )
@@ -1757,13 +1758,13 @@ def benchmarks_pack_sign(
     try:
         signature = sign_benchmark_pack(pack, key, output, force=force)
     except (FileExistsError, OSError, BenchmarkPackError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(f"Signature written: {output}")
-    typer.echo(f"Pack ID: {signature['pack_id']}")
-    typer.echo(f"Root digest: {signature['pack_root_digest']}")
-    typer.echo(f"Key ID: {signature['key_id']}")
-    typer.echo(f"Algorithm: {signature['algorithm']}")
+    safe_echo(f"Signature written: {output}")
+    safe_echo(f"Pack ID: {signature['pack_id']}")
+    safe_echo(f"Root digest: {signature['pack_root_digest']}")
+    safe_echo(f"Key ID: {signature['key_id']}")
+    safe_echo(f"Algorithm: {signature['algorithm']}")
 
 
 @benchmark_pack_app.command("verify-signature")
@@ -1776,15 +1777,15 @@ def benchmarks_pack_verify_signature(
     try:
         result = verify_benchmark_pack_signature(pack, signature, key)
     except BenchmarkPackIntegrityError as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from error
     except (OSError, BenchmarkPackError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(result.message)
-    typer.echo(f"Status: {result.status}")
+    safe_echo(result.message)
+    safe_echo(f"Status: {result.status}")
     if result.key_id is not None:
-        typer.echo(f"Key ID: {result.key_id}")
+        safe_echo(f"Key ID: {result.key_id}")
     if not result.valid:
         raise typer.Exit(1)
 
@@ -1802,9 +1803,9 @@ def benchmarks_pack_trust_init(
     try:
         init_trust_policy(path, force=force)
     except (FileExistsError, OSError, BenchmarkPackError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(f"Trust policy initialized: {path}")
+    safe_echo(f"Trust policy initialized: {path}")
 
 
 @benchmark_pack_trust_app.command("add-key")
@@ -1816,10 +1817,10 @@ def benchmarks_pack_trust_add_key(
     try:
         updated = add_trusted_key(policy, public_key)
     except (OSError, ValueError, BenchmarkPackError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
     key = updated["trusted_keys"][-1]
-    typer.echo(f"Trusted key added: {key['key_id']} {key['name']}")
+    safe_echo(f"Trusted key added: {key['key_id']} {key['name']}")
 
 
 @benchmark_pack_trust_app.command("list")
@@ -1830,10 +1831,10 @@ def benchmarks_pack_trust_list(
     try:
         lines = trust_policy_summary(policy)
     except (OSError, BenchmarkPackError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
     for line in lines:
-        typer.echo(line)
+        safe_echo(line)
 
 
 @benchmark_pack_trust_app.command("verify")
@@ -1850,18 +1851,18 @@ def benchmarks_pack_trust_verify(
     try:
         result = verify_trust_policy(pack, policy, signatures or [])
     except BenchmarkPackIntegrityError as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from error
     except (OSError, BenchmarkPackError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(f"Trust status: {result.status}")
-    typer.echo(
+    safe_echo(f"Trust status: {result.status}")
+    safe_echo(
         f"Trusted signatures: {result.trusted_signatures}/"
         f"{result.required_signatures}"
     )
     for message in result.messages:
-        typer.echo(f"- {message}")
+        safe_echo(f"- {message}")
     if not result.valid:
         raise typer.Exit(1)
 
@@ -1918,31 +1919,31 @@ def benchmarks_pack_import(
             force=force,
         )
     except BenchmarkPackIntegrityError as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from error
     except BenchmarkPackSignatureError as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from error
     except (FileExistsError, OSError, ValueError, BenchmarkPackError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo("Benchmark pack import plan" if dry_run else "Benchmark pack imported")
-    typer.echo(f"Destination: {dest}")
-    typer.echo(f"Files: {len(plan.files)}")
+    safe_echo("Benchmark pack import plan" if dry_run else "Benchmark pack imported")
+    safe_echo(f"Destination: {dest}")
+    safe_echo(f"Files: {len(plan.files)}")
     if plan.trust_status is not None:
-        typer.echo(f"Trust status: {plan.trust_status}")
+        safe_echo(f"Trust status: {plan.trust_status}")
     if plan.collisions:
-        typer.echo("Collisions:")
+        safe_echo("Collisions:")
         for path in plan.collisions:
-            typer.echo(f"- {path}")
+            safe_echo(f"- {path}")
         if not force:
             raise typer.Exit(2)
     for relative_path, target in plan.files:
-        typer.echo(f"- {relative_path} -> {target}")
+        safe_echo(f"- {relative_path} -> {target}")
     if plan.registry_path is not None:
-        typer.echo(f"Registry output: {plan.registry_path}")
+        safe_echo(f"Registry output: {plan.registry_path}")
     if plan.suite_path is not None:
-        typer.echo(f"Suite output: {plan.suite_path}")
+        safe_echo(f"Suite output: {plan.suite_path}")
 
 
 @benchmark_pack_index_app.command("create")
@@ -1983,11 +1984,11 @@ def benchmarks_pack_index_create(
             force=force,
         )
     except (FileExistsError, OSError, ValueError, BenchmarkPackError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo(f"Benchmark pack index written: {output}")
-    typer.echo(f"Index ID: {index['index_id']}")
-    typer.echo(f"Packs: {len(index['packs'])}")
+    safe_echo(f"Benchmark pack index written: {output}")
+    safe_echo(f"Index ID: {index['index_id']}")
+    safe_echo(f"Packs: {len(index['packs'])}")
 
 
 @benchmark_pack_index_app.command("list")
@@ -2003,13 +2004,13 @@ def benchmarks_pack_index_list(
     try:
         lines = list_pack_index(index, trust_policy=trust_policy)
     except BenchmarkPackIntegrityError as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from error
     except (OSError, BenchmarkPackError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
     for line in lines:
-        typer.echo(line)
+        safe_echo(line)
 
 
 @benchmark_pack_index_app.command("verify")
@@ -2025,16 +2026,16 @@ def benchmarks_pack_index_verify(
     try:
         result = verify_pack_index(index, trust_policy=trust_policy)
     except (BenchmarkPackIntegrityError, BenchmarkPackSignatureError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from error
     except (OSError, BenchmarkPackError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    typer.echo("Benchmark pack index verification: PASS")
-    typer.echo(f"Index ID: {result.index['index_id']}")
-    typer.echo(f"Packs: {len(result.entries)}")
+    safe_echo("Benchmark pack index verification: PASS")
+    safe_echo(f"Index ID: {result.index['index_id']}")
+    safe_echo(f"Packs: {len(result.entries)}")
     for message in result.messages:
-        typer.echo(f"- {message}")
+        safe_echo(f"- {message}")
 
 
 @benchmark_pack_index_app.command("show")
@@ -2051,26 +2052,26 @@ def benchmarks_pack_index_show(
     try:
         resolution = resolve_index_pack(index, pack_id=pack_id, version=version)
     except (OSError, BenchmarkPackError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
     entry = resolution.entry
-    typer.echo(f"Pack ID: {entry['pack_id']}")
-    typer.echo(f"Version: {entry['pack_version']}")
-    typer.echo(f"Title: {entry['title']}")
-    typer.echo(f"Description: {entry['description']}")
-    typer.echo(f"Digest: {entry['pack_digest']}")
-    typer.echo(f"Size: {entry['size_bytes']} bytes")
-    typer.echo(f"Source: {entry['source']['type']}:{entry['source']['path']}")
-    typer.echo("Benchmarks:")
+    safe_echo(f"Pack ID: {entry['pack_id']}")
+    safe_echo(f"Version: {entry['pack_version']}")
+    safe_echo(f"Title: {entry['title']}")
+    safe_echo(f"Description: {entry['description']}")
+    safe_echo(f"Digest: {entry['pack_digest']}")
+    safe_echo(f"Size: {entry['size_bytes']} bytes")
+    safe_echo(f"Source: {entry['source']['type']}:{entry['source']['path']}")
+    safe_echo("Benchmarks:")
     for benchmark_id in entry["benchmark_ids"]:
         version_value = entry["benchmark_versions"].get(benchmark_id)
-        typer.echo(f"- {benchmark_id}@{version_value}")
-    typer.echo("Signature:")
+        safe_echo(f"- {benchmark_id}@{version_value}")
+    safe_echo("Signature:")
     if entry.get("signature"):
         signature = entry["signature"]
-        typer.echo(f"- key_id={signature['key_id']} path={signature.get('signature_path', 'inline')}")
+        safe_echo(f"- key_id={signature['key_id']} path={signature.get('signature_path', 'inline')}")
     else:
-        typer.echo("- none")
+        safe_echo("- none")
 
 
 @benchmark_pack_index_app.command("install")
@@ -2127,34 +2128,34 @@ def benchmarks_pack_index_install(
             force=force,
         )
     except (BenchmarkPackIntegrityError, BenchmarkPackSignatureError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(1) from error
     except (FileExistsError, OSError, ValueError, BenchmarkPackError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
     entry = resolution.entry
-    typer.echo(
+    safe_echo(
         "Benchmark pack index install plan"
         if dry_run
         else "Benchmark pack installed from index"
     )
-    typer.echo(f"Pack: {entry['pack_id']}@{entry['pack_version']}")
-    typer.echo(f"Destination: {dest}")
-    typer.echo(f"Files: {len(plan.files)}")
+    safe_echo(f"Pack: {entry['pack_id']}@{entry['pack_version']}")
+    safe_echo(f"Destination: {dest}")
+    safe_echo(f"Files: {len(plan.files)}")
     if plan.trust_status is not None:
-        typer.echo(f"Trust status: {plan.trust_status}")
+        safe_echo(f"Trust status: {plan.trust_status}")
     if plan.collisions:
-        typer.echo("Collisions:")
+        safe_echo("Collisions:")
         for path in plan.collisions:
-            typer.echo(f"- {path}")
+            safe_echo(f"- {path}")
         if not force:
             raise typer.Exit(2)
     for relative_path, target in plan.files:
-        typer.echo(f"- {relative_path} -> {target}")
+        safe_echo(f"- {relative_path} -> {target}")
     if plan.registry_path is not None:
-        typer.echo(f"Registry output: {plan.registry_path}")
+        safe_echo(f"Registry output: {plan.registry_path}")
     if plan.suite_path is not None:
-        typer.echo(f"Suite output: {plan.suite_path}")
+        safe_echo(f"Suite output: {plan.suite_path}")
 
 
 @benchmarks_app.command("audit")
@@ -2210,31 +2211,31 @@ def benchmarks_audit(
             tags=tags,
         )
     except (OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo("AgentGuard Benchmark Audit")
-    typer.echo(f"Mode: {result.mode}")
-    typer.echo(f"Benchmarks: {result.total_benchmarks}")
-    typer.echo(f"Variants: {result.total_variants}")
-    typer.echo(f"Trials: {result.total_trials}")
-    typer.echo(f"Contracts passed: {result.passed_contracts}")
-    typer.echo(f"Contracts failed: {result.failed_contracts}")
-    typer.echo(f"Unstable variants: {result.unstable_variants}")
-    typer.echo(f"Errors: {result.error_count}")
-    typer.echo(f"Warnings: {result.warning_count}")
+    safe_echo("AgentGuard Benchmark Audit")
+    safe_echo(f"Mode: {result.mode}")
+    safe_echo(f"Benchmarks: {result.total_benchmarks}")
+    safe_echo(f"Variants: {result.total_variants}")
+    safe_echo(f"Trials: {result.total_trials}")
+    safe_echo(f"Contracts passed: {result.passed_contracts}")
+    safe_echo(f"Contracts failed: {result.failed_contracts}")
+    safe_echo(f"Unstable variants: {result.unstable_variants}")
+    safe_echo(f"Errors: {result.error_count}")
+    safe_echo(f"Warnings: {result.warning_count}")
     if result.violations:
-        typer.echo("")
-        typer.echo("Severity | Benchmark | Variant | Trial | Field | Message")
-        typer.echo("--- | --- | --- | ---: | --- | ---")
+        safe_echo("")
+        safe_echo("Severity | Benchmark | Variant | Trial | Field | Message")
+        safe_echo("--- | --- | --- | ---: | --- | ---")
         for violation in result.violations:
-            typer.echo(
+            safe_echo(
                 f"{violation.severity} | {violation.benchmark_id} | "
                 f"{violation.variant} | {violation.trial_index} | "
                 f"{violation.field} | {violation.message}"
             )
-    typer.echo(f"Audit JSON report path: {result.json_report_path}")
-    typer.echo(f"Audit Markdown report path: {result.markdown_report_path}")
+    safe_echo(f"Audit JSON report path: {result.json_report_path}")
+    safe_echo(f"Audit Markdown report path: {result.markdown_report_path}")
     if result.has_failures and not allow_contract_failures:
         raise typer.Exit(1)
 
@@ -2261,7 +2262,7 @@ def reports_list(
         raise typer.BadParameter(str(error), param_hint="--type") from error
 
     reports = discover_reports(report_type=validated_type, limit=limit)
-    typer.echo(format_reports_table(reports))
+    safe_echo(format_reports_table(reports))
 
 
 @reports_app.command("show")
@@ -2288,10 +2289,10 @@ def reports_show(
         raise typer.BadParameter(str(error), param_hint="--type") from error
 
     if path is not None and latest:
-        typer.echo("Error: provide a report path or --latest, not both.", err=True)
+        safe_echo("Error: provide a report path or --latest, not both.", err=True)
         raise typer.Exit(2)
     if path is None and not latest:
-        typer.echo("Error: provide a report path or use --latest.", err=True)
+        safe_echo("Error: provide a report path or use --latest.", err=True)
         raise typer.Exit(2)
 
     try:
@@ -2301,14 +2302,14 @@ def reports_show(
             else load_report(path if path is not None else Path())
         )
     except (OSError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
     if report is None:
-        typer.echo("No reports found.", err=True)
+        safe_echo("No reports found.", err=True)
         raise typer.Exit(1)
 
-    typer.echo(format_report_summary(report))
+    safe_echo(format_report_summary(report))
 
 
 @reports_app.command("export-sarif")
@@ -2350,18 +2351,18 @@ def reports_export_sarif(
             include_passed=include_passed,
         )
     except (FileExistsError, OSError, UnsupportedExportInput, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo(f"SARIF exported: {result.output_path}")
-    typer.echo(
+    safe_echo(f"SARIF exported: {result.output_path}")
+    safe_echo(
         "Reports: "
         f"{result.reports}; rules: {result.rules}; results: {result.results}; "
         f"failed findings: {result.findings}; passed included: "
         f"{result.included_passed}"
     )
     if result.unsupported_files:
-        typer.echo(f"Unsupported files skipped: {result.unsupported_files}")
+        safe_echo(f"Unsupported files skipped: {result.unsupported_files}")
 
 
 @reports_app.command("export-junit")
@@ -2397,16 +2398,16 @@ def reports_export_junit(
             suite_name=suite_name,
         )
     except (FileExistsError, OSError, UnsupportedExportInput, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo(f"JUnit exported: {result.output_path}")
-    typer.echo(
+    safe_echo(f"JUnit exported: {result.output_path}")
+    safe_echo(
         f"Reports: {result.reports}; tests: {result.tests}; "
         f"failures: {result.failures}"
     )
     if result.unsupported_files:
-        typer.echo(f"Unsupported files skipped: {result.unsupported_files}")
+        safe_echo(f"Unsupported files skipped: {result.unsupported_files}")
 
 
 @reports_app.command("site")
@@ -2463,11 +2464,11 @@ def reports_site(
             )
         )
     except (FileExistsError, OSError, ValueError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo(f"Static report site: {result.output_path}")
-    typer.echo(
+    safe_echo(f"Static report site: {result.output_path}")
+    safe_echo(
         "Pages: "
         f"{result.page_count}; reports: {result.reports}; "
         f"matrices: {result.matrices}; diagnostics: {result.diagnostics}; "
@@ -2554,7 +2555,7 @@ def history_list(
         agent=agent,
         benchmark_id=benchmark,
     )
-    typer.echo(_format_history_table(records))
+    safe_echo(_format_history_table(records))
 
 
 @history_app.command("stats")
@@ -2592,7 +2593,7 @@ def history_stats_command(
         category=category,
         difficulty=difficulty,
     )
-    typer.echo(
+    safe_echo(
         _format_history_stats(
             stats,
             has_filters=_has_history_filters(
@@ -2648,7 +2649,7 @@ def history_trends_command(
         category=category,
         difficulty=difficulty,
     )
-    typer.echo(_format_history_trends(trends))
+    safe_echo(_format_history_trends(trends))
 
 
 @history_app.command("export")
@@ -2751,17 +2752,20 @@ def history_export_command(
         else export_history_csv(records)
     )
     if output is None:
-        typer.echo(content, nl=False)
+        if validated_format == "csv":
+            typer.echo(content, nl=False)
+        else:
+            safe_echo(content, nl=False)
         return
 
     if output.exists() and not force:
-        typer.echo(
+        safe_echo(
             f"Error: output already exists: {output}. Use --force to overwrite.",
             err=True,
         )
         raise typer.Exit(2)
     atomic_write_text(output, content)
-    typer.echo(f"History exported: {output}")
+    safe_echo(f"History exported: {output}")
 
 
 def _validate_guard_poll_interval(guard_poll_interval: float) -> None:
@@ -2804,48 +2808,48 @@ def run(
             guard_poll_interval_seconds=guard_poll_interval,
         )
     except (OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo("AgentGuard Report")
-    typer.echo(f"Task: {result.task_id}")
-    typer.echo(f"Agent: {result.agent}")
-    typer.echo(f"Result: {result.result}")
-    typer.echo(f"Score: {result.score}/100")
+    safe_echo("AgentGuard Report")
+    safe_echo(f"Task: {result.task_id}")
+    safe_echo(f"Agent: {result.agent}")
+    safe_echo(f"Result: {result.result}")
+    safe_echo(f"Score: {result.score}/100")
     if result.guard_summary.mode != GuardMode.OFF.value:
-        typer.echo(
+        safe_echo(
             "Guard: "
             f"{result.guard_summary.mode}; triggered: "
             f"{result.guard_summary.triggered}; violations: "
             f"{len(result.guard_summary.violations)}"
         )
     if result.command_guard_summary.mode != GuardMode.OFF.value:
-        typer.echo(
+        safe_echo(
             "Command guard: "
             f"{result.command_guard_summary.mode}; triggered: "
             f"{result.command_guard_summary.triggered}; violations: "
             f"{len(result.command_guard_summary.violations)}"
         )
-    typer.echo("Checks summary:")
+    safe_echo("Checks summary:")
     for check in result.check_results:
         status = "PASS" if check.passed else "FAIL"
-        typer.echo(f"- {status} [{check.severity}] {check.name}: {check.message}")
+        safe_echo(f"- {status} [{check.severity}] {check.name}: {check.message}")
         for evidence in check.evidence:
-            typer.echo(f"  Evidence: {evidence}")
-    typer.echo("Modified files:")
+            safe_echo(f"  Evidence: {evidence}")
+    safe_echo("Modified files:")
     if result.diff_summary.changed_files:
         for path in result.diff_summary.changed_files:
-            typer.echo(f"- {path}")
+            safe_echo(f"- {path}")
     else:
-        typer.echo("- None")
+        safe_echo("- None")
     if result.report_paths.command_log is not None:
-        typer.echo(f"Command log path: {result.report_paths.command_log}")
+        safe_echo(f"Command log path: {result.report_paths.command_log}")
     if result.report_paths.guard_incident_json is not None:
-        typer.echo(f"Guard incident path: {result.report_paths.guard_incident_json}")
-    typer.echo(f"JSON report path: {result.report_paths.json}")
-    typer.echo(f"Markdown report path: {result.report_paths.markdown}")
-    typer.echo(f"Manifest path: {result.report_paths.manifest or '-'}")
-    typer.echo(f"Trace path: {result.report_paths.trace or '-'}")
+        safe_echo(f"Guard incident path: {result.report_paths.guard_incident_json}")
+    safe_echo(f"JSON report path: {result.report_paths.json}")
+    safe_echo(f"Markdown report path: {result.report_paths.markdown}")
+    safe_echo(f"Manifest path: {result.report_paths.manifest or '-'}")
+    safe_echo(f"Trace path: {result.report_paths.trace or '-'}")
     if result.result == "FAIL" and not allow_fail_result:
         raise typer.Exit(1)
 
@@ -2880,7 +2884,7 @@ def ci_command(
 ) -> None:
     """Evaluate existing git diff in the current repository."""
     if (base_ref is None) != (head_ref is None):
-        typer.echo(
+        safe_echo(
             "Error: --base and --head must be provided together.",
             err=True,
         )
@@ -2889,7 +2893,7 @@ def ci_command(
     try:
         result = run_ci(config_path, base_ref=base_ref, head_ref=head_ref)
     except (OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
     github_summary_path = None
     if github_summary:
@@ -2897,35 +2901,35 @@ def ci_command(
         if summary_env:
             github_summary_path = write_github_step_summary(result, Path(summary_env))
         else:
-            typer.echo(
+            safe_echo(
                 "Warning: --github-summary was provided but "
                 "GITHUB_STEP_SUMMARY is not set.",
                 err=True,
             )
 
-    typer.echo("AgentGuard CI Report")
-    typer.echo(f"Task: {result.task_id}")
-    typer.echo(f"Result: {result.result}")
-    typer.echo(f"Score: {result.score}/100")
-    typer.echo("Checks summary:")
+    safe_echo("AgentGuard CI Report")
+    safe_echo(f"Task: {result.task_id}")
+    safe_echo(f"Result: {result.result}")
+    safe_echo(f"Score: {result.score}/100")
+    safe_echo("Checks summary:")
     for check in result.check_results:
         status = "PASS" if check.passed else "FAIL"
-        typer.echo(f"- {status} [{check.severity}] {check.name}: {check.message}")
-    typer.echo("Files:")
+        safe_echo(f"- {status} [{check.severity}] {check.name}: {check.message}")
+    safe_echo("Files:")
     for label, paths in [
         ("Modified", result.diff_summary.modified_files),
         ("Added", result.diff_summary.added_files),
         ("Deleted", result.diff_summary.deleted_files),
     ]:
-        typer.echo(f"- {label}: {len(paths)}")
+        safe_echo(f"- {label}: {len(paths)}")
         for path in paths:
-            typer.echo(f"  - {path}")
+            safe_echo(f"  - {path}")
     if result.report_paths.command_log is not None:
-        typer.echo(f"Command log path: {result.report_paths.command_log}")
-    typer.echo(f"JSON report path: {result.report_paths.json}")
-    typer.echo(f"Markdown report path: {result.report_paths.markdown}")
+        safe_echo(f"Command log path: {result.report_paths.command_log}")
+    safe_echo(f"JSON report path: {result.report_paths.json}")
+    safe_echo(f"Markdown report path: {result.report_paths.markdown}")
     if github_summary_path is not None:
-        typer.echo(f"GitHub summary path: {github_summary_path}")
+        safe_echo(f"GitHub summary path: {github_summary_path}")
     if result.result == "FAIL" and not allow_fail_result:
         raise typer.Exit(1)
 
@@ -2953,24 +2957,24 @@ def benchmark_command(
     try:
         summary = run_multi_agent_benchmark(config_path, agent_names)
     except (OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo("AgentGuard Benchmark Summary")
-    typer.echo(f"Task: {summary.task_id}")
-    typer.echo(f"Agents: {summary.total_agents}")
-    typer.echo(f"Passed: {summary.pass_count}")
-    typer.echo(f"Failed: {summary.fail_count}")
-    typer.echo("")
-    typer.echo("Agent | Result | Score | Failed Checks")
-    typer.echo("--- | --- | ---: | ---")
+    safe_echo("AgentGuard Benchmark Summary")
+    safe_echo(f"Task: {summary.task_id}")
+    safe_echo(f"Agents: {summary.total_agents}")
+    safe_echo(f"Passed: {summary.pass_count}")
+    safe_echo(f"Failed: {summary.fail_count}")
+    safe_echo("")
+    safe_echo("Agent | Result | Score | Failed Checks")
+    safe_echo("--- | --- | ---: | ---")
     for agent in summary.agents:
         failed_checks = ", ".join(agent.failed_checks) if agent.failed_checks else "-"
-        typer.echo(
+        safe_echo(
             f"{agent.agent} | {agent.result} | {agent.score} | {failed_checks}"
         )
-    typer.echo(f"Benchmark JSON report path: {summary.report_paths.json}")
-    typer.echo(f"Benchmark Markdown report path: {summary.report_paths.markdown}")
+    safe_echo(f"Benchmark JSON report path: {summary.report_paths.json}")
+    safe_echo(f"Benchmark Markdown report path: {summary.report_paths.markdown}")
     if summary.fail_count > 0 and not allow_failures:
         raise typer.Exit(1)
 
@@ -3033,7 +3037,7 @@ def gate_suite_command(
             filters=filters,
         )
     except (OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
     comparison = result.baseline_comparison
@@ -3047,7 +3051,7 @@ def gate_suite_command(
 
     if save_current_baseline is not None:
         baseline_path = write_suite_baseline(result, save_current_baseline)
-        typer.echo(f"Current baseline saved: {baseline_path}")
+        safe_echo(f"Current baseline saved: {baseline_path}")
 
     if gate_failed:
         raise typer.Exit(1)
@@ -3124,81 +3128,81 @@ def suite_command(
             guard_poll_interval_seconds=guard_poll_interval,
         )
     except (OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo("AgentGuard Suite Summary")
-    typer.echo(f"Suite: {result.suite_id}")
-    typer.echo(f"Guard mode: {result.guard_mode}")
-    typer.echo(
+    safe_echo("AgentGuard Suite Summary")
+    safe_echo(f"Suite: {result.suite_id}")
+    safe_echo(f"Guard mode: {result.guard_mode}")
+    safe_echo(
         f"Guard poll interval: {result.guard_poll_interval_seconds} seconds"
     )
     if result.filters.has_filters():
-        typer.echo(f"Filters: {format_suite_filters(result.filters)}")
-    typer.echo(f"Runs: {result.total_runs}")
-    typer.echo(f"Passed: {result.passed}")
-    typer.echo(f"Failed: {result.failed}")
-    typer.echo(f"Pass rate: {result.pass_rate}%")
-    typer.echo(f"Average score: {result.average_score}")
-    typer.echo("")
-    typer.echo(
+        safe_echo(f"Filters: {format_suite_filters(result.filters)}")
+    safe_echo(f"Runs: {result.total_runs}")
+    safe_echo(f"Passed: {result.passed}")
+    safe_echo(f"Failed: {result.failed}")
+    safe_echo(f"Pass rate: {result.pass_rate}%")
+    safe_echo(f"Average score: {result.average_score}")
+    safe_echo("")
+    safe_echo(
         f"Best run: {result.best_run.task_id} / {result.best_run.agent} / "
         f"{result.best_run.result} / {result.best_run.score}"
     )
-    typer.echo(
+    safe_echo(
         f"Worst run: {result.worst_run.task_id} / {result.worst_run.agent} / "
         f"{result.worst_run.result} / {result.worst_run.score}"
     )
-    typer.echo("")
-    typer.echo("Most common failed checks:")
+    safe_echo("")
+    safe_echo("Most common failed checks:")
     if result.failed_check_counts:
         for name, count in sorted(
             result.failed_check_counts.items(),
             key=lambda item: -item[1],
         ):
-            typer.echo(f"- {name}: {count}")
+            safe_echo(f"- {name}: {count}")
     else:
-        typer.echo("- None")
-    typer.echo("")
-    typer.echo("Task | Category | Agent | Result | Score | Failed Checks")
-    typer.echo("--- | --- | --- | --- | ---: | ---")
+        safe_echo("- None")
+    safe_echo("")
+    safe_echo("Task | Category | Agent | Result | Score | Failed Checks")
+    safe_echo("--- | --- | --- | --- | ---: | ---")
     for run in result.runs:
         failed_checks = ", ".join(run.failed_checks) if run.failed_checks else "-"
-        typer.echo(
+        safe_echo(
             f"{run.task_id} | {run.category or '-'} | {run.agent} | {run.result} | "
             f"{run.score} | {failed_checks}"
         )
     if result.baseline_comparison is not None:
         comparison = result.baseline_comparison
-        typer.echo("")
-        typer.echo("Baseline comparison")
-        typer.echo(f"Baseline: {comparison.baseline_path}")
-        typer.echo(f"Regressions: {'yes' if comparison.has_regressions else 'no'}")
+        safe_echo("")
+        safe_echo("Baseline comparison")
+        safe_echo(f"Baseline: {comparison.baseline_path}")
+        safe_echo(f"Regressions: {'yes' if comparison.has_regressions else 'no'}")
         if comparison.version_mismatches:
-            typer.echo("Benchmark version mismatches:")
+            safe_echo("Benchmark version mismatches:")
             for message in comparison.version_mismatches:
-                typer.echo(f"- {message}")
+                safe_echo(f"- {message}")
         else:
-            typer.echo("Benchmark version mismatches: none")
+            safe_echo("Benchmark version mismatches: none")
         if comparison.regressions:
-            typer.echo("Regression details:")
+            safe_echo("Regression details:")
             for message in comparison.regressions:
-                typer.echo(f"- {message}")
+                safe_echo(f"- {message}")
         else:
-            typer.echo("Regression details: none")
+            safe_echo("Regression details: none")
         if comparison.improvements:
-            typer.echo("Improvements:")
+            safe_echo("Improvements:")
             for message in comparison.improvements:
-                typer.echo(f"- {message}")
+                safe_echo(f"- {message}")
         else:
-            typer.echo("Improvements: none")
-        typer.echo(f"Unchanged runs: {comparison.unchanged_count}")
-    typer.echo(f"Suite JSON report path: {result.json_report_path}")
-    typer.echo(f"Suite Markdown report path: {result.markdown_report_path}")
-    typer.echo(f"Suite manifest path: {result.manifest_path or '-'}")
+            safe_echo("Improvements: none")
+        safe_echo(f"Unchanged runs: {comparison.unchanged_count}")
+    safe_echo(f"Suite JSON report path: {result.json_report_path}")
+    safe_echo(f"Suite Markdown report path: {result.markdown_report_path}")
+    safe_echo(f"Suite manifest path: {result.manifest_path or '-'}")
     if save_baseline is not None:
         baseline_path = write_suite_baseline(result, save_baseline)
-        typer.echo(f"Baseline saved: {baseline_path}")
+        safe_echo(f"Baseline saved: {baseline_path}")
     if (
         result.baseline_comparison is not None
         and result.baseline_comparison.has_regressions
@@ -3381,122 +3385,122 @@ def matrix_command(
             guard_poll_interval_seconds=guard_poll_interval,
         )
     except KeyboardInterrupt as error:
-        typer.echo("Matrix execution interrupted.", err=True)
+        safe_echo("Matrix execution interrupted.", err=True)
         active_checkpoint = resume or checkpoint
         if active_checkpoint is not None:
             resolved = active_checkpoint.expanduser().resolve()
-            typer.echo(f"Checkpoint marked interrupted: {resolved}", err=True)
-            typer.echo(
+            safe_echo(f"Checkpoint marked interrupted: {resolved}", err=True)
+            safe_echo(
                 f"Resume with: agentguard matrix {suite_path} --resume {resolved}",
                 err=True,
             )
         raise typer.Exit(130) from error
     except (OSError, ValueError, yaml.YAMLError) as error:
-        typer.echo(f"Error: {error}", err=True)
+        safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 
-    typer.echo("AgentGuard Matrix Summary")
-    typer.echo(f"Suite: {result.suite_id}")
-    typer.echo(f"Agents: {', '.join(result.agents)}")
-    typer.echo(f"Guard mode: {result.guard_mode}")
-    typer.echo(
+    safe_echo("AgentGuard Matrix Summary")
+    safe_echo(f"Suite: {result.suite_id}")
+    safe_echo(f"Agents: {', '.join(result.agents)}")
+    safe_echo(f"Guard mode: {result.guard_mode}")
+    safe_echo(
         f"Guard poll interval: {result.guard_poll_interval_seconds} seconds"
     )
     _echo_matrix_guard_summary(result)
     if result.filters.has_filters():
-        typer.echo(f"Filters: {format_suite_filters(result.filters)}")
-    typer.echo(f"Trials per combination: {result.trials}")
-    typer.echo(f"Workers: {result.effective_workers}/{result.requested_workers}")
-    typer.echo(f"Execution mode: {result.execution_mode}")
-    typer.echo(f"Execution duration: {result.duration_seconds:.3f} seconds")
-    typer.echo(f"Attempts planned: {result.attempts_planned}")
-    typer.echo(f"Attempts executed: {result.attempts_executed}")
+        safe_echo(f"Filters: {format_suite_filters(result.filters)}")
+    safe_echo(f"Trials per combination: {result.trials}")
+    safe_echo(f"Workers: {result.effective_workers}/{result.requested_workers}")
+    safe_echo(f"Execution mode: {result.execution_mode}")
+    safe_echo(f"Execution duration: {result.duration_seconds:.3f} seconds")
+    safe_echo(f"Attempts planned: {result.attempts_planned}")
+    safe_echo(f"Attempts executed: {result.attempts_executed}")
     if result.checkpoint_path is not None:
-        typer.echo(f"Checkpoint: {result.checkpoint_path}")
-        typer.echo(f"Checkpoint status: {result.checkpoint_status}")
-        typer.echo(f"Attempts reused: {result.attempts_reused}")
-        typer.echo(f"Attempts skipped: {result.attempts_skipped}")
-        typer.echo(
+        safe_echo(f"Checkpoint: {result.checkpoint_path}")
+        safe_echo(f"Checkpoint status: {result.checkpoint_status}")
+        safe_echo(f"Attempts reused: {result.attempts_reused}")
+        safe_echo(f"Attempts skipped: {result.attempts_skipped}")
+        safe_echo(
             "Attempts executed this invocation: "
             f"{result.attempts_executed_this_invocation}"
         )
-        typer.echo(f"Failed attempts retried: {result.failed_attempts_retried}")
-        typer.echo(f"Invalidated attempts: {result.invalidated_attempts}")
-        typer.echo(f"Reuse percentage: {result.reuse_percentage}%")
-        typer.echo(
+        safe_echo(f"Failed attempts retried: {result.failed_attempts_retried}")
+        safe_echo(f"Invalidated attempts: {result.invalidated_attempts}")
+        safe_echo(f"Reuse percentage: {result.reuse_percentage}%")
+        safe_echo(
             "Estimated recomputation avoided: "
             f"{result.estimated_recomputation_avoided_seconds:.3f} seconds"
         )
         for warning in result.compatibility_warnings:
-            typer.echo(f"Compatibility warning: {warning}")
-    typer.echo(f"Stopped early: {'yes' if result.stopped_early else 'no'}")
-    typer.echo(f"Total runs: {result.total_runs}")
-    typer.echo(f"Total attempts: {result.reliability.attempts}")
-    typer.echo(f"Passed: {result.passed}")
-    typer.echo(f"Failed: {result.failed}")
-    typer.echo(f"Pass rate: {result.pass_rate}%")
+            safe_echo(f"Compatibility warning: {warning}")
+    safe_echo(f"Stopped early: {'yes' if result.stopped_early else 'no'}")
+    safe_echo(f"Total runs: {result.total_runs}")
+    safe_echo(f"Total attempts: {result.reliability.attempts}")
+    safe_echo(f"Passed: {result.passed}")
+    safe_echo(f"Failed: {result.failed}")
+    safe_echo(f"Pass rate: {result.pass_rate}%")
     interval = result.reliability.confidence_interval_95
-    typer.echo(
+    safe_echo(
         f"Overall success rate: {result.reliability.success_rate}% "
         f"(95% CI {interval.lower_bound}% to {interval.upper_bound}%)"
     )
-    typer.echo(f"Average score: {result.average_score}")
-    typer.echo("")
-    typer.echo("Agent | Attempts | Passed | Failed | Success Rate | Average Score")
-    typer.echo("--- | ---: | ---: | ---: | ---: | ---:")
+    safe_echo(f"Average score: {result.average_score}")
+    safe_echo("")
+    safe_echo("Agent | Attempts | Passed | Failed | Success Rate | Average Score")
+    safe_echo("--- | ---: | ---: | ---: | ---: | ---:")
     for agent, summary in result.per_agent.items():
         reliability = result.per_agent_reliability[agent]
-        typer.echo(
+        safe_echo(
             f"{agent} | {summary.runs} | {summary.passed} | "
             f"{summary.failed} | {reliability.success_rate}% | "
             f"{reliability.average_score}"
         )
     if result.baseline_comparison is not None:
         comparison = result.baseline_comparison
-        typer.echo("")
-        typer.echo("Baseline comparison")
-        typer.echo(f"Baseline: {comparison.baseline_path}")
-        typer.echo(f"Regressions: {'yes' if comparison.has_regressions else 'no'}")
+        safe_echo("")
+        safe_echo("Baseline comparison")
+        safe_echo(f"Baseline: {comparison.baseline_path}")
+        safe_echo(f"Regressions: {'yes' if comparison.has_regressions else 'no'}")
         for message in comparison.regressions:
-            typer.echo(f"- {message}")
+            safe_echo(f"- {message}")
     if save_reliability_baseline is not None:
-        typer.echo(f"Reliability baseline saved: {save_reliability_baseline}")
+        safe_echo(f"Reliability baseline saved: {save_reliability_baseline}")
     if result.reliability_comparison is not None:
         comparison = result.reliability_comparison
         thresholds = comparison.thresholds
-        typer.echo("")
-        typer.echo("Reliability comparison")
+        safe_echo("")
+        safe_echo("Reliability comparison")
         if comparison.baseline_path is not None:
-            typer.echo(f"Reliability baseline compared: {comparison.baseline_path}")
+            safe_echo(f"Reliability baseline compared: {comparison.baseline_path}")
         if thresholds.min_success_rate is not None:
-            typer.echo(
+            safe_echo(
                 f"Minimum required success rate: {thresholds.min_success_rate}%"
             )
-        typer.echo(
+        safe_echo(
             "Maximum success-rate drop: "
             f"{thresholds.max_success_rate_drop} points"
         )
-        typer.echo(
+        safe_echo(
             "Maximum average-score drop: "
             f"{thresholds.max_average_score_drop} points"
         )
-        typer.echo(
+        safe_echo(
             "Reliability regressions: "
             f"{'yes' if comparison.has_regressions else 'no'}"
         )
         for detail in comparison.regressions:
-            typer.echo(f"- {detail.message}")
+            safe_echo(f"- {detail.message}")
         for key in comparison.new_combinations:
-            typer.echo(f"- New current combination: {key}")
+            safe_echo(f"- New current combination: {key}")
         for message in comparison.version_mismatches:
-            typer.echo(f"- {message}")
-    typer.echo(f"Matrix JSON report path: {result.json_report_path}")
-    typer.echo(f"Matrix Markdown report path: {result.markdown_report_path}")
-    typer.echo(f"Matrix manifest path: {result.manifest_path or '-'}")
+            safe_echo(f"- {message}")
+    safe_echo(f"Matrix JSON report path: {result.json_report_path}")
+    safe_echo(f"Matrix Markdown report path: {result.markdown_report_path}")
+    safe_echo(f"Matrix manifest path: {result.manifest_path or '-'}")
 
     if save_baseline is not None:
         baseline_path = write_suite_baseline(result, save_baseline)
-        typer.echo(f"Baseline saved: {baseline_path}")
+        safe_echo(f"Baseline saved: {baseline_path}")
     if (
         result.baseline_comparison is not None
         and result.baseline_comparison.has_regressions

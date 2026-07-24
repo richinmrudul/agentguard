@@ -29,6 +29,7 @@ from agentguard.guard.filesystem import (
     validate_guard_configuration,
 )
 from agentguard.provenance.manifest import sha256_file
+from agentguard.terminal import sanitize_terminal_text
 
 
 @dataclass(frozen=True)
@@ -168,7 +169,7 @@ def format_evaluation_plan(plan: EvaluationPlan) -> str:
                 f"  Workdir: {run.invocation.workdir}",
             ]
         )
-    return "\n".join(lines)
+    return sanitize_terminal_text("\n".join(lines))
 
 
 def run_evaluation(
