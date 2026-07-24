@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional
 from xml.etree import ElementTree
 
+import pytest
 from typer.testing import CliRunner
 
 from agentguard.cli.main import app
@@ -294,6 +295,84 @@ def test_junit_secret_sanitization(tmp_path: Path, monkeypatch) -> None:
     assert str(tmp_path) not in text
 
 
+@pytest.mark.parametrize("path_kind", ["absolute", "traversal"])
+def test_suite_exports_reject_child_reports_outside_report_tree(
+    tmp_path: Path,
+    monkeypatch,
+    path_kind: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    safe_child = _write_run_report(tmp_path, run_id="safe", failed=True)
+    external_child = _write_run_report(
+        tmp_path / "external",
+        run_id="outside",
+        failed=True,
+        message=CANARY,
+        evidence=[CANARY],
+    )
+    suite = _write_suite_report(tmp_path, safe_child)
+    child_value = (
+        str(external_child)
+        if path_kind == "absolute"
+        else "../../../external/.agentguard/runs/outside/reports/report.json"
+    )
+    _set_child_path(suite, child_value)
+
+    sarif = tmp_path / f"{path_kind}.sarif"
+    junit = tmp_path / f"{path_kind}.xml"
+    sarif_result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(suite), "--output", str(sarif)],
+    )
+    junit_result = runner.invoke(
+        app,
+        ["reports", "export-junit", str(suite), "--output", str(junit)],
+    )
+
+    assert sarif_result.exit_code == 0
+    assert junit_result.exit_code == 0
+    assert CANARY not in sarif.read_text(encoding="utf-8")
+    assert CANARY not in junit.read_text(encoding="utf-8")
+    assert "outside the trusted report tree" in sarif.read_text(encoding="utf-8")
+    assert "outside the trusted report tree" in junit.read_text(encoding="utf-8")
+
+
+def test_suite_exports_reject_child_report_symlink_escape(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    safe_child = _write_run_report(tmp_path, run_id="safe", failed=True)
+    external_child = _write_run_report(
+        tmp_path / "external",
+        run_id="outside",
+        failed=True,
+        message=CANARY,
+        evidence=[CANARY],
+    )
+    suite = _write_suite_report(tmp_path, safe_child)
+    link = tmp_path / ".agentguard/runs/linked-reports"
+    try:
+        link.symlink_to(external_child.parent, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"Symlinks are unavailable: {error}")
+    _set_child_path(
+        suite,
+        ".agentguard/runs/linked-reports/report.json",
+    )
+    output = tmp_path / "symlink.sarif"
+
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(suite), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0
+    text = output.read_text(encoding="utf-8")
+    assert CANARY not in text
+    assert "outside the trusted report tree" in text
+
+
 def test_existing_report_browser_unchanged(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     _write_run_report(tmp_path, failed=False)
@@ -408,3 +487,9 @@ def _row(child: Path) -> dict[str, object]:
         "trial_index": 1,
         "trial_count": 1,
     }
+
+
+def _set_child_path(report: Path, child_path: str) -> None:
+    data = json.loads(report.read_text(encoding="utf-8"))
+    data["runs"][0]["json_report_path"] = child_path
+    report.write_text(json.dumps(data), encoding="utf-8")

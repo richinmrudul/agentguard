@@ -637,6 +637,10 @@ def _row_findings(
 ) -> list[ExportFinding]:
     failed = _string_list(row.get("failed_checks"))
     warnings = set(_string_list(row.get("warning_checks")))
+    evidence = _string_list(row.get("error"))
+    diagnostic = _child_report_diagnostic(row.get("json_report_path"), report_path)
+    if diagnostic is not None:
+        evidence.append(diagnostic)
     findings = []
     for check in failed:
         severity = "warning" if check in warnings else "error"
@@ -647,9 +651,12 @@ def _row_findings(
                 passed=False,
                 severity=severity,
                 message=f"{check} failed in {source_type} row {index + 1}.",
-                evidence=_string_list(row.get("error")),
+                evidence=evidence,
                 paths=[],
-                report_path=_safe_path(_resolve_child_report(row.get("json_report_path"), report_path) or report_path),
+                report_path=_safe_path(
+                    _resolve_child_report(row.get("json_report_path"), report_path)
+                    or report_path
+                ),
                 run_id=_string_or_none(row.get("execution_id")),
                 task_id=_string_or_none(row.get("task_id")),
                 agent=_string_or_none(row.get("agent")),
@@ -672,6 +679,10 @@ def _row_test_case(
     child = _resolve_child_report(row.get("json_report_path"), report_path)
     failed_checks = _string_list(row.get("failed_checks"))
     error = _string_or_none(row.get("error"))
+    evidence = [error] if error else failed_checks
+    diagnostic = _child_report_diagnostic(row.get("json_report_path"), report_path)
+    if diagnostic is not None:
+        evidence.append(diagnostic)
     return ExportTestCase(
         classname=f"agentguard.{source_type}.{agent}",
         name=f"{task}::attempt-{row.get('trial_index', index + 1)}",
@@ -683,7 +694,7 @@ def _row_test_case(
             else error or "Failed checks: " + (", ".join(failed_checks) or "unknown")
         ),
         system_out=_system_out(
-            evidence=[error] if error else failed_checks,
+            evidence=evidence,
             report_path=_safe_path(child or report_path),
             paths=[],
             metadata={
@@ -944,10 +955,39 @@ def _resolve_child_report(value: Any, parent_report: Path) -> Optional[Path]:
     if not isinstance(value, str) or not value:
         return None
     path = Path(value).expanduser()
-    if path.is_absolute():
-        return path
-    candidates = [parent_report.parent / path, Path.cwd() / path]
-    return next((candidate for candidate in candidates if candidate.exists()), candidates[-1])
+    trusted_root = _trusted_report_root(parent_report)
+    candidates = (
+        [path]
+        if path.is_absolute()
+        else [parent_report.parent / path, Path.cwd() / path]
+    )
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(trusted_root)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def _trusted_report_root(parent_report: Path) -> Path:
+    resolved = parent_report.expanduser().resolve()
+    for ancestor in resolved.parents:
+        if ancestor.name == ".agentguard":
+            return ancestor
+    return resolved.parent
+
+
+def _child_report_diagnostic(value: Any, parent_report: Path) -> Optional[str]:
+    if (
+        isinstance(value, str)
+        and value
+        and _resolve_child_report(value, parent_report) is None
+    ):
+        return "Child report unavailable or outside the trusted report tree."
+    return None
 
 
 def _safe_path(path: Path) -> str:
