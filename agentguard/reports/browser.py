@@ -2,11 +2,13 @@ import json
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
+from heapq import nlargest
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 
 REPORT_TYPES = {"run", "suite", "matrix", "ci"}
+MAX_REPORT_BYTES = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -33,8 +35,11 @@ def validate_report_type(report_type: Optional[str]) -> Optional[str]:
 def discover_reports(
     root: Optional[Path] = None,
     report_type: Optional[str] = None,
+    limit: Optional[int] = None,
 ) -> list[ReportItem]:
     validate_report_type(report_type)
+    if limit is not None and limit <= 0:
+        raise ValueError("report limit must be positive.")
     root = root or Path.cwd()
     agentguard_dir = root / ".agentguard"
     if not agentguard_dir.exists():
@@ -47,25 +52,39 @@ def discover_reports(
         "ci": "ci/*/report.json",
     }
     selected_types = [report_type] if report_type is not None else sorted(patterns)
-    reports: list[ReportItem] = []
+    candidates = _report_candidates(agentguard_dir, patterns, selected_types)
+    selected = (
+        nlargest(limit, candidates)
+        if limit is not None
+        else sorted(candidates, reverse=True)
+    )
+    reports = []
+    for _, _, path, selected_type in selected:
+        item = _load_report_item(path, selected_type, root)
+        if item is not None:
+            reports.append(item)
+    return reports
+
+
+def _report_candidates(
+    agentguard_dir: Path,
+    patterns: dict[str, str],
+    selected_types: list[str],
+) -> Iterator[tuple[float, str, Path, str]]:
     for selected_type in selected_types:
         for path in agentguard_dir.glob(patterns[selected_type]):
-            item = _load_report_item(path, selected_type, root)
-            if item is not None:
-                reports.append(item)
-
-    return sorted(
-        reports,
-        key=lambda item: _stat_path(item.path, root).stat().st_mtime,
-        reverse=True,
-    )
+            try:
+                modified_at = path.stat().st_mtime
+            except OSError:
+                continue
+            yield modified_at, str(path), path, selected_type
 
 
 def latest_report(
     root: Optional[Path] = None,
     report_type: Optional[str] = None,
 ) -> Optional[ReportItem]:
-    reports = discover_reports(root=root, report_type=report_type)
+    reports = discover_reports(root=root, report_type=report_type, limit=1)
     return reports[0] if reports else None
 
 
@@ -74,10 +93,7 @@ def load_report(path: Path, root: Optional[Path] = None) -> ReportItem:
     resolved_path = path.expanduser()
     if not resolved_path.is_absolute():
         resolved_path = root / resolved_path
-    with resolved_path.open("r", encoding="utf-8") as file:
-        data = json.load(file)
-    if not isinstance(data, dict):
-        raise ValueError("report JSON must be an object.")
+    data = _read_report_data(resolved_path)
     report_type = _infer_report_type(resolved_path, data)
     return _report_item_from_data(resolved_path, report_type, data, root)
 
@@ -123,13 +139,26 @@ def _load_report_item(
     root: Path,
 ) -> Optional[ReportItem]:
     try:
-        with path.open("r", encoding="utf-8") as file:
-            data = json.load(file)
-    except (OSError, json.JSONDecodeError):
+        data = _read_report_data(path)
+        return _report_item_from_data(path, report_type, data, root)
+    except (OSError, ValueError):
         return None
+
+
+def _read_report_data(path: Path) -> dict[str, Any]:
+    with path.open("rb") as file:
+        content = file.read(MAX_REPORT_BYTES + 1)
+    if len(content) > MAX_REPORT_BYTES:
+        raise ValueError(
+            f"report exceeds the {MAX_REPORT_BYTES}-byte read limit: {path}"
+        )
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise ValueError(f"report is not valid UTF-8 JSON: {path}") from error
     if not isinstance(data, dict):
-        return None
-    return _report_item_from_data(path, report_type, data, root)
+        raise ValueError("report JSON must be an object.")
+    return data
 
 
 def _report_item_from_data(
@@ -207,10 +236,6 @@ def _display_path(path: Path, root: Path) -> Path:
 
 def _relative_path(path: Path) -> str:
     return str(path)
-
-
-def _stat_path(path: Path, root: Path) -> Path:
-    return path if path.is_absolute() else root / path
 
 
 def _modified_at(path: Path) -> str:

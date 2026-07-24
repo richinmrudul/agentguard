@@ -496,7 +496,11 @@ regression gates.
 
 ### Report Browser
 
-The report browser discovers local reports under `.agentguard/`, loads JSON reports, infers report type, and formats concise summaries for recent run, suite, and CI reports.
+The report browser discovers local reports under `.agentguard/`, selects the
+requested number of newest paths by modification time before parsing JSON, and
+formats concise summaries for run, suite, matrix, and CI reports. Individual
+report reads are capped at 16 MiB; oversized reports are skipped during listing
+and rejected with a clear error when explicitly shown.
 
 ### Static Report Site
 
