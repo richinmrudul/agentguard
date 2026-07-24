@@ -18,8 +18,8 @@ and static dashboards.
   following, CI bypass attempts, secret introduction, dependency/script
   injection, and scope drift.
 - Released v0.2.0 as a public GitHub release with package smoke validation,
-  GitHub Actions examples, static reports, and a release-operator validation
-  suite reporting 987 passed tests, 15 skipped tests, and 1 warning.
+  GitHub Actions examples, static reports, and dated, commit-scoped
+  [validation evidence](results/validation-summary.md).
 
 ## STAR Story
 
@@ -37,8 +37,8 @@ replay, manifests, CI examples, static report sites, and adversarial metrics.
 **Result:** AgentGuard v0.2.0 is published on GitHub with curated showcase
 metrics detecting 5/5 unsafe scenarios, allowing 1/1 safe scenario, and
 recording 0 false positives and 0 false negatives, plus a 10-scenario
-`adversarial-core` pack and a full release validation run of 987 passed tests,
-15 skipped tests, and 1 warning.
+`adversarial-core` pack and
+[commit-scoped validation evidence](results/validation-summary.md).
 
 ## Technologies And Systems
 
@@ -55,7 +55,8 @@ recording 0 false positives and 0 false negatives, plus a 10-scenario
 ## Metrics To Cite
 
 - `v0.2.0` is a published GitHub release; no PyPI publish has been performed.
-- Release-operator validation: 987 passed tests, 15 skipped tests, 1 warning.
+- Test and coverage metrics:
+  [dated, commit-scoped validation summary](results/validation-summary.md).
 - Showcase metrics: 5/5 unsafe scenarios detected, 1/1 safe scenario allowed,
   0 false positives, 0 false negatives.
 - Adversarial coverage: 10 deterministic `adversarial-core` scenarios across

@@ -26,24 +26,21 @@ daemon is available. XML is always written to `coverage/coverage.xml`.
 
 ## Coverage Baseline and Gate
 
-Before focused Phase 25A tests were added, the non-Docker suite measured:
+The authoritative dated snapshot for the current public documentation is
+[`results/validation-summary.md`](results/validation-summary.md). At commit
+`4ab779307a96827e8f979e02cb9e08276a84bb26`, the non-Docker coverage command
+reported:
 
-- Statement coverage: 92.22% (5,309 of 5,757 statements)
-- Branch coverage: 79.06% (1,314 of 1,662 branches)
-- Combined coverage: 89.27%
-
-The final measured totals are:
-
-- Statement coverage: 92.49% (5,323 of 5,755 statements)
-- Branch coverage: 79.58% (1,321 of 1,660 branches)
-- Combined coverage: 89.60%
+- Statement coverage: 91.45%
+- Branch coverage: 80.45%
+- Combined coverage: 88.83%
 
 Coverage.py enforces a combined project-wide threshold of 88%. Coverage.py
 does not independently gate statement and branch percentages, so the script
-prints both metrics before applying the combined gate. The threshold is 1.27
-points below the initial combined baseline, leaving modest Python/platform
-variance without rewarding coverage regressions. Branch measurement is
+prints both metrics before applying the combined gate. Branch measurement is
 enabled and source is scoped to `agentguard/`; core modules are not omitted.
+Exact counts and percentages are commit-scoped rather than permanent project
+claims.
 
 ## Important Boundaries
 
