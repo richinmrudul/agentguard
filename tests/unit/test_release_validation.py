@@ -85,6 +85,7 @@ def test_project_metadata_declares_tested_python_range() -> None:
         "requires": ["setuptools>=77"],
         "build-backend": "setuptools.build_meta",
     }
+    assert project["optional-dependencies"]["dev"].count("ruff==0.15.14") == 1
 
 
 def test_package_version_sources_agree() -> None:
