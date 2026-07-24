@@ -105,6 +105,19 @@ def test_profile_loading_is_typed_and_deterministic(tmp_path: Path) -> None:
     assert first.metadata == {"provider": "test", "retries": 1}
 
 
+def test_profile_rejects_unknown_fields_with_suggestions(tmp_path: Path) -> None:
+    profile_path = _write_profile(tmp_path)
+    profile_path.write_text(
+        profile_path.read_text(encoding="utf-8") + "environmnt: []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="environmnt") as error:
+        load_agent_profile(profile_path)
+
+    assert "Did you mean 'environment'?" in str(error.value)
+
+
 @pytest.mark.parametrize(
     "command,match",
     [

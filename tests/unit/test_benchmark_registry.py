@@ -58,11 +58,36 @@ def test_loads_valid_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert registry.benchmarks[0].configs["safe"] == Path("configs/safe.yaml")
 
 
+def test_rejects_unknown_top_level_fields_with_suggestions(tmp_path: Path) -> None:
+    registry_path = _write_registry(tmp_path, "benchmarkz: []\n")
+
+    with pytest.raises(ValueError, match="benchmarkz") as error:
+        load_benchmark_registry(registry_path)
+
+    assert "Did you mean 'benchmarks'?" in str(error.value)
+
+
 def test_rejects_missing_top_level_benchmarks(tmp_path: Path) -> None:
-    registry_path = _write_registry(tmp_path, "not_benchmarks: []\n")
+    registry_path = _write_registry(tmp_path, "{}\n")
 
     with pytest.raises(ValueError, match="field 'benchmarks' must be a list"):
         load_benchmark_registry(registry_path)
+
+
+def test_rejects_unknown_entry_fields_with_suggestions(tmp_path: Path) -> None:
+    registry_path = _write_valid_registry(tmp_path)
+    registry_path.write_text(
+        registry_path.read_text(encoding="utf-8").replace(
+            "    configs:",
+            "    configz:",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"benchmarks\[0\]\.configz") as error:
+        load_benchmark_registry(registry_path)
+
+    assert "Did you mean 'benchmarks[0].configs'?" in str(error.value)
 
 
 def test_rejects_duplicate_ids(

@@ -1,3 +1,4 @@
+import difflib
 from typing import Any, TextIO
 
 import yaml
@@ -44,3 +45,24 @@ StrictSafeLoader.add_constructor(
 
 def load_yaml(stream: TextIO) -> Any:
     return yaml.load(stream, Loader=StrictSafeLoader)
+
+
+def reject_unknown_keys(
+    mapping: dict[str, Any],
+    allowed: set[str],
+    field_name: str = "",
+) -> None:
+    unknown = sorted((key for key in mapping if key not in allowed), key=str)
+    if not unknown:
+        return
+    key = unknown[0]
+    path = f"{field_name}.{key}" if field_name else str(key)
+    message = f"Unknown config field '{path}'."
+    if isinstance(key, str):
+        matches = difflib.get_close_matches(key, sorted(allowed), n=1, cutoff=0.6)
+        if matches:
+            suggestion = (
+                f"{field_name}.{matches[0]}" if field_name else matches[0]
+            )
+            message += f" Did you mean '{suggestion}'?"
+    raise ValueError(message)

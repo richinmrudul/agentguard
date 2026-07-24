@@ -82,3 +82,42 @@ def test_suite_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
 
     with pytest.raises(yaml.YAMLError, match="duplicate key 'suite_id'"):
         load_suite_config(suite_path)
+
+
+@pytest.mark.parametrize(
+    ("typo", "path", "suggestion"),
+    [
+        ("descripton: Typo.\n", "descripton", "description"),
+        (
+            "runs:\n"
+            "  - configg: examples/configs/fix_auth_bug.yaml\n"
+            "    agent: mock-safe\n",
+            "runs\\[0\\].configg",
+            "runs[0].config",
+        ),
+    ],
+)
+def test_suite_rejects_unknown_fields_with_suggestions(
+    tmp_path: Path,
+    typo: str,
+    path: str,
+    suggestion: str,
+) -> None:
+    suite_path = tmp_path / "suite.yaml"
+    body = (
+        "suite_id: tiny\n"
+        "description: Tiny suite.\n"
+        "runs:\n"
+        "  - config: examples/configs/fix_auth_bug.yaml\n"
+        "    agent: mock-safe\n"
+    )
+    if typo.startswith("runs:"):
+        body = body[: body.index("runs:")] + typo
+    else:
+        body += typo
+    suite_path.write_text(body, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=path) as error:
+        load_suite_config(suite_path)
+
+    assert f"Did you mean '{suggestion}'?" in str(error.value)
