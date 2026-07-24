@@ -399,6 +399,10 @@ convenience and real local-agent workflows. It is not sandboxed; AgentGuard
 still evaluates the resulting tests, diffs, command logs, and policy evidence.
 It accepts either a command string (parsed with `shlex.split`) or an argv list
 (used directly), and always launches with `shell=False`.
+Local agent and test subprocesses inherit only operational process variables
+such as `PATH`, locale, temporary-directory, terminal, and virtual-environment
+settings. Use `agent_environment` to pass additional values to a configured
+local agent; configured values are redacted from captured output.
 `agent-command` is the generic local adapter for arbitrary command-line coding
 agents. It runs with `shell=False`, supports either a command string or argv
 list, and is not sandboxed unless the command itself invokes Docker or another

@@ -19,6 +19,7 @@ from agentguard.instrumentation.processes import (
 )
 from agentguard.instrumentation.test_runner import _build_test_env
 from agentguard.policy.command_policy import evaluate_command_policy
+from agentguard.provenance.manifest import sanitize_text
 
 
 class LocalCommandAgent(Agent):
@@ -97,7 +98,10 @@ class LocalCommandAgent(Agent):
                 cwd=repo_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env=_build_test_env(repo_dir),
+                env={
+                    **_build_test_env(repo_dir),
+                    **self.config.agent_environment,
+                },
             )
             capture = BoundedProcessOutput(process, self.config.max_output_bytes)
             if process_controller is not None:
@@ -144,6 +148,11 @@ class LocalCommandAgent(Agent):
             stderr = append_cleanup_message(stderr, cleanup)
 
         duration_seconds = time.monotonic() - started
+        sensitive_values = [
+            value for value in self.config.agent_environment.values() if value
+        ]
+        stdout = sanitize_text(stdout, sensitive_values)
+        stderr = sanitize_text(stderr, sensitive_values)
         limited_stdout = limit_output(stdout, self.config.max_output_bytes)
         limited_stderr = limit_output(stderr, self.config.max_output_bytes)
         stdout_truncated = (

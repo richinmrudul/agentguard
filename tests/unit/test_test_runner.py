@@ -9,7 +9,7 @@ from agentguard.instrumentation.test_runner import _build_test_env
 from agentguard.instrumentation.test_runner import TestRunner as AgentGuardTestRunner
 
 
-def test_build_test_env_uses_absolute_src_pythonpath(
+def test_build_test_env_uses_isolated_absolute_src_pythonpath(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -18,13 +18,35 @@ def test_build_test_env_uses_absolute_src_pythonpath(
     src_dir.mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PYTHONPATH", "existing-path")
+    monkeypatch.setenv("AGENTGUARD_AUDIT_CANARY", "must-not-be-forwarded")
 
     env = _build_test_env(Path("repo"))
-    pythonpath_entries = env["PYTHONPATH"].split(os.pathsep)
 
-    assert pythonpath_entries[0] == str(src_dir.resolve())
-    assert Path(pythonpath_entries[0]).is_absolute()
-    assert pythonpath_entries[1] == "existing-path"
+    assert env["PYTHONPATH"] == str(src_dir.resolve())
+    assert Path(env["PYTHONPATH"]).is_absolute()
+    assert "existing-path" not in env["PYTHONPATH"]
+    assert "AGENTGUARD_AUDIT_CANARY" not in env
+
+
+def test_test_runner_excludes_ambient_environment_from_captured_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    canary = "AGENTGUARD_AMBIENT_CANARY_116"
+    monkeypatch.setenv("AGENTGUARD_AMBIENT_SECRET", canary)
+    tracker = CommandTracker()
+    runner = AgentGuardTestRunner(tracker)
+    script = (
+        "import os; "
+        "print(os.environ.get('AGENTGUARD_AMBIENT_SECRET', 'absent'))"
+    )
+
+    result = runner.run(tmp_path, shlex.join([sys.executable, "-c", script]))
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "absent"
+    assert canary not in result.stdout
+    assert tracker.events[0].stdout.strip() == "absent"
 
 
 def test_test_runner_times_out_sleeping_command(tmp_path: Path) -> None:
