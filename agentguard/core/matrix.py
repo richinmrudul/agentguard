@@ -1307,7 +1307,6 @@ def run_matrix(
     profile_name: Optional[str] = None,
     profile_model: Optional[str] = None,
     profile_identity: Optional[dict[str, object]] = None,
-    resolve_suite_config_paths: bool = False,
     checkpoint_path: Optional[Path] = None,
     resume_path: Optional[Path] = None,
     checkpoint_every: int = 1,
@@ -1345,10 +1344,7 @@ def run_matrix(
         max_success_rate_drop=max_success_rate_drop,
         max_average_score_drop=max_average_score_drop,
     )
-    config = load_suite_config(
-        path,
-        resolve_config_paths=resolve_suite_config_paths,
-    )
+    config = load_suite_config(path)
     loaded_checkpoint = load_checkpoint(resume_path) if resume_path is not None else None
     matrix_id = (
         loaded_checkpoint.matrix_id

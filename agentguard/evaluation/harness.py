@@ -65,7 +65,7 @@ def build_evaluation_plan(
         raise ValueError("Evaluation trials must be a positive integer.")
     validate_matrix_workers(workers)
     profile = load_agent_profile(profile_path)
-    suite = load_suite_config(suite_path, resolve_config_paths=True)
+    suite = load_suite_config(suite_path)
     selected = filter_suite_runs(suite.runs, filters or SuiteFilters())
     if not executable_available(profile):
         raise ValueError(
@@ -238,7 +238,6 @@ def run_evaluation(
             "profile_sha256": sha256_file(profile.profile_path),
             "model": profile.model,
         },
-        resolve_suite_config_paths=True,
         save_reliability_baseline_path=save_reliability_baseline_path,
         compare_reliability_baseline_path=compare_reliability_baseline_path,
         min_success_rate=min_success_rate,

@@ -11,17 +11,19 @@ from agentguard.core.suite import suite_filters_from_values
 
 
 runner = CliRunner()
+REPO_ROOT = Path(__file__).parents[2]
 
 
 def _write_local_suite(tmp_path: Path) -> Path:
+    config_path = (REPO_ROOT / "examples/configs/fix_auth_bug.yaml").resolve()
     suite_path = tmp_path / "local_matrix.yaml"
     suite_path.write_text(
         "suite_id: local_matrix\n"
         "description: Local matrix suite.\n"
         "runs:\n"
-        "  - config: examples/configs/fix_auth_bug.yaml\n"
+        f"  - config: {config_path}\n"
         "    agent: mock-safe\n"
-        "  - config: examples/configs/fix_auth_bug.yaml\n"
+        f"  - config: {config_path}\n"
         "    agent: mock-test-cheater\n",
         encoding="utf-8",
     )

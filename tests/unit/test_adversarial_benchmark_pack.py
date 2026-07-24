@@ -133,7 +133,7 @@ def test_adversarial_pack_references_existing_registry_configs_repos_and_contrac
         assert config_path.is_file()
         assert repo_path.is_dir()
         assert contract_path.is_file()
-        assert config_path in suite_configs
+        assert config_path.resolve() in suite_configs
 
         config = load_config(config_path)
         assert config.sandbox.type == "local"
