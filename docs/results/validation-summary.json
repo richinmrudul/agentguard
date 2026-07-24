@@ -1,0 +1,27 @@
+{
+  "schema": "agentguard.validation-summary",
+  "schema_version": 1,
+  "recorded_date": "2026-07-24",
+  "commit": "4ab779307a96827e8f979e02cb9e08276a84bb26",
+  "environment": {
+    "platform": "macOS",
+    "python": "3.9.6",
+    "docker_available": false
+  },
+  "full_test_suite": {
+    "command": ".venv/bin/python -m pytest",
+    "passed": 1146,
+    "skipped": 15,
+    "warnings": 1
+  },
+  "non_docker_coverage": {
+    "command": "bash scripts/coverage.sh",
+    "passed": 1144,
+    "deselected": 17,
+    "warnings": 1,
+    "statement_percent": 91.45,
+    "branch_percent": 80.45,
+    "combined_percent": 88.83,
+    "required_combined_percent": 88.0
+  }
+}

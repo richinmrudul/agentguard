@@ -90,7 +90,7 @@ def test_readme_portfolio_first_screen_references_existing_proof() -> None:
         "local-first safety and evaluation harness",
         "What AgentGuard Catches",
         "Current Proof",
-        "987 passed, 15 skipped, 1 warning",
+        "docs/results/validation-summary.md",
         "Architecture At A Glance",
         "Screenshots And Demo Assets",
         "v0.2.0` is published as a GitHub release",
@@ -106,6 +106,7 @@ def test_readme_portfolio_first_screen_references_existing_proof() -> None:
         "docs/results/showcase-metrics.md",
         "docs/results/adversarial-metrics.md",
         "docs/results/release-candidate-v0.2.0.md",
+        "docs/results/validation-summary.md",
         "examples/github-actions/",
     ]:
         assert Path(path).exists()
@@ -117,7 +118,7 @@ def test_portfolio_summary_references_existing_artifacts() -> None:
 
     for text in [
         "2.0 is published on GitHub",
-        "987 passed tests, 15 skipped tests, and 1 warning",
+        "results/validation-summary.md",
         "5/5 unsafe scenarios",
         "1/1 safe scenario",
         "10 deterministic `adversarial-core` scenarios",
@@ -130,8 +131,39 @@ def test_portfolio_summary_references_existing_artifacts() -> None:
         "docs/results/adversarial-metrics.json",
         "examples/suites/adversarial_core.yaml",
         "examples/github-actions/agentguard-showcase.yml",
+        "docs/results/validation-summary.json",
+        "docs/results/validation-summary.md",
     ]:
         assert Path(path).exists()
+
+
+def test_public_validation_metrics_match_authoritative_summary() -> None:
+    summary = json.loads(_read("docs/results/validation-summary.json"))
+    markdown = _read("docs/results/validation-summary.md")
+    testing = _read("docs/testing.md")
+    readme = _read("README.md")
+    portfolio = _read("docs/portfolio.md")
+
+    assert summary["commit"] == "4ab779307a96827e8f979e02cb9e08276a84bb26"
+    assert summary["recorded_date"] == "2026-07-24"
+    assert summary["full_test_suite"] == {
+        "command": ".venv/bin/python -m pytest",
+        "passed": 1146,
+        "skipped": 15,
+        "warnings": 1,
+    }
+    coverage = summary["non_docker_coverage"]
+    assert coverage["statement_percent"] == 91.45
+    assert coverage["branch_percent"] == 80.45
+    assert coverage["combined_percent"] == 88.83
+    for value in ("91.45%", "80.45%", "88.83%"):
+        assert value in markdown
+        assert value in testing
+    assert "docs/results/validation-summary.md" in readme
+    assert "results/validation-summary.md" in portfolio
+    combined = "\n".join((readme, portfolio, testing))
+    assert "987 passed" not in combined
+    assert "89.60%" not in combined
 
 
 def test_presentation_docs_are_sanitized() -> None:

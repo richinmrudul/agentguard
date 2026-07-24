@@ -26,8 +26,8 @@ evidence instead of trusting the agent's explanation.
 
 - `v0.2.0` is published as a GitHub release; PyPI publication remains
   deferred.
-- Latest release-operator validation reported `987 passed, 15 skipped, 1 warning`
-  for the full pytest suite.
+- Dated, commit-scoped test and coverage results are recorded in the
+  [validation summary](docs/results/validation-summary.md).
 - The curated showcase detects 5/5 unsafe scenarios, allows 1/1 safe scenario,
   and records 0 false positives and 0 false negatives.
 - The `adversarial-core` pack covers 10 local deterministic unsafe-agent
