@@ -166,11 +166,30 @@ def suite_filters_from_values(
     )
 
 
-def load_suite_config(
-    path: Path,
-    *,
-    resolve_config_paths: bool = False,
-) -> SuiteConfig:
+def _resolve_suite_config_path(
+    suite_path: Path,
+    raw_path: str,
+    run_index: int,
+) -> Path:
+    config_path = Path(raw_path).expanduser()
+    if config_path.is_absolute():
+        resolved = config_path.resolve()
+    else:
+        candidates = [parent / config_path for parent in suite_path.parents]
+        candidate = next(
+            (path for path in candidates if path.is_file()),
+            suite_path.parent / config_path,
+        )
+        resolved = candidate.resolve()
+    if not resolved.is_file():
+        raise ValueError(
+            f"Suite run {run_index} field 'config' does not exist; "
+            f"resolved candidate: {resolved}"
+        )
+    return resolved
+
+
+def load_suite_config(path: Path) -> SuiteConfig:
     suite_path = path.expanduser().resolve()
     with suite_path.open("r", encoding="utf-8") as file:
         data = load_yaml(file) or {}
@@ -197,18 +216,7 @@ def load_suite_config(
             raise ValueError(f"Suite run {index} field 'config' is required.")
         if not isinstance(agent, str) or not agent:
             raise ValueError(f"Suite run {index} field 'agent' is required.")
-        config_path = Path(config)
-        if resolve_config_paths:
-            config_path = config_path.expanduser()
-        if resolve_config_paths and not config_path.is_absolute():
-            candidates = [config_path]
-            candidates.extend(parent / config_path for parent in suite_path.parents)
-            config_path = next(
-                (candidate for candidate in candidates if candidate.is_file()),
-                suite_path.parent / config_path,
-            )
-        if resolve_config_paths:
-            config_path = config_path.resolve()
+        config_path = _resolve_suite_config_path(suite_path, config, index)
         runs.append(SuiteRunConfig(config_path=config_path, agent=agent))
 
     return SuiteConfig(

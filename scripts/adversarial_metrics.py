@@ -142,7 +142,7 @@ def _validate_references(pack: dict[str, Any]) -> None:
         config_path = Path(scenario["config"])
         repo_path = Path(scenario["repo"])
         contract_path = Path(scenario["contract"])
-        if config_path not in suite_configs:
+        if config_path.resolve() not in suite_configs:
             raise ValueError(f"{config_path} is not included in {pack['suite']}.")
         config = load_config(config_path)
         if config.sandbox.type != "local":

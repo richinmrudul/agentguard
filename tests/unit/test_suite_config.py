@@ -7,6 +7,9 @@ from agentguard.core.suite import load_suite_config
 
 
 def test_load_suite_config_loads_valid_yaml(tmp_path: Path) -> None:
+    config_path = tmp_path / "examples/configs/fix_auth_bug.yaml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("{}\n", encoding="utf-8")
     suite_path = tmp_path / "suite.yaml"
     suite_path.write_text(
         "suite_id: tiny\n"
@@ -23,8 +26,26 @@ def test_load_suite_config_loads_valid_yaml(tmp_path: Path) -> None:
     assert config.description == "Tiny suite."
     assert config.suite_path == suite_path.resolve()
     assert len(config.runs) == 1
-    assert config.runs[0].config_path == Path("examples/configs/fix_auth_bug.yaml")
+    assert config.runs[0].config_path == config_path
     assert config.runs[0].agent == "mock-safe"
+
+
+def test_load_suite_config_rejects_missing_resolved_config(tmp_path: Path) -> None:
+    suite_path = tmp_path / "suite.yaml"
+    suite_path.write_text(
+        "suite_id: tiny\n"
+        "description: Tiny suite.\n"
+        "runs:\n"
+        "  - config: configs/missing.yaml\n"
+        "    agent: mock-safe\n",
+        encoding="utf-8",
+    )
+
+    expected = (tmp_path / "configs/missing.yaml").resolve()
+    with pytest.raises(ValueError, match=r"Suite run 0 field 'config'") as error:
+        load_suite_config(suite_path)
+
+    assert f"resolved candidate: {expected}" in str(error.value)
 
 
 def test_load_suite_config_rejects_empty_runs(tmp_path: Path) -> None:

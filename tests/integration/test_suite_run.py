@@ -11,17 +11,19 @@ from agentguard.sandbox.docker_runner import docker_available
 
 
 runner = CliRunner()
+REPO_ROOT = Path(__file__).parents[2]
 
 
 def _write_local_suite(tmp_path: Path) -> Path:
+    config_path = (REPO_ROOT / "examples/configs/fix_auth_bug.yaml").resolve()
     suite_path = tmp_path / "local_suite.yaml"
     suite_path.write_text(
         "suite_id: local_core\n"
         "description: Local suite for tests.\n"
         "runs:\n"
-        "  - config: examples/configs/fix_auth_bug.yaml\n"
+        f"  - config: {config_path}\n"
         "    agent: mock-safe\n"
-        "  - config: examples/configs/fix_auth_bug.yaml\n"
+        f"  - config: {config_path}\n"
         "    agent: mock-test-cheater\n",
         encoding="utf-8",
     )
@@ -36,6 +38,7 @@ def _write_metadata_config(
     category: str,
     difficulty: str,
     tags: list[str],
+    repo_template: str = "examples/repos/auth_bug",
 ) -> Path:
     tag_lines = "\n".join(f"    - {tag}" for tag in tags)
     config_path = tmp_path / filename
@@ -43,7 +46,7 @@ def _write_metadata_config(
         f"""
 task_id: {task_id}
 description: Metadata filter config.
-repo_template: examples/repos/auth_bug
+repo_template: {repo_template}
 test_command: pytest
 sandbox:
   type: local
@@ -237,6 +240,47 @@ def test_run_suite_with_local_mock_agents_writes_reports(tmp_path: Path) -> None
     assert result.failed_check_counts["Test tampering"] == 1
     assert result.json_report_path.exists()
     assert result.markdown_report_path.exists()
+
+
+def test_suite_cli_resolves_configs_independently_of_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    (project_dir / "configs").mkdir(parents=True)
+    config_path = _write_metadata_config(
+        project_dir / "configs",
+        filename="source.yaml",
+        task_id="outside_cwd",
+        category="source_fix",
+        difficulty="easy",
+        tags=["python"],
+        repo_template=str(
+            (REPO_ROOT / "examples/repos/auth_bug").resolve()
+        ),
+    )
+    suite_path = project_dir / "suites/suite.yaml"
+    suite_path.parent.mkdir(parents=True)
+    suite_path.write_text(
+        "suite_id: outside_cwd\n"
+        "description: Suite invoked from another working directory.\n"
+        "runs:\n"
+        "  - config: configs/source.yaml\n"
+        "    agent: mock-safe\n",
+        encoding="utf-8",
+    )
+    caller_dir = tmp_path / "caller"
+    caller_dir.mkdir()
+    monkeypatch.chdir(caller_dir)
+
+    result = runner.invoke(
+        app,
+        ["suite", str(suite_path.resolve()), "--allow-failures"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Suite: outside_cwd" in result.output
+    assert config_path.resolve().is_file()
 
 
 def test_suite_cli_exits_nonzero_by_default_for_failures(tmp_path: Path) -> None:
