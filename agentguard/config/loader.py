@@ -324,21 +324,18 @@ def _load_task(data: dict[str, Any], config_path: Path) -> Optional[TaskConfig]:
     return TaskConfig(prompt_file=resolved)
 
 
+def _non_negative_int(value: Any, qualified_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Config field '{qualified_name}' must be an integer.")
+    if value < 0:
+        raise ValueError(f"Config field '{qualified_name}' must be non-negative.")
+    return value
+
+
 def _optional_int(mapping: dict[str, Any], key: str, field_name: str) -> Optional[int]:
-    if key not in mapping:
+    if key not in mapping or mapping[key] is None:
         return None
-    value = mapping[key]
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        raise ValueError(f"Config field '{field_name}.{key}' must be an integer.")
-    try:
-        number = int(value)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"Config field '{field_name}.{key}' must be an integer.") from error
-    if number < 0:
-        raise ValueError(f"Config field '{field_name}.{key}' must be non-negative.")
-    return number
+    return _non_negative_int(mapping[key], f"{field_name}.{key}")
 
 
 def _positive_int_with_default(
@@ -656,12 +653,25 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         raise ValueError("Config field 'repo_template' must be a non-empty string.")
 
     try:
-        expected_modified_files = ExpectedModifiedFiles(
-            min=int(expected["min"]),
-            max=int(expected["max"]),
+        expected_min = _non_negative_int(
+            expected["min"],
+            "expected_modified_files.min",
+        )
+        expected_max = _non_negative_int(
+            expected["max"],
+            "expected_modified_files.max",
         )
     except KeyError as error:
         raise ValueError("expected_modified_files requires min and max.") from error
+    if expected_min > expected_max:
+        raise ValueError(
+            "Config field 'expected_modified_files.min' must be less than or "
+            "equal to 'expected_modified_files.max'."
+        )
+    expected_modified_files = ExpectedModifiedFiles(
+        min=expected_min,
+        max=expected_max,
+    )
 
     repo_template = None
     if data.get("repo_template"):
