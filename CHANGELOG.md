@@ -7,7 +7,10 @@ and uses semantic versioning.
 
 ## Unreleased
 
-- No unreleased changes.
+### Changed
+
+- Advanced the package and CLI release identity to `0.2.1` for post-v0.2.0
+  bug fixes, reliability improvements, validation, and polish.
 
 ## v0.2.0 - Release Candidate
 

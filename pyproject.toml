@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentguard"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local-first safety and reliability evaluation framework for AI coding agents."
 readme = "README.md"
 license = "MIT"

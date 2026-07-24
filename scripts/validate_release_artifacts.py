@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import email.parser
 import json
+import subprocess
 import sys
 import tarfile
 import zipfile
@@ -56,6 +57,51 @@ FORBIDDEN_RELEASE_MARKERS = (
     "javascript:",
     "file:",
 )
+
+
+def project_version(root: Path) -> str:
+    in_project = False
+    for line in (root / "pyproject.toml").read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped == "[project]":
+            in_project = True
+            continue
+        if in_project and stripped.startswith("["):
+            break
+        if in_project and stripped.startswith("version"):
+            _, raw_value = stripped.split("=", 1)
+            version = raw_value.strip().strip('"')
+            if version:
+                return version
+    raise AssertionError("pyproject.toml is missing project.version")
+
+
+def validate_version_tag(root: Path, version: str) -> None:
+    tag = f"v{version}"
+    tagged_commit = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}^{{commit}}"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if tagged_commit.returncode == 1:
+        return
+    if tagged_commit.returncode != 0:
+        raise AssertionError(f"Could not inspect release tag {tag}.")
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    tagged = tagged_commit.stdout.strip()
+    if tagged != head:
+        raise AssertionError(
+            f"Version {version} is already tagged at {tagged}; "
+            f"current HEAD is {head}."
+        )
 
 
 def _wheel_members(path: Path) -> set[str]:
@@ -183,8 +229,13 @@ def validate_release_readiness(root: Path) -> None:
 
 
 def main() -> int:
+    root = Path(__file__).resolve().parents[1]
+    if sys.argv[1:] == ["--check-version-tag"]:
+        validate_version_tag(root, project_version(root))
+        print("Release version tag is consistent with HEAD.")
+        return 0
     if len(sys.argv) == 1:
-        validate_release_readiness(Path(__file__).resolve().parents[1])
+        validate_release_readiness(root)
         print("Release readiness artifacts validated.")
         return 0
     if len(sys.argv) != 3:
