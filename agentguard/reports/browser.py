@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 
-REPORT_TYPES = {"run", "suite", "ci"}
+REPORT_TYPES = {"run", "suite", "matrix", "ci"}
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,7 @@ def discover_reports(
     patterns = {
         "run": "runs/*/reports/report.json",
         "suite": "suites/*/suite.json",
+        "matrix": "matrices/*/matrix.json",
         "ci": "ci/*/report.json",
     }
     selected_types = [report_type] if report_type is not None else sorted(patterns)
@@ -107,6 +108,8 @@ def format_reports_table(reports: list[ReportItem]) -> str:
 
 
 def format_report_summary(report: ReportItem) -> str:
+    if report.type == "matrix":
+        return _format_matrix_summary(report)
     if report.type == "suite":
         return _format_suite_summary(report)
     if report.type == "ci":
@@ -154,7 +157,7 @@ def _report_id(path: Path, report_type: str) -> str:
 
 
 def _report_name(data: dict[str, Any], report_type: str) -> str:
-    if report_type == "suite":
+    if report_type in {"suite", "matrix"}:
         return str(data.get("suite_id") or _report_id_from_data(data) or "-")
     return str(data.get("task_id") or data.get("suite_id") or "-")
 
@@ -168,14 +171,14 @@ def _report_result(data: dict[str, Any], report_type: str) -> Optional[str]:
     value = data.get("result")
     if value is not None:
         return str(value)
-    if report_type == "suite":
+    if report_type in {"suite", "matrix"}:
         failed = data.get("failed")
         return "PASS" if failed == 0 else "FAIL"
     return None
 
 
 def _report_score(data: dict[str, Any], report_type: str) -> Optional[int]:
-    key = "average_score" if report_type == "suite" else "score"
+    key = "average_score" if report_type in {"suite", "matrix"} else "score"
     value = data.get(key)
     if isinstance(value, int):
         return value
@@ -186,6 +189,8 @@ def _report_score(data: dict[str, Any], report_type: str) -> Optional[int]:
 
 def _infer_report_type(path: Path, data: dict[str, Any]) -> str:
     parts = path.parts
+    if "matrices" in parts or "matrix_id" in data:
+        return "matrix"
     if "suites" in parts or "suite_id" in data or "average_score" in data:
         return "suite"
     if "ci" in parts or ("repo_dir" in data and "agent" not in data):
@@ -252,6 +257,58 @@ def _format_suite_summary(report: ReportItem) -> str:
         lines.append(f"Filters: {filters}")
     lines.extend(["Most common failed checks:", *_format_failed_check_counts(data)])
     lines.append(f"JSON path: {report.path}")
+    markdown_path = data.get("markdown_report_path")
+    if markdown_path is not None:
+        lines.append(f"Markdown path: {markdown_path}")
+    return "\n".join(lines)
+
+
+def _format_matrix_summary(report: ReportItem) -> str:
+    data = report.data
+    reliability = data.get("reliability")
+    reliability_data = reliability if isinstance(reliability, dict) else {}
+    guard_summary = data.get("guard_summary")
+    guard_data = guard_summary if isinstance(guard_summary, dict) else {}
+    lines = [
+        "AgentGuard Matrix Report",
+        f"Matrix: {data.get('matrix_id', report.id)}",
+        f"Suite: {data.get('suite_id', '-')}",
+        f"Agents: {', '.join(_list_value(data.get('agents'))) or '-'}",
+        f"Trials per combination: {data.get('trials', '-')}",
+        (
+            "Workers: "
+            f"{data.get('effective_workers', '-')} effective / "
+            f"{data.get('requested_workers', '-')} requested"
+        ),
+        (
+            "Attempts: "
+            f"{data.get('attempts_executed', '-')} executed / "
+            f"{data.get('attempts_planned', '-')} planned"
+        ),
+        f"Passed: {data.get('passed', '-')}",
+        f"Failed: {data.get('failed', '-')}",
+        f"Pass rate: {_format_percent(data.get('pass_rate'))}",
+        f"Average score: {_format_optional(_report_score(data, 'matrix'))}",
+        (
+            "Reliability success rate: "
+            f"{_format_percent(reliability_data.get('success_rate'))}"
+        ),
+        f"Guard mode: {data.get('guard_mode', '-')}",
+        (
+            "Guard incidents: "
+            f"{guard_data.get('incident_runs', 0)} runs / "
+            f"{guard_data.get('blocked_runs', 0)} blocked / "
+            f"{guard_data.get('violations_total', 0)} violations"
+        ),
+        f"Suite baseline: {_comparison_status(data.get('baseline_comparison'))}",
+        (
+            "Reliability baseline: "
+            f"{_comparison_status(data.get('reliability_comparison'))}"
+        ),
+        "Most common failed checks:",
+        *_format_failed_check_counts(data),
+        f"JSON path: {report.path}",
+    ]
     markdown_path = data.get("markdown_report_path")
     if markdown_path is not None:
         lines.append(f"Markdown path: {markdown_path}")
@@ -369,3 +426,9 @@ def _list_value(value: Any) -> list[str]:
 
 def _count_value(value: Any) -> int:
     return value if isinstance(value, int) else 0
+
+
+def _comparison_status(value: Any) -> str:
+    if not isinstance(value, dict):
+        return "not compared"
+    return "REGRESSION" if value.get("has_regressions") else "PASS"
