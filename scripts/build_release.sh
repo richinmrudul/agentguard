@@ -21,6 +21,8 @@ section() {
 }
 
 section "Prepare release output"
+"$PYTHON_BIN" "$ROOT_DIR/scripts/validate_release_artifacts.py" \
+  --check-version-tag
 rm -rf "$ROOT_DIR/build"
 mkdir -p "$OUTPUT_DIR"
 find "$OUTPUT_DIR" -maxdepth 1 \

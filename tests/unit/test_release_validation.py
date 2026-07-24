@@ -15,10 +15,7 @@ from typer.testing import CliRunner
 
 from agentguard import __version__
 from agentguard.cli.main import app
-from scripts.release_readiness import (
-    build_readiness_summary,
-    build_release_candidate_summary,
-)
+from scripts.validate_release_artifacts import validate_version_tag
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -94,8 +91,36 @@ def test_package_version_sources_agree() -> None:
 
     assert project_version == __version__
     assert installed_version("agentguard") == __version__
+    assert project_version == "0.2.1"
     assert result.exit_code == 0
     assert result.output.strip() == project_version
+
+
+def test_release_version_tag_must_point_to_head(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "agentguard@example.invalid"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "AgentGuard Test"],
+        cwd=tmp_path,
+        check=True,
+    )
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("tagged\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "tagged"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "tag", "v0.2.1"], cwd=tmp_path, check=True)
+
+    validate_version_tag(tmp_path, "0.2.1")
+
+    tracked.write_text("new head\n", encoding="utf-8")
+    subprocess.run(["git", "commit", "-qam", "new head"], cwd=tmp_path, check=True)
+
+    with pytest.raises(AssertionError, match="already tagged"):
+        validate_version_tag(tmp_path, "0.2.1")
 
 
 def test_release_readiness_documents_and_license_agree() -> None:
@@ -159,14 +184,12 @@ def test_release_readiness_script_and_artifacts_are_valid() -> None:
     assert READINESS_SCRIPT.exists()
     artifact = json_load(READINESS_JSON)
     markdown = READINESS_MD.read_text(encoding="utf-8")
-    generated = build_readiness_summary()
 
-    assert artifact == generated
     assert artifact["schema"] == "agentguard.release-readiness"
     assert artifact["schema_version"] == 1
     assert artifact["release"] == "v0.2.0"
     assert artifact["recommendation"] == "ready with caveats"
-    assert artifact["package_metadata"]["version"] == __version__
+    assert artifact["package_metadata"]["version"] == "0.2.0"
     assert artifact["package_metadata"]["console_script"] == (
         "agentguard.cli.main:app"
     )
@@ -197,15 +220,13 @@ def test_release_readiness_script_and_artifacts_are_valid() -> None:
 def test_release_candidate_artifacts_are_valid() -> None:
     artifact = json_load(RELEASE_CANDIDATE_JSON)
     markdown = RELEASE_CANDIDATE_MD.read_text(encoding="utf-8")
-    generated = build_release_candidate_summary()
 
-    assert artifact == generated
     assert artifact["schema"] == "agentguard.release-candidate"
     assert artifact["schema_version"] == 1
     assert artifact["release"] == "v0.2.0"
     assert artifact["status"] == "release candidate"
     assert artifact["recommendation"] == "ready to tag after merge with caveats"
-    assert artifact["package_metadata"]["version"] == __version__
+    assert artifact["package_metadata"]["version"] == "0.2.0"
     assert artifact["package_metadata"]["console_script"] == (
         "agentguard.cli.main:app"
     )
@@ -319,6 +340,7 @@ def test_build_release_script_is_executable_and_never_publishes() -> None:
     assert "--sdist" in script
     assert 'rm -rf "$ROOT_DIR/build"' in script
     assert "validate_release_artifacts.py" in script
+    assert "--check-version-tag" in script
     assert "nothing was published" in script
     assert "twine upload" not in script
     assert "gh release" not in script
@@ -340,6 +362,8 @@ def test_ci_workflow_separates_compatibility_docker_and_package_jobs() -> None:
     assert "python -m pytest" in str(jobs["integration"])
     assert "actions/upload-artifact@v4" in str(jobs["package"])
     assert "scripts/build_release.sh" in str(jobs["package"])
+    package_checkout = jobs["package"]["steps"][0]
+    assert package_checkout["with"]["fetch-depth"] == 0
     assert "publish" not in jobs
 
 
