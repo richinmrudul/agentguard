@@ -2244,7 +2244,7 @@ def reports_list(
     report_type: Optional[str] = typer.Option(
         None,
         "--type",
-        help="Report type to list: run, suite, or ci.",
+        help="Report type to list: run, suite, matrix, or ci.",
     ),
     limit: int = typer.Option(
         10,
@@ -2278,7 +2278,7 @@ def reports_show(
     report_type: Optional[str] = typer.Option(
         None,
         "--type",
-        help="Report type for --latest: run, suite, or ci.",
+        help="Report type for --latest: run, suite, matrix, or ci.",
     ),
 ) -> None:
     """Show a concise local AgentGuard report summary."""
