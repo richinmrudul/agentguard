@@ -837,6 +837,127 @@ expected_modified_files:
         load_config(config_path)
 
 
+@pytest.mark.parametrize(
+    ("numeric_config", "field_name"),
+    [
+        ("command_timeout_seconds: 1.9", "command_timeout_seconds"),
+        ("command_timeout_seconds: '2'", "command_timeout_seconds"),
+        ("max_output_bytes: 12.8", "max_output_bytes"),
+        (
+            "diff_limits:\n  max_files_changed: 2.9",
+            "diff_limits.max_files_changed",
+        ),
+        (
+            "diff_limits:\n  max_lines_added: 2.9",
+            "diff_limits.max_lines_added",
+        ),
+        (
+            "diff_limits:\n  max_lines_deleted: 2.9",
+            "diff_limits.max_lines_deleted",
+        ),
+        ("sandbox:\n  timeout_seconds: 1.9", "sandbox.timeout_seconds"),
+    ],
+)
+def test_config_rejects_invalid_integer_fields(
+    tmp_path: Path,
+    numeric_config: str,
+    field_name: str,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        "task_id: task\n"
+        "description: Task.\n"
+        "repo_template: examples/repos/auth_bug\n"
+        "test_command: pytest\n"
+        "expected_modified_files: {min: 0, max: 2}\n"
+        f"{numeric_config}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=field_name):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("min", "true"),
+        ("min", "1.5"),
+        ("min", "-1"),
+        ("min", "'1'"),
+        ("max", "false"),
+        ("max", "2.5"),
+        ("max", "-1"),
+        ("max", "'2'"),
+    ],
+)
+def test_config_rejects_invalid_expected_modified_file_bounds(
+    tmp_path: Path,
+    key: str,
+    value: str,
+) -> None:
+    bounds = {"min": "0", "max": "2"}
+    bounds[key] = value
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        "task_id: task\n"
+        "description: Task.\n"
+        "repo_template: examples/repos/auth_bug\n"
+        "test_command: pytest\n"
+        "expected_modified_files:\n"
+        f"  min: {bounds['min']}\n"
+        f"  max: {bounds['max']}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=f"expected_modified_files.{key}"):
+        load_config(config_path)
+
+
+def test_config_rejects_inverted_expected_modified_file_bounds(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        "task_id: task\n"
+        "description: Task.\n"
+        "repo_template: examples/repos/auth_bug\n"
+        "test_command: pytest\n"
+        "expected_modified_files: {min: 3, max: 2}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="expected_modified_files.min.*expected_modified_files.max",
+    ):
+        load_config(config_path)
+
+
+def test_config_accepts_zero_for_non_negative_integer_fields(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        "task_id: task\n"
+        "description: Task.\n"
+        "repo_template: examples/repos/auth_bug\n"
+        "test_command: pytest\n"
+        "expected_modified_files: {min: 0, max: 0}\n"
+        "diff_limits:\n"
+        "  max_files_changed: 0\n"
+        "  max_lines_added: 0\n"
+        "  max_lines_deleted: 0\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.expected_modified_files.min == 0
+    assert config.expected_modified_files.max == 0
+    assert config.diff_limits.max_files_changed == 0
+    assert config.diff_limits.max_lines_added == 0
+    assert config.diff_limits.max_lines_deleted == 0
+
+
 def test_config_rejects_invalid_command_policy_mode(tmp_path: Path) -> None:
     config_path = tmp_path / "agentguard.yaml"
     config_path.write_text(
