@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 import yaml
 
-from agentguard.config.yaml import load_yaml
+from agentguard.config.yaml import load_yaml, reject_unknown_keys
 from agentguard.config.schema import VALID_BENCHMARK_DIFFICULTIES
 from agentguard.io import atomic_write_text
 
@@ -77,6 +77,21 @@ def _load_entry(
 ) -> BenchmarkRegistryEntry:
     if not isinstance(raw_entry, dict):
         raise ValueError(f"Benchmark registry entry {index} must be a mapping.")
+    reject_unknown_keys(
+        raw_entry,
+        {
+            "id",
+            "version",
+            "name",
+            "category",
+            "difficulty",
+            "description",
+            "tags",
+            "configs",
+            "contract",
+        },
+        f"benchmarks[{index}]",
+    )
 
     benchmark_id = _required_string(raw_entry, "id", index)
     name = _required_string(raw_entry, "name", index)
@@ -165,6 +180,7 @@ def load_benchmark_registry(path: Path = DEFAULT_REGISTRY_PATH) -> BenchmarkRegi
 
     if not isinstance(data, dict):
         raise ValueError("Benchmark registry must be a YAML mapping.")
+    reject_unknown_keys(data, {"benchmarks"})
 
     raw_benchmarks = data.get("benchmarks")
     if not isinstance(raw_benchmarks, list):

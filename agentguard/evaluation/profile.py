@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from agentguard.config.loader import _metadata_mapping
 from agentguard.config.schema import AgentGuardConfig, ScalarMetadata
-from agentguard.config.yaml import load_yaml
+from agentguard.config.yaml import load_yaml, reject_unknown_keys
 from agentguard.provenance.manifest import SECRET_KEY_PATTERN, sanitize_arguments
 
 
@@ -90,6 +90,21 @@ def load_agent_profile(path: Path) -> AgentProfile:
         data = load_yaml(file) or {}
     if not isinstance(data, dict):
         raise ValueError("Agent profile must be a YAML mapping.")
+    reject_unknown_keys(
+        data,
+        {
+            "schema",
+            "schema_version",
+            "id",
+            "name",
+            "command",
+            "version_command",
+            "model",
+            "workdir",
+            "environment",
+            "metadata",
+        },
+    )
     if data.get("schema") != PROFILE_SCHEMA:
         raise ValueError("Invalid agent profile schema.")
     if data.get("schema_version") != PROFILE_SCHEMA_VERSION:

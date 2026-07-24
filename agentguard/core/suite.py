@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from agentguard.artifact_paths import artifact_directory, validate_artifact_id
 from agentguard.config.loader import load_config
-from agentguard.config.yaml import load_yaml
+from agentguard.config.yaml import load_yaml, reject_unknown_keys
 from agentguard.core.baseline import BaselineComparison, compare_suite_to_baseline
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.result import BenchmarkResult
@@ -177,6 +177,7 @@ def load_suite_config(
 
     if not isinstance(data, dict):
         raise ValueError("Suite config must be a YAML mapping.")
+    reject_unknown_keys(data, {"suite_id", "description", "runs"})
 
     suite_id = _required_string(data, "suite_id")
     validate_artifact_id(suite_id, "Suite field 'suite_id'")
@@ -189,6 +190,7 @@ def load_suite_config(
     for index, raw_run in enumerate(raw_runs):
         if not isinstance(raw_run, dict):
             raise ValueError(f"Suite run {index} must be a mapping.")
+        reject_unknown_keys(raw_run, {"config", "agent"}, f"runs[{index}]")
         config = raw_run.get("config")
         agent = raw_run.get("agent")
         if not isinstance(config, str) or not config:
