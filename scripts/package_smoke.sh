@@ -6,6 +6,7 @@ TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/agentguard-package-smoke.XXXXXX")
 VENV_DIR="$TMP_ROOT/venv"
 DIST_DIR="$TMP_ROOT/dist"
 WORK_DIR="$TMP_ROOT/work"
+PREBUILT_DIST_DIR=${1:-}
 
 cleanup() {
   rm -rf "$TMP_ROOT"
@@ -23,20 +24,33 @@ PYTHON="$VENV_DIR/bin/python"
 AGENTGUARD="$VENV_DIR/bin/agentguard"
 mkdir -p "$DIST_DIR" "$WORK_DIR"
 
-section "Install build frontend"
-"$PYTHON" -m pip install build "setuptools>=77"
+if [[ -n "$PREBUILT_DIST_DIR" ]]; then
+  section "Use prebuilt wheel and source distribution"
+  PREBUILT_DIST_DIR=$(cd "$PREBUILT_DIST_DIR" && pwd)
+  find "$PREBUILT_DIST_DIR" -maxdepth 1 \
+    \( -name 'agentguard-*.whl' -o -name 'agentguard-*.tar.gz' \) \
+    -exec cp {} "$DIST_DIR/" \;
+else
+  section "Install build frontend"
+  "$PYTHON" -m pip install build "setuptools>=77"
 
-section "Build wheel and source distribution"
-"$PYTHON" -m build \
-  --no-isolation \
-  --wheel \
-  --sdist \
-  --outdir "$DIST_DIR" \
-  "$ROOT_DIR"
+  section "Build wheel and source distribution"
+  "$PYTHON" -m build \
+    --no-isolation \
+    --wheel \
+    --sdist \
+    --outdir "$DIST_DIR" \
+    "$ROOT_DIR"
+fi
 WHEEL_PATH=$(find "$DIST_DIR" -maxdepth 1 -name 'agentguard-*.whl' -print -quit)
 SDIST_PATH=$(find "$DIST_DIR" -maxdepth 1 -name 'agentguard-*.tar.gz' -print -quit)
 test -n "$WHEEL_PATH"
 test -n "$SDIST_PATH"
+
+section "Validate wheel and source distribution"
+"$PYTHON" "$ROOT_DIR/scripts/validate_release_artifacts.py" \
+  "$WHEEL_PATH" \
+  "$SDIST_PATH"
 
 section "Install wheel"
 "$PYTHON" -m pip install "$WHEEL_PATH"

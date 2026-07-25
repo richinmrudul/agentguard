@@ -168,8 +168,8 @@ Docs:
 - [Testing and quality](docs/testing.md): test layers, coverage measurement,
   CI gate, and known limits.
 - [Changelog](CHANGELOG.md): v0.2.0 readiness notes and released v0.1.0 context.
-- [Release process](docs/release.md): validation, artifact review, and deferred
-  manual release steps.
+- [Release process](docs/release.md): artifact validation and the protected
+  production PyPI Trusted Publishing procedure.
 - [MIT License](LICENSE): terms for using and distributing AgentGuard.
 
 ## Quickstart
@@ -948,9 +948,10 @@ local databases, caches, and development scripts are excluded from both
 artifacts.
 
 AgentGuard v0.2.0 was tagged and published as a GitHub release on July 17,
-2026. PyPI publication remains deferred. See the
-[release process](docs/release.md) for the version-generic release procedure
-and the [changelog](CHANGELOG.md) for released and unreleased changes.
+2026. It remains the latest published GitHub release, and PyPI publication
+remains deferred. See the [release process](docs/release.md) for the v0.2.1
+release preparation and protected publishing procedure, and the
+[changelog](CHANGELOG.md) for released and unreleased changes.
 
 ## Deterministic Evidence
 
