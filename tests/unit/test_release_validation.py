@@ -187,7 +187,8 @@ def test_release_readiness_documents_and_license_agree() -> None:
         )
     assert 'git tag -a "v${VERSION}"' in release_doc
     assert 'gh release create "v${VERSION}"' in release_doc
-    assert "No command in this\nrepository performs those operations automatically." in release_doc
+    assert ".github/workflows/publish.yml" in release_doc
+    assert "production PyPI Trusted Publishing" in release_doc
 
 
 def test_release_readiness_script_and_artifacts_are_valid() -> None:

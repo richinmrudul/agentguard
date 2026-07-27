@@ -1,0 +1,185 @@
+import re
+from pathlib import Path
+
+import yaml
+
+
+ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW_PATH = ROOT / ".github/workflows/publish.yml"
+RELEASE_DOC = ROOT / "docs/release.md"
+RELEASE_CHECKLIST = ROOT / "docs/release-checklist.md"
+README = ROOT / "README.md"
+FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _workflow() -> dict:
+    workflow = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    assert isinstance(workflow, dict)
+    return workflow
+
+
+def _triggers(workflow: dict) -> dict:
+    # PyYAML 1.1 treats the unquoted YAML key "on" as boolean true.
+    triggers = workflow.get("on", workflow.get(True))
+    assert isinstance(triggers, dict)
+    return triggers
+
+
+def _uses(job: dict) -> list[str]:
+    return [
+        step["uses"]
+        for step in job["steps"]
+        if isinstance(step, dict) and "uses" in step
+    ]
+
+
+def test_publish_workflow_has_only_the_release_trigger() -> None:
+    assert WORKFLOW_PATH.is_file()
+    workflow = _workflow()
+    triggers = _triggers(workflow)
+
+    assert set(triggers) == {"release"}
+    assert triggers["release"] == {"types": ["published"]}
+    assert "pull_request" not in triggers
+    assert "push" not in triggers
+    assert "workflow_dispatch" not in triggers
+
+
+def test_publish_workflow_builds_once_and_reuses_validated_artifact() -> None:
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+    build = jobs["build"]
+    publish = jobs["publish"]
+    source = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert source.count("bash scripts/build_release.sh") == 1
+    assert 'bash scripts/package_smoke.sh "$GITHUB_WORKSPACE/dist"' in source
+    assert publish["needs"] == "build"
+    assert not any("checkout" in action for action in _uses(publish))
+    assert "build_release.sh" not in str(publish)
+
+    build_steps = [step.get("name") for step in build["steps"]]
+    assert build_steps.index("Build wheel and source distribution once") < (
+        build_steps.index("Upload exact validated distributions")
+    )
+    assert build_steps.index("Validate artifact metadata and release version") < (
+        build_steps.index("Run clean installed-wheel package smoke")
+    )
+    assert build_steps.index("Run clean installed-wheel package smoke") < (
+        build_steps.index("Upload exact validated distributions")
+    )
+
+    upload = next(step for step in build["steps"] if "upload-artifact" in step.get("uses", ""))
+    download = next(
+        step for step in publish["steps"] if "download-artifact" in step.get("uses", "")
+    )
+    assert upload["with"]["name"] == download["with"]["name"]
+    assert "validated-distributions" in upload["with"]["name"]
+    assert download["with"]["path"] == "validated-dist"
+    assert publish["steps"][-1]["with"]["packages-dir"] == "validated-dist/"
+
+
+def test_publish_workflow_enforces_release_version_and_protected_oidc() -> None:
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+    build = jobs["build"]
+    publish = jobs["publish"]
+    source = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert workflow["permissions"] == {"contents": "read"}
+    assert "id-token" not in workflow["permissions"]
+    assert build["permissions"] == {"contents": "read"}
+    assert "id-token" not in build["permissions"]
+    assert publish["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+    }
+    assert publish["environment"]["name"] == "pypi"
+    assert workflow["concurrency"]["cancel-in-progress"] is False
+    assert "release.tag_name" in workflow["concurrency"]["group"]
+
+    for job in (build, publish):
+        condition = job["if"]
+        assert "github.event_name == 'release'" in condition
+        assert "github.event.action == 'published'" in condition
+        assert "github.event.release.prerelease == false" in condition
+        assert "github.event.release.tag_name == 'v0.2.1'" in condition
+
+    for required_check in (
+        'test "$GITHUB_REF_TYPE" = "tag"',
+        'test "$GITHUB_REF_NAME" = "$RELEASE_TAG"',
+        'test "$RELEASE_TAG" = "v${EXPECTED_VERSION}"',
+        'test "v${package_version}" = "$RELEASE_TAG"',
+        "wheel_metadata.get(\"Version\")",
+        "sdist_metadata.get(\"Version\")",
+        'test "$RELEASE_TAG" = "v0.2.1"',
+    ):
+        assert required_check in source
+
+    lowered = source.lower()
+    assert "testpypi" not in lowered
+    assert "password:" not in lowered
+    assert "repository-url" not in lowered
+    assert "pypa/gh-action-pypi-publish@" in source
+    publish_action = publish["steps"][-1]
+    assert set(publish_action["with"]) == {"packages-dir", "verbose"}
+
+
+def test_all_publish_workflow_actions_use_immutable_sha_pins() -> None:
+    workflow = _workflow()
+    actions = [
+        action
+        for job in workflow["jobs"].values()
+        for action in _uses(job)
+    ]
+
+    assert actions
+    for action in actions:
+        repository, ref = action.rsplit("@", 1)
+        assert "/" in repository
+        assert FULL_SHA.fullmatch(ref), action
+
+
+def test_release_docs_record_testpypi_decision_setup_and_recovery() -> None:
+    release_doc = RELEASE_DOC.read_text(encoding="utf-8")
+    checklist = RELEASE_CHECKLIST.read_text(encoding="utf-8")
+    combined = f"{release_doc}\n{checklist}"
+
+    for required in (
+        "TestPyPI Is Not Used",
+        "belongs to an unrelated project",
+        "independent project ownership",
+        "clean environment",
+        "Production PyPI pending publisher",
+        "`richinmrudul`",
+        "`agentguard`",
+        "`publish.yml`",
+        "`pypi`",
+        "manual approval",
+        "Environment approval rejected",
+        "Publication job fails before upload",
+        "Version already used",
+        "Tag/version mismatch",
+        "Production package-name race",
+        "GitHub release exists but PyPI publication failed",
+        "cannot be\noverwritten",
+        "new package version",
+    ):
+        assert required in combined
+
+    assert "pipx install" in release_doc
+    assert "--index-url https://pypi.org/simple" in release_doc
+    assert "RELEASE_TAG" in release_doc
+    assert "unzip -l" in release_doc
+    assert "tar -tzf" in release_doc
+
+
+def test_readme_does_not_claim_production_pypi_availability() -> None:
+    readme = README.read_text(encoding="utf-8")
+
+    assert "v0.2.0" in readme
+    assert "latest published GitHub release" in readme
+    assert "PyPI publication\nremains deferred" in readme
+    assert "pip install agentguard" not in readme
+    assert "pipx install agentguard" not in readme
+    assert "test.pypi.org" not in readme.lower()

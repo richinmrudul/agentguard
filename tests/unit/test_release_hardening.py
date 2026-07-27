@@ -92,5 +92,5 @@ def test_release_candidate_results_are_sanitized_and_checklist_is_manual() -> No
     assert data["package_validation"]["published"] is False
     assert "/Users/" not in serialized
     assert "/tmp/" not in serialized
-    assert "PyPI publication remains separate and manual" in checklist
-    assert "Rollback And Revocation" in checklist
+    assert "Only the protected publication job has `id-token: write`." in checklist
+    assert "Failure And Immutability Review" in checklist

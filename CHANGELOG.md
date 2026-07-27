@@ -7,6 +7,14 @@ and uses semantic versioning.
 
 ## Unreleased
 
+### Added
+
+- Prepared a production PyPI Trusted Publishing workflow for `v0.2.1` that
+  builds and validates distributions once, preserves the exact artifacts, and
+  gates OIDC publication behind the protected `pypi` GitHub environment.
+  Publication remains deferred until the release and external publisher
+  configuration are explicitly approved.
+
 ### Changed
 
 - Advanced the package and CLI release identity to `0.2.1` for post-v0.2.0

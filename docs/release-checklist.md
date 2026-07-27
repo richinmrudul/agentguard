@@ -1,98 +1,92 @@
 # Release Checklist
 
-This checklist governs a future release decision after its pull request is
-reviewed and merged. Completing it does not itself publish anything.
+This checklist governs v0.2.1 after its preparation pull request is reviewed
+and merged. Checking an item does not itself publish anything.
 
-## Required CI Checks
+## Required CI And Local Checks
 
 - [ ] Python 3.9 through 3.12 compatibility and non-Docker tests pass.
 - [ ] Ruff and the coverage quality gate pass.
 - [ ] Full Python 3.11 integration passes with Docker available.
-- [ ] Wheel and source distribution build and validate.
-- [ ] Installed console entry point works outside the source checkout.
-- [ ] Repository-example package smoke passes.
+- [ ] Wheel and source distribution build exactly once in the publish workflow.
+- [ ] Artifact metadata and members validate before publication.
+- [ ] The built wheel installs in a clean environment.
+- [ ] Installed `agentguard --version` and `agentguard --help` pass.
+- [ ] Repository-example package smoke uses the already-built distributions.
+- [ ] The exact validated distributions are retained as an Actions artifact.
 
-## Artifact Review
+## Artifact And Version Review
 
-- [ ] Inspect wheel and source distribution member lists.
+- [ ] Inspect the wheel and source-distribution member lists.
 - [ ] Confirm no `.agentguard`, coverage, cache, build, local database, secret,
-  test, documentation, example, or workflow artifacts are unintentionally
-  packaged.
-- [ ] Confirm `LICENSE` is present in wheel and source distribution metadata.
-- [ ] Confirm wheel metadata name and version match `pyproject.toml`.
-- [ ] Confirm the installed `agentguard --version` and package version agree.
-- [ ] Verify release artifacts were produced from the intended reviewed commit.
+  test, documentation, example, or workflow artifacts are packaged.
+- [ ] Confirm `LICENSE` is present in wheel and source-distribution metadata.
+- [ ] Confirm package metadata name is `agentguard`.
+- [ ] Confirm `pyproject.toml`, `agentguard.__version__`, installed
+  `agentguard --version`, wheel metadata, and sdist metadata all equal `0.2.1`.
+- [ ] Confirm tag `v0.2.1` points to the reviewed release commit.
+- [ ] Confirm the workflow artifact checksums match the downloaded files.
+- [ ] Review `CHANGELOG.md` and release notes for user-visible changes.
 
-## Version And Changelog
+## One-Time Publishing Configuration
 
-- [ ] Confirm the version agrees in `pyproject.toml`, `agentguard/__init__.py`,
-  CLI output, changelog, and release notes.
-- [ ] Confirm the version has not already been tagged at another commit.
-- [ ] Confirm the supported Python classifiers remain 3.9 through 3.12.
-- [ ] Confirm the SPDX license expression and license file are correct.
-- [ ] Review `CHANGELOG.md` for user-visible changes and migration notes.
-- [ ] Review metrics without promoting machine-specific or synthetic
-  measurements into general claims.
+- [ ] Production PyPI pending publisher uses owner `richinmrudul`, repository
+  `agentguard`, workflow `publish.yml`, environment `pypi`, and distribution
+  `agentguard`.
+- [ ] The GitHub `pypi` environment exists and requires manual approval.
+- [ ] No PyPI token, password, or long-lived publication secret exists in the
+  repository, organization, or environment configuration.
+- [ ] Workflow default permission is `contents: read`.
+- [ ] Only the protected publication job has `id-token: write`.
+- [ ] Production PyPI still reports the `agentguard` name and version `0.2.1`
+  as unused immediately before the release is created.
 
-## Security Review
+## TestPyPI Exclusion
 
-- [ ] Re-run subprocess and `shell=` static searches.
-- [ ] Confirm user-controlled commands still execute with `shell=False`.
-- [ ] Re-run duplicate-key and malformed YAML regressions.
-- [ ] Re-run path traversal and symlink mutation tests.
-- [ ] Confirm environment values remain allowlisted and secrets remain redacted
-  from commands, reports, manifests, and summaries.
-- [ ] Review GitHub workflow permissions and composite-action argv handling.
-- [ ] Confirm local-agent documentation still states that host execution is not
-  a security boundary.
-- [ ] Verify manifests and checkpoint artifact hashes on fresh runs.
+- [ ] Confirm no workflow or release command targets TestPyPI.
+- [ ] Remember that TestPyPI's `agentguard` project belongs to an unrelated
+  publisher and must not be used or presented as this project.
+- [ ] Remember that TestPyPI and production PyPI ownership are independent and
+  TestPyPI ownership does not imply production PyPI ownership.
+- [ ] Use clean installed-wheel smoke and exact artifact inspection in place of
+  TestPyPI validation.
 
-## Draft Release Workflow
+## Release And Publication
 
-- [ ] Select the reviewed merge commit; do not release from an unreviewed branch.
-- [ ] Re-run the required checks on that exact commit.
-- [ ] Build fresh wheel and source distribution in the release environment.
-- [ ] Validate and inspect artifacts before any upload.
-- [ ] Prepare draft release notes from the changelog and reviewed PRs.
-- [ ] Obtain an explicit human publish decision.
-- [ ] Set `VERSION` from the reviewed package and create the tag and GitHub
-  release only after that approval:
+- [ ] Select the reviewed merge commit and re-run validation on that commit.
+- [ ] Create and push annotated tag `v0.2.1`; do not create tags automatically.
+- [ ] Create the GitHub release for the existing tag with `--verify-tag`.
+- [ ] Inspect the publish workflow build logs and retained distributions.
+- [ ] Confirm the build job succeeded before considering environment approval.
+- [ ] Approve the `pypi` environment only when source, tag, metadata, hashes,
+  artifact contents, and release notes agree.
+- [ ] Confirm the publish job downloads the validated artifact and does not
+  rebuild.
+- [ ] Verify the production PyPI project, installed version, CLI version, and
+  GitHub release tag after publication.
 
-```bash
-git switch main
-git pull --ff-only origin main
-VERSION=$(.venv/bin/agentguard --version)
-bash scripts/build_release.sh
-.venv/bin/python scripts/validate_release_artifacts.py \
-  "dist/agentguard-${VERSION}-py3-none-any.whl" \
-  "dist/agentguard-${VERSION}.tar.gz"
-bash scripts/package_smoke.sh
-git tag -a "v${VERSION}" -m "AgentGuard v${VERSION}"
-git push origin "v${VERSION}"
-gh release create "v${VERSION}" \
-  "dist/agentguard-${VERSION}-py3-none-any.whl" \
-  "dist/agentguard-${VERSION}.tar.gz" \
-  --title "AgentGuard v${VERSION}" \
-  --notes-file "release-notes-v${VERSION}.md"
-```
+## Failure And Immutability Review
 
-## Manual Publish Decision
+- [ ] A rejected environment approval means nothing was uploaded.
+- [ ] Before rerunning a failed job, inspect PyPI to determine whether any file
+  was accepted.
+- [ ] If the version or filename was already used, prepare a new version.
+- [ ] If tag and package version differ, do not approve publication.
+- [ ] If the production name is claimed before first upload, stop and make a
+  separate distribution-name decision.
+- [ ] If the GitHub release exists but PyPI publication failed, do not claim
+  PyPI availability.
+- [ ] PyPI files and released version filenames cannot be overwritten or
+  reused after deletion; corrections require a new version.
 
-- [ ] Record who approved publication and which commit and artifact hashes were
-  approved.
-- [ ] Confirm package credentials use least privilege and trusted publishing
-  where configured.
-- [ ] Confirm the target is correct before upload, including TestPyPI versus
-  PyPI.
-- [ ] PyPI publication remains separate and manual. CI artifact creation,
-  tagging, and GitHub release creation must not implicitly publish to PyPI.
+## Security And Scope Review
 
-## Rollback And Revocation
-
-- [ ] Record wheel and source distribution SHA-256 hashes.
-- [ ] Retain the reviewed commit, CI logs, and artifact inspection record.
-- [ ] If a release is defective, stop further publication and mark the affected
-  version as yanked where appropriate.
-- [ ] Revoke or rotate any credential suspected of exposure.
-- [ ] Publish a corrected version rather than replacing an existing artifact.
-- [ ] Document the incident, affected versions, remediation, and user action.
+- [ ] Confirm no tag, GitHub release, or package upload happened in the
+  preparation pull request.
+- [ ] Confirm no generated distribution, virtual environment, cache, coverage
+  output, build directory, or `.agentguard` state is committed.
+- [ ] Confirm all third-party Actions use immutable full commit SHAs.
+- [ ] Confirm release publication is impossible on pull requests, forks,
+  ordinary pushes, workflow dispatch, other tags, and arbitrary commits.
+- [ ] Retain the reviewed commit, workflow logs, artifact SHA-256 hashes, and
+  approval record.
