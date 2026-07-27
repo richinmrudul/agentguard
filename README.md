@@ -24,8 +24,8 @@ evidence instead of trusting the agent's explanation.
 
 ## Current Proof
 
-- `v0.2.0` is published as a GitHub release; PyPI publication remains
-  deferred.
+- `v0.2.1` is the latest published GitHub release; it was not uploaded to
+  PyPI, so PyPI publication remains deferred.
 - Dated, commit-scoped test and coverage results are recorded in the
   [validation summary](docs/results/validation-summary.md).
 - The curated showcase detects 5/5 unsafe scenarios, allows 1/1 safe scenario,
@@ -209,7 +209,7 @@ bash scripts/build_release.sh
 Install the resulting wheel:
 
 ```bash
-python -m pip install dist/agentguard-*.whl
+python -m pip install dist/agentguard_evals-*.whl
 agentguard --version
 ```
 
@@ -947,11 +947,15 @@ Repository examples, docs, tests, workflows, generated `.agentguard` data,
 local databases, caches, and development scripts are excluded from both
 artifacts.
 
-AgentGuard v0.2.0 was tagged and published as a GitHub release on July 17,
-2026. It remains the latest published GitHub release, and PyPI publication
-remains deferred. See the [release process](docs/release.md) for the v0.2.1
-release preparation and protected publishing procedure, and the
-[changelog](CHANGELOG.md) for released and unreleased changes.
+AgentGuard v0.2.1 is the latest published GitHub release. Its production PyPI
+upload failed before publication because PyPI rejected the original
+distribution identity, so PyPI publication remains deferred. Version 0.2.2 is
+being prepared under the PyPI distribution name `agentguard-evals`; the Python
+package and console command remain `agentguard`. After v0.2.2 is published,
+the production installation commands will be `pip install agentguard-evals`
+and `pipx install agentguard-evals`. Until then, use the source-installation
+instructions above. See the [release process](docs/release.md) and
+[changelog](CHANGELOG.md).
 
 ## Deterministic Evidence
 

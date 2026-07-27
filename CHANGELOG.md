@@ -5,15 +5,39 @@ All notable changes to AgentGuard are documented in this file.
 The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and uses semantic versioning.
 
-## Unreleased
+## Unreleased - v0.2.2 Release Preparation
+
+### Changed
+
+- Renamed only the PyPI distribution from `agentguard` to
+  `agentguard-evals`; the AgentGuard product and repository, import package
+  `agentguard`, and console command `agentguard` are unchanged.
+- Updated the protected Trusted Publishing workflow for the intended v0.2.2
+  release, including distribution-name, tag, version, filename, and artifact
+  checks.
+
+### Fixed
+
+- Prepared a publishable distribution identity after PyPI rejected
+  `agentguard` as too similar to another project. AgentGuard v0.2.1 remains a
+  valid GitHub release but was not uploaded to PyPI.
+
+### Compatibility
+
+- No AgentGuard functionality was intentionally removed. Existing
+  `import agentguard` usage and the `agentguard` terminal command remain
+  compatible.
+
+## v0.2.1 - 2026-07-27
 
 ### Added
 
 - Prepared a production PyPI Trusted Publishing workflow for `v0.2.1` that
   builds and validates distributions once, preserves the exact artifacts, and
   gates OIDC publication behind the protected `pypi` GitHub environment.
-  Publication remains deferred until the release and external publisher
-  configuration are explicitly approved.
+  The workflow built and validated the release successfully, but publication
+  failed before upload because the original distribution identity was rejected
+  by PyPI.
 
 ### Changed
 

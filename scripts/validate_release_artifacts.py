@@ -34,7 +34,8 @@ FORBIDDEN_NAMES = {
     ".env",
     "history.db",
 }
-EXPECTED_NAME = "agentguard"
+EXPECTED_NAME = "agentguard-evals"
+EXPECTED_NORMALIZED_NAME = "agentguard_evals"
 EXPECTED_LICENSE_FILE = "LICENSE"
 REQUIRED_RELEASE_READINESS_ARTIFACTS = (
     "docs/results/release-readiness-v0.2.json",
@@ -199,6 +200,16 @@ def validate_artifacts(wheel_path: Path, sdist_path: Path) -> None:
     if wheel_version != sdist_version:
         raise AssertionError(
             f"wheel/sdist version mismatch: {wheel_version} != {sdist_version}"
+        )
+    expected_wheel = f"{EXPECTED_NORMALIZED_NAME}-{wheel_version}-py3-none-any.whl"
+    expected_sdist = f"{EXPECTED_NORMALIZED_NAME}-{wheel_version}.tar.gz"
+    if wheel_path.name != expected_wheel:
+        raise AssertionError(
+            f"wheel has unexpected filename: {wheel_path.name!r}"
+        )
+    if sdist_path.name != expected_sdist:
+        raise AssertionError(
+            f"sdist has unexpected filename: {sdist_path.name!r}"
         )
 
 

@@ -95,7 +95,7 @@ def _package_metadata() -> dict[str, Any]:
         for version in SUPPORTED_PYTHON
     }
     checks = {
-        "name": project.get("name") == "agentguard",
+        "name": project.get("name") == "agentguard-evals",
         "version_advanced_after_release": project.get("version") != TARGET_VERSION,
         "description_mentions_local_first": "Local-first"
         in project.get("description", ""),
@@ -115,7 +115,9 @@ def _package_metadata() -> dict[str, Any]:
     if failed:
         raise AssertionError(f"Package metadata checks failed: {failed}")
     return {
-        "name": project["name"],
+        # This artifact records the distribution used by the historical
+        # v0.2.0 release candidate, not the current development distribution.
+        "name": "agentguard",
         "version": TARGET_VERSION,
         "current_version": project["version"],
         "description": project["description"],

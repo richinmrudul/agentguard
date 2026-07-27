@@ -1,9 +1,15 @@
 # Release Process
 
-AgentGuard v0.2.0 was tagged and published as a GitHub release on July 17,
-2026. It remains the latest published GitHub release. Version 0.2.1 is prepared
-for production PyPI Trusted Publishing, but PyPI publication remains deferred
-until the release is approved and performed.
+AgentGuard is the product and repository name. The production PyPI
+distribution is `agentguard-evals`, while the import package and console
+command remain `agentguard`.
+
+AgentGuard v0.2.1 is a valid published GitHub release, but its Trusted
+Publishing run failed before upload because PyPI rejected the original
+`agentguard` distribution identity as too similar to another project. Nothing
+from v0.2.1 was uploaded to PyPI. Version 0.2.2 is the first intended production
+PyPI release under the publishable distribution name `agentguard-evals`.
+AgentGuard v0.2.0 and v0.2.1 remain unchanged historical GitHub releases.
 
 ## Release Stages
 
@@ -11,67 +17,95 @@ The release stages are deliberately separate:
 
 1. **Validate a release** by testing the reviewed commit, building the wheel
    and source distribution once, inspecting them, and installing the wheel in
-   a disposable environment. Validation does not publish anything.
-2. **Create the Git tag** `v0.2.1` at the reviewed merge commit. A tag identifies
-   the source but does not create a GitHub release or upload a package.
-3. **Create the GitHub release** for that existing tag. Publishing this release
-   triggers `.github/workflows/publish.yml`.
-4. **Approve production PyPI publication** through the protected `pypi` GitHub
-   environment. The workflow publishes only the distributions built and
+   a disposable environment. Validation publishes nothing.
+2. **Create the Git tag** `v0.2.2` at the reviewed merge commit. A tag
+   identifies source; it does not create a GitHub release or upload a package.
+3. **Create the GitHub release** for that existing tag. Publishing the
+   non-prerelease release triggers `.github/workflows/publish.yml`.
+4. **Approve production PyPI publication** through the protected `pypi`
+   GitHub environment. The workflow publishes only the distributions built and
    validated by that workflow run.
+
+## Distribution, Package, And Command Identity
+
+These names intentionally differ:
+
+| Identity | Value |
+| --- | --- |
+| Product and repository | AgentGuard / `agentguard` |
+| PyPI distribution | `agentguard-evals` |
+| Python import package | `agentguard` |
+| Console command | `agentguard` |
+
+After v0.2.2 is published, users install the distribution but continue to
+import and run AgentGuard under its product identity:
+
+```bash
+python -m pip install "agentguard-evals==0.2.2"
+python -c "import agentguard; print(agentguard.__version__)"
+agentguard --version
+agentguard --help
+```
+
+For an isolated command installation:
+
+```bash
+pipx install "agentguard-evals==0.2.2"
+agentguard --version
+agentguard --help
+```
+
+These production installation commands are post-publication instructions.
+Until v0.2.2 appears on production PyPI, install from a reviewed source
+checkout.
 
 ## Why TestPyPI Is Not Used
 
-The `agentguard` namespace on TestPyPI belongs to an unrelated project and
-publisher. TestPyPI and production PyPI have independent project ownership, so
-that TestPyPI project neither grants nor implies ownership of the production
-PyPI name. It also must not be contacted, modified, or used by this project.
+The relevant AgentGuard namespace on TestPyPI belongs to an unrelated project
+and publisher. TestPyPI and production PyPI have independent project ownership,
+so that TestPyPI project neither grants nor implies ownership of a production
+name. This project must not contact, modify, or use that TestPyPI project.
 
-AgentGuard therefore does not publish to TestPyPI. The replacement validation
-is stricter about the actual payload: GitHub Actions builds the wheel and source
-distribution once, validates and inspects those files, installs the wheel in a
-clean environment, runs the installed CLI and repository package smoke, and
-uploads the exact validated distributions as an inspectable Actions artifact.
-The production job downloads and publishes those same files without rebuilding.
-
-The production `agentguard` name is not reserved by this repository merely
-because this workflow exists. Its availability must be rechecked immediately
-before the first release is created.
+AgentGuard therefore validates the actual payload without TestPyPI: GitHub
+Actions builds the wheel and source distribution once, validates and inspects
+those files, installs the wheel in a clean environment, runs the installed CLI
+and repository package smoke, and uploads the exact validated distributions as
+an inspectable Actions artifact. The production job downloads and publishes
+those same files without rebuilding.
 
 ## One-Time Trusted Publisher Setup
 
-No PyPI API token, password, repository secret, or other long-lived publication
-credential is used. Complete these external settings once:
+No PyPI API token, password, repository secret, or other long-lived
+publication credential is used. The production PyPI Trusted Publishing flow uses GitHub
+OIDC exclusively.
 
 ### Production PyPI pending publisher
 
-While the `agentguard` production project is unclaimed, create a pending Trusted
-Publisher on production PyPI with these exact values:
+Configure the pending Trusted Publisher on production PyPI with exactly:
 
 | Field | Value |
 | --- | --- |
-| PyPI distribution/project | `agentguard` |
+| PyPI distribution/project | `agentguard-evals` |
 | GitHub owner | `richinmrudul` |
 | GitHub repository | `agentguard` |
 | Workflow filename | `publish.yml` |
 | Environment name | `pypi` |
 
-The pending publisher claims the production project only when the trusted
+The pending publisher creates the production project only when the trusted
 workflow performs the first successful upload. It does not reserve the name
 against a race before that upload.
 
 ### GitHub environment
 
-Create the GitHub environment named `pypi` and configure required reviewers so
-production publication requires manual approval. Limit deployment branches and
-tags as tightly as repository settings allow, with `v0.2.1` as the intended
-release tag. Do not add a PyPI token or password as an environment or repository
-secret.
+The GitHub environment must be named `pypi` and require manual approval for
+production publication. Before v0.2.2 is released, change its selected tag
+deployment rule from `v0.2.1` to `v0.2.2`. Do not broaden it to arbitrary tags,
+branches, or repository administrators, and do not add a PyPI token or
+password as an environment or repository secret.
 
-The workflow keeps default permissions at `contents: read`. Only its `publish`
-job receives `id-token: write`, and that job is gated by the `pypi` environment.
-The OIDC identity is therefore bound to the repository, workflow filename, and
-environment configured on PyPI.
+The workflow keeps default permissions at `contents: read`. Only its protected
+`publish` job receives `id-token: write`. The OIDC identity is bound to the
+repository, workflow filename, and environment configured on PyPI.
 
 ## Local Validation
 
@@ -81,6 +115,7 @@ Run from the repository root with the development environment installed:
 .venv/bin/python -m pytest
 .venv/bin/python -m ruff check .
 git diff --check
+.venv/bin/python scripts/validate_release_artifacts.py
 bash scripts/build_release.sh
 bash scripts/package_smoke.sh
 .venv/bin/python scripts/showcase_metrics.py --check
@@ -88,30 +123,30 @@ bash scripts/package_smoke.sh
 ```
 
 `build_release.sh` creates a wheel and source distribution under `dist/`,
-checks that the current version is not already tagged at a different commit,
-and validates package metadata and members. It never publishes artifacts.
-`package_smoke.sh` normally builds its own temporary distributions for local
-testing. The publishing workflow passes its already-built `dist/` directory,
-so that workflow installs and exercises the exact wheel without rebuilding.
+checks that the current version is not already tagged at another commit, and
+validates package metadata and members. It never publishes artifacts.
+`package_smoke.sh` normally builds temporary distributions. The publishing
+workflow passes its already-built `dist/` directory so the workflow installs
+and exercises the exact wheel without rebuilding.
 
 Inspect both distributions:
 
 ```bash
 VERSION=$(.venv/bin/agentguard --version)
-unzip -l "dist/agentguard-${VERSION}-py3-none-any.whl"
-tar -tzf "dist/agentguard-${VERSION}.tar.gz"
+unzip -l "dist/agentguard_evals-${VERSION}-py3-none-any.whl"
+tar -tzf "dist/agentguard_evals-${VERSION}.tar.gz"
 .venv/bin/python scripts/validate_release_artifacts.py \
-  "dist/agentguard-${VERSION}-py3-none-any.whl" \
-  "dist/agentguard-${VERSION}.tar.gz"
+  "dist/agentguard_evals-${VERSION}-py3-none-any.whl" \
+  "dist/agentguard_evals-${VERSION}.tar.gz"
 ```
 
-The wheel must contain the importable `agentguard` package, console entry-point
-metadata, and MIT license. The source distribution must additionally contain
-the README, project metadata, and license. Repository examples, docs, tests,
-workflows, scripts, generated `.agentguard` state, databases, and caches are
-not distribution payload.
+The wheel must contain the importable `agentguard` package, `agentguard`
+console entry point, and MIT license. The source distribution must additionally
+contain the README, project metadata, and license. Repository examples, docs,
+tests, workflows, scripts, generated `.agentguard` state, databases, and caches
+are not distribution payload.
 
-## Safe v0.2.1 Release Sequence
+## Safe v0.2.2 Release Sequence
 
 1. Merge the reviewed release-preparation PR only after all required checks
    pass.
@@ -119,25 +154,27 @@ not distribution payload.
    commit.
 3. Re-run the full validation commands on that commit.
 4. Confirm `pyproject.toml`, `agentguard.__version__`, and
-   `agentguard --version` all report `0.2.1`.
-5. Confirm production PyPI still has no `agentguard` project or `0.2.1`
+   `agentguard --version` all report `0.2.2`; confirm built metadata names the
+   distribution `agentguard-evals`.
+5. Confirm production PyPI still has no `agentguard-evals` project or `0.2.2`
    release. If the name is occupied, stop before creating a tag or release.
-6. Confirm the pending production PyPI Trusted Publisher and protected `pypi`
-   GitHub environment use the exact values above.
-7. Create and push the annotated tag at the reviewed commit:
+6. Confirm the pending production PyPI Trusted Publisher uses the exact values
+   above.
+7. Change the protected `pypi` environment tag rule from `v0.2.1` to
+   `v0.2.2`, retaining its required reviewer and other protections.
+8. Create and push the annotated tag at the reviewed commit:
 
    ```bash
    git switch main
    git pull --ff-only origin main
    VERSION=$(.venv/bin/agentguard --version)
-   test "$VERSION" = "0.2.1"
+   test "$VERSION" = "0.2.2"
    git tag -a "v${VERSION}" -m "AgentGuard v${VERSION}"
    git push origin "v${VERSION}"
    ```
 
-8. Prepare release notes from `CHANGELOG.md`, then create a GitHub release that
-   targets the existing `v0.2.1` tag. Do not attach locally rebuilt
-   distributions; the workflow artifact is the publication source:
+9. Prepare release notes from `CHANGELOG.md`, then create a GitHub release for
+   the existing `v0.2.2` tag. Do not attach locally rebuilt distributions:
 
    ```bash
    gh release create "v${VERSION}" \
@@ -146,76 +183,75 @@ not distribution payload.
      --notes-file "release-notes-v${VERSION}.md"
    ```
 
-9. Inspect the workflow's build logs, wheel/sdist member listings, checksums,
-   installed CLI smoke, and `agentguard-v0.2.1-validated-distributions`
-   artifact.
-10. Approve the `pypi` environment deployment only if the tag, commit,
-    metadata, files, and checksums are correct.
-11. After publication, verify the production project and install it from
+10. Inspect the workflow's build logs, member listings, checksums, installed
+    CLI smoke, and `agentguard-evals-v0.2.2-validated-distributions` artifact.
+11. Approve the `pypi` deployment only if tag, commit, distribution name,
+    version, files, and checksums are correct.
+12. After publication, verify the production project and install it from
     production PyPI.
 
-The workflow fails before publication unless the release event is `published`,
-the tag is exactly `v0.2.1`, the checkout is exactly at that tag, and the
-project, wheel, and source-distribution versions are exactly `0.2.1`. Pull
-requests, ordinary pushes, forks, other tags, arbitrary commits, and workflow
-dispatches cannot enter the publication path.
+The workflow fails before publication unless the event is a published,
+non-prerelease GitHub release, the tag is exactly `v0.2.2`, the checkout is
+exactly at that tag, the metadata name is exactly `agentguard-evals`, and all
+package versions are exactly `0.2.2`. Pull requests, ordinary pushes, forks,
+other tags, workflow dispatches, arbitrary commits, and other releases cannot
+enter the publication path.
 
 ## Post-Publication Verification
 
-Compare the release tag and installed package version:
+Compare the release tag with both installed metadata and the CLI:
 
 ```bash
-RELEASE_TAG=$(gh release view v0.2.1 --json tagName --jq .tagName)
+RELEASE_TAG=$(gh release view v0.2.2 --json tagName --jq .tagName)
 python -m venv /tmp/agentguard-release-verify
 /tmp/agentguard-release-verify/bin/python -m pip install \
+  --no-cache-dir \
   --index-url https://pypi.org/simple \
-  "agentguard==0.2.1"
+  "agentguard-evals==0.2.2"
 INSTALLED_VERSION=$(
-  /tmp/agentguard-release-verify/bin/agentguard --version
+  /tmp/agentguard-release-verify/bin/python -c \
+    'from importlib.metadata import version; print(version("agentguard-evals"))'
 )
 test "$RELEASE_TAG" = "v${INSTALLED_VERSION}"
+/tmp/agentguard-release-verify/bin/python -c \
+  "import agentguard; print(agentguard.__version__)"
+/tmp/agentguard-release-verify/bin/agentguard --version
 /tmp/agentguard-release-verify/bin/agentguard --help
 ```
 
-For an isolated command installation with pipx:
+For pipx:
 
 ```bash
-pipx install --index-url https://pypi.org/simple "agentguard==0.2.1"
+pipx install --index-url https://pypi.org/simple "agentguard-evals==0.2.2"
 agentguard --version
 agentguard --help
 ```
 
-These production installation commands are post-publication verification only;
-they are not expected to work while PyPI publication remains deferred.
-
 ## Recovery
 
 - **Environment approval rejected or not granted:** no upload occurs. Inspect
-  the workflow artifact and logs, correct the approval concern, and rerun the
-  failed `publish` job only if version `0.2.1` is still absent from PyPI.
+  the workflow artifact and logs, correct the concern, and rerun only if
+  version `0.2.2` is still absent from PyPI.
 - **Publication job fails before upload:** keep the release and tag unchanged,
   diagnose the OIDC publisher/environment configuration, and rerun only after
-  confirming PyPI has no files for `0.2.1`.
+  confirming PyPI has no files for `0.2.2`.
 - **Publication partially succeeds:** do not blindly rerun. Check the PyPI
-  release file list and workflow logs. Uploaded filenames cannot be reused,
-  even after deletion; prepare a new version if the intended file set cannot be
-  completed safely.
-- **Version already used:** stop. Increment the project version, update the
-  changelog, review and merge a new release PR, and create a new tag and GitHub
-  release. Never overwrite an existing version.
-- **Tag/version mismatch:** do not approve publication. If nothing external
-  references the bad tag, delete it under the repository's reviewed tag
-  correction policy and create the correct tag. If a GitHub release or package
-  publication already exists, use a new version instead of moving release
-  history.
-- **Production package-name race:** if another party claims `agentguard` before
-  the first upload, reject the environment deployment and stop. Do not attempt
-  to upload to or take over an unrelated project. Choose a new distribution
-  name through a separate reviewed design decision.
+  release file list and logs. Uploaded filenames cannot be reused, even after
+  deletion; prepare a new version if the intended file set cannot be completed.
+- **Version already used:** stop. Increment the version through a reviewed
+  release PR. Never overwrite an existing version.
+- **Tag/version/name mismatch:** do not approve publication. If a GitHub
+  release or package publication already exists, use a new version rather than
+  moving release history.
+- **Production package-name race:** if another party claims
+  `agentguard-evals` before first upload, reject deployment and stop. Choose a
+  new distribution name through a separate reviewed decision.
 - **GitHub release exists but PyPI publication failed:** a GitHub release does
-  not prove PyPI availability. Keep README and release notes explicit, repair
-  the Trusted Publisher/environment configuration, and rerun only if the
-  version remains unused. Otherwise prepare a new version.
+  not prove PyPI availability. Keep public docs explicit and prepare a new
+  version if any immutable filename was used.
+- **v0.2.1 incident:** preserve the existing v0.2.1 tag, release, and failed
+  workflow record. Do not rerun it against the new distribution identity;
+  v0.2.2 is the corrective release.
 
 PyPI release files and version filenames are immutable: they cannot be
 overwritten. Deleting a file does not make its filename reusable. Any incorrect

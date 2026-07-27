@@ -150,7 +150,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          wheel=$(find "$GITHUB_WORKSPACE/dist" -maxdepth 1 -name 'agentguard-*.whl' -print -quit)
+          wheel=$(find "$GITHUB_WORKSPACE/dist" -maxdepth 1 -name 'agentguard_evals-*.whl' -print -quit)
           venv_dir="$RUNNER_TEMP/agentguard-wheel-venv"
           work_dir="$RUNNER_TEMP/agentguard-wheel-work"
           python -m venv "$venv_dir"

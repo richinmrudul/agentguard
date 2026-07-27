@@ -3,8 +3,8 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentguard"
-version = "0.2.1"
+name = "agentguard-evals"
+version = "0.2.2"
 description = "Local-first safety and reliability evaluation framework for AI coding agents."
 readme = "README.md"
 license = "MIT"

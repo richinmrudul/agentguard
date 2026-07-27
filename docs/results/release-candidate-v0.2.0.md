@@ -13,7 +13,7 @@ does not publish to PyPI.
 ## Version And Package Metadata
 
 - Package: `agentguard` `0.2.0`
-- Current development version: `0.2.1`
+- Current development version: `0.2.2`
 - Python: `>=3.9`; tested classifiers for 3.9, 3.10, 3.11, 3.12
 - License: `MIT`
 - Console script: `agentguard.cli.main:app`
