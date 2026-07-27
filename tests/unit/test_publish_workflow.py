@@ -103,16 +103,22 @@ def test_publish_workflow_enforces_release_version_and_protected_oidc() -> None:
         assert "github.event_name == 'release'" in condition
         assert "github.event.action == 'published'" in condition
         assert "github.event.release.prerelease == false" in condition
-        assert "github.event.release.tag_name == 'v0.2.1'" in condition
+        assert "github.event.release.tag_name == 'v0.2.2'" in condition
 
     for required_check in (
         'test "$GITHUB_REF_TYPE" = "tag"',
         'test "$GITHUB_REF_NAME" = "$RELEASE_TAG"',
         'test "$RELEASE_TAG" = "v${EXPECTED_VERSION}"',
         'test "v${package_version}" = "$RELEASE_TAG"',
+        'EXPECTED_DISTRIBUTION: "agentguard-evals"',
+        'wheel_metadata.get("Name")',
+        'sdist_metadata.get("Name")',
+        "names != {expected_name}",
         "wheel_metadata.get(\"Version\")",
         "sdist_metadata.get(\"Version\")",
-        'test "$RELEASE_TAG" = "v0.2.1"',
+        'test "$RELEASE_TAG" = "v0.2.2"',
+        "agentguard_evals-0.2.2-py3-none-any.whl",
+        "agentguard_evals-0.2.2.tar.gz",
     ):
         assert required_check in source
 
@@ -140,7 +146,7 @@ def test_all_publish_workflow_actions_use_immutable_sha_pins() -> None:
         assert FULL_SHA.fullmatch(ref), action
 
 
-def test_release_docs_record_testpypi_decision_setup_and_recovery() -> None:
+def test_release_docs_record_distribution_setup_and_recovery() -> None:
     release_doc = RELEASE_DOC.read_text(encoding="utf-8")
     checklist = RELEASE_CHECKLIST.read_text(encoding="utf-8")
     combined = f"{release_doc}\n{checklist}"
@@ -151,23 +157,29 @@ def test_release_docs_record_testpypi_decision_setup_and_recovery() -> None:
         "independent project ownership",
         "clean environment",
         "Production PyPI pending publisher",
+        "`agentguard-evals`",
         "`richinmrudul`",
         "`agentguard`",
         "`publish.yml`",
         "`pypi`",
         "manual approval",
-        "Environment approval rejected",
+        "Environment approval rejected or not granted",
         "Publication job fails before upload",
         "Version already used",
-        "Tag/version mismatch",
+        "Tag/version/name mismatch",
         "Production package-name race",
         "GitHub release exists but PyPI publication failed",
+        "v0.2.1 incident",
         "cannot be\noverwritten",
         "new package version",
+        "change its selected tag",
+        "`v0.2.1` to `v0.2.2`",
     ):
         assert required in combined
 
     assert "pipx install" in release_doc
+    assert 'pip install "agentguard-evals==0.2.2"' in release_doc
+    assert 'pipx install "agentguard-evals==0.2.2"' in release_doc
     assert "--index-url https://pypi.org/simple" in release_doc
     assert "RELEASE_TAG" in release_doc
     assert "unzip -l" in release_doc
@@ -177,9 +189,29 @@ def test_release_docs_record_testpypi_decision_setup_and_recovery() -> None:
 def test_readme_does_not_claim_production_pypi_availability() -> None:
     readme = README.read_text(encoding="utf-8")
 
-    assert "v0.2.0" in readme
+    assert "v0.2.1" in readme
     assert "latest published GitHub release" in readme
-    assert "PyPI publication\nremains deferred" in readme
-    assert "pip install agentguard" not in readme
-    assert "pipx install agentguard" not in readme
+    assert "PyPI publication remains deferred" in readme
+    assert "After v0.2.2 is published" in readme
+    assert "Until then, use the source-installation" in readme
+    assert "pip install agentguard-evals" in readme
+    assert "pipx install agentguard-evals" in readme
+    assert "pip install agentguard\n" not in readme
+    assert "pipx install agentguard\n" not in readme
     assert "test.pypi.org" not in readme.lower()
+
+
+def test_historical_release_artifacts_keep_original_identities() -> None:
+    v010 = (ROOT / "docs/results/release-candidate-v0.1.0.json").read_text(
+        encoding="utf-8"
+    )
+    v020 = (ROOT / "docs/results/release-candidate-v0.2.0.json").read_text(
+        encoding="utf-8"
+    )
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+
+    assert "dist/agentguard-0.1.0-py3-none-any.whl" in v010
+    assert "dist/agentguard-0.2.0-py3-none-any.whl" in v020
+    assert "## v0.1.0 - Released" in changelog
+    assert "## v0.2.0 - 2026-07-17" in changelog
+    assert "## v0.2.1 - 2026-07-27" in changelog

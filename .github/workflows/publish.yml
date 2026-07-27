@@ -18,7 +18,7 @@ jobs:
       github.event_name == 'release' &&
       github.event.action == 'published' &&
       github.event.release.prerelease == false &&
-      github.event.release.tag_name == 'v0.2.1'
+      github.event.release.tag_name == 'v0.2.2'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,7 +39,7 @@ jobs:
 
       - name: Validate the release event, ref, and version
         env:
-          EXPECTED_VERSION: "0.2.1"
+          EXPECTED_VERSION: "0.2.2"
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         shell: bash
         run: |
@@ -68,17 +68,23 @@ jobs:
 
       - name: Validate artifact metadata and release version
         env:
-          EXPECTED_VERSION: "0.2.1"
+          EXPECTED_DISTRIBUTION: "agentguard-evals"
+          EXPECTED_VERSION: "0.2.2"
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         shell: bash
         run: |
           set -euo pipefail
-          wheel=$(find dist -maxdepth 1 -name 'agentguard-*.whl' -print)
-          sdist=$(find dist -maxdepth 1 -name 'agentguard-*.tar.gz' -print)
+          wheel=$(find dist -maxdepth 1 -name 'agentguard_evals-*.whl' -print)
+          sdist=$(find dist -maxdepth 1 -name 'agentguard_evals-*.tar.gz' -print)
           test "$(printf '%s\n' "$wheel" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
           test "$(printf '%s\n' "$sdist" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
           python scripts/validate_release_artifacts.py "$wheel" "$sdist"
-          python - "$wheel" "$sdist" "$EXPECTED_VERSION" "$RELEASE_TAG" <<'PY'
+          python - \
+            "$wheel" \
+            "$sdist" \
+            "$EXPECTED_DISTRIBUTION" \
+            "$EXPECTED_VERSION" \
+            "$RELEASE_TAG" <<'PY'
           import email.parser
           import pathlib
           import sys
@@ -87,8 +93,9 @@ jobs:
 
           wheel = pathlib.Path(sys.argv[1])
           sdist = pathlib.Path(sys.argv[2])
-          expected = sys.argv[3]
-          tag = sys.argv[4]
+          expected_name = sys.argv[3]
+          expected_version = sys.argv[4]
+          tag = sys.argv[5]
           with zipfile.ZipFile(wheel) as archive:
               metadata_name = next(
                   name for name in archive.namelist()
@@ -108,12 +115,21 @@ jobs:
               sdist_metadata = email.parser.Parser().parsestr(
                   pkg_info_file.read().decode("utf-8")
               )
+          names = {
+              wheel_metadata.get("Name"),
+              sdist_metadata.get("Name"),
+              expected_name,
+          }
           versions = {
               wheel_metadata.get("Version"),
               sdist_metadata.get("Version"),
-              expected,
+              expected_version,
           }
-          if versions != {expected} or tag != f"v{expected}":
+          if names != {expected_name}:
+              raise SystemExit(
+                  f"distribution name mismatch: names={names!r}"
+              )
+          if versions != {expected_version} or tag != f"v{expected_version}":
               raise SystemExit(
                   f"release version mismatch: tag={tag!r}, versions={versions!r}"
               )
@@ -123,8 +139,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          unzip -l dist/agentguard-0.2.1-py3-none-any.whl
-          tar -tzf dist/agentguard-0.2.1.tar.gz
+          unzip -l dist/agentguard_evals-0.2.2-py3-none-any.whl
+          tar -tzf dist/agentguard_evals-0.2.2.tar.gz
 
       - name: Run clean installed-wheel package smoke
         run: bash scripts/package_smoke.sh "$GITHUB_WORKSPACE/dist"
@@ -134,16 +150,16 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          sha256sum agentguard-*.whl agentguard-*.tar.gz > SHA256SUMS
+          sha256sum agentguard_evals-*.whl agentguard_evals-*.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
       - name: Upload exact validated distributions
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: agentguard-v0.2.1-validated-distributions
+          name: agentguard-evals-v0.2.2-validated-distributions
           path: |
-            dist/agentguard-*.whl
-            dist/agentguard-*.tar.gz
+            dist/agentguard_evals-*.whl
+            dist/agentguard_evals-*.tar.gz
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 30
@@ -155,11 +171,11 @@ jobs:
       github.event_name == 'release' &&
       github.event.action == 'published' &&
       github.event.release.prerelease == false &&
-      github.event.release.tag_name == 'v0.2.1'
+      github.event.release.tag_name == 'v0.2.2'
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/agentguard/0.2.1/
+      url: https://pypi.org/project/agentguard-evals/0.2.2/
     permissions:
       contents: read
       id-token: write
@@ -168,7 +184,7 @@ jobs:
       - name: Download validated distributions
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: agentguard-v0.2.1-validated-distributions
+          name: agentguard-evals-v0.2.2-validated-distributions
           path: validated-dist
 
       - name: Verify downloaded artifact and publication scope
@@ -180,9 +196,9 @@ jobs:
           test "$GITHUB_EVENT_NAME" = "release"
           test "$GITHUB_REF_TYPE" = "tag"
           test "$GITHUB_REF_NAME" = "$RELEASE_TAG"
-          test "$RELEASE_TAG" = "v0.2.1"
-          test -f validated-dist/agentguard-0.2.1-py3-none-any.whl
-          test -f validated-dist/agentguard-0.2.1.tar.gz
+          test "$RELEASE_TAG" = "v0.2.2"
+          test -f validated-dist/agentguard_evals-0.2.2-py3-none-any.whl
+          test -f validated-dist/agentguard_evals-0.2.2.tar.gz
           test -f validated-dist/SHA256SUMS
           test "$(find validated-dist -maxdepth 1 -type f | wc -l | tr -d ' ')" = "3"
           (

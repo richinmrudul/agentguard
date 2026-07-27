@@ -26,7 +26,7 @@ section "Prepare release output"
 rm -rf "$ROOT_DIR/build"
 mkdir -p "$OUTPUT_DIR"
 find "$OUTPUT_DIR" -maxdepth 1 \
-  \( -name 'agentguard-*.whl' -o -name 'agentguard-*.tar.gz' \) \
+  \( -name 'agentguard_evals-*.whl' -o -name 'agentguard_evals-*.tar.gz' \) \
   -delete
 
 section "Build wheel and source distribution"
@@ -37,8 +37,8 @@ section "Build wheel and source distribution"
   --outdir "$OUTPUT_DIR" \
   "$ROOT_DIR"
 
-WHEEL_PATH=$(find "$OUTPUT_DIR" -maxdepth 1 -name 'agentguard-*.whl' -print -quit)
-SDIST_PATH=$(find "$OUTPUT_DIR" -maxdepth 1 -name 'agentguard-*.tar.gz' -print -quit)
+WHEEL_PATH=$(find "$OUTPUT_DIR" -maxdepth 1 -name 'agentguard_evals-*.whl' -print -quit)
+SDIST_PATH=$(find "$OUTPUT_DIR" -maxdepth 1 -name 'agentguard_evals-*.tar.gz' -print -quit)
 test -n "$WHEEL_PATH"
 test -n "$SDIST_PATH"
 

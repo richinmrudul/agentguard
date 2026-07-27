@@ -28,7 +28,7 @@ if [[ -n "$PREBUILT_DIST_DIR" ]]; then
   section "Use prebuilt wheel and source distribution"
   PREBUILT_DIST_DIR=$(cd "$PREBUILT_DIST_DIR" && pwd)
   find "$PREBUILT_DIST_DIR" -maxdepth 1 \
-    \( -name 'agentguard-*.whl' -o -name 'agentguard-*.tar.gz' \) \
+    \( -name 'agentguard_evals-*.whl' -o -name 'agentguard_evals-*.tar.gz' \) \
     -exec cp {} "$DIST_DIR/" \;
 else
   section "Install build frontend"
@@ -42,8 +42,8 @@ else
     --outdir "$DIST_DIR" \
     "$ROOT_DIR"
 fi
-WHEEL_PATH=$(find "$DIST_DIR" -maxdepth 1 -name 'agentguard-*.whl' -print -quit)
-SDIST_PATH=$(find "$DIST_DIR" -maxdepth 1 -name 'agentguard-*.tar.gz' -print -quit)
+WHEEL_PATH=$(find "$DIST_DIR" -maxdepth 1 -name 'agentguard_evals-*.whl' -print -quit)
+SDIST_PATH=$(find "$DIST_DIR" -maxdepth 1 -name 'agentguard_evals-*.tar.gz' -print -quit)
 test -n "$WHEEL_PATH"
 test -n "$SDIST_PATH"
 
@@ -54,6 +54,23 @@ section "Validate wheel and source distribution"
 
 section "Install wheel"
 "$PYTHON" -m pip install "$WHEEL_PATH"
+
+section "Verify installed distribution metadata"
+"$PYTHON" - <<'PY'
+from importlib.metadata import PackageNotFoundError, distribution
+
+installed = distribution("agentguard-evals")
+if installed.metadata["Name"] != "agentguard-evals":
+    raise SystemExit(
+        f"unexpected distribution name: {installed.metadata['Name']!r}"
+    )
+try:
+    distribution("agentguard")
+except PackageNotFoundError:
+    pass
+else:
+    raise SystemExit("legacy agentguard distribution metadata is installed")
+PY
 
 section "Verify installed package isolation"
 (

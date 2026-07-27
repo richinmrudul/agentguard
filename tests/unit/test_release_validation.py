@@ -6,7 +6,6 @@ import subprocess
 import sys
 import tarfile
 import zipfile
-from importlib.metadata import version as installed_version
 from pathlib import Path
 
 import pytest
@@ -61,8 +60,8 @@ def release_artifacts(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, P
         cwd=ROOT,
         check=True,
     )
-    wheel = next(output_dir.glob("agentguard-*.whl"))
-    sdist = next(output_dir.glob("agentguard-*.tar.gz"))
+    wheel = next(output_dir.glob("agentguard_evals-*.whl"))
+    sdist = next(output_dir.glob("agentguard_evals-*.tar.gz"))
     return wheel, sdist
 
 
@@ -92,12 +91,14 @@ def test_project_metadata_declares_tested_python_range() -> None:
 
 
 def test_package_version_sources_agree() -> None:
-    project_version = _load_pyproject()["project"]["version"]
+    project = _load_pyproject()["project"]
+    project_version = project["version"]
     result = CliRunner().invoke(app, ["--version"])
 
+    assert project["name"] == "agentguard-evals"
     assert project_version == __version__
-    assert installed_version("agentguard") == __version__
-    assert project_version == "0.2.1"
+    assert project_version == "0.2.2"
+    assert project["scripts"] == {"agentguard": "agentguard.cli.main:app"}
     assert result.exit_code == 0
     assert result.output.strip() == project_version
 
@@ -118,15 +119,15 @@ def test_release_version_tag_must_point_to_head(tmp_path: Path) -> None:
     tracked.write_text("tagged\n", encoding="utf-8")
     subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-qm", "tagged"], cwd=tmp_path, check=True)
-    subprocess.run(["git", "tag", "v0.2.1"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "tag", "v0.2.2"], cwd=tmp_path, check=True)
 
-    validate_version_tag(tmp_path, "0.2.1")
+    validate_version_tag(tmp_path, "0.2.2")
 
     tracked.write_text("new head\n", encoding="utf-8")
     subprocess.run(["git", "commit", "-qam", "new head"], cwd=tmp_path, check=True)
 
     with pytest.raises(AssertionError, match="already tagged"):
-        validate_version_tag(tmp_path, "0.2.1")
+        validate_version_tag(tmp_path, "0.2.2")
 
 
 def test_release_readiness_documents_and_license_agree() -> None:
@@ -141,6 +142,8 @@ def test_release_readiness_documents_and_license_agree() -> None:
     assert license_text.startswith("MIT License\n")
     assert "Copyright (c) 2026 Richin Mrudul" in license_text
     assert "## Unreleased" in changelog
+    assert "## Unreleased - v0.2.2 Release Preparation" in changelog
+    assert "## v0.2.1 - 2026-07-27" in changelog
     assert "## v0.2.0 - 2026-07-17" in changelog
     assert "## v0.1.0 - Released" in changelog
     for heading in (
@@ -189,6 +192,8 @@ def test_release_readiness_documents_and_license_agree() -> None:
     assert 'gh release create "v${VERSION}"' in release_doc
     assert ".github/workflows/publish.yml" in release_doc
     assert "production PyPI Trusted Publishing" in release_doc
+    assert "`agentguard-evals`" in release_doc
+    assert "v0.2.1 is a valid published GitHub release" in release_doc
 
 
 def test_release_readiness_script_and_artifacts_are_valid() -> None:
@@ -450,6 +455,29 @@ def test_installed_wheel_runs_outside_repository(
         text=True,
     )
     assert str(venv_dir.resolve()) in import_result.stdout
+
+    metadata_result = subprocess.run(
+        [
+            str(python),
+            "-c",
+            (
+                "from importlib.metadata import PackageNotFoundError, "
+                "distribution; "
+                "d = distribution('agentguard-evals'); "
+                "assert d.metadata['Name'] == 'agentguard-evals'; "
+                "assert d.version == '0.2.2'; "
+                "\ntry: distribution('agentguard')\n"
+                "except PackageNotFoundError: pass\n"
+                "else: raise AssertionError('legacy distribution is installed')"
+            ),
+        ],
+        cwd=work_dir,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert metadata_result.returncode == 0
 
     registry_result = subprocess.run(
         [str(console), "benchmarks", "list"],

@@ -93,7 +93,7 @@ def test_readme_portfolio_first_screen_references_existing_proof() -> None:
         "docs/results/validation-summary.md",
         "Architecture At A Glance",
         "Screenshots And Demo Assets",
-        "v0.2.0` is published as a GitHub release",
+        "v0.2.1` is the latest published GitHub release",
     ]
     for text in required_text:
         assert text in readme
