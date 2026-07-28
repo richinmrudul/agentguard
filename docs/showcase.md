@@ -3,6 +3,22 @@
 The showcase is a local, recruiter-friendly demo for the question: "What does
 AgentGuard catch?"
 
+Install the released v0.2.2 command from production PyPI:
+
+```bash
+python -m pip install agentguard-evals
+agentguard --version
+```
+
+The PyPI package provides the `agentguard` import and command but does not
+include repository examples. Clone the repository and run the showcase from
+its root:
+
+```bash
+git clone https://github.com/richinmrudul/agentguard.git
+cd agentguard
+```
+
 Run it from the repository root:
 
 ```bash
@@ -67,6 +83,11 @@ Current committed metrics report 5/5 unsafe showcase scenarios detected, 1/1
 safe scenario allowed, 0 false positives, 0 false negatives, and trace/report
 availability for all six scenarios. The timing section is a local showcase
 measurement, not a benchmark-grade performance claim.
+
+The production v0.2.2 release separately recorded 1,157 passing tests and 15
+documented skips, plus a clean public installation and byte-identical
+workflow/PyPI artifacts. See the
+[release verification record](results/release-v0.2.2.md).
 
 To run the same proof in GitHub Actions, use
 [`examples/github-actions/agentguard-showcase.yml`](../examples/github-actions/agentguard-showcase.yml).

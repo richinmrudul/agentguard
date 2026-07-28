@@ -1,5 +1,10 @@
 # AgentGuard
 
+[![PyPI version](https://img.shields.io/pypi/v/agentguard-evals)](https://pypi.org/project/agentguard-evals/)
+[![Python versions](https://img.shields.io/pypi/pyversions/agentguard-evals)](https://pypi.org/project/agentguard-evals/)
+[![CI](https://github.com/richinmrudul/agentguard/actions/workflows/ci.yml/badge.svg)](https://github.com/richinmrudul/agentguard/actions/workflows/ci.yml)
+[![License](https://img.shields.io/pypi/l/agentguard-evals)](LICENSE)
+
 AgentGuard is a local-first safety and evaluation harness for AI coding agents
 that detects unsafe behavior across reproducible benchmark runs.
 
@@ -8,6 +13,33 @@ disabling tests, following hidden repository instructions, leaking secrets,
 modifying forbidden files, running unsafe commands, or making suspiciously large
 diffs. AgentGuard treats agents as untrusted contributors and scores observable
 evidence instead of trusting the agent's explanation.
+
+Current release: [`v0.2.2`](https://github.com/richinmrudul/agentguard/releases/tag/v0.2.2),
+available from [production PyPI](https://pypi.org/project/agentguard-evals/0.2.2/).
+
+```bash
+python -m pip install agentguard-evals
+agentguard --version
+agentguard --help
+```
+
+For an isolated CLI installation:
+
+```bash
+pipx install agentguard-evals
+agentguard --version
+agentguard --help
+```
+
+| Identity | Name |
+| --- | --- |
+| Product | AgentGuard |
+| PyPI distribution | `agentguard-evals` |
+| Python import | `agentguard` |
+| Terminal command | `agentguard` |
+
+See the [release process](docs/release.md) and
+[v0.2.2 validation evidence](docs/results/release-v0.2.2.md).
 
 ## What AgentGuard Catches
 
@@ -24,8 +56,13 @@ evidence instead of trusting the agent's explanation.
 
 ## Current Proof
 
-- `v0.2.1` is the latest published GitHub release; it was not uploaded to
-  PyPI, so PyPI publication remains deferred.
+- `v0.2.2` is the current published release and the first production PyPI
+  release under the `agentguard-evals` distribution name.
+- The release used secretless GitHub OIDC Trusted Publishing with digital
+  attestations; the retained workflow wheel and sdist were byte-identical to
+  the public PyPI files.
+- Release validation recorded 1,157 passing tests and 15 documented skips,
+  followed by a clean public installation and network-free smoke evaluation.
 - Dated, commit-scoped test and coverage results are recorded in the
   [validation summary](docs/results/validation-summary.md).
 - The curated showcase detects 5/5 unsafe scenarios, allows 1/1 safe scenario,
@@ -38,6 +75,7 @@ evidence instead of trusting the agent's explanation.
   summaries, and trend analytics.
 
 See the evidence artifacts:
+[`docs/results/release-v0.2.2.md`](docs/results/release-v0.2.2.md),
 [`docs/results/showcase-metrics.md`](docs/results/showcase-metrics.md),
 [`docs/results/adversarial-metrics.md`](docs/results/adversarial-metrics.md),
 [`docs/results/release-candidate-v0.2.0.md`](docs/results/release-candidate-v0.2.0.md),
@@ -45,18 +83,23 @@ and [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Quickstart
 
-Install from a checkout:
+Install the production package with Python 3.9 through 3.12:
 
 ```bash
+python -m pip install agentguard-evals
+agentguard --version
+```
+
+The package contains the `agentguard` import and CLI, but not the repository
+examples. Clone the repository to run the showcase, benchmark fixtures, or
+development checks:
+
+```bash
+git clone https://github.com/richinmrudul/agentguard.git
+cd agentguard
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-agentguard --help
-```
-
-Run the showcase and metrics checks:
-
-```bash
 scripts/showcase_demo.sh
 .venv/bin/python scripts/showcase_metrics.py --check
 .venv/bin/python scripts/adversarial_metrics.py --check
@@ -117,7 +160,7 @@ command/filesystem guard incidents, configured and opt-in built-in
 secret-content enforcement, reports, traces, manifests, CI examples, and
 static report-site analytics, plus the adversarial-core pack, built-in secret
 detector presets, and polling filesystem watcher foundation.
-Roadmap chapters: PyPI publishing, hosted docs/site, broader adversarial
+Roadmap chapters: hosted docs/site, broader adversarial
 benchmark corpus, entropy and user-provided regex detectors, syscall-level
 containment, privileged OS-native watcher integrations, and a hosted dashboard
 or cloud service.
@@ -167,12 +210,12 @@ Docs:
   equivalence reporting, schema compatibility, and limitations.
 - [Testing and quality](docs/testing.md): test layers, coverage measurement,
   CI gate, and known limits.
-- [Changelog](CHANGELOG.md): v0.2.0 readiness notes and released v0.1.0 context.
+- [Changelog](CHANGELOG.md): current and historical release notes.
 - [Release process](docs/release.md): artifact validation and the protected
   production PyPI Trusted Publishing procedure.
 - [MIT License](LICENSE): terms for using and distributing AgentGuard.
 
-## Quickstart
+## Source Checkout For Contributors
 
 ```bash
 python -m venv .venv
@@ -186,7 +229,29 @@ agentguard --help
 AgentGuard supports Python 3.9, 3.10, 3.11, and 3.12. CI tests each listed
 version; versions not listed are not currently claimed as supported.
 
-Install from a source checkout:
+Install from production PyPI and verify the public package:
+
+```bash
+python -m pip install --index-url https://pypi.org/simple agentguard-evals
+python -c "import agentguard; print(agentguard.__version__)"
+agentguard --version
+agentguard --help
+```
+
+For an isolated command installation:
+
+```bash
+pipx install agentguard-evals
+agentguard --version
+```
+
+The similarly named TestPyPI project is unrelated and must not be used as an
+installation source. An ordinary package install includes the `agentguard`
+Python package and terminal command, but it does not include repository
+examples. Clone this repository when you need the examples, demo assets, or
+benchmark fixtures. Docker is required only for Docker-backed evaluations.
+
+Install from a source checkout when contributing or developing:
 
 ```bash
 python -m pip install .
@@ -947,15 +1012,14 @@ Repository examples, docs, tests, workflows, generated `.agentguard` data,
 local databases, caches, and development scripts are excluded from both
 artifacts.
 
-AgentGuard v0.2.1 is the latest published GitHub release. Its production PyPI
-upload failed before publication because PyPI rejected the original
-distribution identity, so PyPI publication remains deferred. Version 0.2.2 is
-being prepared under the PyPI distribution name `agentguard-evals`; the Python
-package and console command remain `agentguard`. After v0.2.2 is published,
-the production installation commands will be `pip install agentguard-evals`
-and `pipx install agentguard-evals`. Until then, use the source-installation
-instructions above. See the [release process](docs/release.md) and
-[changelog](CHANGELOG.md).
+AgentGuard v0.2.2 is published on
+[GitHub](https://github.com/richinmrudul/agentguard/releases/tag/v0.2.2) and
+[production PyPI](https://pypi.org/project/agentguard-evals/0.2.2/) as the
+`agentguard-evals` distribution. The Python package and console command remain
+`agentguard`. Version 0.2.1 remains a valid GitHub-only release because PyPI
+rejected its original distribution identity before upload. See the
+[release process](docs/release.md), [v0.2.2 validation evidence](docs/results/release-v0.2.2.md),
+and [changelog](CHANGELOG.md).
 
 ## Deterministic Evidence
 
@@ -988,7 +1052,6 @@ AgentGuard is available under the [MIT License](LICENSE).
 
 ## Roadmap
 
-- PyPI publishing
 - Hosted docs/site
 - Broader adversarial benchmark corpus
 - Entropy and user-provided regex detectors

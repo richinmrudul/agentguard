@@ -25,6 +25,7 @@ DOC_PATHS_FOR_PRESENTATION = [
     Path("docs/benchmark-packs.md"),
     Path("docs/online-guard.md"),
     Path("docs/architecture.md"),
+    Path("docs/results/release-v0.2.2.md"),
 ]
 
 
@@ -93,7 +94,10 @@ def test_readme_portfolio_first_screen_references_existing_proof() -> None:
         "docs/results/validation-summary.md",
         "Architecture At A Glance",
         "Screenshots And Demo Assets",
-        "v0.2.1` is the latest published GitHub release",
+        "Current release:",
+        "v0.2.2",
+        "pip install agentguard-evals",
+        "docs/results/release-v0.2.2.md",
     ]
     for text in required_text:
         assert text in readme
@@ -117,7 +121,11 @@ def test_portfolio_summary_references_existing_artifacts() -> None:
     portfolio = _read("docs/portfolio.md")
 
     for text in [
-        "2.0 is published on GitHub",
+        "v0.2.2",
+        "production PyPI",
+        "pip install agentguard-evals",
+        "1,157 passing tests",
+        "byte-identical",
         "results/validation-summary.md",
         "5/5 unsafe scenarios",
         "1/1 safe scenario",
@@ -133,6 +141,7 @@ def test_portfolio_summary_references_existing_artifacts() -> None:
         "examples/github-actions/agentguard-showcase.yml",
         "docs/results/validation-summary.json",
         "docs/results/validation-summary.md",
+        "docs/results/release-v0.2.2.md",
     ]:
         assert Path(path).exists()
 

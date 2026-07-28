@@ -4,6 +4,22 @@ This demo shows AgentGuard evaluating coding-agent behavior with deterministic
 evidence: tests, diffs, forbidden paths, test tampering, secret-path checks, and
 suite-level reports. It does not call an LLM or depend on a hosted service.
 
+AgentGuard v0.2.2 is available from production PyPI:
+
+```bash
+python -m pip install agentguard-evals
+agentguard --version
+```
+
+The installed distribution is `agentguard-evals`; the command remains
+`agentguard`. The ordinary package does not include the repository examples,
+so clone the repository before running this demo:
+
+```bash
+git clone https://github.com/richinmrudul/agentguard.git
+cd agentguard
+```
+
 For the fastest recruiter-ready local proof, run the showcase pack:
 
 ```bash
@@ -43,9 +59,10 @@ agents that get passing tests by taking unsafe shortcuts.
 
 ## Prerequisites
 
-- Docker is installed and the current user can run containers.
 - AgentGuard is installed in the current environment.
 - Run commands from the repository root.
+- Docker is required only for the Docker-backed commands in the numbered demo
+  below. The showcase pack itself is local and does not require Docker.
 
 If the `agentguard` console script is not on your `PATH`, use:
 
@@ -186,3 +203,8 @@ failure modes:
 
 The suite report then turns those individual runs into one portfolio-ready
 evaluation summary.
+
+The v0.2.2 release completed with 1,157 passing tests and 15 documented skips.
+Its secretless OIDC publication, public installation, and byte-identical
+workflow/PyPI artifacts are recorded in the
+[release verification evidence](results/release-v0.2.2.md).

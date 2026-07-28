@@ -1,7 +1,9 @@
 # Release Checklist
 
-This checklist governs the corrective v0.2.2 release after its preparation
-pull request is reviewed and merged. Checking an item does not publish anything.
+This checklist is the reusable review gate for production releases. AgentGuard
+v0.2.2 completed this process on 2026-07-28; its immutable release evidence is
+recorded in [`results/release-v0.2.2.md`](results/release-v0.2.2.md). Checking
+an item does not publish anything.
 
 ## Required CI And Local Checks
 
@@ -32,18 +34,21 @@ pull request is reviewed and merged. Checking an item does not publish anything.
 - [ ] Tag `v0.2.2` points to the reviewed release commit.
 - [ ] Workflow artifact checksums match the downloaded files.
 
-## One-Time Publishing Configuration
+## Established Publishing Configuration
 
-- [ ] Production PyPI pending publisher uses project `agentguard-evals`, owner
+- [ ] Production PyPI active publisher uses project `agentguard-evals`, owner
   `richinmrudul`, repository `agentguard`, workflow `publish.yml`, and
   environment `pypi`.
 - [ ] GitHub environment `pypi` exists and requires manual approval.
-- [ ] Before release, replace its selected tag rule `v0.2.1` with `v0.2.2`.
+- [ ] The environment allows only the exact proposed release tag. Version
+  0.2.2 used the selected tag rule `v0.2.2`.
+- [ ] Before a future release, replace the prior tag rule with only the new
+  reviewed version tag.
 - [ ] No PyPI token, password, or long-lived publication secret exists.
 - [ ] Workflow default permission is `contents: read`.
 - [ ] Only the protected publication job has `id-token: write`.
-- [ ] Production PyPI still reports `agentguard-evals` and version `0.2.2` as
-  unused immediately before the release is created.
+- [ ] Production PyPI reports the proposed new version as unused immediately
+  before the release is created.
 
 ## TestPyPI Exclusion
 
@@ -65,6 +70,8 @@ pull request is reviewed and merged. Checking an item does not publish anything.
 - [ ] Confirm the publish job downloads the validated artifact without rebuild.
 - [ ] Verify production PyPI, installed distribution version, CLI version, and
   GitHub release tag after publication.
+- [ ] Verify PyPI digital attestations and compare public wheel/sdist SHA-256
+  hashes with the exact retained workflow files.
 
 ## Failure And Immutability Review
 

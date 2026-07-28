@@ -33,6 +33,7 @@ README = ROOT / "README.md"
 RELEASE_DOC = ROOT / "docs/release.md"
 RELEASE_CHECKLIST = ROOT / "docs/release-checklist.md"
 PORTFOLIO = ROOT / "docs/portfolio.md"
+RELEASE_EVIDENCE = ROOT / "docs/results/release-v0.2.2.md"
 EVALUATION_DOC = ROOT / "docs/evaluation.md"
 READINESS_JSON = ROOT / "docs/results/release-readiness-v0.2.json"
 READINESS_MD = ROOT / "docs/results/release-readiness-v0.2.md"
@@ -142,7 +143,7 @@ def test_release_readiness_documents_and_license_agree() -> None:
     assert license_text.startswith("MIT License\n")
     assert "Copyright (c) 2026 Richin Mrudul" in license_text
     assert "## Unreleased" in changelog
-    assert "## Unreleased - v0.2.2 Release Preparation" in changelog
+    assert "## v0.2.2 - 2026-07-28" in changelog
     assert "## v0.2.1 - 2026-07-27" in changelog
     assert "## v0.2.0 - 2026-07-17" in changelog
     assert "## v0.1.0 - Released" in changelog
@@ -174,8 +175,10 @@ def test_release_readiness_documents_and_license_agree() -> None:
         "poetry publish",
     )
     assert not any(command in release_doc for command in forbidden_publish_commands)
-    for document in (readme, release_doc, portfolio):
+    for document in (readme, release_doc):
         assert "v0.2.0" in document
+    for document in (readme, release_doc, portfolio):
+        assert "v0.2.2" in document
     for document in (readme, portfolio):
         assert "published" in document
     for stale_instruction in (
@@ -194,6 +197,34 @@ def test_release_readiness_documents_and_license_agree() -> None:
     assert "production PyPI Trusted Publishing" in release_doc
     assert "`agentguard-evals`" in release_doc
     assert "v0.2.1 is a valid published GitHub release" in release_doc
+    assert RELEASE_EVIDENCE.exists()
+
+
+def test_v0_2_2_public_release_documentation_is_consistent() -> None:
+    readme = README.read_text(encoding="utf-8")
+    changelog = CHANGELOG.read_text(encoding="utf-8")
+    release_doc = RELEASE_DOC.read_text(encoding="utf-8")
+    release_checklist = RELEASE_CHECKLIST.read_text(encoding="utf-8")
+    portfolio = PORTFOLIO.read_text(encoding="utf-8")
+    evidence = RELEASE_EVIDENCE.read_text(encoding="utf-8")
+    current_docs = "\n".join(
+        (readme, changelog, release_doc, release_checklist, portfolio, evidence)
+    )
+
+    assert "agentguard-evals==0.2.2" in current_docs
+    assert "import agentguard" in current_docs
+    assert "`agentguard`" in current_docs
+    assert "1,157" in evidence
+    assert "15" in evidence
+    assert "OIDC Trusted Publishing" in evidence
+    assert "byte-identical" in evidence
+    assert "v0.2.1 remains a valid GitHub-only release" in evidence
+    assert (
+        "https://github.com/richinmrudul/agentguard/releases/tag/v0.2.2"
+        in current_docs
+    )
+    assert "https://pypi.org/project/agentguard-evals/0.2.2/" in current_docs
+    assert "PyPI publication remains deferred" not in current_docs
 
 
 def test_release_readiness_script_and_artifacts_are_valid() -> None:
