@@ -9,7 +9,30 @@ elif [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
 else
   PYTHON_BIN=python3
 fi
-OUTPUT_DIR=${1:-"$ROOT_DIR/dist"}
+OUTPUT_DIR="$ROOT_DIR/dist"
+VALIDATION_MODE=ordinary-ci
+
+for argument in "$@"; do
+  case "$argument" in
+    --ordinary-ci)
+      VALIDATION_MODE=ordinary-ci
+      ;;
+    --strict-release-tag)
+      VALIDATION_MODE=strict-release
+      ;;
+    -*)
+      printf 'Unknown option: %s\n' "$argument" >&2
+      exit 2
+      ;;
+    *)
+      if [[ "$OUTPUT_DIR" != "$ROOT_DIR/dist" ]]; then
+        printf 'Only one output directory may be provided.\n' >&2
+        exit 2
+      fi
+      OUTPUT_DIR=$argument
+      ;;
+  esac
+done
 
 cleanup() {
   rm -rf "$ROOT_DIR/build"
@@ -21,8 +44,13 @@ section() {
 }
 
 section "Prepare release output"
-"$PYTHON_BIN" "$ROOT_DIR/scripts/validate_release_artifacts.py" \
-  --check-version-tag
+if [[ "$VALIDATION_MODE" == strict-release ]]; then
+  "$PYTHON_BIN" "$ROOT_DIR/scripts/validate_release_artifacts.py" \
+    --strict-release-tag
+else
+  "$PYTHON_BIN" "$ROOT_DIR/scripts/validate_release_artifacts.py" \
+    --ordinary-ci
+fi
 rm -rf "$ROOT_DIR/build"
 mkdir -p "$OUTPUT_DIR"
 find "$OUTPUT_DIR" -maxdepth 1 \

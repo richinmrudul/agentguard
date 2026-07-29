@@ -64,7 +64,7 @@ jobs:
             "build>=1.2.0,<2.0.0" "setuptools>=77"
 
       - name: Build wheel and source distribution once
-        run: bash scripts/build_release.sh
+        run: bash scripts/build_release.sh --strict-release-tag
 
       - name: Validate artifact metadata and release version
         env:
