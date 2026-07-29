@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import email.parser
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -77,19 +78,58 @@ def project_version(root: Path) -> str:
     raise AssertionError("pyproject.toml is missing project.version")
 
 
-def validate_version_tag(root: Path, version: str) -> None:
+def validate_ordinary_package_context(root: Path) -> None:
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    package_init = (root / "agentguard/__init__.py").read_text(encoding="utf-8")
+    package_version_match = re.search(
+        r'(?m)^__version__\s*=\s*"([^"]+)"\s*$',
+        package_init,
+    )
+    if package_version_match is None:
+        raise AssertionError("agentguard.__version__ is missing")
+    declared_version = project_version(root)
+    package_version = package_version_match.group(1)
+    if package_version != declared_version:
+        raise AssertionError(
+            "Package version mismatch: "
+            f"pyproject={declared_version!r}, agentguard={package_version!r}"
+        )
+    if not re.search(
+        rf'(?m)^name\s*=\s*"{re.escape(EXPECTED_NAME)}"\s*$',
+        pyproject,
+    ):
+        raise AssertionError(
+            f"pyproject.toml must declare distribution {EXPECTED_NAME!r}"
+        )
+    if not re.search(
+        r'(?m)^agentguard\s*=\s*"agentguard\.cli\.main:app"\s*$',
+        pyproject,
+    ):
+        raise AssertionError(
+            "pyproject.toml must preserve the agentguard console entry point"
+        )
+
+
+def validate_strict_release_tag(root: Path, version: str) -> None:
     tag = f"v{version}"
-    tagged_commit = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}^{{commit}}"],
+    tag_type = subprocess.run(
+        ["git", "cat-file", "-t", f"refs/tags/{tag}"],
         cwd=root,
         check=False,
         capture_output=True,
         text=True,
     )
-    if tagged_commit.returncode == 1:
-        return
-    if tagged_commit.returncode != 0:
-        raise AssertionError(f"Could not inspect release tag {tag}.")
+    if tag_type.returncode != 0:
+        raise AssertionError(f"Strict release tag {tag} does not exist.")
+    if tag_type.stdout.strip() != "tag":
+        raise AssertionError(f"Strict release tag {tag} must be annotated.")
+    tagged_commit = subprocess.run(
+        ["git", "rev-parse", f"refs/tags/{tag}^{{commit}}"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=root,
@@ -97,12 +137,16 @@ def validate_version_tag(root: Path, version: str) -> None:
         capture_output=True,
         text=True,
     ).stdout.strip()
-    tagged = tagged_commit.stdout.strip()
-    if tagged != head:
+    if tagged_commit != head:
         raise AssertionError(
-            f"Version {version} is already tagged at {tagged}; "
+            f"Strict release tag {tag} points to {tagged_commit}; "
             f"current HEAD is {head}."
         )
+
+
+def validate_strict_release_context(root: Path) -> None:
+    validate_ordinary_package_context(root)
+    validate_strict_release_tag(root, project_version(root))
 
 
 def _wheel_members(path: Path) -> set[str]:
@@ -243,9 +287,13 @@ def validate_release_readiness(root: Path) -> None:
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
-    if sys.argv[1:] == ["--check-version-tag"]:
-        validate_version_tag(root, project_version(root))
-        print("Release version tag is consistent with HEAD.")
+    if sys.argv[1:] == ["--ordinary-ci"]:
+        validate_ordinary_package_context(root)
+        print("Ordinary package context validated without binding HEAD to a tag.")
+        return 0
+    if sys.argv[1:] == ["--strict-release-tag"]:
+        validate_strict_release_context(root)
+        print("Strict package context and release tag validated.")
         return 0
     if len(sys.argv) == 1:
         validate_release_readiness(root)
@@ -253,7 +301,8 @@ def main() -> int:
         return 0
     if len(sys.argv) != 3:
         print(
-            "Usage: validate_release_artifacts.py [WHEEL SDIST]",
+            "Usage: validate_release_artifacts.py "
+            "[--ordinary-ci | --strict-release-tag | WHEEL SDIST]",
             file=sys.stderr,
         )
         return 2

@@ -52,7 +52,10 @@ def test_publish_workflow_builds_once_and_reuses_validated_artifact() -> None:
     publish = jobs["publish"]
     source = WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    assert source.count("bash scripts/build_release.sh") == 1
+    assert source.count(
+        "bash scripts/build_release.sh --strict-release-tag"
+    ) == 1
+    assert "--ordinary-ci" not in source
     assert 'bash scripts/package_smoke.sh "$GITHUB_WORKSPACE/dist"' in source
     assert publish["needs"] == "build"
     assert not any("checkout" in action for action in _uses(publish))

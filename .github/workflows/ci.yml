@@ -144,7 +144,7 @@ jobs:
           python -m pip install -e ".[dev]"
 
       - name: Build and validate wheel and source distribution
-        run: bash scripts/build_release.sh
+        run: bash scripts/build_release.sh --ordinary-ci
 
       - name: Install wheel outside source checkout
         shell: bash
