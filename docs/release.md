@@ -122,12 +122,26 @@ bash scripts/package_smoke.sh
 .venv/bin/python scripts/adversarial_metrics.py --check
 ```
 
-`build_release.sh` creates a wheel and source distribution under `dist/`,
-checks that the current version is not already tagged at another commit, and
-validates package metadata and members. It never publishes artifacts.
+`build_release.sh` creates a wheel and source distribution under `dist/` and
+validates package metadata and members. Its default ordinary-CI mode does not
+assert that `HEAD` is the target of the current version's release tag:
+post-release commits are expected, while published tags remain immutable. It
+never publishes artifacts.
 `package_smoke.sh` normally builds temporary distributions. The publishing
 workflow passes its already-built `dist/` directory so the workflow installs
 and exercises the exact wheel without rebuilding.
+
+Strict release validation is explicit and must run only on the exact commit
+being tagged and published:
+
+```bash
+bash scripts/build_release.sh --strict-release-tag
+```
+
+That mode requires an annotated `v${VERSION}` tag derived from the package
+version and requires the tag to dereference to `HEAD`. The publishing workflow
+uses this strict mode in addition to its release-event, distribution-name, and
+artifact metadata checks.
 
 Inspect both distributions:
 

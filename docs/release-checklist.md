@@ -57,6 +57,9 @@ pull request is reviewed and merged. Checking an item does not publish anything.
 
 - [ ] Select the reviewed merge commit and rerun all validation on it.
 - [ ] Create and push annotated tag `v0.2.2`; do not create tags automatically.
+- [ ] Run `bash scripts/build_release.sh --strict-release-tag` on the exact
+  tagged commit before publication; ordinary CI intentionally permits valid
+  post-release commits after an immutable tag.
 - [ ] Create the GitHub release for the existing tag with `--verify-tag`.
 - [ ] Inspect the publish workflow build logs and retained distributions.
 - [ ] Confirm the build job succeeded before considering environment approval.
