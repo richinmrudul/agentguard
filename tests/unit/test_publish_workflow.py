@@ -149,7 +149,7 @@ def test_all_publish_workflow_actions_use_immutable_sha_pins() -> None:
         assert FULL_SHA.fullmatch(ref), action
 
 
-def test_release_docs_record_distribution_setup_and_recovery() -> None:
+def test_release_docs_record_active_publisher_and_recovery() -> None:
     release_doc = RELEASE_DOC.read_text(encoding="utf-8")
     checklist = RELEASE_CHECKLIST.read_text(encoding="utf-8")
     combined = f"{release_doc}\n{checklist}"
@@ -159,7 +159,8 @@ def test_release_docs_record_distribution_setup_and_recovery() -> None:
         "belongs to an unrelated project",
         "independent project ownership",
         "clean environment",
-        "Production PyPI pending publisher",
+        "Production PyPI publisher",
+        "active production project publisher",
         "`agentguard-evals`",
         "`richinmrudul`",
         "`agentguard`",
@@ -172,11 +173,12 @@ def test_release_docs_record_distribution_setup_and_recovery() -> None:
         "Tag/version/name mismatch",
         "Production package-name race",
         "GitHub release exists but PyPI publication failed",
-        "v0.2.1 incident",
+        "Historical v0.2.1 Publication Incident",
         "cannot be\noverwritten",
         "new package version",
-        "change its selected tag",
-        "`v0.2.1` to `v0.2.2`",
+        "selected-tag deployment rule",
+        "allowed only `v0.2.2`",
+        "byte-identical",
     ):
         assert required in combined
 
@@ -189,19 +191,33 @@ def test_release_docs_record_distribution_setup_and_recovery() -> None:
     assert "tar -tzf" in release_doc
 
 
-def test_readme_does_not_claim_production_pypi_availability() -> None:
+def test_readme_documents_current_production_pypi_availability() -> None:
     readme = README.read_text(encoding="utf-8")
 
-    assert "v0.2.1" in readme
-    assert "latest published GitHub release" in readme
-    assert "PyPI publication remains deferred" in readme
-    assert "After v0.2.2 is published" in readme
-    assert "Until then, use the source-installation" in readme
+    assert "Current release:" in readme
+    assert "`v0.2.2`" in readme
+    assert "production PyPI" in readme
     assert "pip install agentguard-evals" in readme
     assert "pipx install agentguard-evals" in readme
+    assert "Python import | `agentguard`" in readme
+    assert "Terminal command | `agentguard`" in readme
+    assert (
+        "https://pypi.org/project/agentguard-evals/0.2.2/"
+        in readme
+    )
+    assert (
+        "https://github.com/richinmrudul/agentguard/releases/tag/v0.2.2"
+        in readme
+    )
+    assert "docs/results/release-v0.2.2.md" in readme
+    assert "PyPI publication remains deferred" not in readme
+    assert "After v0.2.2 is published" not in readme
     assert "pip install agentguard\n" not in readme
     assert "pipx install agentguard\n" not in readme
     assert "test.pypi.org" not in readme.lower()
+    assert "TestPyPI project is unrelated" in readme
+    assert "img.shields.io/pypi/v/agentguard-evals" in readme
+    assert "img.shields.io/pypi/pyversions/agentguard-evals" in readme
 
 
 def test_historical_release_artifacts_keep_original_identities() -> None:

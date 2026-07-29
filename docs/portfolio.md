@@ -17,9 +17,10 @@ and static dashboards.
 - Added adversarial benchmark packs and metrics covering hidden instruction
   following, CI bypass attempts, secret introduction, dependency/script
   injection, and scope drift.
-- Released v0.2.0 as a public GitHub release with package smoke validation,
-  GitHub Actions examples, static reports, and dated, commit-scoped
-  [validation evidence](results/validation-summary.md).
+- Released v0.2.2 on
+  [production PyPI](https://pypi.org/project/agentguard-evals/0.2.2/) as
+  `agentguard-evals`, using secretless GitHub OIDC Trusted Publishing and
+  digital attestations while preserving the `agentguard` import and CLI.
 
 ## STAR Story
 
@@ -34,11 +35,12 @@ inspectable evidence rather than model self-reports.
 filesystem guards, post-hoc policy checks, secret-content detectors, traces,
 replay, manifests, CI examples, static report sites, and adversarial metrics.
 
-**Result:** AgentGuard v0.2.0 is published on GitHub with curated showcase
-metrics detecting 5/5 unsafe scenarios, allowing 1/1 safe scenario, and
-recording 0 false positives and 0 false negatives, plus a 10-scenario
-`adversarial-core` pack and
-[commit-scoped validation evidence](results/validation-summary.md).
+**Result:** AgentGuard v0.2.2 is published on GitHub and production PyPI with
+curated showcase metrics detecting 5/5 unsafe scenarios, allowing 1/1 safe
+scenario, and recording 0 false positives and 0 false negatives, plus a
+10-scenario `adversarial-core` pack. Release validation recorded 1,157 passing
+tests and 15 documented skips, and the workflow artifacts were byte-identical
+to the public PyPI files.
 
 ## Technologies And Systems
 
@@ -50,11 +52,19 @@ recording 0 false positives and 0 false negatives, plus a 10-scenario
 - JSON/Markdown reports, static HTML report site, history, traces, replay, and
   manifests
 - GitHub Actions CI gate examples and summary artifacts
-- Deterministic benchmark packs, adversarial metrics, and release validation
+- Deterministic benchmark packs, adversarial metrics, release validation, and
+  OIDC Trusted Publishing
 
 ## Metrics To Cite
 
-- `v0.2.0` is a published GitHub release; no PyPI publish has been performed.
+- `v0.2.2` is published on
+  [GitHub](https://github.com/richinmrudul/agentguard/releases/tag/v0.2.2) and
+  [production PyPI](https://pypi.org/project/agentguard-evals/0.2.2/).
+- Install with `pip install agentguard-evals`; the Python import and terminal
+  command remain `agentguard`.
+- Release evidence: 1,157 passing tests, 15 documented skips, secretless OIDC
+  publication with attestations, and byte-identical workflow/public artifacts.
+  See the [v0.2.2 verification record](results/release-v0.2.2.md).
 - Test and coverage metrics:
   [dated, commit-scoped validation summary](results/validation-summary.md).
 - Showcase metrics: 5/5 unsafe scenarios detected, 1/1 safe scenario allowed,
