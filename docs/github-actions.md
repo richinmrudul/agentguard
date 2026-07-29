@@ -73,7 +73,7 @@ summary page. The summary includes result, score, failed and warning checks, cha
 file counts, and report paths; it does not include full command stdout or stderr.
 
 The example workflows upload JSON, Markdown, command-log, and manifest artifacts
-with `actions/upload-artifact@v4`. Generated artifacts remain under
+with `actions/upload-artifact@v6.0.0`. Generated artifacts remain under
 `.agentguard/...` or `docs/results/...`; do not commit `.agentguard/` runtime
 directories.
 
@@ -146,11 +146,11 @@ jobs:
   agentguard:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.11"
 
@@ -170,10 +170,10 @@ permissions:
   contents: read
 
 steps:
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
     with:
       fetch-depth: 0
-  - uses: actions/setup-python@v5
+  - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
     with:
       python-version: "3.11"
   - run: python -m pip install -e ".[dev]"
@@ -199,7 +199,7 @@ metrics flow:
 
 ```yaml
 - run: python scripts/showcase_metrics.py
-- uses: actions/upload-artifact@v4
+- uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
   with:
     name: agentguard-showcase-metrics
     path: |
