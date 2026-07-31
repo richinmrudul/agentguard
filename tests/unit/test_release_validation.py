@@ -538,7 +538,10 @@ def test_ci_workflow_separates_compatibility_docker_and_package_jobs() -> None:
         jobs["compatibility"]
     )
     assert "python -m pytest" in str(jobs["integration"])
-    assert "actions/upload-artifact@v4" in str(jobs["package"])
+    assert (
+        "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f"
+        in str(jobs["package"])
+    )
     assert "scripts/build_release.sh --ordinary-ci" in str(jobs["package"])
     assert "--strict-release-tag" not in str(jobs["package"])
     package_checkout = jobs["package"]["steps"][0]

@@ -11,6 +11,12 @@ COVERAGE_SCRIPT = ROOT / "scripts/coverage.sh"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 README = ROOT / "README.md"
 TESTING_DOC = ROOT / "docs/testing.md"
+SETUP_PYTHON = (
+    "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405"
+)
+UPLOAD_ARTIFACT = (
+    "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f"
+)
 
 
 def _load_pyproject() -> dict:
@@ -57,11 +63,11 @@ def test_ci_enforces_coverage_and_uploads_local_artifacts() -> None:
     setup_step = next(
         step
         for step in coverage_job["steps"]
-        if step.get("uses") == "actions/setup-python@v5"
+        if step.get("uses") == SETUP_PYTHON
     )
     assert setup_step["with"]["python-version"] == "3.11"
     assert "scripts/coverage.sh --html" in serialized
-    assert "actions/upload-artifact@v4" in serialized
+    assert UPLOAD_ARTIFACT in serialized
     assert "coverage/coverage.xml" in serialized
     assert "coverage/html/" in serialized
     assert "codecov" not in serialized.lower()

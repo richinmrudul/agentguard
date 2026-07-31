@@ -15,6 +15,13 @@ WORKFLOW_PATHS = {
     "agentguard-showcase.yml",
 }
 CORE_SUITE_PATH = Path("examples/suites/core.yaml")
+CHECKOUT = "actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd"
+SETUP_PYTHON = (
+    "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405"
+)
+UPLOAD_ARTIFACT = (
+    "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f"
+)
 
 
 def _workflow_path(name: str) -> Path:
@@ -67,7 +74,7 @@ def _artifact_steps(workflow: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         step
         for step in _steps(workflow)
-        if step.get("uses") == "actions/upload-artifact@v4"
+        if step.get("uses") == UPLOAD_ARTIFACT
     ]
 
 
@@ -76,8 +83,8 @@ def test_github_actions_examples_parse_and_use_supported_actions() -> None:
         workflow = _workflow(name)
         assert "jobs" in workflow
         used_actions = set(_uses(workflow))
-        assert "actions/checkout@v4" in used_actions
-        assert "actions/setup-python@v5" in used_actions
+        assert CHECKOUT in used_actions
+        assert SETUP_PYTHON in used_actions
         assert not any("@v1" in action or "@v2" in action for action in used_actions)
 
 
