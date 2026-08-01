@@ -41,10 +41,10 @@ agentguard --help
 See the [release process](docs/release.md) and
 [v0.2.2 validation evidence](docs/results/release-v0.2.2.md).
 
-The [hosted documentation](https://richinmrudul.github.io/agentguard/) is
-deployed through GitHub Pages after the repository's Pages workflow is enabled.
-Until deployment is verified, browse the same maintained documentation under
-[`docs/`](docs/).
+The [hosted documentation](https://richinmrudul.github.io/agentguard/) is live
+on GitHub Pages. Its source remains available under [`docs/`](docs/), and the
+[deployment evidence](docs/results/github-pages-v0.2.2.md) records the verified
+workflow and public-site state.
 
 ## What AgentGuard Catches
 

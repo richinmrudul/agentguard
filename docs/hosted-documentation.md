@@ -33,18 +33,24 @@ The workflow defaults to `contents: read`. Only the deploy job receives
 `pages: write` and `id-token: write`. It uses no repository secret or
 long-lived deployment credential.
 
-## Required one-time repository setting
+## Current deployment
 
-After the workflow is merged, a repository owner must open **Settings → Pages**
-and, under **Build and deployment**, select **GitHub Actions** as the source.
-Then run the documentation workflow from `main` if a push build is not already
-queued. Verify the deployment and the expected URL:
+GitHub Pages is enabled with **GitHub Actions** as its build source. The
+documentation workflow deploys the exact site artifact built from `main` to:
 
 <https://richinmrudul.github.io/agentguard/>
 
-Until that post-merge deployment succeeds and the URL is verified, repository
-documentation must describe the site as configured for GitHub Pages rather
-than already live. No custom domain is configured by this repository.
+The first successful deployment used source commit
+`1da1431b9081fd292c786b74a5c527d229144497`. The
+[deployment evidence](results/github-pages-v0.2.2.md) records the initial
+missing-setting failure, the successful rerun, and public verification. No
+custom domain is configured.
+
+For a new repository or recovery after Pages is disabled, a repository owner
+must open **Settings → Pages** and, under **Build and deployment**, select
+**GitHub Actions** as the source. Rerun the failed Documentation workflow jobs
+or dispatch `docs.yml` from the exact current `main` commit, then verify the
+deployment URL before describing it as live.
 
 ## Publishing boundary
 
