@@ -30,6 +30,11 @@ It produces `.agentguard/showcase/showcase-summary.json` and
 `.agentguard/showcase/showcase-summary.md`, with a committed sample at
 [`docs/results/showcase-summary.json`](results/showcase-summary.json).
 
+The [visual tour](screenshots.md) shows the generated dashboard, a sanitized
+guard incident detail, and the corresponding trend evidence. The
+[screenshot source record](assets/screenshots/README.md) documents the exact
+fixture, capture, and sanitization boundaries.
+
 To regenerate the quoteable detection-quality and local timing proof, run:
 
 ```bash
