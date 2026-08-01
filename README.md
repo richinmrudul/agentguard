@@ -46,6 +46,11 @@ on GitHub Pages. Its source remains available under [`docs/`](docs/), and the
 [deployment evidence](docs/results/github-pages-v0.2.2.md) records the verified
 workflow and public-site state.
 
+![AgentGuard evaluation dashboard showing deterministic safe and unsafe showcase results](docs/assets/screenshots/agentguard-dashboard.png)
+
+See the [visual tour](docs/screenshots.md) for the hosted documentation,
+sanitized guard incident detail, and evaluation evidence behind this dashboard.
+
 ## What AgentGuard Catches
 
 | Risk | Example | Detection surface |

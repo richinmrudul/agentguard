@@ -18,6 +18,13 @@ The generated `site/` directory is ignored and must not be committed.
 Architecture diagrams use the pinned Mermaid 11.16.0 browser renderer; the
 documentation build itself remains Python-only and requires no Node.js toolchain.
 
+Maintained product screenshots live under `docs/assets/screenshots/` and use
+repository-relative references so they work on GitHub and beneath the
+`/agentguard/` Pages subpath. The [visual tour](screenshots.md) provides
+meaningful alt text and context; the adjacent
+[source record](assets/screenshots/README.md) documents capture and
+sanitization. Generated report sites remain separate and are not committed.
+
 ## GitHub Pages workflow
 
 `.github/workflows/docs.yml` performs two distinct operations:

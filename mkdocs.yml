@@ -77,6 +77,7 @@ validation:
 
 not_in_nav: |
   /results/*
+  /assets/screenshots/README.md
 
 nav:
   - Home: index.md
@@ -84,6 +85,7 @@ nav:
       - Installation and Quickstart: quickstart.md
       - Demo: demo.md
       - Showcase: showcase.md
+      - Visual Tour: screenshots.md
   - Core Concepts:
       - Architecture: architecture.md
       - Benchmarks and Suites: benchmarks.md

@@ -67,6 +67,12 @@ This uses a safe, network-free local fixture and produces inspectable evidence
 under `.agentguard/`. See the [quickstart](quickstart.md) for identity,
 installation, Docker, and example boundaries.
 
+![AgentGuard evaluation dashboard showing eight deterministic records, one safe pass, seven detected failures, and benchmark categories](assets/screenshots/agentguard-dashboard.png)
+
+The dashboard is real output from the repository's deterministic showcase plus
+one audit-mode guard incident. Explore the other maintained captures in the
+[visual tour](screenshots.md).
+
 ## Current evidence
 
 - More than 1,170 tests pass with 15 documented local skips; Docker-gated
