@@ -90,7 +90,7 @@ workflow/PyPI artifacts. See the
 [release verification record](results/release-v0.2.2.md).
 
 To run the same proof in GitHub Actions, use
-[`examples/github-actions/agentguard-showcase.yml`](../examples/github-actions/agentguard-showcase.yml).
+[`examples/github-actions/agentguard-showcase.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-showcase.yml).
 It uploads the committed `docs/results` summaries plus generated
 `.agentguard/showcase` JSON/Markdown reports as CI artifacts.
 

@@ -1,0 +1,119 @@
+site_name: AgentGuard
+site_description: Local-first safety and evaluation for observable coding-agent behavior.
+site_url: https://richinmrudul.github.io/agentguard/
+repo_url: https://github.com/richinmrudul/agentguard
+repo_name: richinmrudul/agentguard
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 AgentGuard contributors · MIT License
+
+theme:
+  name: material
+  language: en
+  features:
+    - content.code.copy
+    - content.code.select
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - https://unpkg.com/mermaid@11.16.0/dist/mermaid.min.js
+
+validation:
+  links:
+    absolute_links: relative_to_docs
+    anchors: warn
+    not_found: warn
+  nav:
+    omitted_files: warn
+    absolute_links: warn
+    not_found: warn
+
+not_in_nav: |
+  /results/*
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation and Quickstart: quickstart.md
+      - Demo: demo.md
+      - Showcase: showcase.md
+  - Core Concepts:
+      - Architecture: architecture.md
+      - Benchmarks and Suites: benchmarks.md
+      - Real-Agent Evaluations: evaluation.md
+      - Online Guard: online-guard.md
+  - Evaluation and Evidence:
+      - Detection Quality: detection-quality.md
+      - Policy Ablation: policy-ablation.md
+      - Performance: performance.md
+      - Scalability: scalability.md
+      - Resumable Matrices: resume.md
+  - Artifacts:
+      - Reports and CI Exports: ci-exports.md
+      - Static Report Sites: static-site.md
+      - Traces: traces.md
+      - Replay: replay.md
+      - Metamorphic Traces: metamorphic-traces.md
+  - Benchmark Engineering:
+      - Registry and Contracts: benchmarks.md
+      - Benchmark Packs: benchmark-packs.md
+      - Pack Signing: benchmark-pack-signing.md
+      - Pack Indexes: benchmark-pack-index.md
+      - Fuzzing: benchmark-fuzzing.md
+  - Integration:
+      - GitHub Actions: github-actions.md
+      - Composite Action: action.md
+      - Hosted Documentation: hosted-documentation.md
+  - Project:
+      - Testing and Quality: testing.md
+      - Release Process: release.md
+      - Release Checklist: release-checklist.md
+      - Portfolio Summary: portfolio.md
+      - Changelog: https://github.com/richinmrudul/agentguard/blob/main/CHANGELOG.md

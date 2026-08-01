@@ -76,9 +76,9 @@ errors with exit code `2`; they are not encoded as JUnit failures.
 
 GitHub Code Scanning upload requires `security-events: write` permission on the
 workflow job. A copyable example lives at
-[`examples/github-actions/agentguard-sarif-junit.yml`](../examples/github-actions/agentguard-sarif-junit.yml).
-Use [`examples/github-actions/agentguard-ci.yml`](../examples/github-actions/agentguard-ci.yml)
-or [`examples/github-actions/agentguard-pr-summary.yml`](../examples/github-actions/agentguard-pr-summary.yml)
+[`examples/github-actions/agentguard-sarif-junit.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-sarif-junit.yml).
+Use [`examples/github-actions/agentguard-ci.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-ci.yml)
+or [`examples/github-actions/agentguard-pr-summary.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-pr-summary.yml)
 when you only need a merge-blocking CI gate, Markdown/JSON artifacts, and the
 GitHub job summary. SARIF/JUnit are optional exports for Code Scanning and
 test-report viewers.
