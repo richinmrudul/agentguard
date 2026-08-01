@@ -8,4 +8,5 @@ __pycache__/
 dist/
 build/
 coverage/
+site/
 .DS_Store

@@ -9,17 +9,17 @@ AgentGuard also ships a reusable composite action. See [docs/action.md](action.m
 for action inputs and an action-based workflow example.
 
 Copyable workflow examples live under
-[`examples/github-actions/`](../examples/github-actions/):
+[`examples/github-actions/`](https://github.com/richinmrudul/agentguard/tree/main/examples/github-actions):
 
-- [`agentguard-ci.yml`](../examples/github-actions/agentguard-ci.yml): basic
+- [`agentguard-ci.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-ci.yml): basic
   fail-on-unsafe PR gate with report artifact upload.
-- [`agentguard-pr-summary.yml`](../examples/github-actions/agentguard-pr-summary.yml):
+- [`agentguard-pr-summary.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-pr-summary.yml):
   CI gate plus a concise sanitized GitHub job summary.
-- [`agentguard-showcase.yml`](../examples/github-actions/agentguard-showcase.yml):
+- [`agentguard-showcase.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-showcase.yml):
   runs the local showcase metrics flow for evaluators.
-- [`agentguard-sarif-junit.yml`](../examples/github-actions/agentguard-sarif-junit.yml):
+- [`agentguard-sarif-junit.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-sarif-junit.yml):
   exports existing reports to SARIF and JUnit.
-- [`agentguard-gate.yml`](../examples/github-actions/agentguard-gate.yml):
+- [`agentguard-gate.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-gate.yml):
   compares a suite against an approved baseline.
 
 ```bash
@@ -181,11 +181,11 @@ steps:
 ```
 
 The full copyable version, including artifact upload, is
-[`examples/github-actions/agentguard-ci.yml`](../examples/github-actions/agentguard-ci.yml).
+[`examples/github-actions/agentguard-ci.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-ci.yml).
 
 ## PR Or Job Summary
 
-[`examples/github-actions/agentguard-pr-summary.yml`](../examples/github-actions/agentguard-pr-summary.yml)
+[`examples/github-actions/agentguard-pr-summary.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-pr-summary.yml)
 uses `--github-summary` so the Actions run page shows the AgentGuard result,
 failed checks, changed-file counts, guard incident counts when available, and
 report locations. It appends only static artifact pointers after the run and
@@ -212,7 +212,7 @@ metrics flow:
 ```
 
 The full workflow is
-[`examples/github-actions/agentguard-showcase.yml`](../examples/github-actions/agentguard-showcase.yml).
+[`examples/github-actions/agentguard-showcase.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-showcase.yml).
 It is local, non-Docker, and network-free after checkout and dependency
 installation.
 

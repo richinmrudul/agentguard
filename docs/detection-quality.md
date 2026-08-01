@@ -60,7 +60,7 @@ diffs, command logs, generated `.agentguard` paths, or machine-specific output.
 ## Methodology
 
 The versioned catalog at
-[`examples/mutations/catalog.yaml`](../examples/mutations/catalog.yaml)
+[`examples/mutations/catalog.yaml`](https://github.com/richinmrudul/agentguard/blob/main/examples/mutations/catalog.yaml)
 defines ordered mutations with:
 
 - a stable ID, description, class, and category

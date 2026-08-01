@@ -6,10 +6,9 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ACTIVE_WORKFLOWS = (
-    ROOT / ".github/workflows/ci.yml",
-    ROOT / ".github/workflows/publish.yml",
-)
+ACTIVE_WORKFLOWS = tuple(sorted((ROOT / ".github/workflows").glob("*.yml")))
+CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
+PUBLISH_WORKFLOW = ROOT / ".github/workflows/publish.yml"
 EXAMPLE_WORKFLOWS = tuple(
     sorted((ROOT / "examples/github-actions").glob("*.yml"))
 )
@@ -35,6 +34,18 @@ PINNED_RELEASES = {
     "actions/download-artifact": (
         "37930b1c2abaa49bbe596cd826c3c89aef350131",
         "v7.0.0",
+    ),
+    "actions/configure-pages": (
+        "45bfe0192ca1faeb007ade9deae92b16b8254a0d",
+        "v6.0.0",
+    ),
+    "actions/upload-pages-artifact": (
+        "fc324d3547104276b827a68afc52ff2a11cc49c9",
+        "v5.0.0",
+    ),
+    "actions/deploy-pages": (
+        "cd2ce8fcbc39b97be8ca5fce6e763baed58fa128",
+        "v5.0.0",
     ),
 }
 SUPERSEDED_REFS = {
@@ -95,8 +106,8 @@ def test_deprecated_node20_action_references_are_absent_from_workflows() -> None
 
 
 def test_active_workflow_triggers_and_validation_modes_are_unchanged() -> None:
-    ci = _workflow(ACTIVE_WORKFLOWS[0])
-    publish = _workflow(ACTIVE_WORKFLOWS[1])
+    ci = _workflow(CI_WORKFLOW)
+    publish = _workflow(PUBLISH_WORKFLOW)
     ci_triggers = ci.get("on", ci.get(True))
     publish_triggers = publish.get("on", publish.get(True))
 
@@ -109,7 +120,7 @@ def test_active_workflow_triggers_and_validation_modes_are_unchanged() -> None:
 
 
 def test_publication_permissions_and_artifact_handoff_are_unchanged() -> None:
-    publish = _workflow(ACTIVE_WORKFLOWS[1])
+    publish = _workflow(PUBLISH_WORKFLOW)
     build = publish["jobs"]["build"]
     publication = publish["jobs"]["publish"]
 

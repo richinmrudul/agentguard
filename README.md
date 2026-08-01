@@ -41,6 +41,11 @@ agentguard --help
 See the [release process](docs/release.md) and
 [v0.2.2 validation evidence](docs/results/release-v0.2.2.md).
 
+The [hosted documentation](https://richinmrudul.github.io/agentguard/) is
+deployed through GitHub Pages after the repository's Pages workflow is enabled.
+Until deployment is verified, browse the same maintained documentation under
+[`docs/`](docs/).
+
 ## What AgentGuard Catches
 
 | Risk | Example | Detection surface |
@@ -1052,7 +1057,7 @@ AgentGuard is available under the [MIT License](LICENSE).
 
 ## Roadmap
 
-- Hosted docs/site
+- Verify and maintain the hosted GitHub Pages documentation deployment
 - Broader adversarial benchmark corpus
 - Entropy and user-provided regex detectors
 - Syscall-level containment
