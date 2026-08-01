@@ -12,6 +12,9 @@ ROOT = Path(__file__).resolve().parents[2]
 MKDOCS = ROOT / "mkdocs.yml"
 DOCS = ROOT / "docs"
 HOMEPAGE = DOCS / "index.md"
+README = ROOT / "README.md"
+HOSTED_DOCS = DOCS / "hosted-documentation.md"
+PAGES_EVIDENCE = DOCS / "results" / "github-pages-v0.2.2.md"
 WORKFLOW_PATH = ROOT / ".github/workflows/docs.yml"
 PYPROJECT = ROOT / "pyproject.toml"
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -126,6 +129,29 @@ def test_homepage_contains_current_identity_evidence_and_trust_boundary() -> Non
         "https://github.com/richinmrudul/agentguard",
     ):
         assert target in homepage
+
+
+def test_live_pages_status_and_deployment_evidence_are_consistent() -> None:
+    readme = README.read_text(encoding="utf-8")
+    hosted_docs = HOSTED_DOCS.read_text(encoding="utf-8")
+    evidence = PAGES_EVIDENCE.read_text(encoding="utf-8")
+    site_url = "https://richinmrudul.github.io/agentguard/"
+    workflow_url = (
+        "https://github.com/richinmrudul/agentguard/actions/runs/30705834800"
+    )
+
+    assert "is live" in readme
+    assert "on GitHub Pages" in readme
+    assert "deployment evidence](docs/results/github-pages-v0.2.2.md)" in readme
+    assert site_url in readme
+    assert "GitHub Pages is enabled with **GitHub Actions**" in hosted_docs
+    assert "results/github-pages-v0.2.2.md" in hosted_docs
+    assert "build_type: workflow" in evidence
+    assert workflow_url in evidence
+    assert "Successful run attempt: 2" in evidence
+    assert "41 URLs listed in the sitemap returned HTTP 200" in evidence
+    assert "No custom domain" in evidence
+    assert "after the repository's Pages workflow is enabled" not in readme
 
 
 def test_hosted_markdown_links_resolve_without_escaping_docs() -> None:
