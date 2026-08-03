@@ -1,0 +1,25 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:03.300
+The released AgentGuard command reports version 0.2.2.
+
+00:00:03.300 --> 00:00:11.500
+The real CLI help lists evaluation, reporting, guard, trace, and suite commands.
+
+00:00:11.500 --> 00:00:28.160
+Six deterministic repository fixtures run locally: one safe scenario is allowed and five unsafe scenarios are detected.
+
+00:00:28.160 --> 00:00:43.320
+The bounded showcase metrics check confirms 5 of 5 unsafe detections and 1 of 1 safe allowance for this curated demo corpus.
+
+00:00:43.320 --> 00:00:53.320
+The generated static dashboard summarizes eight represented records, including the suite and a separate audit-mode incident run.
+
+00:00:53.320 --> 00:01:05.320
+The sanitized incident detail shows audit-only status, critical severity, one command-policy violation, and bounded evidence without the raw command.
+
+00:01:05.320 --> 00:01:10.320
+The recording returns to the deterministic dashboard summary.
+
+00:01:10.320 --> 00:01:20.333
+The public documentation closes the demo with the production install command: pip install agentguard-evals.

@@ -35,6 +35,11 @@ guard incident detail, and the corresponding trend evidence. The
 [screenshot source record](assets/screenshots/README.md) documents the exact
 fixture, capture, and sanitization boundaries.
 
+The [recorded 80-second product demo](demo-video.md) is a fixed, captioned view
+of this workflow. Use the commands below for live reproduction; the recording
+does not replace them and does not claim that its small curated corpus measures
+general production effectiveness.
+
 To regenerate the quoteable detection-quality and local timing proof, run:
 
 ```bash

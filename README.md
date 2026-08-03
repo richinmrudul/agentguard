@@ -50,6 +50,8 @@ workflow and public-site state.
 
 See the [visual tour](docs/screenshots.md) for the hosted documentation,
 sanitized guard incident detail, and evaluation evidence behind this dashboard.
+After this documentation change is deployed, watch the
+[80-second AgentGuard product demo](https://richinmrudul.github.io/agentguard/demo-video/).
 
 ## What AgentGuard Catches
 
@@ -147,15 +149,12 @@ tests/diffs/events, and JSON/Markdown artifacts make the result auditable.
 
 ## Screenshots And Demo Assets
 
-No screenshots are committed yet. Recommended demo assets to add:
-
-- static dashboard screenshot
-- guard incident detail screenshot
-- adversarial metrics terminal output
-- GitHub Actions summary screenshot
-
-Do not commit screenshots that include private repository paths, environment
-values, tokens, or raw secret-like content.
+The maintained [visual tour](docs/screenshots.md) shows the static dashboard,
+sanitized guard incident detail, evaluation evidence, and hosted documentation.
+The [recorded demo](docs/demo-video.md) connects the released CLI, deterministic
+showcase, report experience, and install path without an external model call.
+Its [capture record](docs/assets/demo/README.md) documents the real commands,
+encoding, accessibility, checksums, sanitization review, and limitations.
 
 Use AgentGuard in CI with the GitHub Actions examples in
 [`examples/github-actions/`](examples/github-actions/), then publish local
