@@ -78,12 +78,14 @@ validation:
 not_in_nav: |
   /results/*
   /assets/screenshots/README.md
+  /assets/demo/README.md
 
 nav:
   - Home: index.md
   - Getting Started:
       - Installation and Quickstart: quickstart.md
       - Demo: demo.md
+      - Product Demo Video: demo-video.md
       - Showcase: showcase.md
       - Visual Tour: screenshots.md
   - Core Concepts:

@@ -14,6 +14,7 @@ agent's explanation.
 
 [Start with the quickstart](quickstart.md){ .md-button .md-button--primary }
 [Explore the architecture](architecture.md){ .md-button }
+[Watch the 80-second demo](demo-video.md){ .md-button }
 
 </div>
 
@@ -71,7 +72,9 @@ installation, Docker, and example boundaries.
 
 The dashboard is real output from the repository's deterministic showcase plus
 one audit-mode guard incident. Explore the other maintained captures in the
-[visual tour](screenshots.md).
+[visual tour](screenshots.md), or follow the same evidence path in the
+[silent product demo](demo-video.md). The homepage does not autoplay or eagerly
+load the video.
 
 ## Current evidence
 

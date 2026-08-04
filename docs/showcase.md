@@ -101,6 +101,10 @@ public documentation and deterministic local AgentGuard output. The dashboard
 uses the six-scenario showcase plus one separate audit-mode run so the report
 site can truthfully demonstrate its incident and trend views.
 
+The [silent product demo](demo-video.md) records the same deterministic
+showcase command and bounded metrics check before moving through those
+sanitized report views. It makes no external agent or model call.
+
 The [source and sanitization record](assets/screenshots/README.md) documents the
 source commit, commands, viewports, metadata removal, visual review, and known
 rendering limitations. Generated `.agentguard` and static-site trees remain
