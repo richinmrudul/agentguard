@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-from click import unstyle
 from typer.testing import CliRunner
 
 from agentguard.cli.main import app
@@ -18,6 +17,7 @@ from agentguard.project_init import (
 
 runner = CliRunner()
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+ANSI_STYLE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _invoke(root: Path, *args: str):
@@ -348,7 +348,7 @@ def test_help_documents_final_interface() -> None:
     result = runner.invoke(app, ["init", "--help"])
 
     assert result.exit_code == 0
-    help_text = unstyle(result.output)
+    help_text = ANSI_STYLE.sub("", result.output)
     assert "path" in help_text.lower()
     for option in ("--dry-run", "--force", "--ci", "--no-ci", "--test-command"):
         assert option in help_text
