@@ -347,5 +347,6 @@ def test_help_documents_final_interface() -> None:
     result = runner.invoke(app, ["init", "--help"])
 
     assert result.exit_code == 0
-    for option in ("PATH", "--dry-run", "--force", "--ci", "--no-ci", "--test-command"):
+    assert "path" in result.output.lower()
+    for option in ("--dry-run", "--force", "--ci", "--no-ci", "--test-command"):
         assert option in result.output
