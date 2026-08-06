@@ -30,6 +30,8 @@ def test_package_smoke_script_covers_installed_cli_workflow() -> None:
         'cp -R "$ROOT_DIR/examples"',
         '"$AGENTGUARD" --version',
         '"$AGENTGUARD" --help',
+        '"$AGENTGUARD" presets list',
+        '"$AGENTGUARD" presets show recommended --format json',
         '"$AGENTGUARD" benchmarks list',
         '"$AGENTGUARD" reports list',
         "examples/configs/fix_auth_bug_local_command_safe.yaml",

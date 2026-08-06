@@ -117,6 +117,13 @@ from agentguard.project_init import (
     apply_initialization_plan,
     build_initialization_plan,
 )
+from agentguard.presets import (
+    DEFAULT_PRESET_NAME,
+    PRESETS,
+    get_preset,
+    render_preset_machine,
+    render_preset_text,
+)
 from agentguard.reports.browser import (
     discover_reports,
     format_report_summary,
@@ -185,6 +192,8 @@ diagnostics_app = typer.Typer(help="Run deterministic AgentGuard diagnostics.")
 app.add_typer(diagnostics_app, name="diagnostics")
 guard_app = typer.Typer(help="Inspect online guard incident reports.")
 app.add_typer(guard_app, name="guard")
+presets_app = typer.Typer(help="List and inspect post-execution CI policy presets.")
+app.add_typer(presets_app, name="presets")
 
 
 def _echo_matrix_guard_summary(result: MatrixResult) -> None:
@@ -257,6 +266,11 @@ def init_command(
         "--test-command",
         help="Exact argument-safe test command to store in the configuration.",
     ),
+    preset: str = typer.Option(
+        DEFAULT_PRESET_NAME,
+        "--preset",
+        help="CI validation preset: minimal, recommended (default), or strict.",
+    ),
 ) -> None:
     """Safely initialize AgentGuard in an existing project."""
     try:
@@ -266,6 +280,7 @@ def init_command(
             ci=ci,
             no_ci=no_ci,
             test_command=test_command,
+            preset=preset,
         )
     except (OSError, ValueError, yaml.YAMLError) as error:
         safe_echo(f"Error: {error}", err=True)
@@ -281,6 +296,7 @@ def init_command(
     display_root = os.path.relpath(plan.root, Path.cwd().resolve())
     safe_echo(f"Target project root: {display_root}")
     safe_echo(f"Detected project type: {plan.project_type}")
+    safe_echo(f"Selected preset: {plan.preset_name}")
     if plan.test_command_source == "explicit":
         safe_echo("Test command: supplied with --test-command")
     else:
@@ -320,6 +336,42 @@ def init_command(
     if dry_run:
         safe_echo("Dry run complete; no project files were changed.")
         return
+
+
+@presets_app.command("list")
+def presets_list() -> None:
+    """List the available post-execution CI validation presets."""
+    safe_echo("AgentGuard CI policy presets")
+    for preset in PRESETS:
+        default = " (default)" if preset.default else ""
+        safe_echo(f"- {preset.name}{default}: {preset.intended_use}")
+        safe_echo(f"  {preset.validation_posture}")
+    safe_echo("Execution boundary: none of these presets contains agent execution.")
+
+
+@presets_app.command("show")
+def presets_show(
+    name: str = typer.Argument(..., help="Canonical preset name."),
+    output_format: str = typer.Option(
+        "text",
+        "--format",
+        help="Output format: text, yaml, or json.",
+    ),
+) -> None:
+    """Show the exact public definition of a CI validation preset."""
+    try:
+        preset = get_preset(name)
+        if output_format == "text":
+            rendered = render_preset_text(preset)
+        elif output_format in {"yaml", "json"}:
+            rendered = render_preset_machine(preset, output_format)
+        else:
+            valid = ", ".join(("text", "yaml", "json"))
+            raise ValueError(f"Unknown format {output_format!r}. Valid formats: {valid}.")
+    except ValueError as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    safe_echo(rendered, nl=not rendered.endswith("\n"))
 
 
 @app.command("benchmark-overhead")

@@ -9,6 +9,13 @@ and uses semantic versioning.
 
 ### Added
 
+- Added unreleased typed `minimal`, `recommended`, and `strict` CI policy
+  presets, `agentguard init --preset`, and deterministic `agentguard presets
+  list/show` inspection in text, YAML, and JSON.
+- Added monotonic preset validation, production-path behavioral coverage, and
+  documentation of the post-execution CI boundary. The misleading
+  `untrusted-agent` name remains deferred until AgentGuard can launch agents
+  through an enforced contained-execution workflow.
 - Added unreleased `agentguard init [PATH]` project onboarding with dry-run,
   explicit conflict and force handling, conservative Python/pytest detection,
   argument-safe test-command storage, and optional least-privilege GitHub

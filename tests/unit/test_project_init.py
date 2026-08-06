@@ -1,3 +1,4 @@
+import hashlib
 import re
 import subprocess
 from pathlib import Path
@@ -13,9 +14,11 @@ from agentguard.project_init import (
     GITHUB_WORKFLOW_PATH,
     UNKNOWN_TEST_COMMAND,
 )
+from agentguard.presets import get_preset, preset_names
 
 
 runner = CliRunner()
+stderr_runner = CliRunner(mix_stderr=False)
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 ANSI_STYLE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -51,6 +54,54 @@ def test_init_basic_python_project_generates_strict_valid_config(tmp_path: Path)
     assert (root / ".gitignore").read_text(encoding="utf-8") == ".agentguard/\n"
 
 
+def test_default_is_byte_identical_to_explicit_recommended(tmp_path: Path) -> None:
+    implicit = tmp_path / "implicit"
+    explicit = tmp_path / "explicit"
+    _python_project(implicit)
+    _python_project(explicit)
+
+    implicit_result = _invoke(implicit, "--no-ci")
+    explicit_result = _invoke(explicit, "--no-ci", "--preset", "recommended")
+
+    assert implicit_result.exit_code == explicit_result.exit_code == 0
+    assert (implicit / CONFIG_PATH).read_bytes() == (explicit / CONFIG_PATH).read_bytes()
+    assert hashlib.sha256((implicit / CONFIG_PATH).read_bytes()).hexdigest() == (
+        "1f6ae85d14b383773cddfb46540947dd129bb6b0c68e860d001516fc5095dc84"
+    )
+    assert "Selected preset: recommended" in implicit_result.output
+
+
+@pytest.mark.parametrize("preset_name", preset_names())
+def test_every_preset_generates_configuration_accepted_by_production_loader(
+    tmp_path: Path, preset_name: str
+) -> None:
+    root = tmp_path / preset_name
+    _python_project(root)
+
+    result = _invoke(root, "--no-ci", "--preset", preset_name)
+    config = load_config(root / CONFIG_PATH)
+    expected = get_preset(preset_name).settings
+
+    assert result.exit_code == 0, result.output
+    assert config.command_timeout_seconds == expected.command_timeout_seconds
+    assert config.max_output_bytes == expected.max_output_bytes
+    assert config.expected_modified_files.max == expected.expected_modified_files_max
+    assert config.diff_limits.max_files_changed == expected.max_files_changed
+    assert config.policy == dict(expected.policy_severities)
+    assert config.secret_content_builtin_detectors == list(
+        expected.secret_content_builtin_detectors
+    )
+    source = (root / CONFIG_PATH).read_text(encoding="utf-8")
+    for unsupported in (
+        "sandbox:",
+        "docker:",
+        "command_policy:",
+        "filesystem_watcher:",
+        "benchmark:",
+    ):
+        assert unsupported not in source
+
+
 def test_explicit_test_command_is_preserved_as_one_yaml_value(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -78,11 +129,14 @@ def test_unknown_project_uses_failing_customization_placeholder(tmp_path: Path) 
     assert "Detected project type: unknown" in result.output
 
 
-def test_github_workflow_is_valid_least_privilege_and_pinned(tmp_path: Path) -> None:
+@pytest.mark.parametrize("preset_name", preset_names())
+def test_github_workflow_is_valid_least_privilege_and_pinned(
+    tmp_path: Path, preset_name: str
+) -> None:
     root = tmp_path / "repo"
     _python_project(root)
 
-    result = _invoke(root, "--ci", "github")
+    result = _invoke(root, "--ci", "github", "--preset", preset_name)
 
     assert result.exit_code == 0, result.output
     workflow = _workflow(root)
@@ -178,6 +232,47 @@ def test_identical_rerun_is_idempotent(tmp_path: Path) -> None:
     assert first.exit_code == second.exit_code == 0
     assert before == after
     assert "Already current:" in second.output
+
+
+def test_switching_presets_conflicts_then_force_replaces_only_config(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    _python_project(root)
+    keep = root / "keep.txt"
+    keep.write_text("unchanged\n", encoding="utf-8")
+    first = _invoke(root, "--ci", "github", "--preset", "minimal")
+    workflow_before = (root / GITHUB_WORKFLOW_PATH).read_bytes()
+    ignore_before = (root / ".gitignore").read_bytes()
+
+    conflict = _invoke(root, "--ci", "github", "--preset", "strict")
+    after_conflict = load_config(root / CONFIG_PATH)
+    forced = _invoke(root, "--ci", "github", "--preset", "strict", "--force")
+    after_force = load_config(root / CONFIG_PATH)
+
+    assert first.exit_code == 0
+    assert conflict.exit_code == 1
+    assert after_conflict.expected_modified_files.max == 100
+    assert forced.exit_code == 0, forced.output
+    assert after_force.expected_modified_files.max == 25
+    assert (root / GITHUB_WORKFLOW_PATH).read_bytes() == workflow_before
+    assert (root / ".gitignore").read_bytes() == ignore_before
+    assert keep.read_text(encoding="utf-8") == "unchanged\n"
+    assert "Already current:\n- .gitignore\n- .github/workflows/agentguard.yml" in forced.output
+
+
+@pytest.mark.parametrize("preset_name", preset_names())
+def test_dry_run_for_each_preset_writes_nothing(
+    tmp_path: Path, preset_name: str
+) -> None:
+    root = tmp_path / preset_name
+    root.mkdir()
+
+    result = _invoke(root, "--dry-run", "--ci", "github", "--preset", preset_name)
+
+    assert result.exit_code == 0, result.output
+    assert list(root.iterdir()) == []
+    assert f"Selected preset: {preset_name}" in result.output
 
 
 def test_gitignore_is_preserved_and_entry_is_deduplicated(tmp_path: Path) -> None:
@@ -350,5 +445,21 @@ def test_help_documents_final_interface() -> None:
     assert result.exit_code == 0
     help_text = ANSI_STYLE.sub("", result.output)
     assert "path" in help_text.lower()
-    for option in ("--dry-run", "--force", "--ci", "--no-ci", "--test-command"):
+    for option in ("--dry-run", "--force", "--ci", "--no-ci", "--test-command", "--preset"):
         assert option in help_text
+    for name in preset_names():
+        assert name in help_text
+
+
+def test_unknown_preset_has_valid_choices_and_no_traceback(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    result = stderr_runner.invoke(
+        app, ["init", str(root), "--preset", "Recommended", "--no-ci"]
+    )
+
+    assert result.exit_code == 2
+    assert "Valid presets: minimal, recommended, strict" in result.stderr
+    assert "Traceback" not in result.output
+    assert list(root.iterdir()) == []

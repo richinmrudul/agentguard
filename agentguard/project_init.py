@@ -10,6 +10,13 @@ import yaml
 
 from agentguard.config.yaml import load_yaml
 from agentguard.io import atomic_write_text
+from agentguard.presets import (
+    CI_DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    CI_DEFAULT_MAX_OUTPUT_BYTES,
+    DEFAULT_PRESET_NAME,
+    PolicyPreset,
+    get_preset,
+)
 
 
 CONFIG_PATH = Path("agentguard.yaml")
@@ -37,6 +44,7 @@ class InitializationPlan:
     test_command_source: str
     files: tuple[PlannedFile, ...]
     ci_enabled: bool
+    preset_name: str
 
     @property
     def conflicts(self) -> tuple[PlannedFile, ...]:
@@ -171,45 +179,46 @@ def detect_project(root: Path, explicit_test_command: Optional[str]) -> tuple[st
     return project_type, UNKNOWN_TEST_COMMAND, "requires customization"
 
 
-def _config_content(test_command: str, command_source: str) -> str:
+def _config_content(
+    test_command: str,
+    command_source: str,
+    preset: PolicyPreset,
+) -> str:
+    settings = preset.settings
     data = {
         "mode": "ci",
         "task_id": "agentguard_ci",
         "description": "Validate repository changes with AgentGuard.",
         "test_command": test_command,
-        "allowed_paths": ["**"],
-        "forbidden_paths": [
-            ".env",
-            ".env.*",
-            "secrets/**",
-            "**/*.pem",
-            "**/*.key",
-        ],
-        "test_paths": ["tests/**"],
-        "expected_modified_files": {"min": 0, "max": 50},
-        "unsafe_commands": ["rm -rf", "curl", "wget", "nc", "chmod 777"],
+    }
+    if settings.command_timeout_seconds != CI_DEFAULT_COMMAND_TIMEOUT_SECONDS:
+        data["command_timeout_seconds"] = settings.command_timeout_seconds
+    if settings.max_output_bytes != CI_DEFAULT_MAX_OUTPUT_BYTES:
+        data["max_output_bytes"] = settings.max_output_bytes
+    data.update({
+        "allowed_paths": list(settings.allowed_paths),
+        "forbidden_paths": list(settings.forbidden_paths),
+        "test_paths": list(settings.test_paths),
+        "expected_modified_files": {
+            "min": settings.expected_modified_files_min,
+            "max": settings.expected_modified_files_max,
+        },
+        "unsafe_commands": list(settings.unsafe_commands),
         "policy": {
-            "tests_pass": {"severity": "error"},
-            "forbidden_paths": {"severity": "critical"},
-            "test_tampering": {"severity": "error"},
-            "unsafe_commands": {"severity": "critical"},
-            "scope_adherence": {"severity": "warning"},
-            "diff_size": {"severity": "warning"},
-            "secret_scan": {"severity": "critical"},
+            key: {"severity": severity}
+            for key, severity in settings.policy_severities
         },
         "diff_limits": {
-            "max_files_changed": 50,
-            "max_lines_added": 2000,
-            "max_lines_deleted": 1000,
+            "max_files_changed": settings.max_files_changed,
+            "max_lines_added": settings.max_lines_added,
+            "max_lines_deleted": settings.max_lines_deleted,
         },
-        "secret_patterns": [
-            ".env",
-            ".env.*",
-            "*.pem",
-            "*.key",
-            "secrets/**",
-        ],
-    }
+        "secret_patterns": list(settings.secret_patterns),
+    })
+    if settings.secret_content_builtin_detectors:
+        data["secret_content_builtin_detectors"] = list(
+            settings.secret_content_builtin_detectors
+        )
     source_note = {
         "explicit": "The test command below was supplied with --test-command.",
         "detected pytest": "AgentGuard detected maintained pytest configuration.",
@@ -218,8 +227,14 @@ def _config_content(test_command: str, command_source: str) -> str:
             "this as a CI gate; the placeholder exits nonzero."
         ),
     }[command_source]
+    preset_note = (
+        ""
+        if preset.name == DEFAULT_PRESET_NAME
+        else f"# Preset: {preset.name} (post-execution CI validation only).\n"
+    )
     header = (
         "# AgentGuard project configuration.\n"
+        f"{preset_note}"
         f"# {source_note}\n"
         f"# Customize policy paths for this repository: {DOCUMENTATION_URL}\n"
     )
@@ -303,16 +318,18 @@ def build_initialization_plan(
     ci: Optional[str] = None,
     no_ci: bool = False,
     test_command: Optional[str] = None,
+    preset: str = DEFAULT_PRESET_NAME,
 ) -> InitializationPlan:
     if ci is not None and no_ci:
         raise ValueError("--ci and --no-ci cannot be used together.")
     if ci is not None and ci != "github":
         raise ValueError("--ci currently supports only 'github'.")
     root = _validate_root(path)
+    selected_preset = get_preset(preset)
     project_type, selected_test_command, command_source = detect_project(
         root, test_command
     )
-    config = _config_content(selected_test_command, command_source)
+    config = _config_content(selected_test_command, command_source, selected_preset)
 
     gitignore_target = _target_path(root, GITIGNORE_PATH)
     gitignore_existing = _read_text_if_file(gitignore_target, GITIGNORE_PATH)
@@ -334,6 +351,7 @@ def build_initialization_plan(
         test_command_source=command_source,
         files=tuple(files),
         ci_enabled=ci_enabled,
+        preset_name=selected_preset.name,
     )
     _validate_generated_content(plan)
     return plan

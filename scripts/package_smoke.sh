@@ -101,6 +101,8 @@ section "Run installed CLI smoke checks"
   cd "$WORK_DIR"
   "$AGENTGUARD" --version
   "$AGENTGUARD" --help
+  "$AGENTGUARD" presets list
+  "$AGENTGUARD" presets show recommended --format json
   "$AGENTGUARD" benchmarks list
   "$AGENTGUARD" reports list
   "$AGENTGUARD" run \
