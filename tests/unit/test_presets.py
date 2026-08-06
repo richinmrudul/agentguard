@@ -31,6 +31,16 @@ def _error_output(result) -> str:
         return result.output
 
 
+def _captured_output(result) -> str:
+    streams = []
+    for attribute in ("stdout", "stderr"):
+        try:
+            streams.append(getattr(result, attribute))
+        except ValueError:
+            pass
+    return "\n".join(streams) or result.output
+
+
 def test_registry_contains_exactly_three_stable_presets() -> None:
     assert preset_names() == ("minimal", "recommended", "strict")
     assert tuple(PRESET_REGISTRY) == preset_names()
@@ -184,9 +194,11 @@ def test_preset_help_is_discoverable() -> None:
     show_help = runner.invoke(app, ["presets", "show", "--help"])
 
     assert root_help.exit_code == show_help.exit_code == 0
-    assert "presets" in root_help.output
-    assert "--format" in show_help.output
-    assert "text, yaml, or json" in show_help.output
+    root_output = _captured_output(root_help)
+    show_output = _captured_output(show_help)
+    assert "presets" in root_output
+    assert "--format" in show_output
+    assert "text, yaml, or json" in show_output
 
 
 def test_documented_comparison_matches_registry_and_rejects_containment_claims() -> (
