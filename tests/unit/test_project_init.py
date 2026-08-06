@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from click import unstyle
 from typer.testing import CliRunner
 
 from agentguard.cli.main import app
@@ -347,6 +348,7 @@ def test_help_documents_final_interface() -> None:
     result = runner.invoke(app, ["init", "--help"])
 
     assert result.exit_code == 0
-    assert "path" in result.output.lower()
+    help_text = unstyle(result.output)
+    assert "path" in help_text.lower()
     for option in ("--dry-run", "--force", "--ci", "--no-ci", "--test-command"):
-        assert option in result.output
+        assert option in help_text
