@@ -18,9 +18,15 @@ from agentguard.presets import get_preset, preset_names
 
 
 runner = CliRunner()
-stderr_runner = CliRunner(mix_stderr=False)
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 ANSI_STYLE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _error_output(result) -> str:
+    try:
+        return result.stderr
+    except ValueError:
+        return result.output
 
 
 def _invoke(root: Path, *args: str):
@@ -455,11 +461,11 @@ def test_unknown_preset_has_valid_choices_and_no_traceback(tmp_path: Path) -> No
     root = tmp_path / "repo"
     root.mkdir()
 
-    result = stderr_runner.invoke(
+    result = runner.invoke(
         app, ["init", str(root), "--preset", "Recommended", "--no-ci"]
     )
 
     assert result.exit_code == 2
-    assert "Valid presets: minimal, recommended, strict" in result.stderr
+    assert "Valid presets: minimal, recommended, strict" in _error_output(result)
     assert "Traceback" not in result.output
     assert list(root.iterdir()) == []

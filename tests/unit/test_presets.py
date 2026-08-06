@@ -20,9 +20,15 @@ from agentguard.presets import (
 
 
 runner = CliRunner()
-stderr_runner = CliRunner(mix_stderr=False)
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 SEVERITY_RANK = {"info": 0, "warning": 1, "error": 2, "critical": 3}
+
+
+def _error_output(result) -> str:
+    try:
+        return result.stderr
+    except ValueError:
+        return result.output
 
 
 def test_registry_contains_exactly_three_stable_presets() -> None:
@@ -166,10 +172,10 @@ def test_machine_output_is_deterministic_parseable_and_control_free(
 def test_preset_mistakes_are_concise_stderr_errors(
     args: tuple[str, ...], message: str
 ) -> None:
-    result = stderr_runner.invoke(app, list(args))
+    result = runner.invoke(app, list(args))
 
     assert result.exit_code == 2
-    assert message in result.stderr
+    assert message in _error_output(result)
     assert "Traceback" not in result.output
 
 
