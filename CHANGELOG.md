@@ -7,7 +7,15 @@ and uses semantic versioning.
 
 ## Unreleased
 
-No changes are documented yet.
+### Added
+
+- Added unreleased `agentguard init [PATH]` project onboarding with dry-run,
+  explicit conflict and force handling, conservative Python/pytest detection,
+  argument-safe test-command storage, and optional least-privilege GitHub
+  Actions generation.
+- Added strict path and symlink containment, atomic known-target writes,
+  idempotent reruns, `.gitignore` preservation, focused regression coverage,
+  and hosted onboarding documentation for safe initialization.
 
 ## v0.2.2 - 2026-07-28
 

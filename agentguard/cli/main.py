@@ -111,6 +111,12 @@ from agentguard.provenance.manifest import (
     provenance_summary,
     verify_manifest,
 )
+from agentguard.project_init import (
+    CONFIG_PATH as INIT_CONFIG_PATH,
+    DOCUMENTATION_URL as INIT_DOCUMENTATION_URL,
+    apply_initialization_plan,
+    build_initialization_plan,
+)
 from agentguard.reports.browser import (
     discover_reports,
     format_report_summary,
@@ -218,6 +224,102 @@ def main(
 def version() -> None:
     """Print the AgentGuard version."""
     safe_echo(__version__)
+
+
+@app.command("init")
+def init_command(
+    path: Path = typer.Argument(
+        Path("."),
+        help="Existing project directory to initialize.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Validate and show the exact plan without changing the project.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Replace only non-identical files owned by this initializer.",
+    ),
+    ci: Optional[str] = typer.Option(
+        None,
+        "--ci",
+        help="Generate CI integration (currently: github).",
+    ),
+    no_ci: bool = typer.Option(
+        False,
+        "--no-ci",
+        help="Do not generate a CI workflow.",
+    ),
+    test_command: Optional[str] = typer.Option(
+        None,
+        "--test-command",
+        help="Exact argument-safe test command to store in the configuration.",
+    ),
+) -> None:
+    """Safely initialize AgentGuard in an existing project."""
+    try:
+        plan = build_initialization_plan(
+            path,
+            force=force,
+            ci=ci,
+            no_ci=no_ci,
+            test_command=test_command,
+        )
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+
+    if not dry_run and not plan.conflicts:
+        try:
+            apply_initialization_plan(plan, dry_run=False)
+        except (OSError, ValueError) as error:
+            safe_echo(f"Error: {error}", err=True)
+            raise typer.Exit(2) from error
+
+    display_root = os.path.relpath(plan.root, Path.cwd().resolve())
+    safe_echo(f"Target project root: {display_root}")
+    safe_echo(f"Detected project type: {plan.project_type}")
+    if plan.test_command_source == "explicit":
+        safe_echo("Test command: supplied with --test-command")
+    else:
+        safe_echo(
+            f"Test command ({plan.test_command_source}): {plan.test_command}"
+        )
+    if not dry_run and not plan.conflicts:
+        safe_echo(f"Initialized AgentGuard in {display_root}")
+    preview_only = dry_run or bool(plan.conflicts)
+    labels = {
+        "create": "Would create" if preview_only else "Created",
+        "update": "Would update" if preview_only else "Updated",
+        "replace": "Would replace" if preview_only else "Replaced",
+        "current": "Already current",
+        "conflict": "Conflict",
+    }
+    for action in ("create", "update", "replace", "current", "conflict"):
+        matching = [item for item in plan.files if item.action == action]
+        if matching:
+            safe_echo(f"{labels[action]}:")
+            for item in matching:
+                safe_echo(f"- {item.relative_path.as_posix()}")
+
+    safe_echo(f"Next local command: agentguard ci --config {INIT_CONFIG_PATH}")
+    if plan.ci_enabled:
+        safe_echo("Next CI step: review and commit .github/workflows/agentguard.yml")
+    else:
+        safe_echo("Next CI step: rerun with --ci github to generate GitHub Actions")
+    safe_echo(f"Documentation: {INIT_DOCUMENTATION_URL}")
+
+    if plan.conflicts:
+        safe_echo(
+            "Initialization stopped: resolve conflicts or rerun with --force.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    if dry_run:
+        safe_echo("Dry run complete; no project files were changed.")
+        return
 
 
 @app.command("benchmark-overhead")

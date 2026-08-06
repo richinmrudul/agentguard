@@ -84,6 +84,7 @@ nav:
   - Home: index.md
   - Getting Started:
       - Installation and Quickstart: quickstart.md
+      - Project Initialization: project-initialization.md
       - Demo: demo.md
       - Product Demo Video: demo-video.md
       - Showcase: showcase.md
