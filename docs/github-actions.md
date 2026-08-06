@@ -22,6 +22,12 @@ Copyable workflow examples live under
 - [`agentguard-gate.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-gate.yml):
   compares a suite against an approved baseline.
 
+On `main`, the unreleased `agentguard init --ci github` command can generate a
+maintained starter workflow at `.github/workflows/agentguard.yml`. The current
+PyPI v0.2.2 package does not contain the initializer. See
+[safe project initialization](project-initialization.md) for its dry-run,
+overwrite, detection, and workflow security model.
+
 ```bash
 agentguard ci --config agentguard.yaml
 ```

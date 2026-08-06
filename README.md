@@ -102,6 +102,26 @@ python -m pip install agentguard-evals
 agentguard --version
 ```
 
+### Unreleased project initialization
+
+Safe project initialization is available on `main` and is not included in the
+current `agentguard-evals==0.2.2` PyPI package. From a source installation of
+`main`, preview and create a strict project configuration plus an optional
+least-privilege GitHub Actions gate:
+
+```bash
+agentguard init --dry-run --ci github
+agentguard init --ci github
+agentguard ci --config agentguard.yaml
+```
+
+The initializer creates `agentguard.yaml`, adds one `.agentguard/` entry to
+`.gitignore`, and optionally creates `.github/workflows/agentguard.yml`. It
+does not run repository code, install dependencies, overwrite non-identical
+files without `--force`, or change Git state. See
+[safe project initialization](docs/project-initialization.md) for detection,
+overwrite, CI security, and customization details.
+
 The package contains the `agentguard` import and CLI, but not the repository
 examples. Clone the repository to run the showcase, benchmark fixtures, or
 development checks:
@@ -182,6 +202,8 @@ and
 
 Docs:
 
+- [Safe project initialization](docs/project-initialization.md): dry-run-first
+  onboarding, generated files, overwrite rules, detection, and GitHub CI.
 - [Architecture](docs/architecture.md): pipeline, trust model, sandbox model,
   suite/baseline/history/gate layers, and limitations.
 - [Portfolio summary](docs/portfolio.md): two-sentence project summary, resume

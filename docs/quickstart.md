@@ -23,6 +23,21 @@ agentguard --version
 Do not use TestPyPI as an installation source. Its similarly named project is
 unrelated to AgentGuard.
 
+## Initialize an existing project (unreleased)
+
+`agentguard init` is currently available on `main` only and is not included in
+the production `agentguard-evals==0.2.2` package. With a source installation of
+`main`, preview project onboarding before writing files:
+
+```bash
+agentguard init --dry-run --ci github
+agentguard init --ci github
+```
+
+Continue with [safe project initialization](project-initialization.md) for the
+generated-file inventory, Python detection rules, overwrite model, security
+boundaries, and first local and CI runs.
+
 ## Run a deterministic safe evaluation
 
 The ordinary PyPI package intentionally excludes repository examples. Clone
