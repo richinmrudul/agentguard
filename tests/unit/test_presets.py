@@ -194,8 +194,8 @@ def test_preset_help_is_discoverable() -> None:
     show_help = runner.invoke(app, ["presets", "show", "--help"])
 
     assert root_help.exit_code == show_help.exit_code == 0
-    root_output = _captured_output(root_help)
-    show_output = _captured_output(show_help)
+    root_output = ANSI.sub("", _captured_output(root_help))
+    show_output = ANSI.sub("", _captured_output(show_help))
     assert "presets" in root_output
     assert "--format" in show_output
     assert "text, yaml, or json" in show_output
