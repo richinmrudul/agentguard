@@ -111,7 +111,7 @@ least-privilege GitHub Actions gate:
 
 ```bash
 agentguard init --dry-run --ci github
-agentguard init --ci github
+agentguard init --preset recommended --ci github
 agentguard ci --config agentguard.yaml
 ```
 
@@ -120,7 +120,11 @@ The initializer creates `agentguard.yaml`, adds one `.agentguard/` entry to
 does not run repository code, install dependencies, overwrite non-identical
 files without `--force`, or change Git state. See
 [safe project initialization](docs/project-initialization.md) for detection,
-overwrite, CI security, and customization details.
+overwrite, CI security, and customization details. The unreleased
+[`minimal`, `recommended`, and `strict` CI policy presets](docs/policy-presets.md)
+configure only settings consumed by post-execution `agentguard ci` validation;
+they do not contain agent or test execution. Inspect them with `agentguard
+presets list` and `agentguard presets show PRESET`.
 
 The package contains the `agentguard` import and CLI, but not the repository
 examples. Clone the repository to run the showcase, benchmark fixtures, or
@@ -204,6 +208,9 @@ Docs:
 
 - [Safe project initialization](docs/project-initialization.md): dry-run-first
   onboarding, generated files, overwrite rules, detection, and GitHub CI.
+- [CI policy presets](docs/policy-presets.md): exact `minimal`, `recommended`,
+  and `strict` validation settings, inspection commands, switching behavior,
+  and the execution boundary.
 - [Architecture](docs/architecture.md): pipeline, trust model, sandbox model,
   suite/baseline/history/gate layers, and limitations.
 - [Portfolio summary](docs/portfolio.md): two-sentence project summary, resume

@@ -1,5 +1,18 @@
 # Running AgentGuard in GitHub Actions
 
+## Preset Execution Boundary
+
+The unreleased `minimal`, `recommended`, and `strict` initialization presets
+configure settings that `agentguard ci` consumes: test-command time/output
+bounds, diff and expected-file thresholds, policy severities, path checks, and
+optional built-in secret-content detectors. They perform post-execution
+validation and do not contain the coding agent or the configured test command.
+
+The CI path does not apply benchmark-only Docker, command-policy, or filesystem
+watcher settings. Use least-privilege runner credentials and an isolation model
+appropriate for the code being evaluated. See
+[CI policy presets](policy-presets.md) for exact settings and limitations.
+
 AgentGuard CI mode evaluates the current repository's existing git diff or a
 PR-style base/head git diff. It does not run an agent. A typical run executes the
 configured test command, applies deterministic policy checks, scores the result, and
