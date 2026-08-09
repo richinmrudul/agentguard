@@ -12,7 +12,9 @@ from agentguard.cli.main import app
 from agentguard.config.loader import load_config
 from agentguard.project_init import (
     CONFIG_PATH,
+    GO_TEST_COMMAND,
     GITHUB_WORKFLOW_PATH,
+    MAX_GO_MOD_BYTES,
     MAX_NODE_PACKAGE_JSON_BYTES,
     NODE_TEST_COMMAND,
     UNKNOWN_TEST_COMMAND,
@@ -55,6 +57,16 @@ def _node_project(
     package.update(package_fields or {})
     (root / "package.json").write_text(
         json.dumps(package, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _go_project(
+    root: Path, *, module_path: str = "example.com/agentguard-fixture"
+) -> None:
+    root.mkdir(parents=True)
+    (root / "go.mod").write_text(
+        f"module {module_path}\n\ngo 1.26\n",
         encoding="utf-8",
     )
 
@@ -384,6 +396,229 @@ def test_node_package_symlink_is_not_followed_for_detection(tmp_path: Path) -> N
     assert result.exit_code == 0, result.output
     assert "Detected project type: unknown" in result.output
     assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
+
+
+def test_go_module_is_detected_without_executing_go_or_reading_go_sum(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "Go project café 日本語"
+    _go_project(root)
+    (root / "go.sum").write_bytes(b"untrusted module checksum metadata\x00\xff\n")
+
+    def fail(*args, **kwargs):
+        raise AssertionError(f"unexpected command execution: {args!r} {kwargs!r}")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    result = _invoke(root, "--no-ci")
+
+    assert result.exit_code == 0, result.output
+    assert "Detected project type: Go" in result.output
+    assert "detected Go module" in result.output
+    assert load_config(root / CONFIG_PATH).test_command == GO_TEST_COMMAND
+    assert "untrusted module checksum" not in (root / CONFIG_PATH).read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize(
+    "go_mod",
+    [
+        b"",
+        b"go 1.26\n",
+        b"module example.com/one\nmodule example.com/two\n",
+        b"module example.com/valid\nmodule\n",
+        b'module "example.com/quoted"\n',
+        b"module ../outside\n",
+        b"module example.com/../outside\n",
+        b"/*\nmodule example.com/commented\n*/\n",
+        b"module example.com/demo\x00\n",
+        b"module example.com/demo\xff\n",
+    ],
+)
+def test_invalid_go_module_directive_requires_customization(
+    tmp_path: Path, go_mod: bytes
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "go.mod").write_bytes(go_mod)
+
+    result = _invoke(root, "--no-ci")
+
+    assert result.exit_code == 0, result.output
+    assert "Detected project type: Go" in result.output
+    assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
+
+
+def test_non_module_go_mod_content_remains_opaque_untrusted_data(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "Go project café"
+    root.mkdir()
+    unsafe_payload = "touch must-not-exist && curl https://attacker.invalid"
+    (root / "go.mod").write_text(
+        "module example.com/agentguard-fixture\n\n"
+        "go 1.26\n\n"
+        "require (\n"
+        "    example.com/dependency v1.2.3\n"
+        ")\n\n"
+        "replace example.com/dependency => ./local-dependency\n"
+        f"// opaque untrusted value: {unsafe_payload}\n",
+        encoding="utf-8",
+    )
+
+    def fail(*args, **kwargs):
+        raise AssertionError(f"unexpected command execution: {args!r} {kwargs!r}")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    result = _invoke(root, "--ci", "github")
+    config_source = (root / CONFIG_PATH).read_text(encoding="utf-8")
+    workflow_source = (root / GITHUB_WORKFLOW_PATH).read_text(encoding="utf-8")
+
+    assert result.exit_code == 0, result.output
+    assert load_config(root / CONFIG_PATH).test_command == GO_TEST_COMMAND
+    assert unsafe_payload not in config_source
+    assert unsafe_payload not in workflow_source
+    assert "example.com/dependency" not in config_source
+    assert "example.com/dependency" not in workflow_source
+
+
+def test_oversized_go_metadata_is_bounded_and_requires_customization(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "go.mod").write_bytes(b" " * (MAX_GO_MOD_BYTES + 1))
+
+    result = _invoke(root, "--no-ci")
+
+    assert result.exit_code == 0, result.output
+    assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
+
+
+@pytest.mark.parametrize("ambiguity", ["workspace", "python", "node", "go-sum-only"])
+def test_ambiguous_go_projects_require_explicit_customization(
+    tmp_path: Path, ambiguity: str
+) -> None:
+    root = tmp_path / "repo"
+    if ambiguity == "go-sum-only":
+        root.mkdir()
+        (root / "go.sum").write_text("untrusted\n", encoding="utf-8")
+    else:
+        _go_project(root)
+        if ambiguity == "workspace":
+            (root / "go.work").write_text("go 1.26\nuse ./module\n", encoding="utf-8")
+        elif ambiguity == "python":
+            (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+        elif ambiguity == "node":
+            (root / "package.json").write_text(
+                '{"scripts":{"test":"node --test"}}\n', encoding="utf-8"
+            )
+
+    result = _invoke(root, "--no-ci")
+
+    assert result.exit_code == 0, result.output
+    assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
+    assert "requires customization" in result.output
+
+
+def test_explicit_test_command_precedes_ambiguous_go_detection(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    _go_project(root)
+    (root / "go.work").write_text("use ./module\n", encoding="utf-8")
+    explicit = "go test ./internal/safe"
+
+    result = _invoke(root, "--no-ci", "--test-command", explicit)
+
+    assert result.exit_code == 0, result.output
+    assert load_config(root / CONFIG_PATH).test_command == explicit
+    assert "Test command: supplied with --test-command" in result.output
+
+
+def test_go_workflow_is_pinned_least_privilege_and_does_not_download_modules(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    _go_project(root)
+
+    result = _invoke(root, "--ci", "github")
+    source = (root / GITHUB_WORKFLOW_PATH).read_text(encoding="utf-8")
+    workflow = _workflow(root)
+    steps = workflow["jobs"]["agentguard"]["steps"]
+
+    assert result.exit_code == 0, result.output
+    assert workflow["permissions"] == {"contents": "read"}
+    assert "pull_request_target" not in source
+    assert any(
+        step.get("uses") == "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+        and step.get("with") == {"go-version": "1.26.x", "cache": "false"}
+        for step in steps
+    )
+    assert not any(
+        token in source
+        for token in ("go test", "go list", "go env", "go generate", "go get", "go mod")
+    )
+    assert "secrets." not in source
+    assert "id-token" not in source
+
+
+@pytest.mark.parametrize("metadata_name", ["go.mod", "go.work", "go.sum"])
+def test_go_metadata_symlinks_are_not_followed_for_detection(
+    tmp_path: Path, metadata_name: str
+) -> None:
+    root = tmp_path / "repo"
+    if metadata_name == "go.mod":
+        root.mkdir()
+    else:
+        _go_project(root)
+    outside = tmp_path / f"outside-{metadata_name}"
+    outside.write_text("module example.com/outside\n", encoding="utf-8")
+    (root / metadata_name).symlink_to(outside)
+
+    result = _invoke(root, "--no-ci")
+
+    assert result.exit_code == 0, result.output
+    if metadata_name == "go.mod":
+        assert "Detected project type: unknown" in result.output
+    else:
+        assert "Detected project type: Go" in result.output
+    assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
+
+
+def test_go_dry_run_and_idempotent_apply_preserve_project_files(tmp_path: Path) -> None:
+    dry_root = tmp_path / "dry Go café"
+    _go_project(dry_root)
+    before = {
+        path.relative_to(dry_root): path.read_bytes() for path in dry_root.rglob("*")
+    }
+
+    dry = _invoke(dry_root, "--dry-run", "--ci", "github")
+    after = {
+        path.relative_to(dry_root): path.read_bytes() for path in dry_root.rglob("*")
+    }
+
+    assert dry.exit_code == 0, dry.output
+    assert before == after
+
+    root = tmp_path / "applied Go 日本語"
+    _go_project(root)
+    first = _invoke(root, "--ci", "github")
+    applied = {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    second = _invoke(root, "--ci", "github")
+    repeated = {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+    assert first.exit_code == second.exit_code == 0
+    assert applied == repeated
+    assert "Already current:" in second.output
 
 
 @pytest.mark.parametrize("preset_name", preset_names())

@@ -30,6 +30,8 @@ UNKNOWN_TEST_COMMAND = (
 )
 NODE_TEST_COMMAND = "node --test"
 MAX_NODE_PACKAGE_JSON_BYTES = 1024 * 1024
+GO_TEST_COMMAND = "go test ./..."
+MAX_GO_MOD_BYTES = 1024 * 1024
 NODE_LOCKFILES = {
     "package-lock.json": "npm",
     "npm-shrinkwrap.json": "npm",
@@ -38,6 +40,7 @@ NODE_LOCKFILES = {
     "bun.lock": "bun",
     "bun.lockb": "bun",
 }
+GO_MODULE_FILES = ("go.mod", "go.work", "go.sum")
 
 
 @dataclass(frozen=True)
@@ -223,6 +226,46 @@ def _detect_node_test_command(
     return isinstance(scripts, dict) and scripts.get("test") == NODE_TEST_COMMAND
 
 
+def _has_supported_go_module(root: Path) -> bool:
+    path = root / "go.mod"
+    if not _is_safe_detection_file(root, path):
+        return False
+    workspace_path = root / "go.work"
+    checksum_path = root / "go.sum"
+    if workspace_path.exists() or workspace_path.is_symlink():
+        return False
+    if (checksum_path.exists() or checksum_path.is_symlink()) and not (
+        _is_safe_detection_file(root, checksum_path)
+    ):
+        return False
+    try:
+        with path.open("rb") as module_file:
+            raw = module_file.read(MAX_GO_MOD_BYTES + 1)
+        if len(raw) > MAX_GO_MOD_BYTES:
+            return False
+        source = raw.decode("utf-8")
+    except (OSError, UnicodeError):
+        return False
+    if "\0" in source or "/*" in source or "*/" in source:
+        return False
+    module_paths = []
+    for line in source.splitlines():
+        if re.match(r"[ \t]*module(?:[ \t]|$)", line) is None:
+            continue
+        match = re.fullmatch(
+            r"[ \t]*module[ \t]+([A-Za-z0-9][A-Za-z0-9._~+\-/]*)"
+            r"[ \t]*(?://[^\r\n]*)?",
+            line,
+        )
+        if match is None:
+            return False
+        module_path = match.group(1)
+        if any(part in {"", ".", ".."} for part in module_path.split("/")):
+            return False
+        module_paths.append(module_path)
+    return len(module_paths) == 1
+
+
 def detect_project(root: Path, explicit_test_command: Optional[str]) -> tuple[str, str, str]:
     python_signals = (
         "pyproject.toml",
@@ -242,25 +285,32 @@ def detect_project(root: Path, explicit_test_command: Optional[str]) -> tuple[st
     package_path = root / "package.json"
     lock_managers = _node_lock_managers(root)
     has_node_signal = _is_safe_detection_file(root, package_path) or bool(lock_managers)
-    package = _load_node_package(root) if has_node_signal else None
-    if is_python and has_node_signal:
-        project_type = "Python + Node.js"
-    elif is_python:
-        project_type = "Python"
-    elif has_node_signal:
-        project_type = "Node.js"
-    else:
-        project_type = "unknown"
+    has_go_signal = any(
+        _is_safe_detection_file(root, root / name) for name in GO_MODULE_FILES
+    )
+    ecosystems = [
+        name
+        for name, present in (
+            ("Python", is_python),
+            ("Node.js", has_node_signal),
+            ("Go", has_go_signal),
+        )
+        if present
+    ]
+    project_type = " + ".join(ecosystems) if ecosystems else "unknown"
     if explicit_test_command is not None:
         if not explicit_test_command.strip() or "\0" in explicit_test_command:
             raise ValueError("--test-command must be a non-empty value without NUL.")
         return project_type, explicit_test_command, "explicit"
-    if is_python and has_node_signal:
+    if len(ecosystems) > 1:
         return project_type, UNKNOWN_TEST_COMMAND, "requires customization"
     if is_python and _looks_like_pytest_config(root):
         return project_type, "python -m pytest", "detected pytest"
+    package = _load_node_package(root) if has_node_signal else None
     if has_node_signal and _detect_node_test_command(package, lock_managers):
         return project_type, NODE_TEST_COMMAND, "detected Node.js test runner"
+    if has_go_signal and _has_supported_go_module(root):
+        return project_type, GO_TEST_COMMAND, "detected Go module"
     return project_type, UNKNOWN_TEST_COMMAND, "requires customization"
 
 
@@ -310,6 +360,10 @@ def _config_content(
         "detected Node.js test runner": (
             "AgentGuard detected an exact native Node.js test command. Dependency "
             "installation remains the user's responsibility."
+        ),
+        "detected Go module": (
+            "AgentGuard detected a root Go module and selected a fixed Go test "
+            "command. Tests may download modules later; initialization does not."
         ),
         "requires customization": (
             "No safe test command was detected. Replace test_command before using "
@@ -362,6 +416,14 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "24"
+"""
+    if "Go" in project_type:
+        workflow += """
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+          cache: "false"
 """
     workflow += """
 

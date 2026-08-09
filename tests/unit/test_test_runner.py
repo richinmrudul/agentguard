@@ -4,8 +4,10 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 from agentguard.instrumentation.command_tracker import CommandTracker
-from agentguard.instrumentation.test_runner import _build_test_env
+from agentguard.instrumentation.test_runner import _build_test_env, _go_test_env
 from agentguard.instrumentation.test_runner import TestRunner as AgentGuardTestRunner
 
 
@@ -26,6 +28,29 @@ def test_build_test_env_uses_isolated_absolute_src_pythonpath(
     assert Path(env["PYTHONPATH"]).is_absolute()
     assert "existing-path" not in env["PYTHONPATH"]
     assert "AGENTGUARD_AUDIT_CANARY" not in env
+    assert "GOCACHE" not in env
+    assert "GOMODCACHE" not in env
+
+
+def test_go_test_env_uses_contained_caches_and_rejects_symlinks(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "Go repo café"
+    repo_dir.mkdir()
+
+    env = _go_test_env(repo_dir)
+
+    assert env["GOCACHE"] == str(repo_dir / ".agentguard/cache/go-build")
+    assert env["GOMODCACHE"] == str(repo_dir / ".agentguard/cache/go-mod")
+    assert env["GOENV"] == "off"
+    assert env["GOTOOLCHAIN"] == "local"
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (repo_dir / ".agentguard").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="not a safe directory"):
+        _go_test_env(repo_dir)
 
 
 def test_test_runner_excludes_ambient_environment_from_captured_output(

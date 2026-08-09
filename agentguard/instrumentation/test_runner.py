@@ -55,6 +55,28 @@ def _build_test_env(repo_dir: Path) -> dict[str, str]:
     return env
 
 
+def _go_test_env(repo_dir: Path) -> dict[str, str]:
+    root = repo_dir.resolve()
+    artifact_root = root / ".agentguard" / "cache"
+    for path in (
+        root / ".agentguard",
+        artifact_root,
+        artifact_root / "go-build",
+        artifact_root / "go-mod",
+    ):
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            raise ValueError(
+                "Go test cache path is not a safe directory beneath the repository: "
+                f"{path.relative_to(root)}"
+            )
+    return {
+        "GOCACHE": str(artifact_root / "go-build"),
+        "GOENV": "off",
+        "GOMODCACHE": str(artifact_root / "go-mod"),
+        "GOTOOLCHAIN": "local",
+    }
+
+
 class TestRunner:
     def __init__(
         self,
@@ -72,6 +94,8 @@ class TestRunner:
             raise ValueError("Test command cannot be empty.")
 
         env = _build_test_env(repo_dir)
+        if Path(argv[0]).name == "go":
+            env.update(_go_test_env(repo_dir))
 
         started = time.monotonic()
         timed_out = False

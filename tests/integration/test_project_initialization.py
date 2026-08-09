@@ -131,6 +131,47 @@ def test_node_fixture_initialization_is_inert_then_native_tests_run(
     assert marker.read_text(encoding="utf-8") == "yes\n"
 
 
+def test_go_fixture_initialization_is_inert_then_module_tests_run(
+    tmp_path: Path,
+) -> None:
+    if shutil.which("go") is None:
+        pytest.skip("Go is not installed")
+    root = tmp_path / "Go project café 日本語"
+    root.mkdir()
+    (root / "go.mod").write_text(
+        "module example.com/agentguard-go-fixture\n\ngo 1.20\n",
+        encoding="utf-8",
+    )
+    marker = root / "go-test-ran"
+    (root / "onboarding_test.go").write_text(
+        "package onboarding\n\n"
+        "import (\n"
+        '\t"os"\n'
+        '\t"testing"\n'
+        ")\n\n"
+        "func TestOnboarding(t *testing.T) {\n"
+        '\tif err := os.WriteFile("go-test-ran", []byte("yes\\n"), 0o600); err != nil {\n'
+        "\t\tt.Fatal(err)\n"
+        "\t}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    initialized = runner.invoke(app, ["init", str(root), "--no-ci"])
+    config = load_config(root / "agentguard.yaml")
+
+    assert initialized.exit_code == 0, initialized.output
+    assert config.test_command == "go test ./..."
+    assert not marker.exists(), "initialization must not execute repository tests"
+
+    tracker = CommandTracker()
+    test_result = CommandTestRunner(tracker).run(root, config.test_command)
+
+    assert test_result.exit_code == 0, test_result.stderr
+    assert tracker.events[0].command == ["go", "test", "./..."]
+    assert marker.read_text(encoding="utf-8") == "yes\n"
+
+
 def test_explicit_test_command_metacharacters_are_not_shell_injectable(
     tmp_path: Path,
 ) -> None:

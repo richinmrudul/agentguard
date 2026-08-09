@@ -71,7 +71,7 @@ mode evaluates the existing repository and its current Git diff:
 agentguard ci --config agentguard.yaml
 ```
 
-## Python And Node.js Detection
+## Python, Node.js, And Go Detection
 
 Phase 44A recognizes common Python signals such as `pyproject.toml`,
 `setup.py`, `setup.cfg`, pytest configuration, `conftest.py`, and requirements
@@ -135,6 +135,49 @@ An explicit `--test-command` still takes precedence for every recognized or
 ambiguous project. It is stored as one value and later split without a shell.
 That protects argument boundaries, but it does not make the selected executable
 or repository tests trusted.
+
+Go detection is similarly conservative and reads only safe root-level regular
+files. `go.mod`, `go.work`, and `go.sum` are presence signals; their contents
+are untrusted. AgentGuard reads at most 1 MiB of `go.mod` as strict UTF-8 and
+requires exactly one supported simple, unquoted `module` directive. Missing,
+duplicate, or malformed `module` directives fail closed. AgentGuard deliberately
+does not parse or validate `go`, `toolchain`, `require`, `replace`, `exclude`,
+`retract`, or other remaining content; it treats those lines as opaque untrusted
+data and never copies them into generated files. It never invokes `go`, parses
+command output, follows symlinked metadata, or reads `go.sum` contents during
+initialization.
+
+For an otherwise unambiguous root module with no `go.work`, the initializer
+selects the fixed command:
+
+```yaml
+test_command: go test ./...
+```
+
+The module path is only a conservative signal and is never copied into a
+command. Workspaces, mixed Python/Node.js/Go roots, `go.sum` without a supported
+`go.mod`, and missing, malformed, or unsupported module directives require
+customization, as do unreadable, oversized, NUL-containing, non-UTF-8, or
+symlinked metadata. Other `go.mod` content can still be invalid because the
+initializer does not implement Go's module-file parser. An explicit
+`--test-command` still takes precedence in these cases. The Go toolchain
+validates the complete module file only during later user-authorized execution.
+
+Initialization itself never runs `go test`, `go list`, `go env`, `go generate`,
+other Go tooling, repository code, module downloads, scripts, or project
+binaries. The generated test command is intended for a later, reviewed
+AgentGuard run. During that later execution, `go test ./...` executes repository
+test code and the Go toolchain may download modules named by repository
+metadata. Review the module and test sources and configure dependency policy or
+an appropriate execution boundary before running it. AgentGuard CI performs
+post-execution validation; it does not contain hostile code.
+
+The isolated test environment assigns Go build and module caches beneath the
+ignored `.agentguard/cache/` directory, disables the per-user Go environment
+file, and disables automatic toolchain switching. This avoids dependence on a
+user home directory and prevents host Go cache state from being inherited. It
+does not prevent the selected Go runtime from downloading modules during the
+later test execution.
 
 If no safe command can be inferred, the generated configuration contains a
 deterministic placeholder that prints an edit instruction and exits nonzero.
@@ -201,6 +244,9 @@ The optional workflow:
   immutable full commit SHAs;
 - for a detected Node.js root, pins `actions/setup-node` v6.5.0 to its immutable
   full commit SHA and selects supported Node.js 24;
+- for a detected Go root, pins `actions/setup-go` v7.0.0 to its immutable full
+  commit SHA, selects supported Go 1.26, and disables setup caching so setup
+  does not inspect or restore module dependencies;
 - passes the pull request base SHA through a quoted environment variable;
 - uses no secrets, OIDC, long-lived credentials, or repository write access;
 - runs the real `agentguard ci --config agentguard.yaml` command and preserves
@@ -217,6 +263,12 @@ packages, add a reviewed installation step yourself. Package-manager installs
 may download dependencies and execute lifecycle hooks on the GitHub runner;
 that later execution is outside `agentguard init`, and AgentGuard CI remains
 post-execution validation rather than hostile-code containment.
+
+For Go projects, setup prepares the supported runtime with dependency caching
+disabled; the generated workflow has no module installation or metadata-probe
+step. The later AgentGuard test step runs the configured `go test ./...`; that
+command can download modules and execute repository test code. Review `go.mod`,
+replacements, dependencies, and tests before enabling the gate.
 
 ## Customize Or Remove
 
