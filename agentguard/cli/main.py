@@ -138,6 +138,12 @@ from agentguard.reports.exports import (
     export_sarif,
 )
 from agentguard.reports.github_summary import write_github_step_summary
+from agentguard.reports.pr_report import (
+    append_pr_summary,
+    build_pr_report,
+    github_annotations,
+    write_pr_report,
+)
 from agentguard.reports.site import (
     DEFAULT_HISTORY_DB_PATH as DEFAULT_SITE_HISTORY_DB_PATH,
     DEFAULT_REPORTS_ROOT as DEFAULT_SITE_REPORTS_ROOT,
@@ -3035,6 +3041,21 @@ def ci_command(
         "--github-summary",
         help="Append a compact CI report to GITHUB_STEP_SUMMARY.",
     ),
+    baseline_report: Optional[Path] = typer.Option(
+        None,
+        "--baseline-report",
+        help="Prior AgentGuard CI or PR report used to classify findings.",
+    ),
+    pr_report_path: Optional[Path] = typer.Option(
+        None,
+        "--pr-report",
+        help="Path for the machine-readable PR comparison report.",
+    ),
+    github_annotations_enabled: bool = typer.Option(
+        False,
+        "--github-annotations",
+        help="Emit bounded GitHub annotations for new findings with safe locations.",
+    ),
 ) -> None:
     """Evaluate existing git diff in the current repository."""
     if (base_ref is None) != (head_ref is None):
@@ -3049,17 +3070,31 @@ def ci_command(
     except (OSError, ValueError, yaml.YAMLError) as error:
         safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
+    try:
+        pr_report = build_pr_report(result, baseline_report)
+        pr_report_output = write_pr_report(
+            pr_report,
+            pr_report_path or result.run_dir / "pr-report.json",
+        )
+    except (OSError, ValueError) as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
     github_summary_path = None
     if github_summary:
         summary_env = os.environ.get("GITHUB_STEP_SUMMARY")
         if summary_env:
             github_summary_path = write_github_step_summary(result, Path(summary_env))
+            append_pr_summary(pr_report, github_summary_path)
         else:
             safe_echo(
                 "Warning: --github-summary was provided but "
                 "GITHUB_STEP_SUMMARY is not set.",
                 err=True,
             )
+
+    if github_annotations_enabled:
+        for annotation in github_annotations(pr_report, result.repo_dir):
+            safe_echo(annotation)
 
     safe_echo("AgentGuard CI Report")
     safe_echo(f"Task: {result.task_id}")
@@ -3082,6 +3117,14 @@ def ci_command(
         safe_echo(f"Command log path: {result.report_paths.command_log}")
     safe_echo(f"JSON report path: {result.report_paths.json}")
     safe_echo(f"Markdown report path: {result.report_paths.markdown}")
+    safe_echo(f"PR report path: {pr_report_output}")
+    safe_echo(
+        "Baseline findings: "
+        f"{pr_report.baseline.status}; new {pr_report.counts['new']}; "
+        f"existing {pr_report.counts['existing']}; "
+        f"resolved {pr_report.counts['resolved']}; "
+        f"unclassified {pr_report.counts['unclassified']}"
+    )
     if github_summary_path is not None:
         safe_echo(f"GitHub summary path: {github_summary_path}")
     if result.result == "FAIL" and not allow_fail_result:

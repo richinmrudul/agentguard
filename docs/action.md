@@ -15,6 +15,9 @@ AgentGuard in the workflow before invoking the action.
 | `base` | empty | Base git ref for PR-style diff comparison. |
 | `head` | `HEAD` | Head git ref for PR-style diff comparison. |
 | `github-summary` | `true` | Whether to append a GitHub Actions step summary. |
+| `baseline-report` | empty | Prior CI or PR report used to classify findings. |
+| `pr-report` | empty | Explicit path for the machine-readable comparison report. |
+| `github-annotations` | `false` | Emit bounded annotations for new findings with safe locations. |
 | `allow-fail-result` | `false` | Whether to exit 0 even if AgentGuard policy result is FAIL. |
 
 When `base` is provided, the action runs:
@@ -69,4 +72,6 @@ jobs:
 - The action is composite and assumes `agentguard` is already on `PATH`.
 - The action does not package or install AgentGuard yet.
 - Future Docker sandboxing is separate and is not part of this action.
-- The action does not call GitHub APIs, create PR comments, or emit annotations.
+- The action does not call GitHub APIs or create PR comments. Optional
+  annotations are escaped workflow commands, capped at ten, and limited to new
+  findings with safe repository-contained file and line locations.

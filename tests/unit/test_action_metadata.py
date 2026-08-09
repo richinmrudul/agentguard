@@ -19,6 +19,9 @@ def test_composite_action_metadata_is_valid() -> None:
         "base",
         "head",
         "github-summary",
+        "baseline-report",
+        "pr-report",
+        "github-annotations",
         "allow-fail-result",
     }
     assert metadata["inputs"]["config"]["default"] == "agentguard.yaml"
@@ -29,3 +32,6 @@ def test_composite_action_metadata_is_valid() -> None:
     assert "set -euo pipefail" in entrypoint
     assert "agentguard ci" in entrypoint
     assert "--github-summary" in entrypoint
+    assert "--baseline-report" in entrypoint
+    assert "--pr-report" in entrypoint
+    assert "--github-annotations" in entrypoint

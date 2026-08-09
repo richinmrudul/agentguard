@@ -293,6 +293,76 @@ def test_ci_cli_warns_when_github_summary_env_is_missing(
     assert "AgentGuard CI Report" in result.output
 
 
+def test_ci_cli_compares_actual_report_and_preserves_conservative_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_dir = _init_repo(tmp_path)
+    _write(repo_dir / ".env", "TOKEN=secret\n")
+    config_path = _config(tmp_path, task_id="ci_baseline_pr")
+    baseline_result = run_ci(
+        config_path,
+        repo_dir=repo_dir,
+        ci_root=tmp_path / "baseline-run",
+    )
+    _write(repo_dir / "secrets" / "new.key", "not-a-real-secret\n")
+    output = tmp_path / "pr-report.json"
+    monkeypatch.chdir(repo_dir)
+
+    gated = runner.invoke(
+        app,
+        [
+            "ci",
+            "--config",
+            str(config_path),
+            "--baseline-report",
+            str(baseline_result.report_paths.json),
+            "--pr-report",
+            str(output),
+        ],
+    )
+
+    assert gated.exit_code == 1
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["baseline"]["status"] == "available"
+    assert report["counts"]["new"] > 0
+    assert report["counts"]["existing"] > 0
+    assert report["gate"] == "all-blocking-findings"
+    assert "Baseline findings: available" in gated.output
+
+
+def test_ci_cli_invalid_baseline_is_reported_but_does_not_mask_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_dir = _init_repo(tmp_path)
+    _write(repo_dir / ".env", "TOKEN=secret\n")
+    config_path = _config(tmp_path, task_id="ci_invalid_baseline")
+    invalid = tmp_path / "baseline.json"
+    invalid.write_text("{", encoding="utf-8")
+    output = tmp_path / "pr-report.json"
+    monkeypatch.chdir(repo_dir)
+
+    result = runner.invoke(
+        app,
+        [
+            "ci",
+            "--config",
+            str(config_path),
+            "--baseline-report",
+            str(invalid),
+            "--pr-report",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 1
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["baseline"]["status"] == "invalid"
+    assert report["counts"]["new"] == 0
+    assert report["counts"]["unclassified"] > 0
+
+
 def test_ci_cli_requires_base_and_head_together(
     tmp_path: Path,
     monkeypatch,
