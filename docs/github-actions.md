@@ -121,11 +121,15 @@ summary page. The summary includes result, score, failed and warning checks, cha
 file counts, baseline state, bounded new/existing/resolved lists, and report
 paths; it does not include full command stdout or stderr.
 
-`--github-annotations` emits at most ten annotations and only for new findings
-that have an unambiguous bounded positive line number in a regular UTF-8 file
-contained by the repository. Absolute paths, traversal, symlinks at any path
-component, missing/deleted files, binary content, oversized files or lines,
-out-of-range lines, duplicates, and location-free findings are skipped.
+Finding paths are limited to 500 characters and 255 characters per component.
+Oversized current or legacy paths become location-free opaque findings; a
+versioned baseline containing one is invalid. `--github-annotations` emits at
+most ten annotations and only for new findings that have an unambiguous bounded
+positive line number in a regular UTF-8 file contained by the repository. The
+complete bounded file is validated before annotation. Absolute paths, traversal,
+symlinks at any path component, missing/deleted files, binary content, oversized
+files or target lines, out-of-range lines, duplicates, and location-free findings
+are skipped.
 Workflow-command properties and messages are escaped. Existing findings are
 not re-annotated.
 

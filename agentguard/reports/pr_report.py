@@ -20,6 +20,8 @@ MAX_FINDINGS = 1_000
 MAX_SUMMARY_FINDINGS = 20
 MAX_ANNOTATIONS = 10
 MAX_FIELD_CHARS = 500
+MAX_PATH_CHARS = 500
+MAX_PATH_COMPONENT_CHARS = 255
 MAX_ANNOTATION_FILE_BYTES = 1_000_000
 MAX_ANNOTATION_LINE = 10_000
 MAX_ANNOTATION_LINE_BYTES = 16_384
@@ -135,12 +137,16 @@ def _baseline_rule_name(rule_id: str) -> str:
 
 
 def _safe_relative_path(raw: object) -> Optional[str]:
-    if not isinstance(raw, str) or not raw:
+    if not isinstance(raw, str) or not raw or len(raw) > MAX_PATH_CHARS:
         return None
     if any(ord(character) < 32 or ord(character) == 127 for character in raw):
         return None
     path = PurePosixPath(raw.replace("\\", "/"))
-    if path.is_absolute() or ".." in path.parts:
+    if (
+        path.is_absolute()
+        or ".." in path.parts
+        or any(len(part) > MAX_PATH_COMPONENT_CHARS for part in path.parts)
+    ):
         return None
     normalized = path.as_posix()
     return normalized if normalized not in {"", "."} else None
@@ -698,19 +704,20 @@ def _safe_annotation_location(
         stat_result = resolved.stat()
         if not resolved.is_file() or stat_result.st_size > MAX_ANNOTATION_FILE_BYTES:
             return None
-        bytes_read = 0
         with resolved.open("rb") as file:
-            for _ in range(finding.line):
-                raw_line = file.readline(MAX_ANNOTATION_LINE_BYTES + 1)
-                bytes_read += len(raw_line)
-                if (
-                    not raw_line
-                    or len(raw_line) > MAX_ANNOTATION_LINE_BYTES
-                    or bytes_read > MAX_ANNOTATION_FILE_BYTES
-                    or b"\x00" in raw_line
-                ):
-                    return None
-                raw_line.decode("utf-8")
+            raw = file.read(MAX_ANNOTATION_FILE_BYTES + 1)
+        if (
+            len(raw) != stat_result.st_size
+            or len(raw) > MAX_ANNOTATION_FILE_BYTES
+            or b"\x00" in raw
+        ):
+            return None
+        raw.decode("utf-8")
+        lines = raw.splitlines(keepends=True)
+        if finding.line > len(lines):
+            return None
+        if len(lines[finding.line - 1]) > MAX_ANNOTATION_LINE_BYTES:
+            return None
     except (OSError, UnicodeDecodeError, ValueError):
         return None
     return relative, finding.line

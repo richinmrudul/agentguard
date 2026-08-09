@@ -14,6 +14,7 @@ from agentguard.reports.pr_report import (
     MAX_ANNOTATION_FILE_BYTES,
     MAX_ANNOTATION_LINE,
     MAX_ANNOTATIONS,
+    MAX_PATH_CHARS,
     append_pr_summary,
     build_pr_report,
     findings_from_checks,
@@ -241,6 +242,45 @@ def test_oversized_baseline_is_invalid_without_becoming_empty_baseline(
     assert report.counts["unclassified"] == 1
 
 
+def test_paths_are_bounded_in_current_legacy_and_versioned_reports(
+    tmp_path: Path,
+) -> None:
+    long_path = "/".join(["x" * 100] * 6) + ".py"
+    assert len(long_path) > MAX_PATH_CHARS
+    result = _result(tmp_path, [_check("Forbidden paths", [long_path])])
+
+    current = build_pr_report(result)
+    assert current.findings[0].path is None
+    assert long_path not in json.dumps(asdict(current))
+    summary = append_pr_summary(current, tmp_path / "current-summary.md").read_text()
+    assert long_path not in summary
+    assert len(summary) < 10_000
+
+    legacy = tmp_path / "legacy-long-path.json"
+    _write_ci_baseline(legacy, result)
+    legacy_report = build_pr_report(_result(tmp_path, []), legacy)
+    assert legacy_report.baseline.status == "available"
+    assert legacy_report.resolved[0].path is None
+    legacy_summary = append_pr_summary(
+        legacy_report, tmp_path / "legacy-summary.md"
+    ).read_text()
+    assert long_path not in legacy_summary
+    assert len(legacy_summary) < 10_000
+
+    valid = asdict(
+        build_pr_report(
+            _result(tmp_path, [_check("Forbidden paths", ["safe/path.py"])]),
+            _empty_baseline(tmp_path),
+        )
+    )
+    valid["findings"][0]["path"] = long_path
+    versioned = tmp_path / "versioned-long-path.json"
+    versioned.write_text(json.dumps(valid), encoding="utf-8")
+    versioned_report = build_pr_report(_result(tmp_path, []), versioned)
+    assert versioned_report.baseline.status == "invalid"
+    assert long_path not in json.dumps(asdict(versioned_report))
+
+
 def test_malformed_pr_baseline_shapes_are_invalid_without_traceback(
     tmp_path: Path,
     monkeypatch,
@@ -440,6 +480,8 @@ def test_annotations_enforce_file_line_binary_and_component_bounds(
     (outside / "file.py").write_text("x\n", encoding="utf-8")
     (repo / "linked").symlink_to(outside, target_is_directory=True)
     (repo / "binary.py").write_bytes(b"safe\x00payload\n")
+    (repo / "late-nul.py").write_bytes(b"safe\nlate\x00payload\n")
+    (repo / "late-invalid.py").write_bytes(b"safe\nlate\xffpayload\n")
     (repo / "oversized.py").write_text("x" * 64, encoding="utf-8")
     (repo / "deleted.py").write_text("gone\n", encoding="utf-8")
     (repo / "deleted.py").unlink()
@@ -451,6 +493,8 @@ def test_annotations_enforce_file_line_binary_and_component_bounds(
             [
                 f"{unicode_path}:2 matched secret-content detector safe",
                 "binary.py:1 matched secret-content detector binary",
+                "late-nul.py:1 matched secret-content detector late-binary",
+                "late-invalid.py:1 matched secret-content detector late-invalid",
                 "oversized.py:1 matched secret-content detector large",
                 "linked/file.py:1 matched secret-content detector symlink",
                 "deleted.py:1 matched secret-content detector deleted",
@@ -472,6 +516,8 @@ def test_annotations_enforce_file_line_binary_and_component_bounds(
     assert len(annotations) == 1
     assert "space ünicode.py,line=2" in annotations[0]
     assert all("binary.py" not in item for item in annotations)
+    assert all("late-nul.py" not in item for item in annotations)
+    assert all("late-invalid.py" not in item for item in annotations)
     assert all("oversized.py" not in item for item in annotations)
     assert all("linked" not in item for item in annotations)
     assert all("deleted" not in item for item in annotations)
