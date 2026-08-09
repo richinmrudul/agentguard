@@ -14,6 +14,8 @@ from agentguard.reports.pr_report import (
     MAX_ANNOTATION_FILE_BYTES,
     MAX_ANNOTATION_LINE,
     MAX_ANNOTATIONS,
+    MAX_BASELINE_BYTES,
+    MAX_FINDINGS,
     MAX_PATH_CHARS,
     append_pr_summary,
     build_pr_report,
@@ -224,6 +226,65 @@ def test_machine_report_is_deterministic_versioned_and_has_no_absolute_source(
     assert round_trip.counts["new"] == 0
 
 
+def test_max_old_to_max_new_report_round_trips_with_per_collection_limit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(pr_report_module, "MAX_FINDINGS", 2)
+    old = _result(
+        tmp_path,
+        [_check("Forbidden paths", ["old/one.py", "old/two.py"])],
+    )
+    baseline = tmp_path / "old.json"
+    _write_ci_baseline(baseline, old)
+    current = _result(
+        tmp_path,
+        [_check("Forbidden paths", ["new/one.py", "new/two.py"])],
+    )
+
+    transition = build_pr_report(current, baseline)
+    assert transition.counts == {
+        "new": 2,
+        "existing": 0,
+        "resolved": 2,
+        "unclassified": 0,
+        "total": 2,
+    }
+    report_path = write_pr_report(transition, tmp_path / "transition.json")
+    assert report_path.stat().st_size <= MAX_BASELINE_BYTES
+
+    reloaded = build_pr_report(current, report_path)
+    assert reloaded.baseline.status == "available"
+    assert reloaded.counts == {
+        "new": 0,
+        "existing": 2,
+        "resolved": 0,
+        "unclassified": 0,
+        "total": 2,
+    }
+
+
+def test_default_maximum_transition_serializes_within_baseline_byte_limit(
+    tmp_path: Path,
+) -> None:
+    old_paths = [f"old/{index:04d}/" + ("😀" * 122) for index in range(MAX_FINDINGS)]
+    new_paths = [f"new/{index:04d}/" + ("😀" * 122) for index in range(MAX_FINDINGS)]
+    baseline = tmp_path / "maximum-old.json"
+    _write_ci_baseline(
+        baseline,
+        _result(tmp_path, [_check("Forbidden paths", old_paths)]),
+    )
+
+    report = build_pr_report(
+        _result(tmp_path, [_check("Forbidden paths", new_paths)]),
+        baseline,
+    )
+    assert len(report.findings) == MAX_FINDINGS
+    assert len(report.resolved) == MAX_FINDINGS
+    output = write_pr_report(report, tmp_path / "maximum-transition.json")
+    assert output.stat().st_size <= MAX_BASELINE_BYTES
+
+
 def test_oversized_baseline_is_invalid_without_becoming_empty_baseline(
     tmp_path: Path,
     monkeypatch,
@@ -339,6 +400,20 @@ def test_malformed_pr_baseline_shapes_are_invalid_without_traceback(
     too_many_path = tmp_path / "too-many.json"
     too_many_path.write_text(json.dumps(too_many), encoding="utf-8")
     assert build_pr_report(result, too_many_path).baseline.status == "invalid"
+
+    too_many_resolved = json.loads(json.dumps(valid))
+    too_many_resolved["findings"] = []
+    too_many_resolved["resolved"] = [
+        {"not": "validated"},
+        {"not": "validated"},
+    ]
+    too_many_resolved_path = tmp_path / "too-many-resolved.json"
+    too_many_resolved_path.write_text(
+        json.dumps(too_many_resolved), encoding="utf-8"
+    )
+    assert (
+        build_pr_report(result, too_many_resolved_path).baseline.status == "invalid"
+    )
 
 
 def test_pr_baseline_display_payloads_are_never_propagated(tmp_path: Path) -> None:

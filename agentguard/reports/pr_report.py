@@ -21,6 +21,7 @@ MAX_SUMMARY_FINDINGS = 20
 MAX_ANNOTATIONS = 10
 MAX_FIELD_CHARS = 500
 MAX_PATH_CHARS = 500
+MAX_PATH_BYTES = 500
 MAX_PATH_COMPONENT_CHARS = 255
 MAX_ANNOTATION_FILE_BYTES = 1_000_000
 MAX_ANNOTATION_LINE = 10_000
@@ -138,6 +139,11 @@ def _baseline_rule_name(rule_id: str) -> str:
 
 def _safe_relative_path(raw: object) -> Optional[str]:
     if not isinstance(raw, str) or not raw or len(raw) > MAX_PATH_CHARS:
+        return None
+    try:
+        if len(raw.encode("utf-8")) > MAX_PATH_BYTES:
+            return None
+    except UnicodeEncodeError:
         return None
     if any(ord(character) < 32 or ord(character) == 127 for character in raw):
         return None
@@ -472,12 +478,10 @@ def _validate_pr_report(data: dict[str, Any]) -> tuple[str, list[PrFinding]]:
     raw_resolved = data.get("resolved")
     if not isinstance(raw_findings, list) or not isinstance(raw_resolved, list):
         raise ValueError("Baseline findings and resolved must be arrays.")
-    if (
-        len(raw_findings) > MAX_FINDINGS
-        or len(raw_resolved) > MAX_FINDINGS
-        or len(raw_findings) + len(raw_resolved) > MAX_FINDINGS
-    ):
-        raise ValueError(f"Baseline exceeds the {MAX_FINDINGS}-finding limit.")
+    if len(raw_findings) > MAX_FINDINGS or len(raw_resolved) > MAX_FINDINGS:
+        raise ValueError(
+            f"Baseline exceeds the {MAX_FINDINGS}-finding per-collection limit."
+        )
     findings = [_validated_finding(item) for item in raw_findings]
     resolved = [_validated_finding(item) for item in raw_resolved]
     all_ids = [finding.id for finding in [*findings, *resolved]]

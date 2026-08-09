@@ -104,6 +104,10 @@ The comparison classifies findings as `new`,
 unreadable, oversized, malformed, wrong-version, or wrong-task baseline is
 `invalid`. Versioned PR baselines use strict typed shapes and reject unknown
 fields, invalid counts, duplicate identities, or inconsistent fingerprints.
+Current and resolved collections are each limited to 1,000 findings, so a fully
+replaced maximum-size collection can round-trip while the 5 MB baseline input
+bound still applies.
+
 When the baseline is unavailable or invalid, current findings are
 `unclassified` rather than being mislabeled as new. The report records the
 baseline content digest and filename, not an
@@ -121,7 +125,8 @@ summary page. The summary includes result, score, failed and warning checks, cha
 file counts, baseline state, bounded new/existing/resolved lists, and report
 paths; it does not include full command stdout or stderr.
 
-Finding paths are limited to 500 characters and 255 characters per component.
+Finding paths are limited to 500 characters, 500 UTF-8 bytes, and 255 characters
+per component.
 Oversized current or legacy paths become location-free opaque findings; a
 versioned baseline containing one is invalid. `--github-annotations` emits at
 most ten annotations and only for new findings that have an unambiguous bounded
