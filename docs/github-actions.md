@@ -91,11 +91,20 @@ directory, test result, diff summary, check results, command log path, and timel
 
 Every CI run also writes a versioned `agentguard.pr-report` JSON artifact. Pass
 `--baseline-report PATH` to compare against either an earlier CI `report.json`
-or an earlier PR report. Finding identities are deterministic across ordering
-and line-number movement. The comparison classifies findings as `new`,
+or an earlier PR report. Finding identities use canonical rule IDs, safe
+repository paths, and SHA-256 fingerprints of the full rule-aware semantic
+evidence; display truncation is not part of identity. Line numbers are excluded
+from content-finding identity so line movement remains stable. Raw commands,
+arguments, authorization values, URL credentials, configured unsafe/secret
+patterns, and arbitrary check payloads are not copied into PR reports,
+summaries, annotations, or IDs. They are represented only by safe outcome
+descriptors and, when needed to distinguish findings, one-way fingerprints.
+The comparison classifies findings as `new`,
 `existing`, or `resolved`; a missing argument is `unavailable`, while an
 unreadable, oversized, malformed, wrong-version, or wrong-task baseline is
-`invalid`. When the baseline is unavailable or invalid, current findings are
+`invalid`. Versioned PR baselines use strict typed shapes and reject unknown
+fields, invalid counts, duplicate identities, or inconsistent fingerprints.
+When the baseline is unavailable or invalid, current findings are
 `unclassified` rather than being mislabeled as new. The report records the
 baseline content digest and filename, not an
 environment-specific absolute path.
@@ -113,10 +122,12 @@ file counts, baseline state, bounded new/existing/resolved lists, and report
 paths; it does not include full command stdout or stderr.
 
 `--github-annotations` emits at most ten annotations and only for new findings
-that have an unambiguous positive line number in a regular file contained by
-the repository. Absolute paths, traversal, symlinks, missing files, invalid
-lines, duplicates, and location-free findings are skipped. Workflow-command
-properties and messages are escaped. Existing findings are not re-annotated.
+that have an unambiguous bounded positive line number in a regular UTF-8 file
+contained by the repository. Absolute paths, traversal, symlinks at any path
+component, missing/deleted files, binary content, oversized files or lines,
+out-of-range lines, duplicates, and location-free findings are skipped.
+Workflow-command properties and messages are escaped. Existing findings are
+not re-annotated.
 
 The example workflows upload JSON, Markdown, command-log, and manifest artifacts
 with `actions/upload-artifact@v6.0.0`. Generated artifacts remain under

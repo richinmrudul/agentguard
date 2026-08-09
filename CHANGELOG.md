@@ -14,6 +14,10 @@ and uses semantic versioning.
   states, bounded safe GitHub summaries and annotations, and a least-privilege
   fork-compatible workflow example. Current policy failures remain the
   conservative exit-code gate regardless of baseline classification.
+- PR reports use rule-aware safe descriptors and one-way semantic fingerprints
+  instead of copying command or arbitrary evidence payloads. Baseline parsing
+  and annotation paths have explicit shape, count, file, line, binary, symlink,
+  and read-work bounds.
 - Added a packaged, versioned Draft 2020-12 JSON Schema for `agentguard.yaml`,
   deterministic loader-contract and example validation in CI, and VS Code and
   YAML Language Server integration guidance.

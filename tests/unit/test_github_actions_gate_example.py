@@ -234,3 +234,19 @@ def test_workflows_do_not_embed_local_paths_or_secret_like_values() -> None:
         r"(ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})",
         combined,
     )
+
+
+def test_workflow_run_bodies_never_interpolate_github_event_data() -> None:
+    workflow_paths = [
+        *sorted(Path(".github/workflows").glob("*.yml")),
+        *sorted(WORKFLOW_DIR.glob("*.yml")),
+    ]
+    forbidden = re.compile(r"\$\{\{\s*github\.(?:event(?:\.|\s)|base_ref\b)")
+
+    for path in workflow_paths:
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(workflow, dict)
+        for command in _run_commands(workflow):
+            assert forbidden.search(command) is None, (
+                f"{path} interpolates GitHub event data into shell source"
+            )

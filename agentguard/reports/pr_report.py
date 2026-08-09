@@ -10,7 +10,6 @@ from typing import Any, Optional
 from agentguard.checks.registry import resolve_check_registration
 from agentguard.core.result import CheckResult, CiResult
 from agentguard.io import atomic_write_json
-from agentguard.provenance.manifest import sanitize_text
 from agentguard.reports.markdown import markdown_inline_code, markdown_text
 
 
@@ -21,12 +20,45 @@ MAX_FINDINGS = 1_000
 MAX_SUMMARY_FINDINGS = 20
 MAX_ANNOTATIONS = 10
 MAX_FIELD_CHARS = 500
+MAX_ANNOTATION_FILE_BYTES = 1_000_000
+MAX_ANNOTATION_LINE = 10_000
+MAX_ANNOTATION_LINE_BYTES = 16_384
+_HASH_PATTERN = re.compile(r"[0-9a-f]{64}")
+_RULE_ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _LOCATION_PATTERN = re.compile(r"^(?P<path>.+?):(?P<line>[1-9][0-9]*) matched ")
+_EXIT_PATTERN = re.compile(r" exited (?P<exit>-?[0-9]+)$")
+_UNSAFE_STATUS_PATTERN = re.compile(r" \((?P<status>preflight blocked|blocked|audit|executed|simulated)\)$")
+_KNOWN_SEVERITIES = {"warning", "error", "critical"}
+_PR_REPORT_FIELDS = {
+    "schema",
+    "schema_version",
+    "task_id",
+    "result",
+    "score",
+    "gate",
+    "baseline",
+    "counts",
+    "findings",
+    "resolved",
+}
+_FINDING_FIELDS = {
+    "id",
+    "fingerprint",
+    "rule_id",
+    "rule_name",
+    "severity",
+    "message",
+    "evidence",
+    "state",
+    "path",
+    "line",
+}
 
 
 @dataclass(frozen=True)
 class PrFinding:
     id: str
+    fingerprint: str
     rule_id: str
     rule_name: str
     severity: str
@@ -59,24 +91,53 @@ class PrReport:
     resolved: list[PrFinding] = field(default_factory=list)
 
 
-def _bounded(value: Any, limit: int = MAX_FIELD_CHARS) -> str:
-    text = sanitize_text(str(value), [])
-    text = "\\n".join(text.splitlines())
+@dataclass(frozen=True)
+class _SafeEvidence:
+    message: str
+    display: str
+    semantic: dict[str, Any]
+    path: Optional[str] = None
+    line: Optional[int] = None
+
+
+def _display_text(value: str, limit: int = MAX_FIELD_CHARS) -> str:
+    text = "\\n".join(value.splitlines())
     if len(text) <= limit:
         return text
-    return text[: limit - len("...[truncated]")] + "...[truncated]"
+    suffix = "...[truncated]"
+    return text[: limit - len(suffix)] + suffix
 
 
-def _rule_id(name: str) -> str:
+def _safe_diagnostic(value: object) -> str:
+    return _display_text(str(value))
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _rule_metadata(name: str) -> tuple[str, str]:
     try:
-        return resolve_check_registration(name).identifier
+        registration = resolve_check_registration(name)
+        return registration.identifier, registration.name
     except ValueError:
-        normalized = "-".join(name.strip().lower().replace("_", "-").split())
-        return normalized or "unknown-check"
+        return f"custom-{_sha256_text(name)[:16]}", "Custom check"
 
 
-def _safe_relative_path(raw: str) -> Optional[str]:
-    if not raw or any(ord(character) < 32 or ord(character) == 127 for character in raw):
+def _baseline_rule_name(rule_id: str) -> str:
+    try:
+        registration = resolve_check_registration(rule_id)
+        if registration.identifier == rule_id:
+            return registration.name
+    except ValueError:
+        pass
+    return "Custom check"
+
+
+def _safe_relative_path(raw: object) -> Optional[str]:
+    if not isinstance(raw, str) or not raw:
+        return None
+    if any(ord(character) < 32 or ord(character) == 127 for character in raw):
         return None
     path = PurePosixPath(raw.replace("\\", "/"))
     if path.is_absolute() or ".." in path.parts:
@@ -85,34 +146,149 @@ def _safe_relative_path(raw: str) -> Optional[str]:
     return normalized if normalized not in {"", "."} else None
 
 
-def _location(check: CheckResult, evidence: str) -> tuple[Optional[str], Optional[int], str]:
-    rule_id = _rule_id(check.name)
-    raw_path: Optional[str] = None
-    line: Optional[int] = None
-    identity_evidence = evidence
-    if rule_id in {"forbidden-paths", "test-tampering"}:
-        raw_path = evidence
-    elif rule_id == "scope-adherence" and evidence.startswith("Outside allowed paths: "):
-        raw_path = evidence.removeprefix("Outside allowed paths: ")
-    elif rule_id == "secret-scan":
+def _path_evidence(
+    evidence: str,
+    *,
+    message: str,
+    display: str,
+    semantic_type: str,
+) -> _SafeEvidence:
+    path = _safe_relative_path(evidence)
+    if path is None:
+        return _opaque_evidence(evidence, message=message)
+    return _SafeEvidence(
+        message=message,
+        display=display,
+        semantic={"type": semantic_type, "path": path},
+        path=path,
+    )
+
+
+def _opaque_evidence(value: str, *, message: str) -> _SafeEvidence:
+    digest = _sha256_text(value)
+    return _SafeEvidence(
+        message=message,
+        display="Detailed evidence omitted; fingerprint recorded.",
+        semantic={"type": "opaque", "sha256": digest},
+    )
+
+
+def _safe_evidence(rule_id: str, evidence: str) -> _SafeEvidence:
+    if rule_id == "tests-passed":
+        match = _EXIT_PATTERN.search(evidence)
+        if match:
+            exit_code = int(match.group("exit"))
+            return _SafeEvidence(
+                message="Configured test command failed.",
+                display=f"Configured test command exited with code {exit_code}.",
+                semantic={"type": "test-exit", "exit_code": exit_code},
+            )
+        return _opaque_evidence(
+            evidence,
+            message="Configured test command failed; command evidence omitted.",
+        )
+    if rule_id == "unsafe-commands":
+        match = _UNSAFE_STATUS_PATTERN.search(evidence)
+        status = match.group("status") if match else "observed"
+        return _SafeEvidence(
+            message="Unsafe command policy matched.",
+            display=f"Unsafe command policy matched ({status}); command omitted.",
+            semantic={
+                "type": "unsafe-command",
+                "status": status,
+                "evidence_sha256": _sha256_text(evidence),
+            },
+        )
+    if rule_id == "forbidden-paths":
+        return _path_evidence(
+            evidence,
+            message="A forbidden repository path was modified.",
+            display="Repository path matched the forbidden-path policy.",
+            semantic_type="forbidden-path",
+        )
+    if rule_id == "test-tampering":
+        return _path_evidence(
+            evidence,
+            message="A configured test path was modified.",
+            display="Repository path matched the test-path policy.",
+            semantic_type="test-path",
+        )
+    if rule_id == "scope-adherence" and evidence.startswith(
+        "Outside allowed paths: "
+    ):
+        return _path_evidence(
+            evidence.removeprefix("Outside allowed paths: "),
+            message="A changed path was outside the configured scope.",
+            display="Repository path was outside the configured scope.",
+            semantic_type="outside-scope",
+        )
+    if rule_id == "secret-scan":
         match = _LOCATION_PATTERN.match(evidence)
         if match:
-            raw_path = match.group("path")
+            path = _safe_relative_path(match.group("path"))
             line = int(match.group("line"))
-            identity_evidence = evidence[match.end("line") :]
-        elif " matched pattern " in evidence:
-            raw_path, identity_evidence = evidence.split(" matched pattern ", 1)
-            identity_evidence = " matched pattern " + identity_evidence
-    return _safe_relative_path(raw_path or ""), line, identity_evidence
+            if path is not None:
+                return _SafeEvidence(
+                    message="Added content matched a secret detector.",
+                    display="Repository content matched a secret detector.",
+                    semantic={
+                        "type": "secret-content",
+                        "path": path,
+                        "detector_sha256": _sha256_text(evidence[match.end() :]),
+                    },
+                    path=path,
+                    line=line,
+                )
+        if " matched pattern " in evidence:
+            raw_path, pattern = evidence.split(" matched pattern ", 1)
+            path = _safe_relative_path(raw_path)
+            if path is not None:
+                return _SafeEvidence(
+                    message="A repository path matched a secret-path policy.",
+                    display="Repository path matched a secret-path policy.",
+                    semantic={
+                        "type": "secret-path",
+                        "path": path,
+                        "pattern_sha256": _sha256_text(pattern),
+                    },
+                    path=path,
+                )
+        return _opaque_evidence(
+            evidence,
+            message="Secret-scan evidence was recorded without raw payloads.",
+        )
+    if rule_id == "diff-size" and re.fullmatch(
+        r"(?:Changed|Added|Deleted) [0-9]+ (?:files|lines); limit is [0-9]+\.",
+        evidence,
+    ):
+        return _SafeEvidence(
+            message="The repository diff exceeded a configured size limit.",
+            display=evidence,
+            semantic={"type": "diff-limit", "value": evidence},
+        )
+    return _opaque_evidence(
+        evidence,
+        message="A policy finding was recorded without raw evidence.",
+    )
 
 
-def _finding_id(rule_id: str, path: Optional[str], identity_evidence: str) -> str:
+def _semantic_fingerprint(semantic: dict[str, Any]) -> str:
     canonical = json.dumps(
-        [PR_REPORT_VERSION, rule_id, path or "", _bounded(identity_evidence)],
+        semantic,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return _sha256_text(canonical)
+
+
+def _finding_id(rule_id: str, path: Optional[str], fingerprint: str) -> str:
+    canonical = json.dumps(
+        [PR_REPORT_VERSION, rule_id, path or "", fingerprint],
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return _sha256_text(canonical)
 
 
 def findings_from_checks(checks: list[CheckResult]) -> list[PrFinding]:
@@ -120,21 +296,23 @@ def findings_from_checks(checks: list[CheckResult]) -> list[PrFinding]:
     for check in checks:
         if check.passed:
             continue
+        rule_id, rule_name = _rule_metadata(check.name)
+        severity = check.severity if check.severity in _KNOWN_SEVERITIES else "error"
         evidence_items = check.evidence or [check.message]
-        for evidence_value in evidence_items:
-            evidence = _bounded(evidence_value)
-            path, line, identity_evidence = _location(check, evidence)
-            rule_id = _rule_id(check.name)
-            finding_id = _finding_id(rule_id, path, identity_evidence)
+        for raw_evidence in evidence_items:
+            safe = _safe_evidence(rule_id, raw_evidence)
+            fingerprint = _semantic_fingerprint(safe.semantic)
+            finding_id = _finding_id(rule_id, safe.path, fingerprint)
             candidate = PrFinding(
                 id=finding_id,
+                fingerprint=fingerprint,
                 rule_id=rule_id,
-                rule_name=_bounded(check.name),
-                severity=_bounded(check.severity, 32),
-                message=_bounded(check.message),
-                evidence=evidence,
-                path=path,
-                line=line,
+                rule_name=rule_name,
+                severity=severity,
+                message=safe.message,
+                evidence=safe.display,
+                path=safe.path,
+                line=safe.line,
             )
             previous = findings.get(finding_id)
             if previous is not None:
@@ -142,8 +320,6 @@ def findings_from_checks(checks: list[CheckResult]) -> list[PrFinding]:
                 comparable_candidate = asdict(candidate)
                 comparable_previous.pop("line")
                 comparable_candidate.pop("line")
-                comparable_previous.pop("evidence")
-                comparable_candidate.pop("evidence")
                 if comparable_previous != comparable_candidate:
                     raise ValueError(f"Finding identity collision for {finding_id}.")
                 if candidate.line is not None and (
@@ -153,85 +329,207 @@ def findings_from_checks(checks: list[CheckResult]) -> list[PrFinding]:
             else:
                 findings[finding_id] = candidate
             if len(findings) > MAX_FINDINGS:
-                raise ValueError(f"Current report exceeds the {MAX_FINDINGS}-finding limit.")
+                raise ValueError(
+                    f"Current report exceeds the {MAX_FINDINGS}-finding limit."
+                )
     return sorted(findings.values(), key=lambda item: item.id)
 
 
+def _required_string(
+    data: dict[str, Any],
+    field_name: str,
+    *,
+    max_length: int = MAX_FIELD_CHARS,
+) -> str:
+    value = data.get(field_name)
+    if not isinstance(value, str) or not value or len(value) > max_length:
+        raise ValueError(f"Baseline field '{field_name}' must be a bounded string.")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError(f"Baseline field '{field_name}' contains control characters.")
+    return value
+
+
+def _optional_string(data: dict[str, Any], field_name: str) -> Optional[str]:
+    value = data.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > MAX_FIELD_CHARS:
+        raise ValueError(f"Baseline field '{field_name}' must be null or a string.")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError(f"Baseline field '{field_name}' contains control characters.")
+    return value
+
+
 def _validated_finding(data: Any) -> PrFinding:
-    if not isinstance(data, dict):
-        raise ValueError("Baseline finding must be an object.")
-    finding_id = data.get("id")
-    if not isinstance(finding_id, str) or not re.fullmatch(r"[0-9a-f]{64}", finding_id):
+    if not isinstance(data, dict) or set(data) != _FINDING_FIELDS:
+        raise ValueError("Baseline finding has missing or unknown fields.")
+    finding_id = _required_string(data, "id", max_length=64)
+    fingerprint = _required_string(data, "fingerprint", max_length=64)
+    if _HASH_PATTERN.fullmatch(finding_id) is None:
         raise ValueError("Baseline finding has an invalid id.")
-    path = data.get("path")
-    if path is not None and _safe_relative_path(path) != path:
+    if _HASH_PATTERN.fullmatch(fingerprint) is None:
+        raise ValueError("Baseline finding has an invalid fingerprint.")
+    rule_id = _required_string(data, "rule_id")
+    if _RULE_ID_PATTERN.fullmatch(rule_id) is None:
+        raise ValueError("Baseline finding has an invalid rule_id.")
+    _required_string(data, "rule_name")
+    severity = _required_string(data, "severity", max_length=32)
+    if severity not in _KNOWN_SEVERITIES:
+        raise ValueError("Baseline finding has an invalid severity.")
+    _required_string(data, "message")
+    _required_string(data, "evidence")
+    state = _required_string(data, "state", max_length=32)
+    if state not in {"new", "existing", "unclassified", "resolved"}:
+        raise ValueError("Baseline finding has an invalid state.")
+    raw_path = data.get("path")
+    path = _safe_relative_path(raw_path) if raw_path is not None else None
+    if raw_path is not None and path != raw_path:
         raise ValueError("Baseline finding has an unsafe path.")
     line = data.get("line")
-    if line is not None and (not isinstance(line, int) or isinstance(line, bool) or line < 1):
+    if line is not None and (
+        not isinstance(line, int)
+        or isinstance(line, bool)
+        or not 1 <= line <= MAX_ANNOTATION_LINE
+    ):
         raise ValueError("Baseline finding has an invalid line.")
-    finding = PrFinding(
+    if _finding_id(rule_id, path, fingerprint) != finding_id:
+        raise ValueError("Baseline finding id does not match its content.")
+    rule_name = _baseline_rule_name(rule_id)
+    return PrFinding(
         id=finding_id,
-        rule_id=_bounded(data.get("rule_id", "")),
-        rule_name=_bounded(data.get("rule_name", "")),
-        severity=_bounded(data.get("severity", ""), 32),
-        message=_bounded(data.get("message", "")),
-        evidence=_bounded(data.get("evidence", "")),
-        state="existing",
+        fingerprint=fingerprint,
+        rule_id=rule_id,
+        rule_name=rule_name,
+        severity=severity,
+        message="Previously reported AgentGuard finding.",
+        evidence="Baseline evidence omitted; fingerprint retained.",
+        state=state,
         path=path,
         line=line,
     )
-    derived_path, derived_line, identity_evidence = _location(
-        CheckResult(
-            name=finding.rule_name,
-            passed=False,
-            severity=finding.severity,
-            message=finding.message,
-            evidence=[finding.evidence],
-        ),
-        finding.evidence,
-    )
-    if derived_path != finding.path or derived_line != finding.line:
-        raise ValueError("Baseline finding location does not match its evidence.")
-    if _finding_id(finding.rule_id, finding.path, identity_evidence) != finding.id:
-        raise ValueError("Baseline finding id does not match its content.")
-    return finding
 
 
-def _checks_from_ci_report(data: dict[str, Any]) -> tuple[str, list[CheckResult]]:
+def _validated_counts(data: Any, findings: list[PrFinding], resolved: list[PrFinding]) -> None:
+    expected_keys = {"new", "existing", "resolved", "unclassified", "total"}
+    if not isinstance(data, dict) or set(data) != expected_keys:
+        raise ValueError("Baseline counts have missing or unknown fields.")
+    if not all(
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 <= value <= MAX_FINDINGS
+        for value in data.values()
+    ):
+        raise ValueError("Baseline counts must be bounded non-negative integers.")
+    expected = {
+        "new": sum(item.state == "new" for item in findings),
+        "existing": sum(item.state == "existing" for item in findings),
+        "resolved": len(resolved),
+        "unclassified": sum(item.state == "unclassified" for item in findings),
+        "total": len(findings),
+    }
+    if data != expected:
+        raise ValueError("Baseline counts do not match its findings.")
+
+
+def _validate_pr_report(data: dict[str, Any]) -> tuple[str, list[PrFinding]]:
+    if set(data) != _PR_REPORT_FIELDS:
+        raise ValueError("Baseline PR report has missing or unknown fields.")
+    if data.get("schema_version") != PR_REPORT_VERSION:
+        raise ValueError(f"Baseline schema_version must be {PR_REPORT_VERSION}.")
+    task_id = _required_string(data, "task_id")
+    if data.get("result") not in {"PASS", "FAIL"}:
+        raise ValueError("Baseline result must be PASS or FAIL.")
+    score = data.get("score")
+    if not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 100:
+        raise ValueError("Baseline score must be an integer from 0 to 100.")
+    if data.get("gate") != "all-blocking-findings":
+        raise ValueError("Baseline gate contract is unsupported.")
+    baseline_state = data.get("baseline")
+    if not isinstance(baseline_state, dict) or set(baseline_state) != {
+        "status",
+        "source",
+        "sha256",
+        "diagnostic",
+    }:
+        raise ValueError("Baseline provenance state is invalid.")
+    if baseline_state.get("status") not in {"available", "unavailable", "invalid"}:
+        raise ValueError("Baseline provenance status is invalid.")
+    _optional_string(baseline_state, "source")
+    _optional_string(baseline_state, "diagnostic")
+    provenance_hash = baseline_state.get("sha256")
+    if provenance_hash is not None and (
+        not isinstance(provenance_hash, str)
+        or _HASH_PATTERN.fullmatch(provenance_hash) is None
+    ):
+        raise ValueError("Baseline provenance sha256 is invalid.")
+    raw_findings = data.get("findings")
+    raw_resolved = data.get("resolved")
+    if not isinstance(raw_findings, list) or not isinstance(raw_resolved, list):
+        raise ValueError("Baseline findings and resolved must be arrays.")
+    if (
+        len(raw_findings) > MAX_FINDINGS
+        or len(raw_resolved) > MAX_FINDINGS
+        or len(raw_findings) + len(raw_resolved) > MAX_FINDINGS
+    ):
+        raise ValueError(f"Baseline exceeds the {MAX_FINDINGS}-finding limit.")
+    findings = [_validated_finding(item) for item in raw_findings]
+    resolved = [_validated_finding(item) for item in raw_resolved]
+    all_ids = [finding.id for finding in [*findings, *resolved]]
+    if len(set(all_ids)) != len(all_ids):
+        raise ValueError("Baseline contains duplicate finding ids.")
+    if any(item.state == "resolved" for item in findings):
+        raise ValueError("Baseline current findings have an invalid state.")
+    if any(item.state != "resolved" for item in resolved):
+        raise ValueError("Baseline resolved findings have an invalid state.")
+    _validated_counts(data.get("counts"), findings, resolved)
+    return task_id, findings
+
+
+def _checks_from_ci_report(data: dict[str, Any]) -> tuple[str, list[PrFinding]]:
     task_id = data.get("task_id")
     raw_checks = data.get("check_results")
-    if not isinstance(task_id, str) or not isinstance(raw_checks, list):
-        raise ValueError("Baseline is not an AgentGuard CI report.")
+    if not isinstance(task_id, str) or not task_id or len(task_id) > MAX_FIELD_CHARS:
+        raise ValueError("Baseline CI report has an invalid task_id.")
+    if not isinstance(raw_checks, list) or len(raw_checks) > MAX_FINDINGS:
+        raise ValueError("Baseline CI report has invalid check_results.")
     checks: list[CheckResult] = []
+    evidence_count = 0
+    expected_check_fields = {"name", "passed", "severity", "message", "evidence"}
     for raw in raw_checks:
-        if not isinstance(raw, dict):
-            raise ValueError("Baseline check result must be an object.")
-        try:
-            passed = raw["passed"]
-            if not isinstance(passed, bool):
-                raise TypeError
-            raw_evidence = raw.get("evidence", [])
-            if not isinstance(raw_evidence, list) or not all(
-                isinstance(item, str) for item in raw_evidence
-            ):
-                raise TypeError
-            checks.append(
-                CheckResult(
-                    name=str(raw["name"]),
-                    passed=passed,
-                    severity=str(raw["severity"]),
-                    message=str(raw["message"]),
-                    evidence=raw_evidence,
-                )
-            )
-        except (KeyError, TypeError) as error:
-            raise ValueError("Baseline check result is invalid.") from error
+        if not isinstance(raw, dict) or set(raw) != expected_check_fields:
+            raise ValueError("Baseline check result has missing or unknown fields.")
+        name = raw.get("name")
+        passed = raw.get("passed")
+        severity = raw.get("severity")
+        message = raw.get("message")
+        raw_evidence = raw.get("evidence")
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(passed, bool)
+            or not isinstance(severity, str)
+            or severity not in _KNOWN_SEVERITIES
+            or not isinstance(message, str)
+            or not isinstance(raw_evidence, list)
+            or not all(isinstance(item, str) for item in raw_evidence)
+        ):
+            raise ValueError("Baseline check result is invalid.")
+        evidence_count += max(1, len(raw_evidence)) if not passed else 0
+        if evidence_count > MAX_FINDINGS:
+            raise ValueError(f"Baseline exceeds the {MAX_FINDINGS}-finding limit.")
+        checks.append(CheckResult(name, passed, severity, message, raw_evidence))
     return task_id, findings_from_checks(checks)
 
 
-def _load_baseline(path: Optional[Path], task_id: str) -> tuple[BaselineState, list[PrFinding]]:
+def _load_baseline(
+    path: Optional[Path],
+    task_id: str,
+) -> tuple[BaselineState, list[PrFinding]]:
     if path is None:
-        return BaselineState(status="unavailable", diagnostic="No baseline report was provided."), []
+        return BaselineState(
+            status="unavailable",
+            diagnostic="No baseline report was provided.",
+        ), []
     source = path.expanduser()
     safe_source = source.name
     try:
@@ -243,21 +541,11 @@ def _load_baseline(path: Optional[Path], task_id: str) -> tuple[BaselineState, l
         if not isinstance(data, dict):
             raise ValueError("Baseline must be a JSON object.")
         if data.get("schema") == PR_REPORT_SCHEMA:
-            if data.get("schema_version") != PR_REPORT_VERSION:
-                raise ValueError(f"Baseline schema_version must be {PR_REPORT_VERSION}.")
-            baseline_task = data.get("task_id")
-            raw_findings = data.get("findings")
-            if not isinstance(baseline_task, str) or not isinstance(raw_findings, list):
-                raise ValueError("Baseline PR report is incomplete.")
-            findings = [_validated_finding(item) for item in raw_findings]
+            baseline_task, findings = _validate_pr_report(data)
         else:
             baseline_task, findings = _checks_from_ci_report(data)
         if baseline_task != task_id:
             raise ValueError("Baseline task_id does not match the current CI task.")
-        if len(findings) > MAX_FINDINGS:
-            raise ValueError(f"Baseline exceeds the {MAX_FINDINGS}-finding limit.")
-        if len({finding.id for finding in findings}) != len(findings):
-            raise ValueError("Baseline contains duplicate finding ids.")
         return (
             BaselineState(
                 status="available",
@@ -266,8 +554,14 @@ def _load_baseline(path: Optional[Path], task_id: str) -> tuple[BaselineState, l
             ),
             findings,
         )
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
-        diagnostic = _bounded(error)
+    except (
+        OSError,
+        OverflowError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        ValueError,
+    ) as error:
+        diagnostic = _safe_diagnostic(error)
         for candidate in {str(source), str(source.absolute())}:
             diagnostic = diagnostic.replace(candidate, safe_source)
         return BaselineState(
@@ -295,11 +589,15 @@ def build_pr_report(result: CiResult, baseline_path: Optional[Path] = None) -> P
         )
         for finding in current
     ]
-    resolved = [
-        PrFinding(**{**asdict(finding), "state": "resolved"})
-        for finding in previous
-        if finding.id not in current_ids
-    ] if baseline.status == "available" else []
+    resolved = (
+        [
+            PrFinding(**{**asdict(finding), "state": "resolved"})
+            for finding in previous
+            if finding.id not in current_ids
+        ]
+        if baseline.status == "available"
+        else []
+    )
     counts = {
         "new": sum(item.state == "new" for item in classified),
         "existing": sum(item.state == "existing" for item in classified),
@@ -374,8 +672,15 @@ def append_pr_summary(report: PrReport, summary_path: Path) -> Path:
     return summary_path
 
 
-def _safe_annotation_location(repo_dir: Path, finding: PrFinding) -> Optional[tuple[str, int]]:
-    if finding.path is None or finding.line is None:
+def _safe_annotation_location(
+    repo_dir: Path,
+    finding: PrFinding,
+) -> Optional[tuple[str, int]]:
+    if (
+        finding.path is None
+        or finding.line is None
+        or not 1 <= finding.line <= MAX_ANNOTATION_LINE
+    ):
         return None
     relative = _safe_relative_path(finding.path)
     if relative is None:
@@ -390,18 +695,34 @@ def _safe_annotation_location(repo_dir: Path, finding: PrFinding) -> Optional[tu
         root = repo_dir.resolve(strict=True)
         resolved = target.resolve(strict=True)
         resolved.relative_to(root)
-        if not resolved.is_file():
+        stat_result = resolved.stat()
+        if not resolved.is_file() or stat_result.st_size > MAX_ANNOTATION_FILE_BYTES:
             return None
-        line_count = sum(1 for _ in resolved.open("rb"))
-    except (OSError, ValueError):
-        return None
-    if finding.line > line_count:
+        bytes_read = 0
+        with resolved.open("rb") as file:
+            for _ in range(finding.line):
+                raw_line = file.readline(MAX_ANNOTATION_LINE_BYTES + 1)
+                bytes_read += len(raw_line)
+                if (
+                    not raw_line
+                    or len(raw_line) > MAX_ANNOTATION_LINE_BYTES
+                    or bytes_read > MAX_ANNOTATION_FILE_BYTES
+                    or b"\x00" in raw_line
+                ):
+                    return None
+                raw_line.decode("utf-8")
+    except (OSError, UnicodeDecodeError, ValueError):
         return None
     return relative, finding.line
 
 
 def _workflow_escape(value: str, *, property_value: bool = False) -> str:
-    escaped = _bounded(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    escaped = (
+        _display_text(value)
+        .replace("%", "%25")
+        .replace("\r", "%0D")
+        .replace("\n", "%0A")
+    )
     if property_value:
         escaped = escaped.replace(":", "%3A").replace(",", "%2C")
     return escaped
@@ -422,7 +743,10 @@ def github_annotations(report: PrReport, repo_dir: Path) -> list[str]:
             continue
         seen.add(key)
         level = "warning" if finding.severity == "warning" else "error"
-        title = _workflow_escape(f"AgentGuard: {finding.rule_name}", property_value=True)
+        title = _workflow_escape(
+            f"AgentGuard: {finding.rule_name}",
+            property_value=True,
+        )
         message = _workflow_escape(finding.message)
         annotations.append(
             f"::{level} file={_workflow_escape(path, property_value=True)},"
