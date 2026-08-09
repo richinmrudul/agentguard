@@ -32,6 +32,10 @@ PINNED_RELEASES = {
         "249970729cb0ef3589644e2896645e5dc5ba9c38",
         "v6.5.0",
     ),
+    "actions/setup-go": (
+        "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+        "v7.0.0",
+    ),
     "actions/upload-artifact": (
         "b7c566a772e6b6bfb58ed0dc250532a479d7789f",
         "v6.0.0",

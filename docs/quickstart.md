@@ -35,8 +35,8 @@ agentguard init --ci github
 ```
 
 Continue with [safe project initialization](project-initialization.md) for the
-generated-file inventory, Python and conservative Node.js detection rules,
-overwrite model, security boundaries, and first local and CI runs.
+generated-file inventory, conservative Python, Node.js, and Go detection
+rules, overwrite model, security boundaries, and first local and CI runs.
 
 ## Run a deterministic safe evaluation
 
