@@ -15,8 +15,10 @@ wheel and source distribution as
 The production loader remains authoritative because it also performs checks
 that a data-only JSON Schema cannot perform, including resolving repository and
 prompt-file paths, checking prompt-file existence and size, normalizing guard
-ignore paths, comparing cross-field and aggregate limits, and validating the
-complete Docker image grammar.
+ignore paths, and comparing cross-field, aggregate, UTF-8 byte, and filesystem
+limits. YAML can also represent non-finite floats such as `.nan` and `.inf`,
+which are outside JSON Schema's standard JSON data model; the production loader
+explicitly rejects them in metadata and numeric configuration fields.
 
 The checked-in JSON file is the canonical editor schema. CI runs
 `python scripts/validate_config_schema.py`, which:
@@ -26,10 +28,17 @@ The checked-in JSON file is the canonical editor schema. CI runs
 3. loads those same files through production `load_config`.
 
 Focused contract tests additionally compare the schema's top-level fields,
-policy names, enums, built-in detector IDs, required fields, and
-unknown-property behavior with loader constants. Changes to either side must
+policy names, enums, built-in detector IDs, field bounds, required fields,
+nested property sets, conditionals, and unknown-property behavior with loader
+constants and a loader-versus-schema parity corpus. Changes to either side must
 therefore update the contract and examples together. The production loader is
 still the final validation authority at execution time.
+
+When `sandbox.docker.cpus` is a string, the shared schema/loader contract uses
+a bounded positive decimal or scientific form (for example, `"0.5"` or
+`"1e3"`). Native numeric values must also be finite and positive. This keeps
+editor validation deterministic instead of inheriting every platform-specific
+spelling accepted by Python's `float()` conversion.
 
 ## VS Code
 

@@ -14,6 +14,7 @@
   "properties": {
     "task_id": {
       "type": "string",
+      "maxLength": 128,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
       "description": "Portable identifier used in AgentGuard artifact paths."
     },
@@ -28,7 +29,7 @@
       "description": "Selects benchmark evaluation or post-execution CI validation."
     },
     "repo_template": {
-      "$ref": "#/$defs/nullableNonEmptyString",
+      "$ref": "#/$defs/nonEmptyString",
       "description": "Repository template path. Required in benchmark mode and resolved by the production loader."
     },
     "test_command": {
@@ -292,10 +293,10 @@
             "cpus": {
               "oneOf": [
                 {"type": "number", "exclusiveMinimum": 0},
-                {"type": "string", "pattern": "^(?=.*[1-9])(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)$"},
+                {"type": "string", "pattern": "^\\+?(?=[0-9.]*[1-9])(?:[0-9]{1,16}(?:\\.[0-9]{0,16})?|\\.[0-9]{1,16})(?:[eE][+-]?[0-9]{1,2})?$"},
                 {"type": "null"}
               ],
-              "description": "Positive CPU limit; numeric strings accepted by the production loader."
+              "description": "Finite positive CPU limit; bounded decimal or scientific strings are accepted by both schema and production loader."
             },
             "memory": {"$ref": "#/$defs/nullableNonEmptyString", "description": "Docker memory limit."},
             "network": {"type": "string", "enum": ["none", "bridge"], "description": "Docker network mode."},
