@@ -1,7 +1,9 @@
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from agentguard.cli.main import app
@@ -89,6 +91,44 @@ def test_parent_directory_initialization_produces_reusable_strict_config(
     assert result.exit_code == 0, result.output
     assert config.test_command == "python -m pytest"
     assert (root / ".github/workflows/agentguard.yml").is_file()
+
+
+def test_node_fixture_initialization_is_inert_then_native_tests_run(
+    tmp_path: Path,
+) -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is not installed")
+    root = tmp_path / "Node project café 日本語"
+    root.mkdir()
+    (root / "package.json").write_text(
+        '{"name":"agentguard-node-fixture","scripts":{"test":"node --test"}}\n',
+        encoding="utf-8",
+    )
+    test_dir = root / "test"
+    test_dir.mkdir()
+    marker = root / "node-test-ran"
+    (test_dir / "onboarding.test.js").write_text(
+        "const fs = require('node:fs');\n"
+        "const test = require('node:test');\n"
+        "const assert = require('node:assert/strict');\n"
+        "test('onboarding', () => {\n"
+        "  fs.writeFileSync('node-test-ran', 'yes\\n');\n"
+        "  assert.equal(2 + 2, 4);\n"
+        "});\n",
+        encoding="utf-8",
+    )
+
+    initialized = runner.invoke(app, ["init", str(root), "--no-ci"])
+    config = load_config(root / "agentguard.yaml")
+
+    assert initialized.exit_code == 0, initialized.output
+    assert config.test_command == "node --test"
+    assert not marker.exists(), "initialization must not execute repository tests"
+
+    test_result = CommandTestRunner(CommandTracker()).run(root, config.test_command)
+
+    assert test_result.exit_code == 0, test_result.stderr
+    assert marker.read_text(encoding="utf-8") == "yes\n"
 
 
 def test_explicit_test_command_metacharacters_are_not_shell_injectable(

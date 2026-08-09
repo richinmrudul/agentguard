@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from io import StringIO
@@ -27,6 +28,16 @@ UNKNOWN_TEST_COMMAND = (
     "python -c \"import sys; print('Edit test_command in agentguard.yaml'); "
     "sys.exit(2)\""
 )
+NODE_TEST_COMMAND = "node --test"
+MAX_NODE_PACKAGE_JSON_BYTES = 1024 * 1024
+NODE_LOCKFILES = {
+    "package-lock.json": "npm",
+    "npm-shrinkwrap.json": "npm",
+    "yarn.lock": "yarn",
+    "pnpm-lock.yaml": "pnpm",
+    "bun.lock": "bun",
+    "bun.lockb": "bun",
+}
 
 
 @dataclass(frozen=True)
@@ -153,6 +164,65 @@ def _looks_like_pytest_config(root: Path) -> bool:
     return False
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate package.json key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"non-standard package.json constant: {value}")
+
+
+def _load_node_package(root: Path) -> Optional[dict[str, object]]:
+    path = root / "package.json"
+    if not _is_safe_detection_file(root, path):
+        return None
+    try:
+        with path.open("rb") as package_file:
+            raw = package_file.read(MAX_NODE_PACKAGE_JSON_BYTES + 1)
+        if len(raw) > MAX_NODE_PACKAGE_JSON_BYTES:
+            return None
+        parsed = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+            parse_constant=_reject_json_constant,
+        )
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _node_lock_managers(root: Path) -> tuple[str, ...]:
+    return tuple(
+        manager
+        for filename, manager in NODE_LOCKFILES.items()
+        if _is_safe_detection_file(root, root / filename)
+    )
+
+
+def _detect_node_test_command(
+    package: Optional[dict[str, object]],
+    lock_managers: tuple[str, ...],
+) -> bool:
+    if package is None or "workspaces" in package or len(lock_managers) > 1:
+        return False
+    package_manager = package.get("packageManager")
+    if package_manager is not None:
+        if not isinstance(package_manager, str):
+            return False
+        match = re.fullmatch(r"(npm|yarn|pnpm|bun)@[^\s]+", package_manager)
+        if match is None:
+            return False
+        if lock_managers and match.group(1) != lock_managers[0]:
+            return False
+    scripts = package.get("scripts")
+    return isinstance(scripts, dict) and scripts.get("test") == NODE_TEST_COMMAND
+
+
 def detect_project(root: Path, explicit_test_command: Optional[str]) -> tuple[str, str, str]:
     python_signals = (
         "pyproject.toml",
@@ -169,13 +239,28 @@ def detect_project(root: Path, explicit_test_command: Optional[str]) -> tuple[st
         _is_safe_detection_file(root, path)
         for path in root.glob("requirements*.txt")
     )
-    project_type = "Python" if is_python else "unknown"
+    package_path = root / "package.json"
+    lock_managers = _node_lock_managers(root)
+    has_node_signal = _is_safe_detection_file(root, package_path) or bool(lock_managers)
+    package = _load_node_package(root) if has_node_signal else None
+    if is_python and has_node_signal:
+        project_type = "Python + Node.js"
+    elif is_python:
+        project_type = "Python"
+    elif has_node_signal:
+        project_type = "Node.js"
+    else:
+        project_type = "unknown"
     if explicit_test_command is not None:
         if not explicit_test_command.strip() or "\0" in explicit_test_command:
             raise ValueError("--test-command must be a non-empty value without NUL.")
         return project_type, explicit_test_command, "explicit"
+    if is_python and has_node_signal:
+        return project_type, UNKNOWN_TEST_COMMAND, "requires customization"
     if is_python and _looks_like_pytest_config(root):
         return project_type, "python -m pytest", "detected pytest"
+    if has_node_signal and _detect_node_test_command(package, lock_managers):
+        return project_type, NODE_TEST_COMMAND, "detected Node.js test runner"
     return project_type, UNKNOWN_TEST_COMMAND, "requires customization"
 
 
@@ -222,6 +307,10 @@ def _config_content(
     source_note = {
         "explicit": "The test command below was supplied with --test-command.",
         "detected pytest": "AgentGuard detected maintained pytest configuration.",
+        "detected Node.js test runner": (
+            "AgentGuard detected an exact native Node.js test command. Dependency "
+            "installation remains the user's responsibility."
+        ),
         "requires customization": (
             "No safe test command was detected. Replace test_command before using "
             "this as a CI gate; the placeholder exits nonzero."
@@ -241,8 +330,8 @@ def _config_content(
     return header + yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
 
 
-def _workflow_content() -> str:
-    return """name: AgentGuard
+def _workflow_content(project_type: str) -> str:
+    workflow = """name: AgentGuard
 
 on:
   pull_request:
@@ -266,6 +355,15 @@ jobs:
 
       - name: Install AgentGuard
         run: python -m pip install agentguard-evals==0.2.2
+"""
+    if "Node.js" in project_type:
+        workflow += """
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+"""
+    workflow += """
 
       - name: Run AgentGuard CI gate
         env:
@@ -274,6 +372,7 @@ jobs:
           agentguard ci --config agentguard.yaml
           --base "$AGENTGUARD_BASE_SHA" --head HEAD --github-summary
 """
+    return workflow
 
 
 def _gitignore_content(existing: Optional[str]) -> str:
@@ -341,7 +440,12 @@ def build_initialization_plan(
     ci_enabled = ci == "github" and not no_ci
     if ci_enabled:
         files.append(
-            _plan_file(root, GITHUB_WORKFLOW_PATH, _workflow_content(), force)
+            _plan_file(
+                root,
+                GITHUB_WORKFLOW_PATH,
+                _workflow_content(project_type),
+                force,
+            )
         )
 
     plan = InitializationPlan(

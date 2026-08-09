@@ -71,7 +71,7 @@ mode evaluates the existing repository and its current Git diff:
 agentguard ci --config agentguard.yaml
 ```
 
-## Python Detection And Test Commands
+## Python And Node.js Detection
 
 Phase 44A recognizes common Python signals such as `pyproject.toml`,
 `setup.py`, `setup.cfg`, pytest configuration, `conftest.py`, and requirements
@@ -94,6 +94,47 @@ agentguard init --test-command "python -m pytest tests/unit"
 AgentGuard later splits this value into an argument vector; it does not pass it
 through a shell. Quotes and shell metacharacters therefore do not become shell
 fragments. Review any explicit command before running the gate.
+
+Node.js detection is deliberately narrower. The initializer reads only safe,
+root-level regular files. It parses at most 1 MiB of `package.json` as strict
+UTF-8 JSON, rejects duplicate keys and non-standard constants, and requires a
+top-level JSON object. Lockfiles are treated only as untrusted presence signals;
+their contents are never parsed or executed.
+
+The only automatically selected Node.js command is the fixed native runner:
+
+```yaml
+test_command: node --test
+```
+
+AgentGuard selects that fixed value only when all of these conditions hold:
+
+- `package.json` has an exact string value of `node --test` at
+  `scripts.test`;
+- no `workspaces` field is present;
+- at most one of `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`,
+  `pnpm-lock.yaml`, `bun.lock`, `bun.lockb` is present; and
+- when `packageManager` is present, it names `npm`, `yarn`, `pnpm`, or `bun`
+  with a non-whitespace version/reference and agrees with the detected lockfile.
+
+The script is used only as a conservative signal. Its contents are not copied
+into configuration, and initialization never invokes `npm test`, another
+package script, a lifecycle hook, a package manager, Node.js, a local binary,
+or repository code. Commands such as `jest`, `vitest`, `npm test`, `yarn test`,
+and values containing arguments or shell operators require an explicit
+`--test-command`; AgentGuard does not try to quote or rewrite them.
+
+The following cases also require customization: mixed Python/Node.js roots,
+workspaces and monorepos, conflicting lockfiles, a `packageManager` mismatch,
+lockfile-only projects, and missing, unreadable, malformed, oversized,
+duplicate-key, non-object, or symlinked `package.json` metadata. Root-level
+signals are intentional; recursive package discovery could guess the wrong
+workspace. Symlinked detection inputs are ignored rather than followed.
+
+An explicit `--test-command` still takes precedence for every recognized or
+ambiguous project. It is stored as one value and later split without a shell.
+That protects argument boundaries, but it does not make the selected executable
+or repository tests trusted.
 
 If no safe command can be inferred, the generated configuration contains a
 deterministic placeholder that prints an edit instruction and exits nonzero.
@@ -158,6 +199,8 @@ The optional workflow:
 - installs `agentguard-evals==0.2.2` for a reproducible gate;
 - pins `actions/checkout` v5.0.1 and `actions/setup-python` v6.2.0 to maintained
   immutable full commit SHAs;
+- for a detected Node.js root, pins `actions/setup-node` v6.5.0 to its immutable
+  full commit SHA and selects supported Node.js 24;
 - passes the pull request base SHA through a quoted environment variable;
 - uses no secrets, OIDC, long-lived credentials, or repository write access;
 - runs the real `agentguard ci --config agentguard.yaml` command and preserves
@@ -167,6 +210,13 @@ Review the workflow, commit it on your branch, and open a pull request to run
 the first CI evaluation. Because initialization itself is unreleased, the
 workflow intentionally uses the released v0.2.2 package only for the existing
 `agentguard ci` command.
+
+The generated workflow does not install Node.js dependencies. Dependency-free
+native tests can run immediately. If the selected test command needs installed
+packages, add a reviewed installation step yourself. Package-manager installs
+may download dependencies and execute lifecycle hooks on the GitHub runner;
+that later execution is outside `agentguard init`, and AgentGuard CI remains
+post-execution validation rather than hostile-code containment.
 
 ## Customize Or Remove
 
