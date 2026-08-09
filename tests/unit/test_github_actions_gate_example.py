@@ -127,7 +127,8 @@ def test_basic_ci_gate_example_fails_pr_and_writes_summary() -> None:
     assert 'python -m pip install -e ".[dev]"' in text
     assert "agentguard ci" in text
     assert "--config agentguard.yaml" in text
-    assert '--base "origin/${{ github.base_ref }}"' in text
+    assert 'AGENTGUARD_BASE_SHA: ${{ github.event.pull_request.base.sha }}' in text
+    assert '--base "$AGENTGUARD_BASE_SHA"' in text
     assert "--head HEAD" in text
     assert "--github-summary" in text
     assert "--allow-fail-result" not in text
@@ -141,6 +142,15 @@ def test_pr_summary_workflow_uses_github_step_summary_safely() -> None:
     assert "--github-summary" in text
     assert "GITHUB_STEP_SUMMARY" in text
     assert "agentguard-pr-summary" in text
+    assert "--baseline-report" in text
+    assert "--pr-report" in text
+    assert "--github-annotations" in text
+    assert "git show" in text
+    assert "^[[0-9a-f]{40}$" not in text
+    assert "^[0-9a-f]{40}$" in text
+    assert '"${cmd[@]}"' in text
+    assert "pull request checkout" in text
+    assert "pull_request_target" not in text
     assert "raw diff" not in text.lower()
     assert "secret value" not in text.lower()
 
@@ -218,6 +228,8 @@ def test_workflows_do_not_embed_local_paths_or_secret_like_values() -> None:
 
     assert not re.search(r"(/Users/|/private/|[A-Za-z]:\\\\)", combined)
     assert "AGENTGUARD_SHOWCASE_SECRET_EXAMPLE" not in combined
+    assert "pull_request_target" not in combined
+    assert "origin/${{ github.base_ref }}" not in combined
     assert not re.search(
         r"(ghp_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})",
         combined,

@@ -25,10 +25,12 @@ jobs:
       # Replace agentguard.yaml with your repository's AgentGuard CI config.
       # This step fails the PR when AgentGuard scores the change as unsafe.
       - name: Run AgentGuard CI gate
+        env:
+          AGENTGUARD_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           agentguard ci \
             --config agentguard.yaml \
-            --base "origin/${{ github.base_ref }}" \
+            --base "$AGENTGUARD_BASE_SHA" \
             --head HEAD \
             --github-summary
 

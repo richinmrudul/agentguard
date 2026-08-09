@@ -80,7 +80,7 @@ def test_github_step_summary_appends_compact_markdown(tmp_path: Path) -> None:
     assert "  - `src/app.py`" in content
     assert "- Added: 1" in content
     assert "- Deleted: 1" in content
-    assert f"- Command log: `{tmp_path / 'command_log.json'}`" in content
+    assert "- Command log: `command_log.json`" in content
 
 
 def test_github_step_summary_escapes_inline_code_and_report_fields(
@@ -120,3 +120,32 @@ def test_github_step_summary_escapes_inline_code_and_report_fields(
     assert "<details>" not in summary
     assert "&lt;details>" in summary
     assert "src/a`b|c.py\\n- forged" in summary
+
+
+def test_github_step_summary_bounds_checks_fields_and_workspace_paths(
+    tmp_path: Path,
+) -> None:
+    result = _ci_result(tmp_path)
+    result = CiResult(
+        **{
+            **result.__dict__,
+            "check_results": [
+                CheckResult(
+                    name=f"Check {index}",
+                    passed=False,
+                    severity="error",
+                    message="x" * 1_000,
+                )
+                for index in range(25)
+            ],
+        }
+    )
+
+    summary = write_github_step_summary(
+        result,
+        tmp_path / "summary.md",
+    ).read_text(encoding="utf-8")
+
+    assert "...and 5 more" in summary
+    assert "truncated" in summary
+    assert str(tmp_path) not in summary

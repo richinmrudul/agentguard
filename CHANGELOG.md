@@ -9,6 +9,11 @@ and uses semantic versioning.
 
 ### Added
 
+- Added deterministic baseline-aware pull-request reports with stable finding
+  identities, explicit new/existing/resolved and unavailable/invalid baseline
+  states, bounded safe GitHub summaries and annotations, and a least-privilege
+  fork-compatible workflow example. Current policy failures remain the
+  conservative exit-code gate regardless of baseline classification.
 - Added a packaged, versioned Draft 2020-12 JSON Schema for `agentguard.yaml`,
   deterministic loader-contract and example validation in CI, and VS Code and
   YAML Language Server integration guidance.

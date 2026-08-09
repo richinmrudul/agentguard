@@ -45,10 +45,12 @@ overwrite, detection, and workflow security model.
 agentguard ci --config agentguard.yaml
 ```
 
-For pull request-style evaluation in CI, pass the base and head refs:
+For pull request-style evaluation in CI, pass the base and head commits. Put
+event values in environment variables instead of interpolating them into a
+shell program:
 
 ```bash
-agentguard ci --config agentguard.yaml --base origin/main --head HEAD --github-summary
+agentguard ci --config agentguard.yaml --base "$AGENTGUARD_BASE_SHA" --head HEAD --github-summary
 ```
 
 ## Diff Modes
@@ -81,15 +83,40 @@ Each CI run writes reports under:
 .agentguard/ci/<run-id>/report.json
 .agentguard/ci/<run-id>/report.md
 .agentguard/ci/<run-id>/command_log.json
+.agentguard/ci/<run-id>/pr-report.json
 ```
 
 The JSON and Markdown reports include the task, result, score, config path, repository
 directory, test result, diff summary, check results, command log path, and timeline.
 
+Every CI run also writes a versioned `agentguard.pr-report` JSON artifact. Pass
+`--baseline-report PATH` to compare against either an earlier CI `report.json`
+or an earlier PR report. Finding identities are deterministic across ordering
+and line-number movement. The comparison classifies findings as `new`,
+`existing`, or `resolved`; a missing argument is `unavailable`, while an
+unreadable, oversized, malformed, wrong-version, or wrong-task baseline is
+`invalid`. When the baseline is unavailable or invalid, current findings are
+`unclassified` rather than being mislabeled as new. The report records the
+baseline content digest and filename, not an
+environment-specific absolute path.
+
+Baseline classification does not waive policy. The normal exit code continues
+to gate on all current error and critical findings: `PASS` is `0`, `FAIL` is
+`1`, and operational/input errors are `2`. Thus a missing or corrupt baseline
+cannot turn current failures green. Use `--allow-fail-result` only when the
+existing documented non-gating behavior is intentional.
+
 When `--github-summary` is provided, AgentGuard appends a compact Markdown summary to
 the file path in `GITHUB_STEP_SUMMARY`. GitHub renders that content on the Actions run
 summary page. The summary includes result, score, failed and warning checks, changed
-file counts, and report paths; it does not include full command stdout or stderr.
+file counts, baseline state, bounded new/existing/resolved lists, and report
+paths; it does not include full command stdout or stderr.
+
+`--github-annotations` emits at most ten annotations and only for new findings
+that have an unambiguous positive line number in a regular file contained by
+the repository. Absolute paths, traversal, symlinks, missing files, invalid
+lines, duplicates, and location-free findings are skipped. Workflow-command
+properties and messages are escaped. Existing findings are not re-annotated.
 
 The example workflows upload JSON, Markdown, command-log, and manifest artifacts
 with `actions/upload-artifact@v6.0.0`. Generated artifacts remain under
@@ -196,7 +223,9 @@ steps:
     with:
       python-version: "3.11"
   - run: python -m pip install -e ".[dev]"
-  - run: agentguard ci --config agentguard.yaml --base "origin/${{ github.base_ref }}" --head HEAD --github-summary
+  - env:
+      AGENTGUARD_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    run: agentguard ci --config agentguard.yaml --base "$AGENTGUARD_BASE_SHA" --head HEAD --github-summary
 ```
 
 The full copyable version, including artifact upload, is
@@ -205,11 +234,23 @@ The full copyable version, including artifact upload, is
 ## PR Or Job Summary
 
 [`examples/github-actions/agentguard-pr-summary.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-pr-summary.yml)
-uses `--github-summary` so the Actions run page shows the AgentGuard result,
-failed checks, changed-file counts, guard incident counts when available, and
-report locations. It appends only static artifact pointers after the run and
-does not render raw diffs, secret values, environment variables, or full
-stdout/stderr blobs.
+uses a tracked approved baseline with `--baseline-report`, writes the
+machine-readable comparison with `--pr-report`, and enables the bounded summary
+and safe new-finding annotations. The workflow is compatible with forked pull
+requests: it uses only `pull_request`, `contents: read`, the checked-out base
+commit SHA through an environment variable, and artifact upload. It does not
+use `pull_request_target`, interpolate event data into shell source, request
+secrets, or grant write permissions.
+
+The example loads the approved baseline with `git show` from the validated
+40-character base commit SHA. It does not trust a baseline modified by the pull
+request itself. Command arguments are assembled in a Bash array; the base SHA
+and runner paths remain data rather than executable shell source.
+
+An approved baseline is a review decision. Refresh it from a known trusted run
+after accepting the findings it contains, then commit it under a stable path
+such as `baselines/agentguard-ci.json`. AgentGuard does not fetch or
+manage a remote baseline service and does not infer freshness from timestamps.
 
 ## Showcase Metrics In CI
 

@@ -717,7 +717,8 @@ See the copyable workflow examples:
 - [examples/github-actions/agentguard-ci.yml](examples/github-actions/agentguard-ci.yml)
   for a fail-on-unsafe PR gate with uploaded reports
 - [examples/github-actions/agentguard-pr-summary.yml](examples/github-actions/agentguard-pr-summary.yml)
-  for a sanitized GitHub job summary
+  for baseline-aware new/existing/resolved findings, a bounded sanitized job
+  summary, and safe new-finding annotations
 - [examples/github-actions/agentguard-showcase.yml](examples/github-actions/agentguard-showcase.yml)
   for showcase metrics in CI
 - [examples/github-actions/agentguard-gate.yml](examples/github-actions/agentguard-gate.yml)
@@ -734,6 +735,7 @@ AgentGuard writes local artifacts under `.agentguard/` by default:
 - Suite manifests: `.agentguard/suites/.../manifest.json`
 - Matrix manifests: `.agentguard/matrices/.../manifest.json`
 - CI reports: `.agentguard/ci/.../report.json` and `report.md`
+- Baseline-aware PR reports: `.agentguard/ci/.../pr-report.json`
 - Command logs: `command_log.json`
 - Timeline data embedded in reports
 - Run history index: `.agentguard/history.db`
