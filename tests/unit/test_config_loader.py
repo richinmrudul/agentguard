@@ -6,6 +6,20 @@ import yaml
 from agentguard.config.loader import load_config
 
 
+def test_missing_required_strings_report_in_stable_order(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        "expected_modified_files:\n  min: 0\n  max: 1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Config field 'task_id' must be a non-empty string",
+    ):
+        load_config(config_path)
+
+
 def test_load_fix_auth_bug_config() -> None:
     config = load_config(Path("examples/configs/fix_auth_bug.yaml"))
 
@@ -743,6 +757,70 @@ sandbox:
         load_config(config_path)
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("1e3", 1000.0), ("0.25", 0.25), ("+2.5e-1", 0.25)],
+)
+def test_config_accepts_finite_positive_docker_cpu_strings(
+    tmp_path: Path,
+    value: str,
+    expected: float,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "task_id": "task",
+                "description": "Task.",
+                "repo_template": "examples/repos/auth_bug",
+                "test_command": "pytest",
+                "expected_modified_files": {"min": 1, "max": 2},
+                "sandbox": {"docker": {"cpus": value}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_config(config_path).sandbox.cpus == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        0,
+        -1,
+        "0",
+        "-1",
+        "nan",
+        "inf",
+        "1e100",
+        float("nan"),
+        float("inf"),
+    ],
+)
+def test_config_rejects_non_positive_or_non_finite_docker_cpus(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "task_id": "task",
+                "description": "Task.",
+                "repo_template": "examples/repos/auth_bug",
+                "test_command": "pytest",
+                "expected_modified_files": {"min": 1, "max": 2},
+                "sandbox": {"docker": {"cpus": value}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="sandbox.docker.cpus"):
+        load_config(config_path)
+
+
 def test_invalid_policy_severity_raises_clear_error(tmp_path: Path) -> None:
     config_path = tmp_path / "agentguard.yaml"
     config_path.write_text(
@@ -772,6 +850,50 @@ def test_load_ci_config_without_repo_template() -> None:
     assert config.task_id == "pr_safety_check"
     assert config.repo_template is None
     assert config.allowed_paths == ["agentguard/**", "tests/**", "examples/**"]
+
+
+@pytest.mark.parametrize("repo_template", ["", None, 123, []])
+def test_ci_config_rejects_invalid_present_repo_template(
+    tmp_path: Path,
+    repo_template: object,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "task_id": "task",
+                "description": "Task.",
+                "mode": "ci",
+                "repo_template": repo_template,
+                "test_command": "pytest",
+                "expected_modified_files": {"min": 0, "max": 2},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="repo_template"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize("non_finite", [".nan", ".inf", "-.inf"])
+def test_config_rejects_yaml_non_finite_agent_metadata(
+    tmp_path: Path,
+    non_finite: str,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        "task_id: task\n"
+        "description: Task.\n"
+        "mode: ci\n"
+        "test_command: pytest\n"
+        "expected_modified_files: {min: 0, max: 2}\n"
+        f"agent_metadata: {{value: {non_finite}}}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="agent_metadata.*finite"):
+        load_config(config_path)
 
 
 def test_config_accepts_command_limit_defaults_for_null_values(tmp_path: Path) -> None:

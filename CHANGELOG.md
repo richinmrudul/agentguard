@@ -9,6 +9,12 @@ and uses semantic versioning.
 
 ### Added
 
+- Added a packaged, versioned Draft 2020-12 JSON Schema for `agentguard.yaml`,
+  deterministic loader-contract and example validation in CI, and VS Code and
+  YAML Language Server integration guidance.
+- Tightened the shared configuration contract so a present `repo_template`
+  must be non-empty in every mode and Docker CPU limits use finite positive
+  numbers or the documented bounded decimal/scientific string form.
 - Added unreleased typed `minimal`, `recommended`, and `strict` CI policy
   presets, `agentguard init --preset`, and deterministic `agentguard presets
   list/show` inspection in text, YAML, and JSON.

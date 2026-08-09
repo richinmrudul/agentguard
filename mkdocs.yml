@@ -85,6 +85,7 @@ nav:
   - Getting Started:
       - Installation and Quickstart: quickstart.md
       - Project Initialization: project-initialization.md
+      - Configuration JSON Schema: configuration-schema.md
       - CI Policy Presets: policy-presets.md
       - Demo: demo.md
       - Product Demo Video: demo-video.md

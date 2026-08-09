@@ -28,6 +28,8 @@ VALID_DOCKER_NETWORKS = {"none", "bridge"}
 VALID_COMMAND_POLICY_MODES = {"audit", "enforce"}
 VALID_AGENT_WORKDIRS = {"repo_root", "config_dir"}
 VALID_FILESYSTEM_WATCHER_MODES = {"auto", "polling", "disabled"}
+VALID_CONFIG_MODES = {"benchmark", "ci"}
+VALID_SANDBOX_TYPES = {"local", "docker"}
 MAX_TASK_PROMPT_FILE_BYTES = 65536
 MAX_SECRET_CONTENT_PATTERNS = 32
 MAX_SECRET_CONTENT_PATTERN_ID_LENGTH = 64
@@ -36,6 +38,11 @@ MAX_SECRET_CONTENT_LITERAL_LENGTH = 1024
 MAX_SECRET_CONTENT_LITERAL_BYTES = 2048
 MAX_SECRET_CONTENT_TOTAL_LITERAL_BYTES = 16384
 SECRET_CONTENT_PATTERN_ID = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
+POSITIVE_FLOAT_STRING_PATTERN = re.compile(
+    r"^\+?(?=[0-9.]*[1-9])"
+    r"(?:[0-9]{1,16}(?:\.[0-9]{0,16})?|\.[0-9]{1,16})"
+    r"(?:[eE][+-]?[0-9]{1,2})?$"
+)
 TOP_LEVEL_CONFIG_KEYS = {
     "agent_command",
     "agent_environment",
@@ -77,6 +84,40 @@ POLICY_KEYS = {
     "tests_pass",
     "unsafe_commands",
 }
+TOP_LEVEL_REQUIRED_FIELDS = {
+    "description",
+    "expected_modified_files",
+    "task_id",
+    "test_command",
+}
+REQUIRED_STRING_FIELDS = ("task_id", "description", "test_command")
+EXPECTED_MODIFIED_FILES_KEYS = {"max", "min"}
+EXPECTED_MODIFIED_FILES_REQUIRED_KEYS = {"max", "min"}
+TASK_KEYS = {"prompt", "prompt_file"}
+BENCHMARK_KEYS = {
+    "category",
+    "difficulty",
+    "expected_behavior",
+    "failure_mode",
+    "id",
+    "tags",
+    "version",
+}
+POLICY_SETTING_KEYS = {"severity"}
+DIFF_LIMIT_KEYS = {"max_files_changed", "max_lines_added", "max_lines_deleted"}
+COMMAND_POLICY_KEYS = {"mode"}
+FILESYSTEM_WATCHER_KEYS = {"mode"}
+SANDBOX_KEYS = {
+    "docker",
+    "image",
+    "network",
+    "read_only",
+    "timeout_seconds",
+    "type",
+    "workdir",
+}
+SANDBOX_DOCKER_KEYS = {"cpus", "memory", "network", "read_only"}
+SECRET_CONTENT_PATTERN_KEYS = {"contains", "id"}
 
 
 def _string_list(data: dict[str, Any], key: str) -> list[str]:
@@ -111,7 +152,7 @@ def _load_secret_content_patterns(
         label = f"secret_content_patterns[{index}]"
         if not isinstance(raw_pattern, dict):
             raise ValueError(f"Config field '{label}' must be an object.")
-        unknown = set(raw_pattern) - {"id", "contains"}
+        unknown = set(raw_pattern) - SECRET_CONTENT_PATTERN_KEYS
         if unknown:
             raise ValueError(
                 f"Config field '{label}' contains unsupported key(s): "
@@ -269,7 +310,7 @@ def _load_task(data: dict[str, Any], config_path: Path) -> Optional[TaskConfig]:
         return None
     if not isinstance(raw_task, dict):
         raise ValueError("Config field 'task' must be a mapping.")
-    reject_unknown_keys(raw_task, {"prompt", "prompt_file"}, "task")
+    reject_unknown_keys(raw_task, TASK_KEYS, "task")
     prompt = raw_task.get("prompt")
     prompt_file = raw_task.get("prompt_file")
     if (prompt is None) == (prompt_file is None):
@@ -343,11 +384,13 @@ def _optional_positive_float(
         return None
     if isinstance(value, bool):
         raise ValueError(f"Config field '{field_name}.{key}' must be positive.")
+    if isinstance(value, str) and POSITIVE_FLOAT_STRING_PATTERN.fullmatch(value) is None:
+        raise ValueError(f"Config field '{field_name}.{key}' must be positive.")
     try:
         number = float(value)
     except (TypeError, ValueError) as error:
         raise ValueError(f"Config field '{field_name}.{key}' must be positive.") from error
-    if number <= 0:
+    if not math.isfinite(number) or number <= 0:
         raise ValueError(f"Config field '{field_name}.{key}' must be positive.")
     return number
 
@@ -410,15 +453,7 @@ def _load_benchmark_metadata(data: dict[str, Any]) -> BenchmarkMetadata:
         raise ValueError("Config field 'benchmark' must be a mapping.")
     reject_unknown_keys(
         benchmark,
-        {
-            "category",
-            "difficulty",
-            "expected_behavior",
-            "failure_mode",
-            "id",
-            "tags",
-            "version",
-        },
+        BENCHMARK_KEYS,
         "benchmark",
     )
 
@@ -458,7 +493,7 @@ def _load_policy(data: dict[str, Any]) -> dict[str, str]:
             raise ValueError("Config field 'policy' keys must be strings.")
         if not isinstance(check_config, dict):
             raise ValueError(f"Config field 'policy.{check_key}' must be a mapping.")
-        reject_unknown_keys(check_config, {"severity"}, f"policy.{check_key}")
+        reject_unknown_keys(check_config, POLICY_SETTING_KEYS, f"policy.{check_key}")
         severity = check_config.get("severity")
         if severity is None:
             continue
@@ -478,7 +513,7 @@ def _load_diff_limits(data: dict[str, Any]) -> DiffLimits:
         raise ValueError("Config field 'diff_limits' must be a mapping.")
     reject_unknown_keys(
         limits,
-        {"max_files_changed", "max_lines_added", "max_lines_deleted"},
+        DIFF_LIMIT_KEYS,
         "diff_limits",
     )
     return DiffLimits(
@@ -494,7 +529,7 @@ def _load_command_policy(data: dict[str, Any]) -> CommandPolicyConfig:
         command_policy = {}
     if not isinstance(command_policy, dict):
         raise ValueError("Config field 'command_policy' must be a mapping.")
-    reject_unknown_keys(command_policy, {"mode"}, "command_policy")
+    reject_unknown_keys(command_policy, COMMAND_POLICY_KEYS, "command_policy")
     mode = command_policy.get("mode", "audit")
     if mode not in VALID_COMMAND_POLICY_MODES:
         valid = ", ".join(sorted(VALID_COMMAND_POLICY_MODES))
@@ -510,7 +545,7 @@ def _load_filesystem_watcher(data: dict[str, Any]) -> FilesystemWatcherConfig:
         raw = {"mode": raw}
     if not isinstance(raw, dict):
         raise ValueError("Config field 'filesystem_watcher' must be an object.")
-    reject_unknown_keys(raw, {"mode"}, "filesystem_watcher")
+    reject_unknown_keys(raw, FILESYSTEM_WATCHER_KEYS, "filesystem_watcher")
     mode = raw.get("mode", "auto")
     if mode not in VALID_FILESYSTEM_WATCHER_MODES:
         raise ValueError(
@@ -528,15 +563,7 @@ def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
         raise ValueError("Config field 'sandbox' must be a mapping.")
     reject_unknown_keys(
         sandbox,
-        {
-            "docker",
-            "image",
-            "network",
-            "read_only",
-            "timeout_seconds",
-            "type",
-            "workdir",
-        },
+        SANDBOX_KEYS,
         "sandbox",
     )
     docker_policy = sandbox.get("docker", {})
@@ -546,12 +573,12 @@ def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
         raise ValueError("Config field 'sandbox.docker' must be a mapping.")
     reject_unknown_keys(
         docker_policy,
-        {"cpus", "memory", "network", "read_only"},
+        SANDBOX_DOCKER_KEYS,
         "sandbox.docker",
     )
 
     sandbox_type = sandbox.get("type", "local")
-    if sandbox_type not in {"local", "docker"}:
+    if sandbox_type not in VALID_SANDBOX_TYPES:
         raise ValueError("Config field 'sandbox.type' must be either 'local' or 'docker'.")
 
     image = sandbox.get("image")
@@ -610,14 +637,17 @@ def load_config(config_path: Path) -> AgentGuardConfig:
     expected = data.get("expected_modified_files", {})
     if not isinstance(expected, dict):
         raise ValueError("Config field 'expected_modified_files' must be a mapping.")
-    reject_unknown_keys(expected, {"max", "min"}, "expected_modified_files")
+    reject_unknown_keys(
+        expected,
+        EXPECTED_MODIFIED_FILES_KEYS,
+        "expected_modified_files",
+    )
 
     mode = data.get("mode", "benchmark")
-    if mode not in {"benchmark", "ci"}:
+    if mode not in VALID_CONFIG_MODES:
         raise ValueError("Config field 'mode' must be either 'benchmark' or 'ci'.")
 
-    required_string_fields = ["task_id", "description", "test_command"]
-    for field in required_string_fields:
+    for field in REQUIRED_STRING_FIELDS:
         if not isinstance(data.get(field), str) or not data[field]:
             raise ValueError(f"Config field '{field}' must be a non-empty string.")
     validate_artifact_id(data["task_id"], "Config field 'task_id'")
@@ -625,9 +655,12 @@ def load_config(config_path: Path) -> AgentGuardConfig:
     agent_name = _optional_non_empty_string(data, "agent_name", "config")
     agent_version_command = _argv_field(data, "agent_version_command")
     agent_model = _optional_non_empty_string(data, "agent_model", "config")
-    if mode == "benchmark" and (
-        not isinstance(data.get("repo_template"), str) or not data["repo_template"]
+    repo_template_value = data.get("repo_template")
+    if "repo_template" in data and (
+        not isinstance(repo_template_value, str) or not repo_template_value
     ):
+        raise ValueError("Config field 'repo_template' must be a non-empty string.")
+    if mode == "benchmark" and repo_template_value is None:
         raise ValueError("Config field 'repo_template' must be a non-empty string.")
 
     try:
@@ -653,7 +686,7 @@ def load_config(config_path: Path) -> AgentGuardConfig:
 
     repo_template = None
     if data.get("repo_template"):
-        repo_template = Path(data["repo_template"])
+        repo_template = Path(repo_template_value)
         if not repo_template.is_absolute():
             candidates = [Path.cwd() / repo_template]
             candidates.extend(parent / repo_template for parent in path.resolve().parents)
