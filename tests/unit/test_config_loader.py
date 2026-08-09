@@ -6,6 +6,20 @@ import yaml
 from agentguard.config.loader import load_config
 
 
+def test_missing_required_strings_report_in_stable_order(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        "expected_modified_files:\n  min: 0\n  max: 1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Config field 'task_id' must be a non-empty string",
+    ):
+        load_config(config_path)
+
+
 def test_load_fix_auth_bug_config() -> None:
     config = load_config(Path("examples/configs/fix_auth_bug.yaml"))
 

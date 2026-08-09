@@ -90,7 +90,7 @@ TOP_LEVEL_REQUIRED_FIELDS = {
     "task_id",
     "test_command",
 }
-REQUIRED_STRING_FIELDS = {"description", "task_id", "test_command"}
+REQUIRED_STRING_FIELDS = ("task_id", "description", "test_command")
 EXPECTED_MODIFIED_FILES_KEYS = {"max", "min"}
 EXPECTED_MODIFIED_FILES_REQUIRED_KEYS = {"max", "min"}
 TASK_KEYS = {"prompt", "prompt_file"}

@@ -83,7 +83,7 @@ def test_schema_top_level_contract_matches_production_loader(schema: dict) -> No
     assert set(schema["properties"]) == TOP_LEVEL_CONFIG_KEYS
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == TOP_LEVEL_REQUIRED_FIELDS
-    assert REQUIRED_STRING_FIELDS < TOP_LEVEL_REQUIRED_FIELDS
+    assert set(REQUIRED_STRING_FIELDS) < TOP_LEVEL_REQUIRED_FIELDS
 
 
 def test_schema_enums_match_production_constants(schema: dict) -> None:
