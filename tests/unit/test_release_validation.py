@@ -565,6 +565,9 @@ def test_wheel_and_sdist_contents(release_artifacts: tuple[Path, Path]) -> None:
         sdist_members = archive.getnames()
 
     assert any(name.endswith(".dist-info/entry_points.txt") for name in wheel_members)
+    schema_member = "agentguard/schemas/agentguard-config-v1.schema.json"
+    assert schema_member in wheel_members
+    assert any(name.endswith(f"/{schema_member}") for name in sdist_members)
     assert not any("/examples/" in name for name in sdist_members)
     assert not any("/docs/" in name for name in sdist_members)
     assert not any("/tests/" in name for name in sdist_members)
@@ -623,6 +626,23 @@ def test_installed_wheel_runs_outside_repository(
         text=True,
     )
     assert str(venv_dir.resolve()) in import_result.stdout
+
+    subprocess.run(
+        [
+            str(python),
+            "-c",
+            (
+                "from agentguard.config.json_schema import "
+                "load_config_json_schema; "
+                "schema = load_config_json_schema(); "
+                "assert schema['$schema'] == "
+                "'https://json-schema.org/draft/2020-12/schema'"
+            ),
+        ],
+        cwd=work_dir,
+        env=env,
+        check=True,
+    )
 
     metadata_result = subprocess.run(
         [

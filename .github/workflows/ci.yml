@@ -65,6 +65,9 @@ jobs:
       - name: Run Ruff
         run: python -m ruff check .
 
+      - name: Verify configuration schema and maintained examples
+        run: python scripts/validate_config_schema.py
+
   coverage:
     name: Coverage quality gate (Python 3.11)
     runs-on: ubuntu-latest

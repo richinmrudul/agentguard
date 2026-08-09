@@ -9,6 +9,9 @@ and uses semantic versioning.
 
 ### Added
 
+- Added a packaged, versioned Draft 2020-12 JSON Schema for `agentguard.yaml`,
+  deterministic loader-contract and example validation in CI, and VS Code and
+  YAML Language Server integration guidance.
 - Added unreleased typed `minimal`, `recommended`, and `strict` CI policy
   presets, `agentguard init --preset`, and deterministic `agentguard presets
   list/show` inspection in text, YAML, and JSON.

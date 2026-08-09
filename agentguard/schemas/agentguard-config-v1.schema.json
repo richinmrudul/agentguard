@@ -1,0 +1,317 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/richinmrudul/agentguard/main/agentguard/schemas/agentguard-config-v1.schema.json",
+  "title": "AgentGuard configuration v1",
+  "description": "Configuration consumed by the AgentGuard production load_config function. AgentGuard validates observable agent results after execution; this configuration does not provide hostile-code containment.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "description",
+    "test_command",
+    "expected_modified_files"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "description": "Portable identifier used in AgentGuard artifact paths."
+    },
+    "description": {
+      "$ref": "#/$defs/nonEmptyString",
+      "description": "Human-readable description of the evaluated task."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["benchmark", "ci"],
+      "default": "benchmark",
+      "description": "Selects benchmark evaluation or post-execution CI validation."
+    },
+    "repo_template": {
+      "$ref": "#/$defs/nullableNonEmptyString",
+      "description": "Repository template path. Required in benchmark mode and resolved by the production loader."
+    },
+    "test_command": {
+      "$ref": "#/$defs/nonEmptyString",
+      "description": "Test command executed by the selected AgentGuard workflow."
+    },
+    "agent_command": {
+      "$ref": "#/$defs/command",
+      "description": "Agent command as a shell-compatible string or argument vector."
+    },
+    "agent_name": {
+      "$ref": "#/$defs/nullableNonEmptyString",
+      "description": "Optional display name for the configured agent."
+    },
+    "agent_environment": {
+      "$ref": "#/$defs/nullableStringMap",
+      "description": "Environment variables supplied to the configured agent."
+    },
+    "agent_version_command": {
+      "$ref": "#/$defs/command",
+      "description": "Optional command used to record the agent version."
+    },
+    "agent_model": {
+      "$ref": "#/$defs/nullableNonEmptyString",
+      "description": "Optional model identifier recorded with agent evidence."
+    },
+    "agent_metadata": {
+      "type": ["object", "null"],
+      "propertyNames": {"pattern": ".*\\S.*"},
+      "additionalProperties": {"type": ["string", "integer", "number", "boolean"]},
+      "description": "Optional scalar metadata recorded for the agent."
+    },
+    "agent_workdir": {
+      "type": "string",
+      "enum": ["repo_root", "config_dir"],
+      "default": "repo_root",
+      "description": "Working-directory base for the agent command."
+    },
+    "command_timeout_seconds": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "default": 60,
+      "description": "Positive command timeout in seconds; null selects the production default."
+    },
+    "max_output_bytes": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "default": 200000,
+      "description": "Positive bound for captured command output; null selects the production default."
+    },
+    "command_policy": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["audit", "enforce"],
+          "default": "audit",
+          "description": "Whether unsafe-command preflight records or enforces matches."
+        }
+      },
+      "description": "Preflight unsafe-command policy."
+    },
+    "filesystem_watcher": {
+      "oneOf": [
+        {"$ref": "#/$defs/filesystemWatcherMode"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "$ref": "#/$defs/filesystemWatcherMode",
+              "description": "Filesystem observation mode."
+            }
+          }
+        },
+        {"type": "null"}
+      ],
+      "description": "Filesystem watcher settings or the supported string shorthand."
+    },
+    "allowed_paths": {
+      "$ref": "#/$defs/stringList",
+      "description": "Path patterns considered in scope for modifications."
+    },
+    "forbidden_paths": {
+      "$ref": "#/$defs/stringList",
+      "description": "Path patterns that findings treat as forbidden."
+    },
+    "test_paths": {
+      "$ref": "#/$defs/stringList",
+      "description": "Path patterns identifying tests for tampering checks."
+    },
+    "expected_modified_files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": {"type": "integer", "minimum": 0, "description": "Minimum expected modified-file count."},
+        "max": {"type": "integer", "minimum": 0, "description": "Maximum expected modified-file count."}
+      },
+      "description": "Inclusive expected modified-file bounds. The production loader additionally requires min to be no greater than max."
+    },
+    "unsafe_commands": {
+      "$ref": "#/$defs/stringList",
+      "description": "Command fragments used by unsafe-command checks."
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "diff_size": {"$ref": "#/$defs/policySetting", "description": "Diff-size check severity."},
+        "forbidden_paths": {"$ref": "#/$defs/policySetting", "description": "Forbidden-path check severity."},
+        "scope_adherence": {"$ref": "#/$defs/policySetting", "description": "Scope-adherence check severity."},
+        "secret_scan": {"$ref": "#/$defs/policySetting", "description": "Secret-scan check severity."},
+        "test_tampering": {"$ref": "#/$defs/policySetting", "description": "Test-tampering check severity."},
+        "tests_pass": {"$ref": "#/$defs/policySetting", "description": "Test-result check severity."},
+        "unsafe_commands": {"$ref": "#/$defs/policySetting", "description": "Unsafe-command check severity."}
+      },
+      "description": "Severity overrides for production policy checks."
+    },
+    "diff_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_files_changed": {"$ref": "#/$defs/nullableNonNegativeInteger", "description": "Maximum changed-file count."},
+        "max_lines_added": {"$ref": "#/$defs/nullableNonNegativeInteger", "description": "Maximum added-line count."},
+        "max_lines_deleted": {"$ref": "#/$defs/nullableNonNegativeInteger", "description": "Maximum deleted-line count."}
+      },
+      "description": "Optional post-execution diff bounds."
+    },
+    "secret_patterns": {
+      "$ref": "#/$defs/stringList",
+      "description": "Sensitive path patterns used by secret-path checks."
+    },
+    "secret_content_builtin_detectors": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["aws-access-key-id-shape", "generic-api-key-assignment", "github-token-shape", "npm-token-shape", "private-key-header"]
+      },
+      "description": "Opt-in built-in secret-content detector identifiers."
+    },
+    "secret_content_patterns": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {"$ref": "#/$defs/secretContentPattern"},
+      "description": "Literal secret-content detectors. The production loader also rejects duplicate IDs or literals and enforces aggregate detector and UTF-8 byte limits."
+    },
+    "guard_ignore_paths": {
+      "$ref": "#/$defs/stringList",
+      "description": "Repository-contained path patterns ignored by online guards. The production loader enforces normalization, containment, and protected-path overlap rules."
+    },
+    "sandbox": {
+      "$ref": "#/$defs/sandbox",
+      "description": "Execution selection and Docker options. Local execution is not hostile-code containment."
+    },
+    "benchmark": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/nullableNonBlankString", "description": "Benchmark identifier."},
+        "version": {
+          "oneOf": [
+            {"type": "integer", "minimum": 1},
+            {"type": "string", "pattern": "^[1-9][0-9]*$"},
+            {"type": "null"}
+          ],
+          "description": "Positive benchmark contract version; canonical integer strings are accepted by the production loader."
+        },
+        "category": {"$ref": "#/$defs/nullableNonBlankString", "description": "Benchmark category."},
+        "difficulty": {"type": ["string", "null"], "enum": ["easy", "medium", "hard", "advanced", null], "description": "Benchmark difficulty."},
+        "tags": {"type": ["array", "null"], "items": {"$ref": "#/$defs/nonBlankString"}, "description": "Non-blank benchmark tags."},
+        "expected_behavior": {"$ref": "#/$defs/nullableNonBlankString", "description": "Expected safe behavior."},
+        "failure_mode": {"$ref": "#/$defs/nullableNonBlankString", "description": "Expected unsafe failure mode."
+        }
+      },
+      "description": "Optional benchmark metadata."
+    },
+    "task": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "oneOf": [
+        {"required": ["prompt"], "not": {"required": ["prompt_file"]}},
+        {"required": ["prompt_file"], "not": {"required": ["prompt"]}},
+        {"type": "null"}
+      ],
+      "properties": {
+        "prompt": {"$ref": "#/$defs/nonBlankString", "description": "Inline task prompt."},
+        "prompt_file": {"$ref": "#/$defs/nonEmptyString", "description": "Prompt file relative to and contained by the configuration directory."
+        }
+      },
+      "description": "Exactly one inline prompt or contained prompt file. File existence, containment, and size are checked by the production loader."
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"mode": {"const": "ci"}}, "required": ["mode"]},
+      "then": {},
+      "else": {
+        "required": ["repo_template"],
+        "properties": {"repo_template": {"$ref": "#/$defs/nonEmptyString"}}
+      }
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "nonBlankString": {"type": "string", "pattern": ".*\\S.*"},
+    "nullableNonEmptyString": {"type": ["string", "null"], "minLength": 1},
+    "nullableNonBlankString": {"type": ["string", "null"], "pattern": ".*\\S.*"},
+    "dockerImage": {
+      "type": "string",
+      "pattern": "^(?:(?:(?:localhost|[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*|\\[[0-9A-Fa-f:.]+\\])(?::(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?)/)?[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[0-9A-Fa-f]{64})?$"
+    },
+    "nullableDockerImage": {
+      "oneOf": [{"$ref": "#/$defs/dockerImage"}, {"type": "null"}]
+    },
+    "stringList": {"type": "array", "items": {"type": "string"}},
+    "nullableStringMap": {"type": ["object", "null"], "additionalProperties": {"type": "string"}},
+    "nullableNonNegativeInteger": {"type": ["integer", "null"], "minimum": 0},
+    "command": {
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        {"type": "null"}
+      ]
+    },
+    "filesystemWatcherMode": {"type": "string", "enum": ["auto", "polling", "disabled"]},
+    "policySetting": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "severity": {"type": ["string", "null"], "enum": ["info", "warning", "error", "critical", null], "description": "Finding severity override."}
+      }
+    },
+    "secretContentPattern": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "contains"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9][a-z0-9_.-]*$", "description": "Stable detector identifier."},
+        "contains": {"type": "string", "minLength": 8, "maxLength": 1024, "pattern": "^[^\\u0000\\r\\n]*\\S[^\\u0000\\r\\n]*$", "description": "Single-line literal to detect. UTF-8 byte limits are enforced by the production loader."}
+      }
+    },
+    "sandbox": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"type": "string", "enum": ["local", "docker"], "default": "local", "description": "Execution backend selection."},
+        "image": {"$ref": "#/$defs/nullableDockerImage", "description": "Docker image reference. Registry port bounds and control characters are additionally checked by the production loader."},
+        "workdir": {"type": "string", "minLength": 1, "default": "/workspace", "description": "Container working directory."},
+        "network": {"type": "string", "enum": ["none", "bridge"], "description": "Legacy Docker network setting."},
+        "read_only": {"type": "boolean", "description": "Legacy Docker read-only setting."},
+        "timeout_seconds": {"type": ["integer", "null"], "minimum": 1, "default": 60, "description": "Positive sandbox command timeout."},
+        "docker": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "Docker-specific resource, network, and filesystem options.",
+          "properties": {
+            "cpus": {
+              "oneOf": [
+                {"type": "number", "exclusiveMinimum": 0},
+                {"type": "string", "pattern": "^(?=.*[1-9])(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)$"},
+                {"type": "null"}
+              ],
+              "description": "Positive CPU limit; numeric strings accepted by the production loader."
+            },
+            "memory": {"$ref": "#/$defs/nullableNonEmptyString", "description": "Docker memory limit."},
+            "network": {"type": "string", "enum": ["none", "bridge"], "description": "Docker network mode."},
+            "read_only": {"type": "boolean", "description": "Run the container filesystem read-only."}
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "docker"}}, "required": ["type"]},
+          "then": {
+            "required": ["image"],
+            "properties": {"image": {"$ref": "#/$defs/dockerImage"}}
+          }
+        }
+      ]
+    }
+  }
+}

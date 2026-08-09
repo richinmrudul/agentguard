@@ -206,6 +206,8 @@ and
 
 Docs:
 
+- [Configuration JSON Schema](docs/configuration-schema.md): versioned Draft
+  2020-12 validation and editor autocomplete for `agentguard.yaml`.
 - [Safe project initialization](docs/project-initialization.md): dry-run-first
   onboarding, generated files, overwrite rules, detection, and GitHub CI.
 - [CI policy presets](docs/policy-presets.md): exact `minimal`, `recommended`,
