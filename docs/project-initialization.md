@@ -139,9 +139,13 @@ or repository tests trusted.
 Go detection is similarly conservative and reads only safe root-level regular
 files. `go.mod`, `go.work`, and `go.sum` are presence signals; their contents
 are untrusted. AgentGuard reads at most 1 MiB of `go.mod` as strict UTF-8 and
-requires exactly one simple, unquoted `module` directive. It never invokes
-`go`, parses command output, follows symlinked metadata, or reads `go.sum`
-contents during initialization.
+requires exactly one supported simple, unquoted `module` directive. Missing,
+duplicate, or malformed `module` directives fail closed. AgentGuard deliberately
+does not parse or validate `go`, `toolchain`, `require`, `replace`, `exclude`,
+`retract`, or other remaining content; it treats those lines as opaque untrusted
+data and never copies them into generated files. It never invokes `go`, parses
+command output, follows symlinked metadata, or reads `go.sum` contents during
+initialization.
 
 For an otherwise unambiguous root module with no `go.work`, the initializer
 selects the fixed command:
@@ -152,9 +156,12 @@ test_command: go test ./...
 
 The module path is only a conservative signal and is never copied into a
 command. Workspaces, mixed Python/Node.js/Go roots, `go.sum` without a supported
-`go.mod`, and missing, unreadable, malformed, oversized, NUL-containing,
-non-UTF-8, or symlinked module metadata require customization. An explicit
-`--test-command` still takes precedence in these cases.
+`go.mod`, and missing, malformed, or unsupported module directives require
+customization, as do unreadable, oversized, NUL-containing, non-UTF-8, or
+symlinked metadata. Other `go.mod` content can still be invalid because the
+initializer does not implement Go's module-file parser. An explicit
+`--test-command` still takes precedence in these cases. The Go toolchain
+validates the complete module file only during later user-authorized execution.
 
 Initialization itself never runs `go test`, `go list`, `go env`, `go generate`,
 other Go tooling, repository code, module downloads, scripts, or project

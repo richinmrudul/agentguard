@@ -11,9 +11,11 @@ and uses semantic versioning.
 
 - Extended unreleased safe project initialization to conservatively recognize
   unambiguous root Go modules and select the fixed argument-safe `go test ./...`
-  command, with bounded metadata handling and a cache-disabled immutable Go
-  setup Action. Initialization never runs Go tooling, repository code, module
-  downloads, generators, scripts, or project binaries.
+  command, with bounded simple module-directive inspection and a cache-disabled
+  immutable Go setup Action. Other `go.mod` content remains opaque and is
+  validated by Go only during later user-authorized test execution.
+  Initialization never runs Go tooling, repository code, module downloads,
+  generators, scripts, or project binaries.
 - Extended unreleased safe project initialization to conservatively recognize
   single-package Node.js roots with an exact native `node --test` declaration,
   strict bounded `package.json` parsing, ambiguity fallbacks, and an immutable
