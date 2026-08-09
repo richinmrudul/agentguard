@@ -1,4 +1,5 @@
 import hashlib
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -12,6 +13,8 @@ from agentguard.config.loader import load_config
 from agentguard.project_init import (
     CONFIG_PATH,
     GITHUB_WORKFLOW_PATH,
+    MAX_NODE_PACKAGE_JSON_BYTES,
+    NODE_TEST_COMMAND,
     UNKNOWN_TEST_COMMAND,
 )
 from agentguard.presets import get_preset, preset_names
@@ -37,6 +40,21 @@ def _python_project(root: Path) -> None:
     root.mkdir(parents=True)
     (root / "pyproject.toml").write_text(
         "[project]\nname = 'demo'\n\n[tool.pytest.ini_options]\ntestpaths = ['tests']\n",
+        encoding="utf-8",
+    )
+
+
+def _node_project(
+    root: Path,
+    *,
+    test_script: str = NODE_TEST_COMMAND,
+    package_fields=None,
+) -> None:
+    root.mkdir(parents=True)
+    package = {"name": "demo", "scripts": {"test": test_script}}
+    package.update(package_fields or {})
+    (root / "package.json").write_text(
+        json.dumps(package, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
 
@@ -133,6 +151,239 @@ def test_unknown_project_uses_failing_customization_placeholder(tmp_path: Path) 
         root / CONFIG_PATH
     ).read_text(encoding="utf-8")
     assert "Detected project type: unknown" in result.output
+
+
+@pytest.mark.parametrize(
+    ("lockfile", "manager"),
+    [
+        (None, None),
+        ("package-lock.json", "npm"),
+        ("npm-shrinkwrap.json", "npm"),
+        ("yarn.lock", "yarn"),
+        ("pnpm-lock.yaml", "pnpm"),
+        ("bun.lock", "bun"),
+        ("bun.lockb", "bun"),
+    ],
+)
+def test_node_native_test_runner_is_detected_without_package_manager_execution(
+    tmp_path: Path,
+    monkeypatch,
+    lockfile: str,
+    manager: str,
+) -> None:
+    root = tmp_path / "node project café"
+    fields = {"packageManager": f"{manager}@1.2.3"} if manager else None
+    _node_project(root, package_fields=fields)
+    if lockfile:
+        (root / lockfile).write_bytes(b"untrusted lock metadata\n")
+
+    def fail(*args, **kwargs):
+        raise AssertionError(f"unexpected command execution: {args!r} {kwargs!r}")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    result = _invoke(root, "--no-ci")
+
+    assert result.exit_code == 0, result.output
+    assert "Detected project type: Node.js" in result.output
+    assert "detected Node.js test runner" in result.output
+    assert load_config(root / CONFIG_PATH).test_command == NODE_TEST_COMMAND
+
+
+def test_node_lifecycle_scripts_are_not_invoked_or_copied(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    lifecycle = "touch must-not-exist"
+    _node_project(
+        root,
+        package_fields={
+            "scripts": {
+                "pretest": lifecycle,
+                "test": NODE_TEST_COMMAND,
+                "posttest": lifecycle,
+            }
+        },
+    )
+
+    result = _invoke(root, "--no-ci")
+    config_source = (root / CONFIG_PATH).read_text(encoding="utf-8")
+
+    assert result.exit_code == 0, result.output
+    assert load_config(root / CONFIG_PATH).test_command == NODE_TEST_COMMAND
+    assert lifecycle not in config_source
+    assert not (root / "must-not-exist").exists()
+
+
+def test_node_dry_run_is_byte_for_byte_inert(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    _node_project(root)
+    before = {path.relative_to(root): path.read_bytes() for path in root.rglob("*")}
+
+    result = _invoke(root, "--dry-run", "--ci", "github")
+    after = {path.relative_to(root): path.read_bytes() for path in root.rglob("*")}
+
+    assert result.exit_code == 0, result.output
+    assert before == after
+    assert "Dry run complete" in result.output
+
+
+@pytest.mark.parametrize(
+    "test_script",
+    [
+        "npm test",
+        "npm run test:unit",
+        "node --test; touch owned",
+        "node --test && npm run posttest",
+        "yarn test",
+        "pnpm test",
+        "bun test",
+        "vitest",
+        "jest",
+        "node --test ",
+    ],
+)
+def test_node_package_scripts_are_not_guessed_or_copied(
+    tmp_path: Path, test_script: str
+) -> None:
+    root = tmp_path / "repo"
+    _node_project(root, test_script=test_script)
+
+    result = _invoke(root, "--no-ci")
+    config_source = (root / CONFIG_PATH).read_text(encoding="utf-8")
+
+    assert result.exit_code == 0, result.output
+    assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
+    assert test_script not in config_source
+
+
+@pytest.mark.parametrize(
+    "package_source",
+    [
+        "{not json}\n",
+        "[]\n",
+        '{"scripts":{},"scripts":{"test":"node --test"}}\n',
+        '{"scripts":{"test":"node --test"},"value":NaN}\n',
+    ],
+)
+def test_invalid_node_metadata_fails_closed_to_customization(
+    tmp_path: Path, package_source: str
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "package.json").write_text(package_source, encoding="utf-8")
+
+    result = _invoke(root, "--no-ci")
+
+    assert result.exit_code == 0, result.output
+    assert "Detected project type: Node.js" in result.output
+    assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
+
+
+def test_oversized_node_metadata_is_bounded_and_requires_customization(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "package.json").write_bytes(b" " * (MAX_NODE_PACKAGE_JSON_BYTES + 1))
+
+    result = _invoke(root, "--no-ci")
+
+    assert result.exit_code == 0, result.output
+    assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        "workspace",
+        "multiple-lockfiles",
+        "manager-mismatch",
+        "mixed-python-node",
+    ],
+)
+def test_ambiguous_node_projects_require_explicit_customization(
+    tmp_path: Path, mutate: str
+) -> None:
+    root = tmp_path / "repo"
+    fields = {"workspaces": ["packages/*"]} if mutate == "workspace" else None
+    _node_project(root, package_fields=fields)
+    if mutate == "multiple-lockfiles":
+        (root / "package-lock.json").write_text("{}\n", encoding="utf-8")
+        (root / "yarn.lock").write_text("untrusted\n", encoding="utf-8")
+    elif mutate == "manager-mismatch":
+        package = json.loads((root / "package.json").read_text(encoding="utf-8"))
+        package["packageManager"] = "pnpm@10.0.0"
+        (root / "package.json").write_text(json.dumps(package), encoding="utf-8")
+        (root / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    elif mutate == "mixed-python-node":
+        (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+
+    result = _invoke(root, "--no-ci")
+
+    assert result.exit_code == 0, result.output
+    assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
+    assert "requires customization" in result.output
+
+
+def test_explicit_test_command_precedes_ambiguous_node_detection(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    _node_project(root, package_fields={"workspaces": ["packages/*"]})
+    explicit = "node --test test/safe.test.js"
+
+    result = _invoke(root, "--no-ci", "--test-command", explicit)
+
+    assert result.exit_code == 0, result.output
+    assert load_config(root / CONFIG_PATH).test_command == explicit
+    assert "Test command: supplied with --test-command" in result.output
+
+
+def test_node_workflow_is_pinned_least_privilege_and_never_installs_dependencies(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    _node_project(root)
+
+    result = _invoke(root, "--ci", "github")
+    source = (root / GITHUB_WORKFLOW_PATH).read_text(encoding="utf-8")
+    workflow = _workflow(root)
+    steps = workflow["jobs"]["agentguard"]["steps"]
+
+    assert result.exit_code == 0, result.output
+    assert workflow["permissions"] == {"contents": "read"}
+    assert "pull_request_target" not in source
+    assert any(
+        step.get("uses")
+        == "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
+        and step.get("with") == {"node-version": "24"}
+        for step in steps
+    )
+    assert not any(
+        token in source
+        for token in (
+            "npm install",
+            "npm ci",
+            "npm test",
+            "yarn ",
+            "pnpm ",
+            "bun ",
+        )
+    )
+    assert "secrets." not in source
+    assert "id-token" not in source
+
+
+def test_node_package_symlink_is_not_followed_for_detection(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    outside = tmp_path / "outside-package.json"
+    root.mkdir()
+    outside.write_text(
+        '{"scripts":{"test":"node --test"}}\n', encoding="utf-8"
+    )
+    (root / "package.json").symlink_to(outside)
+
+    result = _invoke(root, "--no-ci")
+
+    assert result.exit_code == 0, result.output
+    assert "Detected project type: unknown" in result.output
+    assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
 
 
 @pytest.mark.parametrize("preset_name", preset_names())

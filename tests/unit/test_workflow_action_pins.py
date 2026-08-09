@@ -16,6 +16,7 @@ ACTION_DOCUMENTATION = (
     ROOT / "docs/action.md",
     ROOT / "docs/ci-exports.md",
     ROOT / "docs/github-actions.md",
+    ROOT / "docs/project-initialization.md",
 )
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 PINNED_RELEASES = {
@@ -26,6 +27,10 @@ PINNED_RELEASES = {
     "actions/setup-python": (
         "a309ff8b426b58ec0e2a45f0f869d46889d02405",
         "v6.2.0",
+    ),
+    "actions/setup-node": (
+        "249970729cb0ef3589644e2896645e5dc5ba9c38",
+        "v6.5.0",
     ),
     "actions/upload-artifact": (
         "b7c566a772e6b6bfb58ed0dc250532a479d7789f",

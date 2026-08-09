@@ -9,6 +9,11 @@ and uses semantic versioning.
 
 ### Added
 
+- Extended unreleased safe project initialization to conservatively recognize
+  single-package Node.js roots with an exact native `node --test` declaration,
+  strict bounded `package.json` parsing, ambiguity fallbacks, and an immutable
+  Node.js setup Action. Initialization never runs package managers, scripts,
+  lifecycle hooks, local binaries, dependency installs, or repository code.
 - Added deterministic baseline-aware pull-request reports with stable finding
   identities, explicit new/existing/resolved and unavailable/invalid baseline
   states, bounded safe GitHub summaries and annotations, and a least-privilege

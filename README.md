@@ -117,8 +117,10 @@ agentguard ci --config agentguard.yaml
 
 The initializer creates `agentguard.yaml`, adds one `.agentguard/` entry to
 `.gitignore`, and optionally creates `.github/workflows/agentguard.yml`. It
-does not run repository code, install dependencies, overwrite non-identical
-files without `--force`, or change Git state. See
+conservatively detects maintained pytest configuration and an exact native
+Node.js `node --test` declaration. It does not run repository code, package
+scripts, package managers, or dependency installation; overwrite non-identical
+files without `--force`; or change Git state. See
 [safe project initialization](docs/project-initialization.md) for detection,
 overwrite, CI security, and customization details. The unreleased
 [`minimal`, `recommended`, and `strict` CI policy presets](docs/policy-presets.md)
