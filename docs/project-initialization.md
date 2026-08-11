@@ -1,15 +1,12 @@
 # Safe Project Initialization
 
 `agentguard init [PATH]` prepares an existing repository for AgentGuard without
-running repository code, installing dependencies, or changing Git state. The
-command is included in the v0.3.0 source candidate but is not part of the
-currently published `agentguard-evals==0.2.2` package. Until v0.3.0 is
-published, install a source checkout from `main` for evaluation:
+running repository code, installing dependencies, or changing Git state. It is
+included in the production `agentguard-evals==0.3.0` package:
 
 ```bash
-git clone https://github.com/richinmrudul/agentguard.git
-cd agentguard
-python -m pip install .
+python -m pip install "agentguard-evals==0.3.0"
+agentguard --version
 ```
 
 ## Start With A Dry Run
@@ -239,7 +236,7 @@ The optional workflow:
 
 - runs for `pull_request`, not `pull_request_target`;
 - grants only `contents: read`;
-- installs `agentguard-evals==0.3.0` for a reproducible candidate gate;
+- installs `agentguard-evals==0.3.0` for a reproducible gate;
 - pins `actions/checkout` v5.0.1 and `actions/setup-python` v6.2.0 to maintained
   immutable full commit SHAs;
 - for a detected Node.js root, pins `actions/setup-node` v6.5.0 to its immutable
@@ -253,9 +250,8 @@ The optional workflow:
   its failing exit status.
 
 Review the workflow, commit it on your branch, and open a pull request to run
-the first CI evaluation after v0.3.0 is published. Before publication, the
-exact `agentguard-evals==0.3.0` pin is intentionally unavailable from public
-PyPI; use a reviewed source installation for candidate evaluation.
+the first CI evaluation. The exact `agentguard-evals==0.3.0` pin is available
+from production PyPI.
 
 The generated workflow does not install Node.js dependencies. Dependency-free
 native tests can run immediately. If the selected test command needs installed

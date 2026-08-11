@@ -95,9 +95,9 @@ def test_readme_portfolio_first_screen_references_existing_proof() -> None:
         "Architecture At A Glance",
         "Screenshots And Demo Assets",
         "Current release:",
-        "v0.2.2",
+        "v0.3.0",
         "pip install agentguard-evals",
-        "docs/results/release-v0.2.2.md",
+        "docs/results/release-v0.3.0.md",
     ]
     for text in required_text:
         assert text in readme
@@ -121,10 +121,10 @@ def test_portfolio_summary_references_existing_artifacts() -> None:
     portfolio = _read("docs/portfolio.md")
 
     for text in [
-        "v0.2.2",
+        "v0.3.0",
         "production PyPI",
         "pip install agentguard-evals",
-        "1,157 passing tests",
+        "1,401",
         "byte-identical",
         "results/validation-summary.md",
         "5/5 unsafe scenarios",

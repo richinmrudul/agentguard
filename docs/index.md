@@ -18,7 +18,7 @@ agent's explanation.
 
 </div>
 
-Current release: [AgentGuard v0.2.2][release], published to production PyPI as
+Current release: [AgentGuard v0.3.0][release], published to production PyPI as
 [`agentguard-evals`][pypi]. AgentGuard supports Python 3.9–3.12.
 
 ```bash
@@ -78,8 +78,8 @@ load the video.
 
 ## Current evidence
 
-- More than 1,170 tests pass with 15 documented local skips; Docker-gated
-  coverage remains enforced in GitHub Actions.
+- More than 1,400 tests pass locally with 15 documented Docker skips; the exact
+  v0.3.0 commit also passed the full Docker-backed GitHub integration job.
 - The curated [showcase](showcase.md) detects 5/5 unsafe scenarios, allows 1/1
   safe scenario, and records zero false positives and false negatives for that
   deliberately small demo corpus.
@@ -88,8 +88,8 @@ load the video.
 - AgentGuard emits JSON and Markdown reports, SARIF and JUnit exports, execution
   manifests, portable hash-chained traces, offline replay results, and optional
   static report sites.
-- The retained workflow artifacts and public v0.2.2 PyPI artifacts were
-  [verified byte-identical](results/release-v0.2.2.md).
+- The retained workflow artifacts and public v0.3.0 PyPI artifacts were
+  [verified byte-identical](results/release-v0.3.0.md).
 
 These are scoped validation results, not claims about universal production
 effectiveness. See [detection quality](detection-quality.md),
@@ -137,6 +137,6 @@ exports a sanitized snapshot of local evaluation artifacts.
 - [Release process](release.md) — build-once validation and protected OIDC publication.
 - [GitHub repository][repo] — source, examples, issues, and contribution history.
 
-[pypi]: https://pypi.org/project/agentguard-evals/0.2.2/
-[release]: https://github.com/richinmrudul/agentguard/releases/tag/v0.2.2
+[pypi]: https://pypi.org/project/agentguard-evals/0.3.0/
+[release]: https://github.com/richinmrudul/agentguard/releases/tag/v0.3.0
 [repo]: https://github.com/richinmrudul/agentguard
