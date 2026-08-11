@@ -2,7 +2,7 @@
   "schema": "agentguard.showcase-metrics",
   "schema_version": 1,
   "name": "AgentGuard showcase metrics",
-  "agentguard_version": "0.2.2",
+  "agentguard_version": "0.3.0",
   "source_summary": "docs/results/showcase-summary.json",
   "generated_by": "scripts/showcase_metrics.py",
   "metrics_artifacts": {

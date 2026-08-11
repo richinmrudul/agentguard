@@ -102,7 +102,7 @@ def test_package_version_sources_agree() -> None:
 
     assert project["name"] == "agentguard-evals"
     assert project_version == __version__
-    assert project_version == "0.2.2"
+    assert project_version == "0.3.0"
     assert project["scripts"] == {"agentguard": "agentguard.cli.main:app"}
     assert result.exit_code == 0
     assert result.output.strip() == project_version
@@ -124,13 +124,13 @@ def _init_release_repository(tmp_path: Path) -> Path:
     (tmp_path / "pyproject.toml").write_text(
         '[project]\n'
         'name = "agentguard-evals"\n'
-        'version = "0.2.2"\n'
+        'version = "0.3.0"\n'
         '[project.scripts]\n'
         'agentguard = "agentguard.cli.main:app"\n',
         encoding="utf-8",
     )
     (tmp_path / "agentguard/__init__.py").write_text(
-        '__version__ = "0.2.2"\n',
+        '__version__ = "0.3.0"\n',
         encoding="utf-8",
     )
     tracked = tmp_path / "tracked.txt"
@@ -143,7 +143,7 @@ def _init_release_repository(tmp_path: Path) -> Path:
 def test_ordinary_validation_allows_post_release_commits(tmp_path: Path) -> None:
     tracked = _init_release_repository(tmp_path)
     subprocess.run(
-        ["git", "tag", "-a", "v0.2.2", "-m", "AgentGuard v0.2.2"],
+        ["git", "tag", "-a", "v0.3.0", "-m", "AgentGuard v0.3.0"],
         cwd=tmp_path,
         check=True,
     )
@@ -160,7 +160,7 @@ def test_ordinary_validation_allows_post_release_commits(tmp_path: Path) -> None
 def test_ordinary_validation_allows_simulated_merge_commit(tmp_path: Path) -> None:
     tracked = _init_release_repository(tmp_path)
     subprocess.run(
-        ["git", "tag", "-a", "v0.2.2", "-m", "AgentGuard v0.2.2"],
+        ["git", "tag", "-a", "v0.3.0", "-m", "AgentGuard v0.3.0"],
         cwd=tmp_path,
         check=True,
     )
@@ -207,18 +207,18 @@ def test_strict_release_tag_must_be_annotated_and_point_to_head(
 ) -> None:
     tracked = _init_release_repository(tmp_path)
     subprocess.run(
-        ["git", "tag", "-a", "v0.2.2", "-m", "AgentGuard v0.2.2"],
+        ["git", "tag", "-a", "v0.3.0", "-m", "AgentGuard v0.3.0"],
         cwd=tmp_path,
         check=True,
     )
 
-    validate_strict_release_tag(tmp_path, "0.2.2")
+    validate_strict_release_tag(tmp_path, "0.3.0")
 
     tracked.write_text("new head\n", encoding="utf-8")
     subprocess.run(["git", "commit", "-qam", "new head"], cwd=tmp_path, check=True)
 
     with pytest.raises(AssertionError, match="current HEAD"):
-        validate_strict_release_tag(tmp_path, "0.2.2")
+        validate_strict_release_tag(tmp_path, "0.3.0")
 
 
 def test_strict_release_tag_rejects_missing_or_mismatched_tag(
@@ -227,17 +227,17 @@ def test_strict_release_tag_rejects_missing_or_mismatched_tag(
     _init_release_repository(tmp_path)
 
     with pytest.raises(AssertionError, match="does not exist"):
-        validate_strict_release_tag(tmp_path, "0.2.2")
-    with pytest.raises(AssertionError, match="v0.2.3 does not exist"):
-        validate_strict_release_tag(tmp_path, "0.2.3")
+        validate_strict_release_tag(tmp_path, "0.3.0")
+    with pytest.raises(AssertionError, match="v0.3.1 does not exist"):
+        validate_strict_release_tag(tmp_path, "0.3.1")
 
 
 def test_strict_release_tag_rejects_lightweight_tag(tmp_path: Path) -> None:
     _init_release_repository(tmp_path)
-    subprocess.run(["git", "tag", "v0.2.2"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "tag", "v0.3.0"], cwd=tmp_path, check=True)
 
     with pytest.raises(AssertionError, match="must be annotated"):
-        validate_strict_release_tag(tmp_path, "0.2.2")
+        validate_strict_release_tag(tmp_path, "0.3.0")
 
 
 def test_strict_release_context_rejects_distribution_mismatch(
@@ -245,7 +245,7 @@ def test_strict_release_context_rejects_distribution_mismatch(
 ) -> None:
     _init_release_repository(tmp_path)
     subprocess.run(
-        ["git", "tag", "-a", "v0.2.2", "-m", "AgentGuard v0.2.2"],
+        ["git", "tag", "-a", "v0.3.0", "-m", "AgentGuard v0.3.0"],
         cwd=tmp_path,
         check=True,
     )
@@ -653,7 +653,7 @@ def test_installed_wheel_runs_outside_repository(
                 "distribution; "
                 "d = distribution('agentguard-evals'); "
                 "assert d.metadata['Name'] == 'agentguard-evals'; "
-                "assert d.version == '0.2.2'; "
+                "assert d.version == '0.3.0'; "
                 "\ntry: distribution('agentguard')\n"
                 "except PackageNotFoundError: pass\n"
                 "else: raise AssertionError('legacy distribution is installed')"

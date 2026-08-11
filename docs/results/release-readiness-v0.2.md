@@ -12,7 +12,7 @@ or replace tags, releases, or package artifacts.
 ## Package Metadata
 
 - Package: `agentguard` `0.2.0`
-- Current development version: `0.2.2`
+- Current development version: `0.3.0`
 - Description: Local-first safety and reliability evaluation framework for AI coding agents.
 - Python: `>=3.9`; tested classifiers for 3.9, 3.10, 3.11, 3.12
 - License: `MIT`

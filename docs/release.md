@@ -13,6 +13,11 @@ available from [PyPI](https://pypi.org/project/agentguard-evals/0.2.2/) and
 [GitHub](https://github.com/richinmrudul/agentguard/releases/tag/v0.2.2).
 AgentGuard v0.2.0 and v0.2.1 remain unchanged historical GitHub releases.
 
+The source tree is currently prepared as the v0.3.0 release candidate. That
+candidate is not tagged, released, or present on PyPI. Production installation
+examples below intentionally continue to use v0.2.2 until the separate release
+operation succeeds.
+
 ## Release Stages
 
 The release stages are deliberately separate:
@@ -212,9 +217,9 @@ are not distribution payload.
     production PyPI.
 
 The workflow fails before publication unless the event is a published,
-non-prerelease GitHub release, the tag is exactly `v0.2.2`, the checkout is
+non-prerelease GitHub release, the tag is exactly `v0.3.0`, the checkout is
 exactly at that tag, the metadata name is exactly `agentguard-evals`, and all
-package versions are exactly `0.2.2`. Pull requests, ordinary pushes, forks,
+package versions are exactly `0.3.0`. Pull requests, ordinary pushes, forks,
 other tags, workflow dispatches, arbitrary commits, and other releases cannot
 enter the publication path.
 

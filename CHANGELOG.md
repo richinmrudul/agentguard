@@ -7,16 +7,18 @@ and uses semantic versioning.
 
 ## Unreleased
 
+## v0.3.0 - 2026-08-10
+
 ### Added
 
-- Extended unreleased safe project initialization to conservatively recognize
+- Extended safe project initialization to conservatively recognize
   unambiguous root Go modules and select the fixed argument-safe `go test ./...`
   command, with bounded simple module-directive inspection and a cache-disabled
   immutable Go setup Action. Other `go.mod` content remains opaque and is
   validated by Go only during later user-authorized test execution.
   Initialization never runs Go tooling, repository code, module downloads,
   generators, scripts, or project binaries.
-- Extended unreleased safe project initialization to conservatively recognize
+- Extended safe project initialization to conservatively recognize
   single-package Node.js roots with an exact native `node --test` declaration,
   strict bounded `package.json` parsing, ambiguity fallbacks, and an immutable
   Node.js setup Action. Initialization never runs package managers, scripts,
@@ -36,20 +38,40 @@ and uses semantic versioning.
 - Tightened the shared configuration contract so a present `repo_template`
   must be non-empty in every mode and Docker CPU limits use finite positive
   numbers or the documented bounded decimal/scientific string form.
-- Added unreleased typed `minimal`, `recommended`, and `strict` CI policy
+- Added typed `minimal`, `recommended`, and `strict` CI policy
   presets, `agentguard init --preset`, and deterministic `agentguard presets
   list/show` inspection in text, YAML, and JSON.
 - Added monotonic preset validation, production-path behavioral coverage, and
   documentation of the post-execution CI boundary. The misleading
   `untrusted-agent` name remains deferred until AgentGuard can launch agents
   through an enforced contained-execution workflow.
-- Added unreleased `agentguard init [PATH]` project onboarding with dry-run,
+- Added `agentguard init [PATH]` project onboarding with dry-run,
   explicit conflict and force handling, conservative Python/pytest detection,
   argument-safe test-command storage, and optional least-privilege GitHub
   Actions generation.
 - Added strict path and symlink containment, atomic known-target writes,
   idempotent reruns, `.gitignore` preservation, focused regression coverage,
   and hosted onboarding documentation for safe initialization.
+
+### Changed
+
+- Generated Python, Node.js, and Go initializer workflows install the exact
+  `agentguard-evals==0.3.0` distribution while retaining immutable Action
+  pins, read-only permissions, and fork-safe pull-request behavior.
+- Finalized the configuration schema, policy preset, initialization, and
+  baseline-reporting documentation for the v0.3.0 source candidate.
+
+### Safety/Security
+
+- Initialization remains a bounded, non-executing planning and file-generation
+  operation. AgentGuard CI validates observable results after execution and
+  does not claim hostile-code containment.
+
+### Known Limitations
+
+- Local-agent and project-test execution are not contained by the initializer
+  or the post-execution CI presets. Enforced contained execution remains
+  deferred.
 
 ## v0.2.2 - 2026-07-28
 

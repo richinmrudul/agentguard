@@ -23,6 +23,7 @@ def test_package_smoke_script_covers_installed_cli_workflow() -> None:
         'pip install "$WHEEL_PATH"',
         "Verify installed distribution metadata",
         'distribution("agentguard-evals")',
+        'installed.version != "0.3.0"',
         'distribution("agentguard")',
         "Verify installed package isolation",
         "agentguard module path:",
