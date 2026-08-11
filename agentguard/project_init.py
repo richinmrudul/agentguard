@@ -408,7 +408,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install AgentGuard
-        run: python -m pip install agentguard-evals==0.2.2
+        run: python -m pip install agentguard-evals==0.3.0
 """
     if "Node.js" in project_type:
         workflow += """

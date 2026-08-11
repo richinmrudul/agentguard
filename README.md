@@ -102,11 +102,12 @@ python -m pip install agentguard-evals
 agentguard --version
 ```
 
-### Unreleased project initialization
+### v0.3.0 release-candidate project initialization
 
-Safe project initialization is available on `main` and is not included in the
-current `agentguard-evals==0.2.2` PyPI package. From a source installation of
-`main`, preview and create a strict project configuration plus an optional
+Safe project initialization is included in the v0.3.0 source candidate but is
+not yet included in the current `agentguard-evals==0.2.2` PyPI package. From a
+source installation of `main`, preview and create a strict project
+configuration plus an optional
 least-privilege GitHub Actions gate:
 
 ```bash
@@ -123,11 +124,14 @@ fixed `go test ./...` command. It does not run repository code, Python or Go
 tooling, package scripts, package managers, or dependency installation;
 overwrite non-identical files without `--force`; or change Git state. See
 [safe project initialization](docs/project-initialization.md) for detection,
-overwrite, CI security, and customization details. The unreleased
+overwrite, CI security, and customization details. The v0.3.0 candidate's
 [`minimal`, `recommended`, and `strict` CI policy presets](docs/policy-presets.md)
 configure only settings consumed by post-execution `agentguard ci` validation;
 they do not contain agent or test execution. Inspect them with `agentguard
 presets list` and `agentguard presets show PRESET`.
+
+Generated candidate workflows pin `agentguard-evals==0.3.0`; that pin becomes
+publicly installable only after the separate production release completes.
 
 The package contains the `agentguard` import and CLI, but not the repository
 examples. Clone the repository to run the showcase, benchmark fixtures, or

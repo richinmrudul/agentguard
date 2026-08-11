@@ -64,6 +64,8 @@ if installed.metadata["Name"] != "agentguard-evals":
     raise SystemExit(
         f"unexpected distribution name: {installed.metadata['Name']!r}"
     )
+if installed.version != "0.3.0":
+    raise SystemExit(f"unexpected distribution version: {installed.version!r}")
 try:
     distribution("agentguard")
 except PackageNotFoundError:

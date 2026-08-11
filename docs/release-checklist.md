@@ -24,14 +24,14 @@ an item does not publish anything.
 - [ ] Distribution metadata name is exactly `agentguard-evals`.
 - [ ] Python imports remain `agentguard`.
 - [ ] Console entry point remains `agentguard`.
-- [ ] Wheel is `agentguard_evals-0.2.2-py3-none-any.whl`.
-- [ ] Source distribution is `agentguard_evals-0.2.2.tar.gz`.
+- [ ] Wheel is `agentguard_evals-0.3.0-py3-none-any.whl`.
+- [ ] Source distribution is `agentguard_evals-0.3.0.tar.gz`.
 - [ ] `pyproject.toml`, `agentguard.__version__`, installed
-  `agentguard --version`, wheel metadata, and sdist metadata all equal `0.2.2`.
+  `agentguard --version`, wheel metadata, and sdist metadata all equal `0.3.0`.
 - [ ] No `.agentguard`, coverage, cache, build, local database, secret, test,
   documentation, example, workflow, or script payload is packaged.
 - [ ] `LICENSE` is present in wheel and source-distribution metadata.
-- [ ] Tag `v0.2.2` points to the reviewed release commit.
+- [ ] Tag `v0.3.0` points to the reviewed release commit.
 - [ ] Workflow artifact checksums match the downloaded files.
 
 ## Established Publishing Configuration
@@ -61,7 +61,7 @@ an item does not publish anything.
 ## Release And Publication
 
 - [ ] Select the reviewed merge commit and rerun all validation on it.
-- [ ] Create and push annotated tag `v0.2.2`; do not create tags automatically.
+- [ ] Create and push annotated tag `v0.3.0`; do not create tags automatically.
 - [ ] Run `bash scripts/build_release.sh --strict-release-tag` on the exact
   tagged commit before publication; ordinary CI intentionally permits valid
   post-release commits after an immutable tag.

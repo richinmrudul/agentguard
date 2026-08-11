@@ -106,7 +106,7 @@ def test_publish_workflow_enforces_release_version_and_protected_oidc() -> None:
         assert "github.event_name == 'release'" in condition
         assert "github.event.action == 'published'" in condition
         assert "github.event.release.prerelease == false" in condition
-        assert "github.event.release.tag_name == 'v0.2.2'" in condition
+        assert "github.event.release.tag_name == 'v0.3.0'" in condition
 
     for required_check in (
         'test "$GITHUB_REF_TYPE" = "tag"',
@@ -119,9 +119,9 @@ def test_publish_workflow_enforces_release_version_and_protected_oidc() -> None:
         "names != {expected_name}",
         "wheel_metadata.get(\"Version\")",
         "sdist_metadata.get(\"Version\")",
-        'test "$RELEASE_TAG" = "v0.2.2"',
-        "agentguard_evals-0.2.2-py3-none-any.whl",
-        "agentguard_evals-0.2.2.tar.gz",
+        'test "$RELEASE_TAG" = "v0.3.0"',
+        "agentguard_evals-0.3.0-py3-none-any.whl",
+        "agentguard_evals-0.3.0.tar.gz",
     ):
         assert required_check in source
 

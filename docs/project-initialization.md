@@ -2,9 +2,9 @@
 
 `agentguard init [PATH]` prepares an existing repository for AgentGuard without
 running repository code, installing dependencies, or changing Git state. The
-command is available on `main` and is unreleased; it is not part of the
-`agentguard-evals==0.2.2` package. Until a future release includes it, install a
-source checkout from `main` for evaluation:
+command is included in the v0.3.0 source candidate but is not part of the
+currently published `agentguard-evals==0.2.2` package. Until v0.3.0 is
+published, install a source checkout from `main` for evaluation:
 
 ```bash
 git clone https://github.com/richinmrudul/agentguard.git
@@ -239,7 +239,7 @@ The optional workflow:
 
 - runs for `pull_request`, not `pull_request_target`;
 - grants only `contents: read`;
-- installs `agentguard-evals==0.2.2` for a reproducible gate;
+- installs `agentguard-evals==0.3.0` for a reproducible candidate gate;
 - pins `actions/checkout` v5.0.1 and `actions/setup-python` v6.2.0 to maintained
   immutable full commit SHAs;
 - for a detected Node.js root, pins `actions/setup-node` v6.5.0 to its immutable
@@ -253,9 +253,9 @@ The optional workflow:
   its failing exit status.
 
 Review the workflow, commit it on your branch, and open a pull request to run
-the first CI evaluation. Because initialization itself is unreleased, the
-workflow intentionally uses the released v0.2.2 package only for the existing
-`agentguard ci` command.
+the first CI evaluation after v0.3.0 is published. Before publication, the
+exact `agentguard-evals==0.3.0` pin is intentionally unavailable from public
+PyPI; use a reviewed source installation for candidate evaluation.
 
 The generated workflow does not install Node.js dependencies. Dependency-free
 native tests can run immediately. If the selected test command needs installed

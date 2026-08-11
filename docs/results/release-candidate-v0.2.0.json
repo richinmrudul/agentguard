@@ -111,7 +111,7 @@
       "version_advanced_after_release": true
     },
     "console_script": "agentguard.cli.main:app",
-    "current_version": "0.2.2",
+    "current_version": "0.3.0",
     "license": "MIT",
     "name": "agentguard",
     "requires_python": ">=3.9",

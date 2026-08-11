@@ -18,7 +18,7 @@ jobs:
       github.event_name == 'release' &&
       github.event.action == 'published' &&
       github.event.release.prerelease == false &&
-      github.event.release.tag_name == 'v0.2.2'
+      github.event.release.tag_name == 'v0.3.0'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,7 +39,7 @@ jobs:
 
       - name: Validate the release event, ref, and version
         env:
-          EXPECTED_VERSION: "0.2.2"
+          EXPECTED_VERSION: "0.3.0"
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         shell: bash
         run: |
@@ -69,7 +69,7 @@ jobs:
       - name: Validate artifact metadata and release version
         env:
           EXPECTED_DISTRIBUTION: "agentguard-evals"
-          EXPECTED_VERSION: "0.2.2"
+          EXPECTED_VERSION: "0.3.0"
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         shell: bash
         run: |
@@ -139,8 +139,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          unzip -l dist/agentguard_evals-0.2.2-py3-none-any.whl
-          tar -tzf dist/agentguard_evals-0.2.2.tar.gz
+          unzip -l dist/agentguard_evals-0.3.0-py3-none-any.whl
+          tar -tzf dist/agentguard_evals-0.3.0.tar.gz
 
       - name: Run clean installed-wheel package smoke
         run: bash scripts/package_smoke.sh "$GITHUB_WORKSPACE/dist"
@@ -156,7 +156,7 @@ jobs:
       - name: Upload exact validated distributions
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: agentguard-evals-v0.2.2-validated-distributions
+          name: agentguard-evals-v0.3.0-validated-distributions
           path: |
             dist/agentguard_evals-*.whl
             dist/agentguard_evals-*.tar.gz
@@ -171,11 +171,11 @@ jobs:
       github.event_name == 'release' &&
       github.event.action == 'published' &&
       github.event.release.prerelease == false &&
-      github.event.release.tag_name == 'v0.2.2'
+      github.event.release.tag_name == 'v0.3.0'
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/agentguard-evals/0.2.2/
+      url: https://pypi.org/project/agentguard-evals/0.3.0/
     permissions:
       contents: read
       id-token: write
@@ -184,7 +184,7 @@ jobs:
       - name: Download validated distributions
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: agentguard-evals-v0.2.2-validated-distributions
+          name: agentguard-evals-v0.3.0-validated-distributions
           path: validated-dist
 
       - name: Verify downloaded artifact and publication scope
@@ -196,9 +196,9 @@ jobs:
           test "$GITHUB_EVENT_NAME" = "release"
           test "$GITHUB_REF_TYPE" = "tag"
           test "$GITHUB_REF_NAME" = "$RELEASE_TAG"
-          test "$RELEASE_TAG" = "v0.2.2"
-          test -f validated-dist/agentguard_evals-0.2.2-py3-none-any.whl
-          test -f validated-dist/agentguard_evals-0.2.2.tar.gz
+          test "$RELEASE_TAG" = "v0.3.0"
+          test -f validated-dist/agentguard_evals-0.3.0-py3-none-any.whl
+          test -f validated-dist/agentguard_evals-0.3.0.tar.gz
           test -f validated-dist/SHA256SUMS
           test "$(find validated-dist -maxdepth 1 -type f | wc -l | tr -d ' ')" = "3"
           (
