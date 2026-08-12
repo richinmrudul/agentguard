@@ -1,5 +1,10 @@
+import os
+import signal
 import subprocess
 import sys
+import time
+
+import pytest
 
 from agentguard.instrumentation.output_limits import (
     BoundedProcessOutput,
@@ -69,3 +74,33 @@ def test_process_output_drains_stdout_and_stderr_concurrently() -> None:
     assert output.stderr.truncated is True
     assert output.stdout.text.endswith("STDOUT_END")
     assert output.stderr.text.endswith("STDERR_END")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX process groups")
+def test_process_output_finish_can_stop_retained_pipe_drains() -> None:
+    script = (
+        "import subprocess, sys\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(10)'])\n"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    process.wait(timeout=2)
+
+    try:
+        started = time.monotonic()
+        capture = BoundedProcessOutput(process, 1024)
+        output = capture.finish(timeout=0.1)
+
+        assert time.monotonic() - started < 1
+        assert output.stdout.text == ""
+        assert output.stderr.text == ""
+        assert all(not thread.is_alive() for thread in capture._threads)
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass

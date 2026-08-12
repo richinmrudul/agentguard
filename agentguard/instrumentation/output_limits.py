@@ -1,6 +1,9 @@
 from dataclasses import dataclass
+import os
+import select
 import subprocess
 import threading
+import time
 from typing import BinaryIO, Optional
 
 
@@ -75,6 +78,7 @@ class BoundedProcessOutput:
         buffer_type = BoundedTailBuffer if retain_tail else BoundedHeadBuffer
         self.stdout_buffer = buffer_type(max_bytes)
         self.stderr_buffer = buffer_type(max_bytes)
+        self._stop_event = threading.Event()
         self._threads = [
             threading.Thread(
                 target=self._drain,
@@ -90,10 +94,19 @@ class BoundedProcessOutput:
         for thread in self._threads:
             thread.start()
 
-    @staticmethod
-    def _drain(stream: BinaryIO, buffer: BoundedTailBuffer) -> None:
+    def _drain(self, stream: BinaryIO, buffer: BoundedTailBuffer) -> None:
+        if os.name == "posix":
+            try:
+                descriptor = stream.fileno()
+            except (OSError, ValueError):
+                pass
+            else:
+                self._drain_posix(stream, descriptor, buffer)
+                return
         try:
             while True:
+                if self._stop_event.is_set():
+                    return
                 chunk = stream.read(65536)
                 if not chunk:
                     return
@@ -103,16 +116,62 @@ class BoundedProcessOutput:
         finally:
             stream.close()
 
+    def _drain_posix(
+        self,
+        stream: BinaryIO,
+        descriptor: int,
+        buffer: BoundedTailBuffer,
+    ) -> None:
+        try:
+            while not self._stop_event.is_set():
+                readable, _, _ = select.select([descriptor], [], [], 0.05)
+                if not readable:
+                    continue
+                chunk = os.read(descriptor, 65536)
+                if not chunk:
+                    return
+                buffer.append(chunk)
+        except (OSError, ValueError):
+            return
+        finally:
+            stream.close()
+
     def wait(self, timeout: Optional[float] = None) -> int:
         return self.process.wait(timeout=timeout)
 
-    def finish(self) -> ProcessOutput:
+    def finish(self, timeout: Optional[float] = None) -> ProcessOutput:
+        deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
         for thread in self._threads:
-            thread.join()
+            remaining = None
+            if deadline is not None:
+                remaining = max(0.0, deadline - time.monotonic())
+            thread.join(timeout=remaining)
+        if deadline is not None and any(thread.is_alive() for thread in self._threads):
+            self._stop_event.set()
+            if os.name != "posix":
+                self._close_streams()
+            for thread in self._threads:
+                thread.join(timeout=0.1)
+            if os.name != "posix":
+                for stream in (self.process.stdout, self.process.stderr):
+                    if stream is not None and not stream.closed:
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass
         return ProcessOutput(
             stdout=self.stdout_buffer.output(),
             stderr=self.stderr_buffer.output(),
         )
+
+    def _close_streams(self) -> None:
+        for stream in (self.process.stdout, self.process.stderr):
+            if stream is None or stream.closed:
+                continue
+            try:
+                os.close(stream.fileno())
+            except OSError:
+                pass
 
 
 def _limit_encoded_output(encoded: bytes, max_bytes: int) -> LimitedOutput:

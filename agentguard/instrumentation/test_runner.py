@@ -9,10 +9,11 @@ from agentguard.core.result import CommandResult
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.output_limits import BoundedProcessOutput, limit_output
 from agentguard.instrumentation.processes import (
-    PROCESS_TIMEOUT_TERMINATED_MESSAGE,
+    PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS,
     ProcessCleanupResult,
     append_cleanup_message,
     popen_with_process_group,
+    process_timeout_message,
     terminate_process_tree,
 )
 
@@ -136,15 +137,20 @@ class TestRunner:
             timed_out = True
             exit_code = 124
             cleanup = terminate_process_tree(process)
-            capture.wait()
-        captured = capture.finish()
+            try:
+                capture.wait(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+        captured = capture.finish(
+            timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS if timed_out else None
+        )
         stdout = captured.stdout.text
         stderr = captured.stderr.text
         if timed_out:
             stderr = (
                 f"{stderr}\nCommand timed out after "
                 f"{self.timeout_seconds} seconds."
-                f"\n{PROCESS_TIMEOUT_TERMINATED_MESSAGE}"
+                f"\n{process_timeout_message(cleanup)}"
             ).strip()
             stderr = append_cleanup_message(stderr, cleanup)
         duration_seconds = time.monotonic() - started

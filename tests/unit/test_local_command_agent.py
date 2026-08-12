@@ -10,6 +10,10 @@ import pytest
 from agentguard.agents.local_command_agent import LocalCommandAgent
 from agentguard.config.loader import load_config
 from agentguard.instrumentation.command_tracker import CommandTracker
+from agentguard.instrumentation.processes import (
+    PROCESS_CLEANUP_INCOMPLETE_MESSAGE,
+    ProcessCleanupResult,
+)
 
 
 def _config(**overrides):
@@ -161,6 +165,38 @@ def test_local_command_agent_timeout_records_controlled_event(
     assert "Local command timed out after 1 seconds." in event.stderr
     assert event.process_cleanup_attempted is True
     assert event.process_cleanup_complete is True
+
+
+def test_local_command_agent_records_incomplete_guard_cleanup(tmp_path: Path) -> None:
+    class IncompleteController:
+        termination_requested = True
+        termination_reason = "policy violation"
+
+        @staticmethod
+        def attach(_process) -> None:
+            return None
+
+        @staticmethod
+        def termination_cleanup_result() -> ProcessCleanupResult:
+            return ProcessCleanupResult(
+                attempted=True,
+                complete=False,
+                kill_required=True,
+                message=PROCESS_CLEANUP_INCOMPLETE_MESSAGE,
+            )
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    tracker = CommandTracker()
+
+    LocalCommandAgent(
+        _config(agent_command=f'{sys.executable} -c "print(123)"')
+    ).run(repo_dir, tracker, process_controller=IncompleteController())
+
+    event = tracker.events[0]
+    assert event.process_cleanup_attempted is True
+    assert event.process_cleanup_complete is False
+    assert event.process_cleanup_message == PROCESS_CLEANUP_INCOMPLETE_MESSAGE
 
 
 def test_local_command_agent_timeout_cleans_up_child_process(

@@ -243,8 +243,14 @@ command timeouts use the same process-tree cleanup path. Docker-backed
 commands are run with a managed container name so timeout/error cleanup can
 attempt `docker rm -f` after terminating the local Docker client process.
 
-Cleanup status is recorded with sanitized booleans and fixed messages such as
-`command timed out and process tree was terminated` or
+On POSIX hosts, cleanup status is not complete until the owned process group is
+observed to be gone after bounded graceful and forceful termination attempts.
+On Windows, the current direct-process backend does not own a Job Object and
+therefore does not claim verified descendant cleanup. Pipe drainage after a
+timeout is bounded even when cleanup cannot be confirmed. Status is recorded
+with sanitized booleans and fixed messages such as
+`command timed out and process tree was terminated`,
+`command timed out and process-tree cleanup could not be confirmed`, or
 `docker cleanup incomplete: container removal failed`; raw exception text,
 environment values, and workspace absolute paths are not added as cleanup
 evidence. The report marks guard-enforced runs as `FAIL` with a controlled
