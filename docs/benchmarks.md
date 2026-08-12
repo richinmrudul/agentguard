@@ -23,6 +23,12 @@ to create the benchmark baseline. Preparation failures remove partial run
 artifacts; if removal itself fails, the error identifies the remaining run
 directory for recoverable cleanup.
 
+Repository preparation force-adds copied source content to the fresh baseline,
+so source `.gitignore` rules do not create evidence blind spots. Final diff
+collection likewise includes new ignored paths. Built-in generated/internal
+artifact paths remain explicitly excluded. Git control metadata is never copied
+or treated as benchmark source evidence.
+
 ## Generated Files During Online Guarding
 
 Known generated noise can be excluded from online filesystem polling in an

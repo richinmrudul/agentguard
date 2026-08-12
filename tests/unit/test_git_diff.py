@@ -130,6 +130,68 @@ def test_collect_diff_excludes_internal_artifacts_and_keeps_source_files(
     assert "src/app.py" in diff.unified_diff
 
 
+@pytest.mark.skipif(not hasattr(Path, "symlink_to"), reason="Symlinks unavailable")
+def test_collect_diff_includes_ignored_paths_without_following_symlinks(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init", "--template=")
+    _write(
+        repo_dir / ".gitignore",
+        "ignored/**\nnested/*.secret\n.agentguard/**\n*.pyc\n",
+    )
+    _write(repo_dir / "ignored" / "modified.txt", "baseline\n")
+    _write(repo_dir / "ignored" / "deleted.txt", "delete me\n")
+    _write(repo_dir / "ignored" / "renamed.txt", "rename me\n")
+    _git(repo_dir, "add", "--all", "--force", "--", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Baseline",
+    )
+
+    _write(repo_dir / "ignored" / "modified.txt", "changed\n")
+    (repo_dir / "ignored" / "deleted.txt").unlink()
+    (repo_dir / "ignored" / "renamed.txt").rename(
+        repo_dir / "ignored" / "renamed-new.txt"
+    )
+    _write(repo_dir / "nested" / "new.secret", "new ignored\n")
+    (repo_dir / "ignored" / "link.secret").symlink_to("../modified.txt")
+    _write(repo_dir / "ignored" / "nested" / ".git" / "config", "control\n")
+    _write(repo_dir / ".agentguard" / "runs" / "report.json", "{}\n")
+    _write(repo_dir / "generated.pyc", "bytecode\n")
+
+    legacy = collect_diff(repo_dir)
+    first = collect_diff(repo_dir, include_ignored=True)
+    second = collect_diff(repo_dir, include_ignored=True)
+
+    assert legacy.added_files == []
+    assert first == second
+    assert first.modified_files == ["ignored/modified.txt"]
+    assert first.added_files == [
+        "ignored/link.secret",
+        "ignored/renamed-new.txt",
+        "nested/new.secret",
+    ]
+    assert first.deleted_files == [
+        "ignored/deleted.txt",
+        "ignored/renamed.txt",
+    ]
+    assert first.lines_added == 3
+    assert first.lines_deleted == 3
+    assert all(".git" not in path.split("/") for path in first.changed_files)
+    assert "ignored/nested/.git/config" not in first.changed_files
+    assert ".agentguard/runs/report.json" not in first.changed_files
+    assert "generated.pyc" not in first.changed_files
+    assert "ignored/modified.txt" in first.unified_diff
+
+
 def test_collect_diff_staged_renames_include_both_paths_for_policy_checks(
     tmp_path: Path,
 ) -> None:

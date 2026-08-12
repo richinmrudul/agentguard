@@ -2,7 +2,10 @@ import subprocess
 from pathlib import Path
 
 from agentguard.core.result import DiffSummary
-from agentguard.repo.internal_artifacts import is_internal_artifact
+from agentguard.repo.internal_artifacts import (
+    git_exclusion_pathspecs,
+    is_internal_artifact,
+)
 
 
 def _git(repo_dir: Path, *args: str) -> str:
@@ -67,19 +70,19 @@ def _classify_name_status(
     return modified_files, added_files, deleted_files
 
 
-def _untracked_files(repo_dir: Path) -> list[str]:
-    return [
-        path
-        for path in _git(
-            repo_dir,
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "-z",
-        ).split("\0")
-        if path
-        if not is_internal_artifact(path)
-    ]
+def _untracked_files(repo_dir: Path, *, include_ignored: bool = False) -> list[str]:
+    args = ["ls-files", "--others"]
+    if not include_ignored:
+        args.append("--exclude-standard")
+    args.append("-z")
+    return sorted(
+        [
+            path
+            for path in _git(repo_dir, *args).split("\0")
+            if path
+            if not is_internal_artifact(path)
+        ]
+    )
 
 
 def _line_count(path: Path) -> int:
@@ -101,7 +104,12 @@ def _require_baseline_commit(repo_dir: Path, baseline_ref: str) -> None:
         ) from error
 
 
-def collect_diff(repo_dir: Path, baseline_ref: str = "HEAD") -> DiffSummary:
+def collect_diff(
+    repo_dir: Path,
+    baseline_ref: str = "HEAD",
+    *,
+    include_ignored: bool = False,
+) -> DiffSummary:
     _require_baseline_commit(repo_dir, baseline_ref)
     modified_files, added_files, deleted_files = _classify_name_status(
         _git(
@@ -113,7 +121,7 @@ def collect_diff(repo_dir: Path, baseline_ref: str = "HEAD") -> DiffSummary:
             "-z",
         )
     )
-    untracked_files = _untracked_files(repo_dir)
+    untracked_files = _untracked_files(repo_dir, include_ignored=include_ignored)
     added_files.extend(path for path in untracked_files if path not in added_files)
     lines_added, lines_deleted = _numstat(repo_dir, baseline_ref)
     lines_added += sum(_line_count(repo_dir / path) for path in untracked_files)
@@ -130,13 +138,7 @@ def collect_diff(repo_dir: Path, baseline_ref: str = "HEAD") -> DiffSummary:
             baseline_ref,
             "--",
             ".",
-            ":!.agentguard_agent_events.jsonl",
-            ":!.agentguard/**",
-            ":!.pytest_cache/**",
-            ":!**/__pycache__/**",
-            ":!**/*.pyc",
-            ":!.ruff_cache/**",
-            ":!.DS_Store",
+            *git_exclusion_pathspecs(),
         ),
     )
 

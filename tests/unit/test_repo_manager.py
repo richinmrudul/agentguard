@@ -92,6 +92,44 @@ def test_prepare_excludes_git_metadata_recursively_and_preserves_similar_names(
     assert _git(prepared.repo_dir, "status", "--porcelain") == ""
 
 
+def test_prepare_tracks_ignored_source_but_excludes_internal_artifacts(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template"
+    (template / "nested").mkdir(parents=True)
+    (template / ".gitignore").write_text(
+        "ignored.txt\n.agentguard/\n*.pyc\n", encoding="utf-8"
+    )
+    (template / "nested" / ".gitignore").write_text("*.secret\n", encoding="utf-8")
+    (template / "ignored.txt").write_text("protected\n", encoding="utf-8")
+    (template / "nested" / "protected.secret").write_text(
+        "nested protected\n", encoding="utf-8"
+    )
+    (template / ".agentguard" / "runs").mkdir(parents=True)
+    (template / ".agentguard" / "runs" / "report.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    (template / "generated.pyc").write_bytes(b"bytecode")
+
+    prepared = RepoManager(tmp_path / "runs").prepare(
+        _config_for(template), "custom-command"
+    )
+
+    tracked = _git(prepared.repo_dir, "ls-files").splitlines()
+    assert tracked == [
+        ".gitignore",
+        "ignored.txt",
+        "nested/.gitignore",
+        "nested/protected.secret",
+    ]
+    assert (prepared.repo_dir / "ignored.txt").read_text(encoding="utf-8") == (
+        "protected\n"
+    )
+    assert (prepared.repo_dir / ".agentguard" / "runs" / "report.json").is_file()
+    assert (prepared.repo_dir / "generated.pyc").is_file()
+    assert _git(prepared.repo_dir, "status", "--porcelain") == ""
+
+
 def test_prepare_flattens_nested_repository_without_creating_gitlink(
     tmp_path: Path,
 ) -> None:
