@@ -831,6 +831,18 @@ def build_execution_trace(
                         if result.guard_summary.watcher_event_error
                         else None
                     ),
+                    "scan_complete": result.guard_summary.scan_complete,
+                    "incomplete_scan_count": (
+                        result.guard_summary.incomplete_scan_count
+                    ),
+                    "scan_error": (
+                        sanitize_text(
+                            result.guard_summary.scan_error,
+                            sensitive_values,
+                        )[:MAX_STRING_CHARS]
+                        if result.guard_summary.scan_error
+                        else None
+                    ),
                     "violations": [
                         {
                             "violation_type": violation.violation_type,
@@ -1440,6 +1452,11 @@ def _validate_payload(event: TraceEvent) -> None:
             "watcher_event_limit_exceeded",
             "watcher_event_error",
         }
+        scan_fields = {
+            "scan_complete",
+            "incomplete_scan_count",
+            "scan_error",
+        }
         if (
             event.event_type == "guard_summary"
             and line_measurement_fields & set(event.payload)
@@ -1450,6 +1467,11 @@ def _validate_payload(event: TraceEvent) -> None:
             and watcher_fields & set(event.payload)
         ):
             event_fields = event_fields | (watcher_fields & set(event.payload))
+        if (
+            event.event_type == "guard_summary"
+            and scan_fields & set(event.payload)
+        ):
+            event_fields = event_fields | scan_fields
         if (
             event.event_type in {"agent_command", "test_result"}
             and "process_cleanup" in event.payload
@@ -1559,6 +1581,21 @@ def _validate_payload(event: TraceEvent) -> None:
                 raise ValueError(
                     "Trace watcher_event_error must be a string or null."
                 )
+        if "scan_complete" in event.payload:
+            if not isinstance(event.payload.get("scan_complete"), bool):
+                raise ValueError("Trace scan_complete must be boolean.")
+            incomplete_count = event.payload.get("incomplete_scan_count")
+            if (
+                not isinstance(incomplete_count, int)
+                or isinstance(incomplete_count, bool)
+                or incomplete_count < 0
+            ):
+                raise ValueError(
+                    "Trace incomplete_scan_count must be a nonnegative integer."
+                )
+            scan_error = event.payload.get("scan_error")
+            if scan_error is not None and not isinstance(scan_error, str):
+                raise ValueError("Trace scan_error must be a string or null.")
     if event.event_type == "file_change":
         path = event.payload.get("path")
         if not isinstance(path, str):
@@ -2035,6 +2072,23 @@ def _guard_summary_from_dict(data: object):
         watcher_event_error=(
             sanitize_text(data.get("watcher_event_error"))[:MAX_STRING_CHARS]
             if isinstance(data.get("watcher_event_error"), str)
+            else None
+        ),
+        scan_complete=(
+            True
+            if "scan_complete" not in data
+            else (
+                data.get("scan_complete")
+                if isinstance(data.get("scan_complete"), bool)
+                else False
+            )
+        ),
+        incomplete_scan_count=_nonnegative_int(
+            data.get("incomplete_scan_count")
+        ),
+        scan_error=(
+            sanitize_text(data.get("scan_error"))[:MAX_STRING_CHARS]
+            if isinstance(data.get("scan_error"), str)
             else None
         ),
     )

@@ -136,6 +136,10 @@ New guard summary events also retain current live added/deleted counts,
 measurement completeness, skipped-file count, and a sanitized incomplete
 status. Older traces default these fields safely. Replay loads the recorded
 summary but does not rerun polling or claim to reproduce violation timing.
+Guard summaries also retain whether bounded filesystem scanning stayed
+complete, the number of incomplete scans, and a sanitized status. Older
+reports and traces without these additive fields default to complete with a
+zero count.
 
 Trace validity does not prove benchmark correctness, policy completeness,
 agent identity, or that recorded evidence was honestly produced. Traces are

@@ -29,6 +29,18 @@ from agentguard.traces.execution import (
 runner = CliRunner()
 
 
+def test_legacy_guard_summary_defaults_to_complete_scan() -> None:
+    legacy = trace_module._guard_summary_from_dict({"mode": "audit"})
+    malformed = trace_module._guard_summary_from_dict(
+        {"mode": "audit", "scan_complete": "yes"}
+    )
+
+    assert legacy.scan_complete is True
+    assert legacy.incomplete_scan_count == 0
+    assert legacy.scan_error is None
+    assert malformed.scan_complete is False
+
+
 @pytest.fixture(scope="module")
 def benchmark_result():
     return run_benchmark(
