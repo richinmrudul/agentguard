@@ -16,7 +16,9 @@ from agentguard.project_init import (
     GITHUB_WORKFLOW_PATH,
     MAX_GO_MOD_BYTES,
     MAX_NODE_PACKAGE_JSON_BYTES,
+    MAX_PYTHON_METADATA_BYTES,
     NODE_TEST_COMMAND,
+    PYTHON_REQUIREMENT_FILES,
     UNKNOWN_TEST_COMMAND,
 )
 from agentguard.presets import get_preset, preset_names
@@ -88,6 +90,175 @@ def test_init_basic_python_project_generates_strict_valid_config(tmp_path: Path)
     assert "Detected project type: Python" in result.output
     assert not (root / GITHUB_WORKFLOW_PATH).exists()
     assert (root / ".gitignore").read_text(encoding="utf-8") == ".agentguard/\n"
+
+
+def test_detected_pytest_workflow_installs_project_and_pytest(tmp_path: Path) -> None:
+    root = tmp_path / "Python project café 日本語"
+    _python_project(root)
+
+    result = _invoke(root, "--ci", "github")
+    steps = _workflow(root)["jobs"]["agentguard"]["steps"]
+    setup = next(
+        step for step in steps if step.get("name") == "Install detected Python test dependencies"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert setup["run"].splitlines() == [
+        "python -m pip install --editable .",
+        "python -m pip install pytest",
+    ]
+
+
+def test_build_system_only_pyproject_does_not_trigger_editable_install(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        "[build-system]\nrequires = ['setuptools']\n\n"
+        "[tool.pytest.ini_options]\ntestpaths = ['tests']\n",
+        encoding="utf-8",
+    )
+
+    result = _invoke(root, "--ci", "github")
+    steps = _workflow(root)["jobs"]["agentguard"]["steps"]
+    setup = next(
+        step for step in steps if step.get("name") == "Install detected Python test dependencies"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert setup["run"].splitlines() == ["python -m pip install pytest"]
+
+
+@pytest.mark.parametrize("requirements_name", PYTHON_REQUIREMENT_FILES)
+def test_detected_pytest_workflow_installs_allowlisted_requirements_without_editable_mode(
+    tmp_path: Path, requirements_name: str
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (root / requirements_name).write_text("example-dependency==1\n", encoding="utf-8")
+
+    result = _invoke(root, "--ci", "github")
+    steps = _workflow(root)["jobs"]["agentguard"]["steps"]
+    setup = next(
+        step for step in steps if step.get("name") == "Install detected Python test dependencies"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert setup["run"].splitlines() == [
+        f"python -m pip install --requirement {requirements_name}",
+        "python -m pip install pytest",
+    ]
+    assert "--editable" not in setup["run"]
+
+
+def test_multiple_allowlisted_requirements_have_deterministic_fixed_order(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    for name in reversed(PYTHON_REQUIREMENT_FILES):
+        (root / name).write_text("example-dependency==1\n", encoding="utf-8")
+
+    result = _invoke(root, "--ci", "github")
+    steps = _workflow(root)["jobs"]["agentguard"]["steps"]
+    setup = next(
+        step for step in steps if step.get("name") == "Install detected Python test dependencies"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert setup["run"].splitlines() == [
+        *(f"python -m pip install --requirement {name}" for name in PYTHON_REQUIREMENT_FILES),
+        "python -m pip install pytest",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("metadata_name", "metadata_source", "pytest_source"),
+    [
+        ("setup.cfg", "[metadata]\nname = demo\n\n[tool:pytest]\n", None),
+        ("setup.py", "raise RuntimeError('must not run during init')\n", "[pytest]\n"),
+        ("tox.ini", "[pytest]\n", None),
+    ],
+)
+def test_python_setup_detection_is_inert_and_only_installs_packaged_roots_editably(
+    tmp_path: Path,
+    monkeypatch,
+    metadata_name: str,
+    metadata_source: str,
+    pytest_source: str,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / metadata_name).write_text(metadata_source, encoding="utf-8")
+    if pytest_source is not None:
+        (root / "pytest.ini").write_text(pytest_source, encoding="utf-8")
+
+    def fail(*args, **kwargs):
+        raise AssertionError(f"initialization executed repository code: {args!r} {kwargs!r}")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    result = _invoke(root, "--ci", "github")
+    workflow_source = (root / GITHUB_WORKFLOW_PATH).read_text(encoding="utf-8")
+
+    assert result.exit_code == 0, result.output
+    if metadata_name in {"setup.cfg", "setup.py"}:
+        assert "python -m pip install --editable ." in workflow_source
+    else:
+        assert "--editable" not in workflow_source
+    assert "python -m pip install pytest" in workflow_source
+
+
+@pytest.mark.parametrize(
+    "unsafe_name",
+    ["requirements-prod.txt", "requirements.txt", "pyproject.toml", "setup.cfg", "setup.py"],
+)
+def test_unsafe_or_unrecognized_dependency_metadata_requires_customization(
+    tmp_path: Path, unsafe_name: str
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.write_text("untrusted\n", encoding="utf-8")
+    if unsafe_name == "requirements-prod.txt":
+        (root / unsafe_name).write_text("untrusted\n", encoding="utf-8")
+    else:
+        (root / unsafe_name).symlink_to(outside)
+
+    result = _invoke(root, "--ci", "github")
+    source = (root / GITHUB_WORKFLOW_PATH).read_text(encoding="utf-8")
+
+    assert result.exit_code == 0, result.output
+    assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
+    assert "Install detected Python test dependencies" not in source
+
+
+def test_oversized_python_dependency_metadata_requires_customization(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (root / "pyproject.toml").write_bytes(b" " * (MAX_PYTHON_METADATA_BYTES + 1))
+
+    result = _invoke(root, "--ci", "github")
+
+    assert result.exit_code == 0, result.output
+    assert load_config(root / CONFIG_PATH).test_command == UNKNOWN_TEST_COMMAND
+
+
+def test_explicit_command_does_not_guess_python_dependency_setup(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    _python_project(root)
+
+    result = _invoke(
+        root, "--ci", "github", "--test-command", "python -m pytest tests/unit"
+    )
+    source = (root / GITHUB_WORKFLOW_PATH).read_text(encoding="utf-8")
+
+    assert result.exit_code == 0, result.output
+    assert "Install detected Python test dependencies" not in source
 
 
 def test_default_is_byte_identical_to_explicit_recommended(tmp_path: Path) -> None:
@@ -645,6 +816,13 @@ def test_github_workflow_is_valid_least_privilege_and_pinned(
     assert "--base \"$AGENTGUARD_BASE_SHA\" --head HEAD --github-summary" in source
     assert "secrets." not in source
     assert "id-token" not in source
+    setup = next(
+        step for step in steps if step.get("name") == "Install detected Python test dependencies"
+    )
+    assert setup["run"].splitlines() == [
+        "python -m pip install --editable .",
+        "python -m pip install pytest",
+    ]
 
 
 def test_no_ci_does_not_generate_workflow(tmp_path: Path) -> None:

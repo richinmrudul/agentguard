@@ -1,6 +1,10 @@
+import os
 import shutil
+import shlex
 import subprocess
 import sys
+import venv
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -13,9 +17,43 @@ from agentguard.core.result import CommandResult
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner as CommandTestRunner
 from agentguard.presets import get_preset, preset_names
+from agentguard.project_init import build_initialization_plan
 
 
 runner = CliRunner()
+
+
+def _write_fixture_wheel(
+    wheelhouse: Path,
+    *,
+    distribution: str,
+    version: str,
+    files: dict[str, str],
+) -> Path:
+    normalized = distribution.replace("-", "_")
+    dist_info = f"{normalized}-{version}.dist-info"
+    members = {
+        **files,
+        f"{dist_info}/METADATA": (
+            "Metadata-Version: 2.1\n"
+            f"Name: {distribution}\n"
+            f"Version: {version}\n"
+        ),
+        f"{dist_info}/WHEEL": (
+            "Wheel-Version: 1.0\n"
+            "Generator: agentguard-test-fixture\n"
+            "Root-Is-Purelib: true\n"
+            "Tag: py3-none-any\n"
+        ),
+    }
+    record_path = f"{dist_info}/RECORD"
+    members[record_path] = "".join(f"{name},,\n" for name in (*members, record_path))
+    wheelhouse.mkdir(parents=True, exist_ok=True)
+    wheel = wheelhouse / f"{normalized}-{version}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, content in members.items():
+            archive.writestr(name, content)
+    return wheel
 
 
 def _git(root: Path, *args: str) -> None:
@@ -91,6 +129,103 @@ def test_parent_directory_initialization_produces_reusable_strict_config(
     assert result.exit_code == 0, result.output
     assert config.test_command == "python -m pytest"
     assert (root / ".github/workflows/agentguard.yml").is_file()
+
+
+def test_detected_pytest_requirements_prepare_disposable_environment_then_tests_run(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "Python project café 日本語"
+    tests = root / "tests"
+    root.mkdir(parents=True)
+    tests.mkdir()
+    (root / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n", encoding="utf-8")
+    (root / "requirements.txt").write_text(
+        "agentguard-fixture-dependency==1\n", encoding="utf-8"
+    )
+    marker = root / "tests-ran"
+    (tests / "test_fixture.py").write_text(
+        "from pathlib import Path\n"
+        "from fixture_value import VALUE\n\n"
+        "def test_declared_dependency_is_available():\n"
+        "    Path('tests-ran').write_text('yes\\n', encoding='utf-8')\n"
+        "    assert VALUE == 42\n",
+        encoding="utf-8",
+    )
+
+    initialized = runner.invoke(app, ["init", str(root), "--ci", "github"])
+    plan = build_initialization_plan(root, ci="github")
+
+    assert initialized.exit_code == 0, initialized.output
+    assert not marker.exists(), "initialization must not install or execute repository code"
+    assert plan.python_setup_commands == (
+        "python -m pip install --requirement requirements.txt",
+        "python -m pip install pytest",
+    )
+
+    wheelhouse = tmp_path / "fixture-wheels"
+    _write_fixture_wheel(
+        wheelhouse,
+        distribution="agentguard-fixture-dependency",
+        version="1",
+        files={"fixture_value.py": "VALUE = 42\n"},
+    )
+    _write_fixture_wheel(
+        wheelhouse,
+        distribution="pytest",
+        version="99.0",
+        files={
+            "pytest/__init__.py": "",
+            "pytest/__main__.py": (
+                "from pathlib import Path\n"
+                "import runpy\n\n"
+                "for test_file in sorted(Path('tests').glob('test_*.py')):\n"
+                "    namespace = runpy.run_path(str(test_file))\n"
+                "    for name, value in sorted(namespace.items()):\n"
+                "        if name.startswith('test_') and callable(value):\n"
+                "            value()\n"
+            ),
+        },
+    )
+    environment = tmp_path / "clean-python"
+    venv.EnvBuilder(with_pip=True).create(environment)
+    python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    for module in ("pytest", "fixture_value"):
+        missing = subprocess.run(
+            [str(python), "-c", f"import {module}"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert missing.returncode != 0
+
+    pip_environment = {
+        **os.environ,
+        "PIP_FIND_LINKS": str(wheelhouse),
+        "PIP_NO_INDEX": "1",
+    }
+    for command in plan.python_setup_commands:
+        argv = shlex.split(command)
+        argv[0] = str(python)
+        installed = subprocess.run(
+            argv,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=pip_environment,
+        )
+        assert installed.returncode == 0, installed.stderr
+    tested = subprocess.run(
+        [str(python), "-m", "pytest", "-q"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert tested.returncode == 0, tested.stderr
+    assert marker.read_text(encoding="utf-8") == "yes\n"
 
 
 def test_node_fixture_initialization_is_inert_then_native_tests_run(
