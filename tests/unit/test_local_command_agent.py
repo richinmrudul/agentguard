@@ -66,6 +66,8 @@ def test_local_command_agent_excludes_ambient_environment_and_redacts_configured
     script = (
         "import os; "
         "print(os.environ.get('AGENTGUARD_AMBIENT_SECRET', 'absent')); "
+        "print(os.environ.get('PYTHONDONTWRITEBYTECODE', 'absent')); "
+        "print(os.environ.get('RUFF_CACHE_DIR', 'absent')); "
         "print(os.environ['AGENTGUARD_CONFIGURED_SECRET'])"
     )
 
@@ -78,7 +80,12 @@ def test_local_command_agent_excludes_ambient_environment_and_redacts_configured
 
     event = tracker.events[0]
     assert event.exit_code == 0
-    assert event.stdout.splitlines() == ["absent", "[REDACTED]"]
+    assert event.stdout.splitlines() == [
+        "absent",
+        "absent",
+        "absent",
+        "[REDACTED]",
+    ]
     assert ambient not in event.stdout
     assert configured not in event.stdout
 

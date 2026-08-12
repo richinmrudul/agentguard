@@ -17,7 +17,7 @@ from agentguard.instrumentation.processes import (
     popen_with_process_group,
     terminate_process_tree,
 )
-from agentguard.instrumentation.test_runner import _build_test_env
+from agentguard.instrumentation.test_runner import _build_subprocess_env
 from agentguard.policy.command_policy import evaluate_command_policy
 from agentguard.provenance.manifest import sanitize_text
 
@@ -99,7 +99,7 @@ class LocalCommandAgent(Agent):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env={
-                    **_build_test_env(repo_dir),
+                    **_build_subprocess_env(repo_dir),
                     **self.config.agent_environment,
                 },
             )

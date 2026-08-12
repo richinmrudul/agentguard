@@ -49,7 +49,7 @@ from agentguard.guard.incident import (
 )
 from agentguard.instrumentation.agent_event_reader import (
     DEFAULT_AGENT_EVENT_FILE,
-    read_agent_events,
+    read_agent_events_with_artifact,
 )
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
@@ -539,6 +539,10 @@ def run_benchmark(
     )
     with _measure_stage(timing_recorder, "workspace_preparation"):
         prepared = RepoManager().prepare(config, agent_name)
+        baseline_event_path = prepared.repo_dir / DEFAULT_AGENT_EVENT_FILE
+        baseline_owns_event_path = (
+            baseline_event_path.exists() or baseline_event_path.is_symlink()
+        )
     timeline.add(
         "repo_prepared",
         "Prepared isolated repo workspace",
@@ -681,7 +685,12 @@ def run_benchmark(
         command_tracker,
         command_event_index,
     )
-    ingested_events = read_agent_events(prepared.repo_dir)
+    ingested_events, event_artifact = read_agent_events_with_artifact(
+        prepared.repo_dir
+    )
+    if baseline_owns_event_path and event_artifact is not None:
+        event_artifact.close()
+        event_artifact = None
     command_tracker.extend(ingested_events)
     timeline.add(
         "ingested_agent_events",
@@ -766,11 +775,16 @@ def run_benchmark(
             command_event_index,
         )
     policy_started = timing_recorder.now() if timing_recorder is not None else None
-    diff_summary = collect_diff(
-        prepared.repo_dir,
-        prepared.baseline_commit,
-        include_ignored=True,
-    )
+    try:
+        diff_summary = collect_diff(
+            prepared.repo_dir,
+            prepared.baseline_commit,
+            include_ignored=True,
+            owned_artifacts=(event_artifact,) if event_artifact is not None else (),
+        )
+    finally:
+        if event_artifact is not None:
+            event_artifact.close()
     diff_summary = with_secret_content_scan(
         prepared.repo_dir,
         diff_summary,

@@ -1,4 +1,5 @@
 import subprocess
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,7 +12,10 @@ from agentguard.checks.test_tampering import TestTamperingCheck
 from agentguard.config.loader import load_config
 from agentguard.core.result import CommandResult
 from agentguard.repo.git_diff import collect_diff, collect_diff_between_refs
-from agentguard.repo.internal_artifacts import is_internal_artifact
+from agentguard.repo.internal_artifacts import (
+    adopt_owned_artifact,
+    is_internal_artifact,
+)
 
 
 def _git(repo_dir: Path, *args: str) -> None:
@@ -27,6 +31,14 @@ def _git(repo_dir: Path, *args: str) -> None:
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _adopt(repo_dir: Path, relative_path: str):
+    descriptor = os.open(
+        repo_dir / relative_path,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+    )
+    return adopt_owned_artifact(repo_dir, relative_path, descriptor)
 
 
 def _command_result() -> CommandResult:
@@ -94,7 +106,7 @@ def test_internal_artifact_matcher_identifies_generated_paths() -> None:
     assert not is_internal_artifact("src/auth_example/login.py")
 
 
-def test_collect_diff_excludes_internal_artifacts_and_keeps_source_files(
+def test_collect_diff_keeps_attacker_controlled_reserved_paths(
     tmp_path: Path,
 ) -> None:
     repo_dir = tmp_path / "repo"
@@ -123,11 +135,252 @@ def test_collect_diff_excludes_internal_artifacts_and_keeps_source_files(
     diff = collect_diff(repo_dir)
 
     assert diff.modified_files == ["src/app.py"]
-    assert diff.added_files == ["tests/test_app.py"]
+    assert diff.added_files == [
+        ".agentguard_agent_events.jsonl",
+        ".pytest_cache/v/cache/nodeids",
+        "tests/__pycache__/x.pyc",
+        "tests/test_app.py",
+    ]
     assert diff.deleted_files == []
-    assert ".agentguard_agent_events.jsonl" not in diff.changed_files
+    assert ".agentguard_agent_events.jsonl" in diff.changed_files
     assert ".agentguard_agent_events.jsonl" not in diff.unified_diff
     assert "src/app.py" in diff.unified_diff
+
+
+def test_collect_diff_excludes_only_unchanged_run_owned_file_identity(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init", "--template=")
+    _write(repo_dir / "tracked.txt", "baseline\n")
+    _git(repo_dir, "add", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Baseline",
+    )
+
+    _write(repo_dir / ".agentguard_agent_events.jsonl", "{}\n")
+    owned = _adopt(repo_dir, ".agentguard_agent_events.jsonl")
+    assert owned is not None
+
+    hidden = collect_diff(repo_dir, owned_artifacts=(owned,))
+    assert hidden.changed_files == []
+
+    (repo_dir / ".agentguard_agent_events.jsonl").unlink()
+    _write(repo_dir / ".agentguard_agent_events.jsonl", "attacker replacement\n")
+
+    visible = collect_diff(repo_dir, owned_artifacts=(owned,))
+    assert visible.added_files == [".agentguard_agent_events.jsonl"]
+
+
+def test_owned_artifact_holds_identity_descriptor_and_close_is_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[int] = []
+    real_close = os.close
+
+    def record_close(descriptor: int) -> None:
+        closed.append(descriptor)
+        real_close(descriptor)
+        raise OSError("simulated close diagnostic")
+
+    monkeypatch.setattr("agentguard.repo.internal_artifacts.os.close", record_close)
+
+    _write(tmp_path / ".agentguard_agent_events.jsonl", "owned\n")
+    owned = _adopt(tmp_path, ".agentguard_agent_events.jsonl")
+
+    assert owned is not None
+    assert closed == []
+    owned.close()
+    owned.close()
+    assert len(closed) == 1
+
+
+def test_preexisting_event_file_collision_remains_evidence(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init", "--template=")
+    _write(repo_dir / ".agentguard_agent_events.jsonl", "baseline attacker file\n")
+    _git(repo_dir, "add", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Baseline",
+    )
+
+    _write(repo_dir / ".agentguard_agent_events.jsonl", "modified by agent\n")
+
+    diff = collect_diff(repo_dir)
+    assert diff.modified_files == [".agentguard_agent_events.jsonl"]
+    assert ".agentguard_agent_events.jsonl" in diff.unified_diff
+
+
+def test_reserved_path_renames_preserve_both_paths(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init", "--template=")
+    _write(repo_dir / "ordinary.txt", "move into reserved\n")
+    _write(repo_dir / ".agentguard" / "move-out.txt", "move out\n")
+    _git(repo_dir, "add", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Baseline",
+    )
+
+    _git(repo_dir, "mv", "ordinary.txt", ".agentguard/move-in.txt")
+    _git(repo_dir, "mv", ".agentguard/move-out.txt", "ordinary-out.txt")
+
+    diff = collect_diff(repo_dir)
+    assert set(diff.modified_files) == {
+        ".agentguard/move-in.txt",
+        ".agentguard/move-out.txt",
+        "ordinary-out.txt",
+        "ordinary.txt",
+    }
+
+
+def test_tracked_nested_reserved_path_modification_is_visible(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init", "--template=")
+    path = repo_dir / ".agentguard" / "nested" / "protected.txt"
+    _write(path, "baseline\n")
+    _git(repo_dir, "add", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Baseline",
+    )
+    _write(path, "agent changed\n")
+
+    first = collect_diff(repo_dir)
+    second = collect_diff(repo_dir)
+
+    assert first == second
+    assert first.modified_files == [".agentguard/nested/protected.txt"]
+
+
+@pytest.mark.skipif(not hasattr(Path, "symlink_to"), reason="Symlinks unavailable")
+def test_owned_event_rename_and_symlink_replacement_are_visible(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init", "--template=")
+    _write(repo_dir / "baseline.txt", "baseline\n")
+    _git(repo_dir, "add", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Baseline",
+    )
+    _write(repo_dir / ".agentguard_agent_events.jsonl", "owned\n")
+    owned = _adopt(repo_dir, ".agentguard_agent_events.jsonl")
+    assert owned is not None
+    event_path = repo_dir / owned.path
+    renamed = repo_dir / ".agentguard" / "renamed-events.jsonl"
+    renamed.parent.mkdir()
+    event_path.rename(renamed)
+    outside = tmp_path / "outside.txt"
+    _write(outside, "must not be followed\n")
+    event_path.symlink_to(outside)
+
+    diff = collect_diff(repo_dir, owned_artifacts=(owned,))
+
+    assert diff.added_files == [
+        ".agentguard/renamed-events.jsonl",
+        ".agentguard_agent_events.jsonl",
+    ]
+    assert diff.lines_added == 1
+
+
+def test_owned_event_hardlink_loses_trusted_status(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init", "--template=")
+    _write(repo_dir / "baseline.txt", "baseline\n")
+    _git(repo_dir, "add", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Baseline",
+    )
+    _write(repo_dir / ".agentguard_agent_events.jsonl", "owned\n")
+    owned = _adopt(repo_dir, ".agentguard_agent_events.jsonl")
+    assert owned is not None
+    os.link(repo_dir / owned.path, repo_dir / "second-link.jsonl")
+
+    diff = collect_diff(repo_dir, owned_artifacts=(owned,))
+
+    assert diff.added_files == [
+        ".agentguard_agent_events.jsonl",
+        "second-link.jsonl",
+    ]
+
+
+def test_reserved_looking_and_backslash_names_remain_visible(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init", "--template=")
+    _write(repo_dir / "baseline.txt", "baseline\n")
+    _git(repo_dir, "add", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Baseline",
+    )
+    names = [
+        ".agentguarded/ordinary.txt",
+        "nested/.agentguard-copy/report.json",
+        r"windows\.agentguard\evidence.txt",
+    ]
+    for name in names:
+        _write(repo_dir / name, "visible\n")
+
+    diff = collect_diff(repo_dir)
+
+    assert diff.added_files == sorted(names)
 
 
 @pytest.mark.skipif(not hasattr(Path, "symlink_to"), reason="Symlinks unavailable")
@@ -175,6 +428,8 @@ def test_collect_diff_includes_ignored_paths_without_following_symlinks(
     assert first == second
     assert first.modified_files == ["ignored/modified.txt"]
     assert first.added_files == [
+        ".agentguard/runs/report.json",
+        "generated.pyc",
         "ignored/link.secret",
         "ignored/renamed-new.txt",
         "nested/new.secret",
@@ -183,12 +438,12 @@ def test_collect_diff_includes_ignored_paths_without_following_symlinks(
         "ignored/deleted.txt",
         "ignored/renamed.txt",
     ]
-    assert first.lines_added == 3
+    assert first.lines_added == 5
     assert first.lines_deleted == 3
     assert all(".git" not in path.split("/") for path in first.changed_files)
     assert "ignored/nested/.git/config" not in first.changed_files
-    assert ".agentguard/runs/report.json" not in first.changed_files
-    assert "generated.pyc" not in first.changed_files
+    assert ".agentguard/runs/report.json" in first.changed_files
+    assert "generated.pyc" in first.changed_files
     assert "ignored/modified.txt" in first.unified_diff
 
 

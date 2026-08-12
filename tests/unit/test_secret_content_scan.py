@@ -181,6 +181,23 @@ def test_scans_untracked_text_and_skips_binary(tmp_path: Path) -> None:
     ]
 
 
+def test_scans_ignored_reserved_path_without_leaking_secret(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    (repo / ".gitignore").write_text(".agentguard/**\n", encoding="utf-8")
+    reserved = repo / ".agentguard" / "attacker.env"
+    reserved.parent.mkdir()
+    reserved.write_text(f"TOKEN={LITERAL}\n", encoding="utf-8")
+
+    diff = collect_diff(repo, include_ignored=True)
+    result = scan_secret_content(repo, diff, PATTERNS)
+
+    assert ".agentguard/attacker.env" in diff.added_files
+    assert result.matches == [
+        ".agentguard/attacker.env:1 matched secret-content detector demo-api-token"
+    ]
+    assert LITERAL not in result.matches[0]
+
+
 def test_ignored_additions_remain_subject_to_candidate_file_bound(
     tmp_path: Path,
 ) -> None:

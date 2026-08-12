@@ -43,7 +43,7 @@ def _argv(command: str) -> list[str]:
     return parts
 
 
-def _build_test_env(repo_dir: Path) -> dict[str, str]:
+def _build_subprocess_env(repo_dir: Path) -> dict[str, str]:
     env = {
         name: os.environ[name]
         for name in INHERITED_SUBPROCESS_ENV_NAMES
@@ -55,11 +55,27 @@ def _build_test_env(repo_dir: Path) -> dict[str, str]:
     return env
 
 
+def _build_test_env(repo_dir: Path) -> dict[str, str]:
+    env = _build_subprocess_env(repo_dir)
+    cache_root = repo_dir.resolve() / ".git" / "agentguard-cache"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["RUFF_CACHE_DIR"] = str(cache_root / "ruff")
+    return env
+
+
+def _is_pytest_argv(argv: list[str]) -> bool:
+    return Path(argv[0]).name in {"pytest", "py.test"} or argv[1:3] == [
+        "-m",
+        "pytest",
+    ]
+
+
 def _go_test_env(repo_dir: Path) -> dict[str, str]:
     root = repo_dir.resolve()
-    artifact_root = root / ".agentguard" / "cache"
+    git_root = root / ".git"
+    artifact_root = git_root / "agentguard-cache"
     for path in (
-        root / ".agentguard",
+        git_root,
         artifact_root,
         artifact_root / "go-build",
         artifact_root / "go-mod",
@@ -94,6 +110,12 @@ class TestRunner:
             raise ValueError("Test command cannot be empty.")
 
         env = _build_test_env(repo_dir)
+        if _is_pytest_argv(argv):
+            # The test run is trusted, but a repository-local cache name is not.
+            # Avoid generating standard pytest/Python caches rather than hiding
+            # same-named attacker-controlled content from benchmark evidence.
+            cache_dir = repo_dir / ".git" / "agentguard-cache" / "pytest"
+            argv.extend(["-o", f"cache_dir={cache_dir}"])
         if Path(argv[0]).name == "go":
             env.update(_go_test_env(repo_dir))
 
