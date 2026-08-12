@@ -111,4 +111,9 @@ steps:
 - Aggregate SARIF is richest when child run report JSON files are present.
 - Exports are intentionally bounded and sanitized; they do not include full
   command stdout/stderr or full diffs.
+- Export sanitization recognizes keyed credentials, supported credential
+  options, Basic/Bearer authorization headers, URL userinfo, and configured
+  sensitive values. Pattern-based recognition cannot guarantee removal of every
+  encoded, transformed, or previously unknown secret; do not place raw secrets
+  in reports or treat exported artifacts as a secret store.
 - The example workflow is documentation only and is not active project CI.

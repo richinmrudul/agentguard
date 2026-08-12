@@ -22,6 +22,7 @@ from agentguard.provenance.manifest import (
     git_identity,
     load_manifest,
     sanitize_arguments,
+    sanitize_text,
     sha256_file,
     verify_manifest,
 )
@@ -159,6 +160,24 @@ def test_sanitize_arguments_redacts_supported_secret_forms() -> None:
         "user:pass",
     ]:
         assert secret not in serialized
+
+
+def test_sanitize_text_redacts_recognized_credential_forms() -> None:
+    canaries = [
+        "OPTION_CANARY_123",
+        "HEADER_CANARY_123",
+        "USERINFO_CANARY_123",
+        "KEYED_CANARY_123",
+    ]
+    sanitized = sanitize_text(
+        f"tool --token {canaries[0]} "
+        f"Authorization: Bearer {canaries[1]} "
+        f"https://agent:{canaries[2]}@example.invalid/path "
+        f"api_key={canaries[3]}"
+    )
+
+    assert all(canary not in sanitized for canary in canaries)
+    assert sanitized.count("[REDACTED]") == len(canaries)
 
 
 def test_agent_identity_never_serializes_secret_metadata_or_environment_values(

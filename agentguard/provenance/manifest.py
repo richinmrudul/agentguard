@@ -40,6 +40,14 @@ URL_CREDENTIALS_PATTERN = re.compile(
 AUTHORIZATION_PATTERN = re.compile(
     r"(?i)(authorization\s*:\s*)(basic|bearer)\s+\S+"
 )
+KEYED_CREDENTIAL_PATTERN = re.compile(
+    r"(?i)\b(?P<key>password|passwd|secret|token|api[_-]?key|access[_-]?key)"
+    r"(?P<separator>\s*[:=]\s*)(?P<value>[^\s,;]+)"
+)
+CREDENTIAL_OPTION_PATTERN = re.compile(
+    r"(?i)(?P<option>--(?:token|api-key|apikey|password|passwd|client-secret|"
+    r"access-token|auth-token))(?P<separator>\s+|=)(?P<value>[^\s,;]+)"
+)
 VERSION_OUTPUT_LIMIT = 4096
 VERSION_TIMEOUT_SECONDS = 10
 
@@ -308,6 +316,14 @@ def sensitive_values_for_config(
 def sanitize_text(value: str, sensitive_values: Optional[list[str]] = None) -> str:
     sanitized = URL_CREDENTIALS_PATTERN.sub(r"\g<scheme>[REDACTED]@", value)
     sanitized = AUTHORIZATION_PATTERN.sub(r"\1[REDACTED]", sanitized)
+    sanitized = CREDENTIAL_OPTION_PATTERN.sub(
+        r"\g<option>\g<separator>[REDACTED]",
+        sanitized,
+    )
+    sanitized = KEYED_CREDENTIAL_PATTERN.sub(
+        r"\g<key>\g<separator>[REDACTED]",
+        sanitized,
+    )
     for secret in sensitive_values or []:
         sanitized = sanitized.replace(secret, "[REDACTED]")
     return sanitized

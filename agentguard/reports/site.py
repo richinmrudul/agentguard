@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from agentguard.history.store import HistoryRecord, list_history
 from agentguard.io import atomic_write_text
+from agentguard.provenance.manifest import sanitize_text as sanitize_credential_text
 from agentguard.reports.exports import SECRET_PATTERNS
 
 
@@ -1622,7 +1623,7 @@ def sanitize_data(value: Any) -> Any:
 
 
 def sanitize_text(value: object) -> str:
-    text = str(value)
+    text = sanitize_credential_text(str(value))
     for pattern in SECRET_PATTERNS:
         text = pattern.sub("[REDACTED]", text)
     text = ABSOLUTE_PATH_PATTERN.sub(_absolute_path_replacement, text)

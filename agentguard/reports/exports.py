@@ -9,6 +9,7 @@ from xml.etree import ElementTree
 
 from agentguard import __version__
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.provenance.manifest import sanitize_text
 
 
 SARIF_VERSION = "2.1.0"
@@ -28,10 +29,6 @@ MAX_EVIDENCE_CHARS = 360
 MAX_SYSTEM_OUT_CHARS = 1600
 
 SECRET_PATTERNS = [
-    re.compile(
-        r"(?i)\b(password|passwd|secret|token|api[_-]?key|access[_-]?key)"
-        r"\s*[:=]\s*[^\s,;]+"
-    ),
     re.compile(r"\b(?:sk|ghp|github_pat)_[A-Za-z0-9_=-]{8,}\b"),
     re.compile(r"AGENTGUARD_SECRET_CANARY[_A-Z0-9-]*", re.IGNORECASE),
 ]
@@ -887,19 +884,11 @@ def _normalize_repo_path(path: str) -> Optional[str]:
 
 
 def _sanitize(value: object) -> str:
-    text = "" if value is None else str(value)
-    text = SECRET_PATTERNS[0].sub(_redact_keyed_secret, text)
-    for pattern in SECRET_PATTERNS[1:]:
+    text = sanitize_text("" if value is None else str(value))
+    for pattern in SECRET_PATTERNS:
         text = pattern.sub("<redacted>", text)
     text = ABSOLUTE_PATH_PATTERN.sub("<path>", text)
     return text.replace("\x00", "")
-
-
-def _redact_keyed_secret(match: re.Match[str]) -> str:
-    raw = match.group(0)
-    separator = "=" if "=" in raw else ":"
-    key = raw.split(separator, 1)[0].strip()
-    return f"{key}{separator}<redacted>"
 
 
 def _bounded(value: str, limit: int = MAX_EVIDENCE_CHARS) -> str:

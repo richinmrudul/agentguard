@@ -295,6 +295,54 @@ def test_junit_secret_sanitization(tmp_path: Path, monkeypatch) -> None:
     assert str(tmp_path) not in text
 
 
+def test_standard_exports_redact_all_recognized_credential_forms(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    canaries = {
+        "option": "OPTION_CANARY_123456",
+        "header": "HEADER_CANARY_123456",
+        "userinfo": "USERINFO_CANARY_123456",
+        "keyed": "KEYED_CANARY_123456",
+    }
+    report = _write_run_report(
+        tmp_path,
+        failed=True,
+        message=(
+            f"tool --token {canaries['option']} and "
+            f"Authorization: Bearer {canaries['header']}"
+        ),
+        evidence=[
+            f"https://agent:{canaries['userinfo']}@example.invalid/path",
+            f"api_key={canaries['keyed']}",
+        ],
+    )
+    sarif = tmp_path / "credential-canaries.sarif"
+    junit = tmp_path / "credential-canaries.xml"
+
+    sarif_result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(report), "--output", str(sarif)],
+    )
+    junit_result = runner.invoke(
+        app,
+        ["reports", "export-junit", str(report), "--output", str(junit)],
+    )
+
+    assert sarif_result.exit_code == 0
+    assert junit_result.exit_code == 0
+    sarif_text = sarif.read_text(encoding="utf-8")
+    junit_text = junit.read_text(encoding="utf-8")
+    json.loads(sarif_text)
+    ElementTree.parse(junit)
+    for canary in canaries.values():
+        assert canary not in sarif_text
+        assert canary not in junit_text
+    assert "[REDACTED]" in sarif_text
+    assert "[REDACTED]" in junit_text
+
+
 @pytest.mark.parametrize("path_kind", ["absolute", "traversal"])
 def test_suite_exports_reject_child_reports_outside_report_tree(
     tmp_path: Path,
