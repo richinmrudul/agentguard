@@ -10,6 +10,7 @@ from agentguard.policy.path_matcher import matching_patterns
 
 
 MAX_OBSERVED_FILES = 20000
+MAX_INSPECTED_ENTRIES = MAX_OBSERVED_FILES * 2
 IGNORED_DIR_NAMES = {
     ".git",
     ".agentguard",
@@ -52,6 +53,14 @@ class FilesystemWatchEvent:
 class FilesystemObservation:
     snapshot: dict[str, FileState]
     events: list[FilesystemWatchEvent]
+    scan_complete: bool = True
+
+
+@dataclass(frozen=True)
+class FilesystemSnapshot:
+    states: dict[str, FileState]
+    complete: bool
+    entries_inspected: int
 
 
 class FilesystemSnapshotScanner:
@@ -65,72 +74,81 @@ class FilesystemSnapshotScanner:
         self.guard_ignore_paths = list(guard_ignore_paths)
 
     def snapshot(self) -> dict[str, FileState]:
+        """Return states for legacy callers; runtime guards use scan_snapshot()."""
+        return self.scan_snapshot().states
+
+    def scan_snapshot(self) -> FilesystemSnapshot:
         observed: dict[str, FileState] = {}
         stack = [self.repo_dir]
         inspected = 0
-        while (
-            stack
-            and len(observed) < MAX_OBSERVED_FILES
-            and inspected < MAX_OBSERVED_FILES
-        ):
+        complete = True
+        while stack:
             directory = stack.pop()
             try:
-                entries = list(os.scandir(directory))
+                entries = os.scandir(directory)
             except OSError:
                 continue
-            for entry in entries:
-                inspected += 1
-                if (
-                    len(observed) >= MAX_OBSERVED_FILES
-                    or inspected > MAX_OBSERVED_FILES
-                ):
-                    break
-                if entry.name in IGNORED_FILE_NAMES:
-                    continue
-                rel = self.relative_path(Path(entry.path))
-                if rel is None:
-                    continue
-                try:
-                    stat = entry.stat(follow_symlinks=False)
-                    is_symlink = entry.is_symlink()
-                    is_dir = entry.is_dir(follow_symlinks=False)
-                except OSError:
-                    continue
-                target = None
-                kind = "file"
-                if is_symlink:
-                    kind = "symlink"
+            with entries:
+                for entry in entries:
+                    inspected += 1
+                    if inspected > MAX_INSPECTED_ENTRIES:
+                        complete = False
+                        stack.clear()
+                        break
+                    if entry.name in IGNORED_FILE_NAMES:
+                        continue
+                    rel = self.relative_path(Path(entry.path))
+                    if rel is None:
+                        continue
                     try:
-                        target = os.readlink(entry.path)
+                        stat = entry.stat(follow_symlinks=False)
+                        is_symlink = entry.is_symlink()
+                        is_dir = entry.is_dir(follow_symlinks=False)
                     except OSError:
-                        target = None
-                    if not self.symlink_escapes(rel, target or "") and (
-                        self.ignored_path(rel)
-                    ):
                         continue
-                elif is_dir:
-                    kind = "directory"
-                    if self.built_in_ignored_path(rel):
-                        continue
-                    if self.configured_ignored_path(rel, is_directory=True):
-                        if self.tree_contains_escaping_symlink(
-                            Path(entry.path),
-                            rel,
+                    target = None
+                    kind = "file"
+                    if is_symlink:
+                        kind = "symlink"
+                        try:
+                            target = os.readlink(entry.path)
+                        except OSError:
+                            target = None
+                        if not self.symlink_escapes(rel, target or "") and (
+                            self.ignored_path(rel)
                         ):
-                            stack.append(Path(entry.path))
+                            continue
+                    elif is_dir:
+                        kind = "directory"
+                        if self.built_in_ignored_path(rel):
+                            continue
+                        if self.configured_ignored_path(rel, is_directory=True):
+                            if self.tree_contains_escaping_symlink(
+                                Path(entry.path),
+                                rel,
+                            ):
+                                stack.append(Path(entry.path))
+                            continue
+                        stack.append(Path(entry.path))
+                        if self.configured_ignore_has_descendant(rel):
+                            continue
+                    elif self.ignored_path(rel):
                         continue
-                    stack.append(Path(entry.path))
-                    if self.configured_ignore_has_descendant(rel):
-                        continue
-                elif self.ignored_path(rel):
-                    continue
-                observed[rel] = FileState(
-                    kind=kind,
-                    mtime_ns=stat.st_mtime_ns,
-                    size=stat.st_size,
-                    symlink_target=target,
-                )
-        return observed
+                    if len(observed) >= MAX_OBSERVED_FILES:
+                        complete = False
+                        stack.clear()
+                        break
+                    observed[rel] = FileState(
+                        kind=kind,
+                        mtime_ns=stat.st_mtime_ns,
+                        size=stat.st_size,
+                        symlink_target=target,
+                    )
+        return FilesystemSnapshot(
+            states=dict(sorted(observed.items())),
+            complete=complete,
+            entries_inspected=inspected,
+        )
 
     def changed_paths(
         self,
@@ -187,26 +205,27 @@ class FilesystemSnapshotScanner:
         while stack and inspected < MAX_OBSERVED_FILES:
             current, current_relative = stack.pop()
             try:
-                entries = list(os.scandir(current))
+                entries = os.scandir(current)
             except OSError:
                 return True
-            for entry in entries:
-                inspected += 1
-                if inspected >= MAX_OBSERVED_FILES:
-                    return True
-                relative = f"{current_relative}/{entry.name}"
-                try:
-                    if entry.is_symlink():
-                        try:
-                            target = os.readlink(entry.path)
-                        except OSError:
-                            return True
-                        if self.symlink_escapes(relative, target):
-                            return True
-                    elif entry.is_dir(follow_symlinks=False):
-                        stack.append((Path(entry.path), relative))
-                except OSError:
-                    return True
+            with entries:
+                for entry in entries:
+                    inspected += 1
+                    if inspected >= MAX_OBSERVED_FILES:
+                        return True
+                    relative = f"{current_relative}/{entry.name}"
+                    try:
+                        if entry.is_symlink():
+                            try:
+                                target = os.readlink(entry.path)
+                            except OSError:
+                                return True
+                            if self.symlink_escapes(relative, target):
+                                return True
+                        elif entry.is_dir(follow_symlinks=False):
+                            stack.append((Path(entry.path), relative))
+                    except OSError:
+                        return True
         return bool(stack)
 
     def configured_ignore_has_descendant(self, path: str) -> bool:
@@ -253,10 +272,20 @@ class PollingFilesystemWatcher:
         self._last_emitted_by_path = {}
 
     def poll(self) -> FilesystemObservation:
-        current = self.scanner.snapshot()
-        events = self._events_for(self._previous, current)
-        self._previous = current
-        return FilesystemObservation(snapshot=current, events=events)
+        result = self.scanner.scan_snapshot()
+        if not result.complete:
+            return FilesystemObservation(
+                snapshot=result.states,
+                events=[],
+                scan_complete=False,
+            )
+        events = self._events_for(self._previous, result.states)
+        self._previous = result.states
+        return FilesystemObservation(
+            snapshot=result.states,
+            events=events,
+            scan_complete=result.complete,
+        )
 
     def _events_for(
         self,

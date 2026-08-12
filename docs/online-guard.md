@@ -68,6 +68,15 @@ detects:
 - current baseline-relative deletions above `diff_limits.max_lines_deleted`
 - deletion of files that existed before the agent started
 - symlinks that point outside the benchmark workspace
+- incomplete bounded filesystem observations
+
+Filesystem observation retains at most 20,000 eligible entries per snapshot.
+Traversal and ignored-entry inspection have a separate finite ceiling. If an
+additional eligible entry exists, or either bound prevents completion, the
+summary and persisted incident explicitly mark the scan incomplete without
+retaining a path from the omitted portion. Audit mode records the condition as
+an incident. Enforce mode treats it as a blocking violation and requests agent
+termination; it never presents the partial snapshot as complete.
 
 Configured secret-content scanning is available in online audit/enforcement as
 well as post-hoc diff checks. Online evidence records detector IDs plus

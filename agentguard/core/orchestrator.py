@@ -277,6 +277,9 @@ def _guard_timeline_events(
             "line_measurement_skipped_files": (
                 guard_summary.line_measurement_skipped_files
             ),
+            "scan_complete": guard_summary.scan_complete,
+            "incomplete_scan_count": guard_summary.incomplete_scan_count,
+            "scan_error": guard_summary.scan_error,
         },
     )
 

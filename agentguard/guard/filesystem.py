@@ -99,6 +99,9 @@ class LiveGuardSummary:
     watcher_events: list[FilesystemWatchEvent] = field(default_factory=list)
     watcher_event_limit_exceeded: bool = False
     watcher_event_error: Optional[str] = None
+    scan_complete: bool = True
+    incomplete_scan_count: int = 0
+    scan_error: Optional[str] = None
 
 
 class ProcessController:
@@ -187,6 +190,7 @@ class RuntimeFilesystemGuard:
             else None
         )
         self._baseline: dict[str, FileState] = {}
+        self._baseline_complete = True
         self._baseline_secret_content_matches: set[tuple[str, int, str]] = set()
         self._secret_content_baseline_error: Optional[str] = None
         self._summary = LiveGuardSummary(
@@ -199,7 +203,9 @@ class RuntimeFilesystemGuard:
     def start(self) -> None:
         if self.mode == GuardMode.OFF:
             return
-        self._baseline = self._scanner.snapshot()
+        baseline = self._scanner.scan_snapshot()
+        self._baseline = baseline.states
+        self._baseline_complete = baseline.complete
         if self._watcher is not None:
             self._watcher.start(self._baseline)
         (
@@ -207,6 +213,14 @@ class RuntimeFilesystemGuard:
             self._secret_content_baseline_error,
         ) = self._scan_secret_content_baseline()
         self._start_time = self.time_source()
+        if not baseline.complete:
+            self._record_scan(
+                {},
+                [self._incomplete_scan_violation()],
+                LiveLineMeasurement(),
+                [],
+                scan_complete=False,
+            )
         self._thread = threading.Thread(
             target=self._run,
             name="agentguard-filesystem-guard",
@@ -227,17 +241,32 @@ class RuntimeFilesystemGuard:
             observation = self._watcher.poll()
             current = observation.snapshot
             watcher_events = observation.events
+            scan_complete = observation.scan_complete
         else:
-            current = self._scanner.snapshot()
+            snapshot = self._scanner.scan_snapshot()
+            current = snapshot.states
             watcher_events = []
-        changed = self._scanner.changed_paths(self._baseline, current)
-        line_measurement = self._measure_lines(current, changed)
-        violations = self._violations_for_diff(
-            current,
-            changed=changed,
-            line_measurement=line_measurement,
+            scan_complete = snapshot.complete
+        scan_complete = scan_complete and self._baseline_complete
+        if scan_complete:
+            changed = self._scanner.changed_paths(self._baseline, current)
+            line_measurement = self._measure_lines(current, changed)
+            violations = self._violations_for_diff(
+                current,
+                changed=changed,
+                line_measurement=line_measurement,
+            )
+        else:
+            watcher_events = []
+            line_measurement = LiveLineMeasurement()
+            violations = [self._incomplete_scan_violation()]
+        self._record_scan(
+            current if scan_complete else {},
+            violations,
+            line_measurement,
+            watcher_events,
+            scan_complete=scan_complete,
         )
-        self._record_scan(current, violations, line_measurement, watcher_events)
         return violations
 
     def summary(self) -> LiveGuardSummary:
@@ -256,6 +285,8 @@ class RuntimeFilesystemGuard:
         violations: list[LiveGuardViolation],
         line_measurement: LiveLineMeasurement,
         watcher_events: list[FilesystemWatchEvent],
+        *,
+        scan_complete: bool = True,
     ) -> None:
         with self._lock:
             existing = list(self._summary.violations)
@@ -333,7 +364,23 @@ class RuntimeFilesystemGuard:
                     if watcher_limit_exceeded
                     else None
                 ),
+                scan_complete=self._summary.scan_complete and scan_complete,
+                incomplete_scan_count=(
+                    self._summary.incomplete_scan_count + (not scan_complete)
+                ),
+                scan_error=(
+                    "Online filesystem scan incomplete: entry limit exceeded."
+                    if not (self._summary.scan_complete and scan_complete)
+                    else None
+                ),
             )
+
+    def _incomplete_scan_violation(self) -> LiveGuardViolation:
+        return self._violation(
+            "filesystem_scan_incomplete",
+            "(workspace)",
+            "Online filesystem scan incomplete: entry limit exceeded.",
+        )
 
     def _violations_for_diff(
         self,

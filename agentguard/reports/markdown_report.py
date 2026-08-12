@@ -95,6 +95,8 @@ def _guard_lines(result: BenchmarkResult) -> list[str]:
         f"- Kill required: {summary.kill_required}",
         f"- Files observed: {summary.files_observed}",
         f"- Scans: {summary.scan_count}",
+        f"- Filesystem scan complete: {summary.scan_complete}",
+        f"- Incomplete filesystem scans: {summary.incomplete_scan_count}",
         f"- Duration: {summary.monitor_duration_seconds:.3f}s",
         f"- Filesystem watcher mode: {_escape_markdown(summary.watcher_mode)}",
         f"- Filesystem watcher events observed: {summary.watcher_events_observed}",
@@ -106,6 +108,11 @@ def _guard_lines(result: BenchmarkResult) -> list[str]:
         "- Line measurement skipped files: "
         f"{summary.line_measurement_skipped_files}",
     ]
+    if summary.scan_error:
+        lines.append(
+            "- Filesystem scan status: "
+            f"{_escape_markdown(summary.scan_error)}"
+        )
     if summary.line_measurement_error:
         lines.append(
             "- Line measurement status: "

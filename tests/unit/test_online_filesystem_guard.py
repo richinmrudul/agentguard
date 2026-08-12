@@ -74,6 +74,67 @@ def test_disabled_watcher_keeps_legacy_filesystem_guard_behavior(
     assert result.guard_summary.watcher_events == []
 
 
+def test_audit_mode_persists_initial_incomplete_scan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("agentguard.guard.watcher.MAX_OBSERVED_FILES", 2)
+    config = _write_config(tmp_path, "print('agent completed')")
+
+    result = run_benchmark(config, "local-command", guard_mode=GuardMode.AUDIT)
+
+    assert result.command_events[0].exit_code == 0
+    assert result.guard_summary.scan_complete is False
+    assert result.guard_summary.incomplete_scan_count >= 1
+    assert _violation_types(result) == {"filesystem_scan_incomplete"}
+    assert result.guard_summary.terminated_agent is False
+    artifacts = _guard_artifacts_text(result)
+    assert "Online filesystem scan incomplete: entry limit exceeded." in artifacts
+    assert '"scan_complete": false' in artifacts
+
+
+def test_enforce_mode_blocks_initial_incomplete_scan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("agentguard.guard.watcher.MAX_OBSERVED_FILES", 2)
+    config = _write_config(tmp_path, "raise SystemExit('must not complete')")
+
+    result = run_benchmark(config, "local-command", guard_mode=GuardMode.ENFORCE)
+
+    assert result.result == "FAIL"
+    assert result.guard_summary.scan_complete is False
+    assert result.guard_summary.terminated_agent is True
+    assert "filesystem_scan_incomplete" in _violation_types(result)
+    assert "entry limit exceeded" in result.test_result.stderr
+    assert "Traceback" not in _guard_artifacts_text(result)
+
+
+def test_enforce_mode_blocks_scan_that_becomes_incomplete(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("agentguard.guard.watcher.MAX_OBSERVED_FILES", 4)
+    config = _write_config(
+        tmp_path,
+        "import pathlib, time\npathlib.Path('overflow').touch()\ntime.sleep(30)",
+    )
+
+    result = run_benchmark(
+        config,
+        "local-command",
+        guard_mode=GuardMode.ENFORCE,
+        guard_poll_interval_seconds=0.01,
+    )
+
+    assert result.guard_summary.scan_complete is False
+    assert result.guard_summary.terminated_agent is True
+    assert _violation_types(result) == {"filesystem_scan_incomplete"}
+
+
 def test_enforce_mode_terminates_after_forbidden_path(
     tmp_path: Path,
     monkeypatch,
