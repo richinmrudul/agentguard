@@ -1,10 +1,13 @@
 import json
+import os
+import unicodedata
 import zipfile
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from agentguard.benchmarks import packs as packs_module
 from agentguard.benchmarks.contracts import load_registry_contracts
 from agentguard.benchmarks.packs import (
     MANIFEST_PATH,
@@ -47,6 +50,16 @@ def _rewrite_zip(path: Path, output: Path, files: dict[str, bytes]) -> Path:
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = (0o100644 & 0xFFFF) << 16
             archive.writestr(info, content)
+    return output
+
+
+def _append_zip_member(
+    path: Path, output: Path, name: str, content: bytes = b"x"
+) -> Path:
+    with zipfile.ZipFile(path, "r") as source, zipfile.ZipFile(output, "w") as archive:
+        for info in source.infolist():
+            archive.writestr(info, source.read(info))
+        archive.writestr(name, content)
     return output
 
 
@@ -209,6 +222,16 @@ def test_export_multiple_benchmarks_with_safe_symlink(tmp_path: Path) -> None:
         file for file in result.files if file.path.endswith("linked_secrets")
     )
     assert symlink.type == "symlink"
+
+
+def test_export_rejects_portable_aliases_before_writing() -> None:
+    with pytest.raises(BenchmarkPackError, match="filesystem-equivalent"):
+        packs_module._dedupe_files(
+            {
+                "repos/example/Case.txt": b"first",
+                "repos/example/case.txt": b"second",
+            }
+        )
 
 
 def test_export_excludes_agentguard_caches_dbs_and_reports(tmp_path: Path) -> None:
@@ -395,6 +418,113 @@ def test_verify_detects_duplicate_normalized_path(tmp_path: Path) -> None:
         verify_benchmark_pack(duplicate)
 
 
+@pytest.mark.parametrize(
+    "alias",
+    [
+        "CONFIGS/fix_auth_bug_docker_command_safe.yaml",
+        unicodedata.normalize(
+            "NFD", "configs/caf\N{LATIN SMALL LETTER E WITH ACUTE}.yaml"
+        ),
+    ],
+)
+def test_verify_rejects_portable_case_and_unicode_aliases(
+    tmp_path: Path,
+    alias: str,
+) -> None:
+    pack = _export_pack(tmp_path, "auth_bug")
+    if "caf" in alias:
+        first = "configs/caf\N{LATIN SMALL LETTER E WITH ACUTE}.yaml"
+        once = _append_zip_member(pack, tmp_path / "once.zip", first)
+        bad = _append_zip_member(once, tmp_path / "alias.zip", alias)
+    else:
+        bad = _append_zip_member(pack, tmp_path / "alias.zip", alias)
+
+    with pytest.raises(BenchmarkPackError, match="filesystem-equivalent"):
+        verify_benchmark_pack(bad)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "configs//alias.yaml",
+        "configs/./alias.yaml",
+        "configs/alias.yaml/",
+        "configs\\alias.yaml",
+        "C:/alias.yaml",
+        "CON",
+        "configs/CONOUT$.txt",
+        "configs/COM\N{SUPERSCRIPT ONE}.txt",
+        "configs/nul.txt",
+        "configs/alias.",
+        "configs/alias ",
+    ],
+)
+def test_verify_rejects_nonportable_member_spellings(tmp_path: Path, name: str) -> None:
+    pack = _export_pack(tmp_path, "auth_bug")
+    bad = _append_zip_member(pack, tmp_path / "nonportable.zip", name)
+
+    with pytest.raises(BenchmarkPackError, match="path|filesystem"):
+        verify_benchmark_pack(bad)
+
+
+def test_verify_rejects_file_directory_prefix_collision(tmp_path: Path) -> None:
+    pack = _export_pack(tmp_path, "auth_bug")
+    once = _append_zip_member(pack, tmp_path / "file.zip", "prefix")
+    bad = _append_zip_member(once, tmp_path / "prefix.zip", "prefix/child")
+
+    with pytest.raises(BenchmarkPackError, match="filesystem-equivalent"):
+        verify_benchmark_pack(bad)
+
+
+def test_verify_rejects_symlink_path_alias_before_content_processing(
+    tmp_path: Path,
+) -> None:
+    pack = _export_pack(tmp_path, "auth_bug")
+    output = tmp_path / "symlink-alias.zip"
+    with zipfile.ZipFile(pack, "r") as source, zipfile.ZipFile(output, "w") as archive:
+        for info in source.infolist():
+            archive.writestr(info, source.read(info))
+        info = zipfile.ZipInfo("CONFIGS/fix_auth_bug_docker_command_safe.yaml")
+        info.external_attr = (0o120777 & 0xFFFF) << 16
+        archive.writestr(info, "target")
+
+    with pytest.raises(BenchmarkPackError, match="filesystem-equivalent"):
+        verify_benchmark_pack(output)
+
+
+def test_verify_rejects_manifest_only_portable_alias(tmp_path: Path) -> None:
+    pack = _export_pack(tmp_path, "auth_bug")
+    files = _zip_map(pack)
+    manifest = _manifest(files)
+    original = manifest["files"][0]
+    manifest["files"].append({**original, "path": original["path"].upper()})
+    bad = _rewrite_zip(
+        pack,
+        tmp_path / "manifest-alias.zip",
+        _write_manifest(files, manifest),
+    )
+
+    with pytest.raises(BenchmarkPackError, match="filesystem-equivalent"):
+        verify_benchmark_pack(bad)
+
+
+def test_import_rejects_member_aliases_before_destination_writes(
+    tmp_path: Path,
+) -> None:
+    pack = _export_pack(tmp_path, "auth_bug")
+    bad = _append_zip_member(
+        pack,
+        tmp_path / "import-alias.zip",
+        "CONFIGS/fix_auth_bug_docker_command_safe.yaml",
+    )
+    dest = tmp_path / "dest"
+
+    with pytest.raises(BenchmarkPackError, match="filesystem-equivalent"):
+        import_benchmark_pack(pack_path=bad, dest_path=dest, force=True)
+
+    assert not dest.exists()
+
+
 def test_verify_detects_symlink_escape(tmp_path: Path) -> None:
     manifest = {
         "schema": "agentguard.benchmark-pack",
@@ -511,6 +641,144 @@ def test_import_creates_safe_symlink(tmp_path: Path) -> None:
     link = dest / "repos/symlink_path_traversal/linked_secrets"
     assert link.is_symlink()
     assert link.readlink() == Path("secrets")
+
+
+def test_import_preparation_failure_leaves_no_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pack = _export_pack(tmp_path, "auth_bug")
+    dest = tmp_path / "dest"
+    registry_out = tmp_path / "registry.yaml"
+    suite_out = tmp_path / "suite.yaml"
+
+    def fail_suite(*args, **kwargs) -> None:
+        raise ValueError("controlled late failure")
+
+    monkeypatch.setattr("agentguard.benchmarks.packs.generate_suite_data", fail_suite)
+    with pytest.raises(ValueError, match="controlled late failure"):
+        import_benchmark_pack(
+            pack_path=pack,
+            dest_path=dest,
+            registry_out=registry_out,
+            suite_out=suite_out,
+        )
+
+    assert not dest.exists()
+    assert not registry_out.exists()
+    assert not suite_out.exists()
+
+
+def test_import_commit_failure_rolls_back_destination_and_side_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pack = _export_pack(tmp_path, "auth_bug")
+    dest = tmp_path / "dest"
+    registry_out = tmp_path / "registry.yaml"
+    registry_out.write_text("original registry\n", encoding="utf-8")
+    real_replace = os.replace
+
+    def fail_once(source, destination) -> None:
+        source_path = Path(source)
+        if Path(destination) == registry_out and source_path.name.endswith(
+            ".pack-import"
+        ):
+            monkeypatch.setattr("agentguard.benchmarks.packs.os.replace", real_replace)
+            raise OSError("controlled replace failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr("agentguard.benchmarks.packs.os.replace", fail_once)
+    with pytest.raises(OSError, match="controlled replace failure"):
+        import_benchmark_pack(
+            pack_path=pack,
+            dest_path=dest,
+            registry_out=registry_out,
+            force=True,
+        )
+
+    assert not dest.exists()
+    assert registry_out.read_text(encoding="utf-8") == "original registry\n"
+    assert not list(tmp_path.rglob("*.pack-import"))
+    assert not list(tmp_path.rglob("*.pack-backup"))
+
+
+def test_import_non_force_race_preserves_new_output_and_rolls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pack = _export_pack(tmp_path, "auth_bug")
+    dest = tmp_path / "dest"
+    registry_out = tmp_path / "registry.yaml"
+    suite_out = tmp_path / "suite.yaml"
+    real_prepare = packs_module._prepare_import_mutations
+
+    def prepare_with_raced_output(*args, **kwargs):
+        mutations = real_prepare(*args, **kwargs)
+        registry_out.write_text("raced-in registry\n", encoding="utf-8")
+        return mutations
+
+    monkeypatch.setattr(
+        "agentguard.benchmarks.packs._prepare_import_mutations",
+        prepare_with_raced_output,
+    )
+
+    with pytest.raises(FileExistsError, match="appeared after collision validation"):
+        import_benchmark_pack(
+            pack_path=pack,
+            dest_path=dest,
+            registry_out=registry_out,
+            suite_out=suite_out,
+        )
+
+    assert registry_out.read_text(encoding="utf-8") == "raced-in registry\n"
+    assert not dest.exists()
+    assert not suite_out.exists()
+    assert not list(tmp_path.rglob("*.pack-import"))
+    assert not list(tmp_path.rglob("*.pack-backup"))
+
+
+def test_import_retains_recoverable_backup_when_final_restore_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pack = _export_pack(tmp_path, "auth_bug")
+    dest = tmp_path / "dest"
+    suite_out = tmp_path / "suite.yaml"
+    suite_out.write_text("original suite\n", encoding="utf-8")
+    real_replace = os.replace
+
+    def fail_final_install_and_restore(source, destination) -> None:
+        source_path = Path(source)
+        if Path(destination) == suite_out and source_path.name.endswith(
+            (".pack-import", ".pack-backup")
+        ):
+            raise OSError("private path must not be reported")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(
+        "agentguard.benchmarks.packs.os.replace",
+        fail_final_install_and_restore,
+    )
+
+    with pytest.raises(BenchmarkPackError, match="recoverable backup retained") as error:
+        import_benchmark_pack(
+            pack_path=pack,
+            dest_path=dest,
+            suite_out=suite_out,
+            force=True,
+        )
+
+    assert str(tmp_path) not in str(error.value)
+    assert not dest.exists()
+    assert not suite_out.exists()
+    assert not list(tmp_path.rglob("*.pack-import"))
+    backups = list(tmp_path.rglob("*.pack-backup"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "original suite\n"
+
+    real_replace(backups[0], suite_out)
+    assert suite_out.read_text(encoding="utf-8") == "original suite\n"
 
 
 def test_export_is_deterministic_for_identical_inputs(tmp_path: Path) -> None:
