@@ -82,6 +82,28 @@ When maintained pytest configuration is present, the initializer selects:
 test_command: python -m pytest
 ```
 
+For this conservatively detected case, the optional GitHub workflow also adds
+an explicit Python test-environment step. It always installs `pytest` rather
+than relying on runner-preinstalled packages. Safe root-level conventional
+requirements files (`requirements.txt`, `requirements-test.txt`, and
+`requirements-dev.txt`) are installed with `pip --requirement`, without
+installing the repository itself. A `[project]` table in `pyproject.toml`, a
+packaging `[metadata]` or `[options]` table in `setup.cfg`, or a regular
+root-level `setup.py` conservatively identifies an installable root project;
+the workflow then installs that checkout in editable mode so its declared
+runtime dependencies and source tree are available to its tests. A bare
+`[build-system]` table or pytest-only `setup.cfg` does not imply that the root
+is installable. These operations run later in GitHub Actions, not during
+initialization.
+
+This is intentionally a small setup model, not universal Python environment
+inference. Unrecognized `requirements*.txt` names and symlinked, unreadable, or
+oversized dependency metadata require explicit customization instead of
+emitting a guessed installation step. Pytest-only roots without packaging or
+requirements metadata receive only the explicit pytest installation. An
+explicit `--test-command` takes precedence and suppresses all inferred project
+setup; add the reviewed setup required by that command to the workflow.
+
 An explicit command is preserved as a single YAML string:
 
 ```bash
@@ -237,6 +259,9 @@ The optional workflow:
 - runs for `pull_request`, not `pull_request_target`;
 - grants only `contents: read`;
 - installs `agentguard-evals==0.3.0` for a reproducible gate;
+- for a safely auto-detected pytest root, installs allowlisted requirements,
+  installs an identified project editably when applicable, and explicitly
+  installs pytest;
 - pins `actions/checkout` v5.0.1 and `actions/setup-python` v6.2.0 to maintained
   immutable full commit SHAs;
 - for a detected Node.js root, pins `actions/setup-node` v6.5.0 to its immutable
@@ -259,6 +284,16 @@ packages, add a reviewed installation step yourself. Package-manager installs
 may download dependencies and execute lifecycle hooks on the GitHub runner;
 that later execution is outside `agentguard init`, and AgentGuard CI remains
 post-execution validation rather than hostile-code containment.
+
+Python dependency installation is likewise later, user-authorized CI
+execution. Requirement processing and editable installation can download
+packages and execute package build backends or setup hooks from the checked-out
+repository. `agentguard init` only inspects bounded root-level regular-file
+metadata and writes the workflow; it never invokes pip, imports the project, or
+executes those hooks. Review dependency and build metadata before enabling the
+generated workflow. Projects needing constraints, lock tooling, non-editable
+installation, extras, multiple environments, or another setup sequence should
+replace the generated step explicitly.
 
 For Go projects, setup prepares the supported runtime with dependency caching
 disabled; the generated workflow has no module installation or metadata-probe

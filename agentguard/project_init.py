@@ -32,6 +32,12 @@ NODE_TEST_COMMAND = "node --test"
 MAX_NODE_PACKAGE_JSON_BYTES = 1024 * 1024
 GO_TEST_COMMAND = "go test ./..."
 MAX_GO_MOD_BYTES = 1024 * 1024
+MAX_PYTHON_METADATA_BYTES = 1024 * 1024
+PYTHON_REQUIREMENT_FILES = (
+    "requirements.txt",
+    "requirements-test.txt",
+    "requirements-dev.txt",
+)
 NODE_LOCKFILES = {
     "package-lock.json": "npm",
     "npm-shrinkwrap.json": "npm",
@@ -59,6 +65,7 @@ class InitializationPlan:
     files: tuple[PlannedFile, ...]
     ci_enabled: bool
     preset_name: str
+    python_setup_commands: tuple[str, ...] = ()
 
     @property
     def conflicts(self) -> tuple[PlannedFile, ...]:
@@ -146,6 +153,19 @@ def _is_safe_detection_file(root: Path, path: Path) -> bool:
         return False
 
 
+def _read_detection_text(root: Path, path: Path) -> Optional[str]:
+    if not _is_safe_detection_file(root, path):
+        return None
+    try:
+        with path.open("rb") as metadata_file:
+            raw = metadata_file.read(MAX_PYTHON_METADATA_BYTES + 1)
+        if len(raw) > MAX_PYTHON_METADATA_BYTES:
+            return None
+        return raw.decode("utf-8")
+    except (OSError, UnicodeError):
+        return None
+
+
 def _looks_like_pytest_config(root: Path) -> bool:
     if _is_safe_detection_file(root, root / "pytest.ini") or _is_safe_detection_file(
         root, root / "conftest.py"
@@ -157,14 +177,59 @@ def _looks_like_pytest_config(root: Path) -> bool:
         (root / "tox.ini", re.compile(r"^\s*\[pytest\]\s*$", re.M)),
     )
     for path, pattern in markers:
-        try:
-            if _is_safe_detection_file(root, path) and pattern.search(
-                path.read_text(encoding="utf-8")
-            ):
-                return True
-        except (OSError, UnicodeError):
-            continue
+        source = _read_detection_text(root, path)
+        if source is not None and pattern.search(source):
+            return True
     return False
+
+
+def _python_dependency_metadata_is_safe(root: Path) -> bool:
+    dependency_names = {
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        *PYTHON_REQUIREMENT_FILES,
+    }
+    for name in dependency_names:
+        path = root / name
+        if not (path.exists() or path.is_symlink()):
+            continue
+        if not _is_safe_detection_file(root, path):
+            return False
+        if _read_detection_text(root, path) is None:
+            return False
+    for path in root.glob("requirements*.txt"):
+        if path.name not in PYTHON_REQUIREMENT_FILES:
+            return False
+    return True
+
+
+def _python_setup_commands(root: Path) -> Optional[tuple[str, ...]]:
+    if not _python_dependency_metadata_is_safe(root):
+        return None
+    requirements = tuple(
+        name
+        for name in PYTHON_REQUIREMENT_FILES
+        if _is_safe_detection_file(root, root / name)
+    )
+    installable = _is_safe_detection_file(root, root / "setup.py")
+    pyproject = _read_detection_text(root, root / "pyproject.toml")
+    if pyproject is not None and re.search(
+        r"^\s*\[project\]\s*$", pyproject, re.M
+    ):
+        installable = True
+    setup_cfg = _read_detection_text(root, root / "setup.cfg")
+    if setup_cfg is not None and re.search(
+        r"^\s*\[(?:metadata|options)\]\s*$", setup_cfg, re.M
+    ):
+        installable = True
+    commands = [
+        f"python -m pip install --requirement {name}" for name in requirements
+    ]
+    if installable:
+        commands.append("python -m pip install --editable .")
+    commands.append("python -m pip install pytest")
+    return tuple(commands)
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -266,7 +331,9 @@ def _has_supported_go_module(root: Path) -> bool:
     return len(module_paths) == 1
 
 
-def detect_project(root: Path, explicit_test_command: Optional[str]) -> tuple[str, str, str]:
+def _detect_project(
+    root: Path, explicit_test_command: Optional[str]
+) -> tuple[str, str, str, tuple[str, ...]]:
     python_signals = (
         "pyproject.toml",
         "setup.py",
@@ -301,17 +368,27 @@ def detect_project(root: Path, explicit_test_command: Optional[str]) -> tuple[st
     if explicit_test_command is not None:
         if not explicit_test_command.strip() or "\0" in explicit_test_command:
             raise ValueError("--test-command must be a non-empty value without NUL.")
-        return project_type, explicit_test_command, "explicit"
+        return project_type, explicit_test_command, "explicit", ()
     if len(ecosystems) > 1:
-        return project_type, UNKNOWN_TEST_COMMAND, "requires customization"
+        return project_type, UNKNOWN_TEST_COMMAND, "requires customization", ()
     if is_python and _looks_like_pytest_config(root):
-        return project_type, "python -m pytest", "detected pytest"
+        setup_commands = _python_setup_commands(root)
+        if setup_commands is None:
+            return project_type, UNKNOWN_TEST_COMMAND, "requires customization", ()
+        return project_type, "python -m pytest", "detected pytest", setup_commands
     package = _load_node_package(root) if has_node_signal else None
     if has_node_signal and _detect_node_test_command(package, lock_managers):
-        return project_type, NODE_TEST_COMMAND, "detected Node.js test runner"
+        return project_type, NODE_TEST_COMMAND, "detected Node.js test runner", ()
     if has_go_signal and _has_supported_go_module(root):
-        return project_type, GO_TEST_COMMAND, "detected Go module"
-    return project_type, UNKNOWN_TEST_COMMAND, "requires customization"
+        return project_type, GO_TEST_COMMAND, "detected Go module", ()
+    return project_type, UNKNOWN_TEST_COMMAND, "requires customization", ()
+
+
+def detect_project(root: Path, explicit_test_command: Optional[str]) -> tuple[str, str, str]:
+    project_type, test_command, command_source, _ = _detect_project(
+        root, explicit_test_command
+    )
+    return project_type, test_command, command_source
 
 
 def _config_content(
@@ -384,7 +461,9 @@ def _config_content(
     return header + yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
 
 
-def _workflow_content(project_type: str) -> str:
+def _workflow_content(
+    project_type: str, python_setup_commands: tuple[str, ...] = ()
+) -> str:
     workflow = """name: AgentGuard
 
 on:
@@ -410,6 +489,12 @@ jobs:
       - name: Install AgentGuard
         run: python -m pip install agentguard-evals==0.3.0
 """
+    if python_setup_commands:
+        workflow += """
+      - name: Install detected Python test dependencies
+        run: |
+"""
+        workflow += "".join(f"          {command}\n" for command in python_setup_commands)
     if "Node.js" in project_type:
         workflow += """
       - name: Set up Node.js
@@ -487,7 +572,7 @@ def build_initialization_plan(
         raise ValueError("--ci currently supports only 'github'.")
     root = _validate_root(path)
     selected_preset = get_preset(preset)
-    project_type, selected_test_command, command_source = detect_project(
+    project_type, selected_test_command, command_source, python_setup_commands = _detect_project(
         root, test_command
     )
     config = _config_content(selected_test_command, command_source, selected_preset)
@@ -505,7 +590,7 @@ def build_initialization_plan(
             _plan_file(
                 root,
                 GITHUB_WORKFLOW_PATH,
-                _workflow_content(project_type),
+                _workflow_content(project_type, python_setup_commands),
                 force,
             )
         )
@@ -518,6 +603,7 @@ def build_initialization_plan(
         files=tuple(files),
         ci_enabled=ci_enabled,
         preset_name=selected_preset.name,
+        python_setup_commands=python_setup_commands,
     )
     _validate_generated_content(plan)
     return plan
