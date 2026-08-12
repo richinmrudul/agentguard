@@ -175,7 +175,9 @@ def init_trust_policy(path: Path, *, force: bool = False) -> dict[str, Any]:
 
 
 def add_trusted_key(policy_path: Path, public_key_path: Path) -> dict[str, Any]:
-    policy = load_trust_policy(policy_path)
+    # A freshly initialized policy has no trusted keys yet, so it is necessarily
+    # incomplete until the first key is added.
+    policy = _load_trust_policy(policy_path, allow_incomplete=True)
     key = _load_key(public_key_path, expected_type="public")
     trusted = list(policy["trusted_keys"])
     if any(item["key_id"] == key["key_id"] for item in trusted):
@@ -193,6 +195,10 @@ def add_trusted_key(policy_path: Path, public_key_path: Path) -> dict[str, Any]:
 
 
 def load_trust_policy(path: Path) -> dict[str, Any]:
+    return _load_trust_policy(path)
+
+
+def _load_trust_policy(path: Path, *, allow_incomplete: bool = False) -> dict[str, Any]:
     policy_path = _safe_input_path(path)
     with policy_path.open("r", encoding="utf-8") as file:
         data = load_yaml(file) or {}
@@ -238,6 +244,10 @@ def load_trust_policy(path: Path) -> dict[str, Any]:
                 raise BenchmarkPackError(f"trusted key {key_id} public_key must be a mapping")
             normalized_item["public_key"] = inline
         normalized.append(normalized_item)
+    if not allow_incomplete and required > len(normalized):
+        raise BenchmarkPackError(
+            "trust policy required_signatures cannot exceed the number of trusted keys"
+        )
     return {
         "schema": TRUST_POLICY_SCHEMA,
         "schema_version": TRUST_POLICY_SCHEMA_VERSION,
@@ -249,7 +259,9 @@ def load_trust_policy(path: Path) -> dict[str, Any]:
 
 
 def trust_policy_summary(policy_path: Path) -> list[str]:
-    policy = load_trust_policy(policy_path)
+    # Listing is non-enforcing and must remain usable for a freshly initialized
+    # policy before its first trusted key is added.
+    policy = _load_trust_policy(policy_path, allow_incomplete=True)
     lines = [
         f"Policy: {policy_path.expanduser()}",
         f"Required signatures: {policy['required_signatures']}",
@@ -295,7 +307,7 @@ def verify_trust_policy(
 
     key_by_id = _load_trusted_keys(policy)
     results = []
-    trusted_count = 0
+    counted_key_ids: set[str] = set()
     for signature_path in signatures:
         signature = _load_signature(signature_path)
         key = key_by_id.get(signature["key_id"])
@@ -312,9 +324,24 @@ def verify_trust_policy(
             )
             continue
         result = _verify_signature_data(pack.manifest, pack.root_digest, signature, key)
-        results.append(result)
         if result.valid and result.trusted:
-            trusted_count += 1
+            key_id = signature["key_id"]
+            if key_id in counted_key_ids:
+                result = SignatureVerification(
+                    valid=True,
+                    trusted=True,
+                    status="duplicate-trusted-key",
+                    key_id=result.key_id,
+                    signer=result.signer,
+                    message=(
+                        "Valid signature from a trusted key already counted "
+                        "toward the threshold."
+                    ),
+                )
+            else:
+                counted_key_ids.add(key_id)
+        results.append(result)
+    trusted_count = len(counted_key_ids)
     valid = trusted_count >= policy["required_signatures"]
     status = "trusted" if valid else "insufficient-trusted-signatures"
     return TrustVerification(
