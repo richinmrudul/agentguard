@@ -766,11 +766,12 @@ def run_benchmark(
             command_event_index,
         )
     policy_started = timing_recorder.now() if timing_recorder is not None else None
-    diff_summary = collect_diff(prepared.repo_dir)
+    diff_summary = collect_diff(prepared.repo_dir, prepared.baseline_commit)
     diff_summary = with_secret_content_scan(
         prepared.repo_dir,
         diff_summary,
         config.secret_content_patterns,
+        baseline_ref=prepared.baseline_commit,
     )
     timeline.add(
         "diff_collected",

@@ -60,6 +60,8 @@ def test_prepare_preserves_repository_symlinks(tmp_path: Path) -> None:
     copied_symlink = prepared.repo_dir / "linked_secrets"
     assert copied_symlink.is_symlink()
     assert copied_symlink.readlink() == Path("secrets")
+    assert prepared.baseline_commit == _git(prepared.repo_dir, "rev-parse", "HEAD")
+    assert len(prepared.baseline_commit) == 40
 
 
 def test_prepare_excludes_git_metadata_recursively_and_preserves_similar_names(

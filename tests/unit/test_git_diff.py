@@ -2,6 +2,8 @@ import subprocess
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from agentguard.checks.forbidden_paths import ForbiddenPathsCheck
 from agentguard.checks.scope_adherence import ScopeAdherenceCheck
 from agentguard.checks.secret_scan import SecretScanCheck
@@ -270,3 +272,139 @@ def test_collect_diff_unstaged_rename_exposes_source_and_destination(
     assert diff.deleted_files == ["tests/old_test.py"]
     assert diff.added_files == ["src/moved_test.py"]
     assert set(diff.changed_files) == {"tests/old_test.py", "src/moved_test.py"}
+
+
+def test_collect_diff_fixed_baseline_combines_committed_index_and_worktree(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init", "--template=")
+    _git(repo_dir, "branch", "-M", "main")
+    _write(repo_dir / "src" / "app.py", "VALUE = 1\n")
+    _write(repo_dir / "src" / "remove.py", "REMOVE = True\n")
+    _write(repo_dir / "tests" / "test_app.py", "def test_app():\n    pass\n")
+    _git(repo_dir, "add", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Baseline",
+    )
+    baseline_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    _git(repo_dir, "checkout", "-b", "agent-work")
+    _write(repo_dir / "src" / "app.py", "VALUE = 2\n")
+    _write(repo_dir / "secrets" / "committed.key", "api_key=committedsecret\n")
+    _git(repo_dir, "rm", "src/remove.py")
+    _git(repo_dir, "mv", "tests/test_app.py", "tests/test_renamed.py")
+    _git(repo_dir, "add", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Agent commit one",
+    )
+    _write(repo_dir / "src" / "second.py", "SECOND = True\n")
+    _git(repo_dir, "add", "src/second.py")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Agent commit two",
+    )
+    _git(repo_dir, "checkout", "--detach")
+    _write(repo_dir / "src" / "staged.py", "STAGED = True\n")
+    _git(repo_dir, "add", "src/staged.py")
+    _write(repo_dir / "src" / "app.py", "VALUE = 3\n")
+    _write(repo_dir / "src" / "untracked.py", "UNTRACKED = True\n")
+
+    diff = collect_diff(repo_dir, baseline_commit)
+
+    assert set(diff.modified_files) == {
+        "src/app.py",
+        "tests/test_app.py",
+        "tests/test_renamed.py",
+    }
+    assert set(diff.added_files) == {
+        "secrets/committed.key",
+        "src/second.py",
+        "src/staged.py",
+        "src/untracked.py",
+    }
+    assert diff.deleted_files == ["src/remove.py"]
+    assert diff.lines_added >= 5
+    assert diff.lines_deleted >= 2
+    assert "secrets/committed.key" in diff.unified_diff
+    assert diff == collect_diff(repo_dir, baseline_commit)
+
+
+def test_collect_diff_fixed_baseline_detects_clean_agent_commit(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init", "--template=")
+    _write(repo_dir / "tracked.txt", "baseline\n")
+    _git(repo_dir, "add", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Baseline",
+    )
+    baseline_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _write(repo_dir / "tracked.txt", "committed agent change\n")
+    _git(repo_dir, "add", ".")
+    _git(
+        repo_dir,
+        "-c",
+        "user.email=agentguard@example.local",
+        "-c",
+        "user.name=AgentGuard",
+        "commit",
+        "-m",
+        "Agent commit",
+    )
+
+    assert collect_diff(repo_dir).changed_files == []
+    assert collect_diff(repo_dir, baseline_commit).modified_files == ["tracked.txt"]
+
+
+def test_collect_diff_fixed_baseline_fails_closed_when_commit_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    _git(repo_dir, "init", "--template=")
+
+    with pytest.raises(RuntimeError, match="baseline commit is unavailable"):
+        collect_diff(repo_dir, "0" * 40)

@@ -16,6 +16,7 @@ class PreparedRepo:
     run_id: str
     run_dir: Path
     repo_dir: Path
+    baseline_commit: str
 
 
 class RepoManager:
@@ -60,6 +61,7 @@ class RepoManager:
                 "-m",
                 "Initial benchmark state",
             )
+            baseline_commit = self._git_output(repo_dir, "rev-parse", "HEAD")
         except Exception:
             try:
                 shutil.rmtree(run_dir)
@@ -69,7 +71,12 @@ class RepoManager:
                     f"partial artifacts remain at {run_dir}."
                 ) from cleanup_error
             raise
-        return PreparedRepo(run_id=run_id, run_dir=run_dir, repo_dir=repo_dir)
+        return PreparedRepo(
+            run_id=run_id,
+            run_dir=run_dir,
+            repo_dir=repo_dir,
+            baseline_commit=baseline_commit,
+        )
 
     @staticmethod
     def _ignore_git_control_entries(_directory: str, names: list[str]) -> set[str]:
@@ -137,6 +144,14 @@ class RepoManager:
 
     @staticmethod
     def _git(repo_dir: Path, *args: str) -> None:
+        RepoManager._run_git(repo_dir, *args)
+
+    @staticmethod
+    def _git_output(repo_dir: Path, *args: str) -> str:
+        return RepoManager._run_git(repo_dir, *args).stdout.strip()
+
+    @staticmethod
+    def _run_git(repo_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
         environment = {
             key: value
             for key, value in os.environ.items()
@@ -149,7 +164,7 @@ class RepoManager:
                 "GIT_TERMINAL_PROMPT": "0",
             }
         )
-        subprocess.run(
+        return subprocess.run(
             ["git", *args],
             cwd=repo_dir,
             check=True,

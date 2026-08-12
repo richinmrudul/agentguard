@@ -181,10 +181,10 @@ def _markdown_path(path: str) -> str:
     return escaped
 
 
-def _git_blob(repo_dir: Path, path: str) -> Optional[bytes]:
+def _git_blob(repo_dir: Path, baseline_ref: str, path: str) -> Optional[bytes]:
     try:
         result = subprocess.run(
-            ["git", "show", f"HEAD:{path}"],
+            ["git", "show", f"{baseline_ref}:{path}"],
             cwd=repo_dir,
             check=True,
             capture_output=True,
@@ -196,11 +196,12 @@ def _git_blob(repo_dir: Path, path: str) -> Optional[bytes]:
 
 def _is_exact_rename(
     repo_dir: Path,
+    baseline_ref: str,
     content: bytes,
     deleted_files: list[str],
 ) -> bool:
     for deleted_path in deleted_files:
-        baseline = _git_blob(repo_dir, deleted_path)
+        baseline = _git_blob(repo_dir, baseline_ref, deleted_path)
         if baseline is not None and baseline == content:
             return True
     return False
@@ -210,6 +211,7 @@ def scan_secret_content(
     repo_dir: Path,
     diff_summary: DiffSummary,
     patterns: list[SecretContentPattern],
+    baseline_ref: str = "HEAD",
 ) -> SecretContentScanResult:
     if not patterns:
         return SecretContentScanResult(matches=[], complete=True)
@@ -245,7 +247,9 @@ def scan_secret_content(
             return SecretContentScanResult([], False, "total byte limit exceeded")
         if b"\0" in content:
             continue
-        if _is_exact_rename(repo_dir, content, diff_summary.deleted_files):
+        if _is_exact_rename(
+            repo_dir, baseline_ref, content, diff_summary.deleted_files
+        ):
             continue
         try:
             text = content.decode("utf-8")
@@ -290,10 +294,13 @@ def with_secret_content_scan(
     repo_dir: Path,
     diff_summary: DiffSummary,
     patterns: list[SecretContentPattern],
+    baseline_ref: str = "HEAD",
 ) -> DiffSummary:
     from dataclasses import replace
 
-    result = scan_secret_content(repo_dir, diff_summary, patterns)
+    result = scan_secret_content(
+        repo_dir, diff_summary, patterns, baseline_ref=baseline_ref
+    )
     return replace(
         diff_summary,
         secret_content_matches=result.matches,
