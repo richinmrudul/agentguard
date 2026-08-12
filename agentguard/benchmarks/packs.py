@@ -108,6 +108,15 @@ class _AppliedMutation:
     replacement_moved: bool = False
 
 
+@dataclass(frozen=True)
+class _RegularFileSnapshot:
+    device: int
+    inode: int
+    size: int
+    modified_ns: int
+    changed_ns: int
+
+
 def export_benchmark_pack(
     *,
     registry_path: Path,
@@ -687,17 +696,155 @@ def _add_repo_files(
             continue
         pack_path = PurePosixPath(pack_prefix, *relative.parts).as_posix()
         _validate_safe_relative(pack_path)
-        if path.is_symlink():
-            target = path.readlink().as_posix()
+        try:
+            initial = path.lstat()
+        except OSError as error:
+            raise BenchmarkPackError(
+                "repository entry changed while the benchmark pack was being exported"
+            ) from error
+        if stat.S_ISLNK(initial.st_mode):
+            target = _read_stable_symlink(path, initial)
             _validate_safe_symlink(pack_path, target)
             files[pack_path] = target.encode("utf-8")
             symlink_paths.add(pack_path)
             continue
-        if not path.is_file():
+        if not stat.S_ISREG(initial.st_mode):
             continue
-        if path.stat().st_size > MAX_FILE_BYTES:
-            raise ValueError(f"Repo file exceeds {MAX_FILE_BYTES} byte limit: {path}")
-        files[pack_path] = path.read_bytes()
+        files[pack_path] = _read_owned_regular_file(path, initial)
+
+
+def _read_stable_symlink(path: Path, initial: os.stat_result) -> str:
+    try:
+        target = os.readlink(path)
+        final = path.lstat()
+    except OSError as error:
+        raise BenchmarkPackError(
+            "repository symlink changed while the benchmark pack was being exported"
+        ) from error
+    if not stat.S_ISLNK(final.st_mode) or not _same_file_identity(initial, final):
+        raise BenchmarkPackError(
+            "repository symlink changed while the benchmark pack was being exported"
+        )
+    return os.fsdecode(target).replace(os.sep, "/")
+
+
+def _read_owned_regular_file(path: Path, initial: os.stat_result) -> bytes:
+    """Read one provably single-linked fixture file through a stable descriptor."""
+    initial_snapshot = _regular_file_snapshot(initial)
+    _require_single_link(initial)
+    if initial_snapshot.size > MAX_FILE_BYTES:
+        raise BenchmarkPackError(
+            f"repository file exceeds the {MAX_FILE_BYTES} byte export limit"
+        )
+
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_BINARY", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise BenchmarkPackError(
+            "repository file changed while the benchmark pack was being exported"
+        ) from error
+    try:
+        opened = os.fstat(descriptor)
+        opened_snapshot = _regular_file_snapshot(opened)
+        _require_single_link(opened)
+        if opened_snapshot != initial_snapshot:
+            raise BenchmarkPackError(
+                "repository file changed while the benchmark pack was being exported"
+            )
+        content = _read_bounded_descriptor(descriptor)
+        final = os.fstat(descriptor)
+        final_snapshot = _regular_file_snapshot(final)
+        _require_single_link(final)
+        if final_snapshot != opened_snapshot or len(content) != final_snapshot.size:
+            raise BenchmarkPackError(
+                "repository file changed while the benchmark pack was being exported"
+            )
+    except OSError as error:
+        raise BenchmarkPackError(
+            "repository file changed while the benchmark pack was being exported"
+        ) from error
+    finally:
+        os.close(descriptor)
+
+    try:
+        path_final = path.lstat()
+        path_snapshot = _regular_file_snapshot(path_final)
+        _require_single_link(path_final)
+    except OSError as error:
+        raise BenchmarkPackError(
+            "repository file changed while the benchmark pack was being exported"
+        ) from error
+    if path_snapshot != final_snapshot:
+        raise BenchmarkPackError(
+            "repository file changed while the benchmark pack was being exported"
+        )
+    return content
+
+
+def _regular_file_snapshot(value: os.stat_result) -> _RegularFileSnapshot:
+    if not stat.S_ISREG(value.st_mode):
+        raise BenchmarkPackError("repository entry is not a stable regular file")
+    try:
+        snapshot = _RegularFileSnapshot(
+            device=int(value.st_dev),
+            inode=int(value.st_ino),
+            size=int(value.st_size),
+            modified_ns=int(value.st_mtime_ns),
+            changed_ns=int(value.st_ctime_ns),
+        )
+    except (AttributeError, TypeError, ValueError) as error:
+        raise BenchmarkPackError(
+            "repository file identity cannot be verified on this platform"
+        ) from error
+    if snapshot.device < 0 or snapshot.inode <= 0:
+        raise BenchmarkPackError(
+            "repository file identity cannot be verified on this platform"
+        )
+    return snapshot
+
+
+def _require_single_link(value: os.stat_result) -> None:
+    try:
+        link_count = int(value.st_nlink)
+    except (AttributeError, TypeError, ValueError) as error:
+        raise BenchmarkPackError(
+            "repository file link ownership cannot be verified on this platform"
+        ) from error
+    if link_count != 1:
+        raise BenchmarkPackError(
+            "benchmark pack export rejects multiply linked repository files"
+        )
+
+
+def _read_bounded_descriptor(descriptor: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = MAX_FILE_BYTES + 1
+    while remaining:
+        chunk = os.read(descriptor, min(64 * 1024, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    content = b"".join(chunks)
+    if len(content) > MAX_FILE_BYTES:
+        raise BenchmarkPackError(
+            f"repository file exceeds the {MAX_FILE_BYTES} byte export limit"
+        )
+    return content
+
+
+def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    try:
+        return (int(left.st_dev), int(left.st_ino)) == (
+            int(right.st_dev),
+            int(right.st_ino),
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
 
 
 def _excluded(relative: Path) -> bool:
