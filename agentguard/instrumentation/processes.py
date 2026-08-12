@@ -3,7 +3,7 @@ import signal
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional, Protocol
 
 
 PROCESS_TERMINATE_TIMEOUT_SECONDS = 0.5
@@ -29,6 +29,44 @@ class ProcessCleanupResult:
     complete: bool = True
     kill_required: bool = False
     message: Optional[str] = None
+
+
+class ProcessOutputCapture(Protocol):
+    def wait(self, timeout: Optional[float] = None) -> int:
+        ...
+
+    def finish(self, timeout: Optional[float] = None) -> object:
+        ...
+
+
+def cleanup_process_after_exception(
+    process: Optional[subprocess.Popen],
+    capture: Optional[ProcessOutputCapture],
+    *,
+    cleanup_started: bool = False,
+    extra_cleanup: Optional[Callable[[], object]] = None,
+) -> None:
+    """Best-effort bounded cleanup without replacing an active exception."""
+    if process is not None and not cleanup_started:
+        try:
+            terminate_process_tree(process)
+        except BaseException:
+            pass
+    if not cleanup_started and extra_cleanup is not None:
+        try:
+            extra_cleanup()
+        except BaseException:
+            pass
+    if capture is None:
+        return
+    try:
+        capture.wait(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
+    except BaseException:
+        pass
+    try:
+        capture.finish(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
+    except BaseException:
+        pass
 
 
 def popen_with_process_group(

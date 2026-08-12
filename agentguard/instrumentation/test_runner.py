@@ -7,11 +7,18 @@ from pathlib import Path
 
 from agentguard.core.result import CommandResult
 from agentguard.instrumentation.command_tracker import CommandTracker
-from agentguard.instrumentation.output_limits import BoundedProcessOutput, limit_output
+from agentguard.instrumentation.output_limits import (
+    BoundedProcessOutput,
+    LimitedOutput,
+    ProcessOutput,
+    limit_output,
+)
 from agentguard.instrumentation.processes import (
     PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS,
+    PROCESS_CLEANUP_INCOMPLETE_MESSAGE,
     ProcessCleanupResult,
     append_cleanup_message,
+    cleanup_process_after_exception,
     popen_with_process_group,
     process_timeout_message,
     terminate_process_tree,
@@ -123,6 +130,9 @@ class TestRunner:
         started = time.monotonic()
         timed_out = False
         cleanup = ProcessCleanupResult()
+        process = None
+        capture = None
+        cleanup_started = False
         try:
             process = popen_with_process_group(
                 argv,
@@ -136,14 +146,43 @@ class TestRunner:
         except subprocess.TimeoutExpired:
             timed_out = True
             exit_code = 124
-            cleanup = terminate_process_tree(process)
+            cleanup_started = True
+            try:
+                cleanup = terminate_process_tree(process)
+            except BaseException:
+                cleanup = ProcessCleanupResult(
+                    attempted=True,
+                    complete=False,
+                    message=PROCESS_CLEANUP_INCOMPLETE_MESSAGE,
+                )
             try:
                 capture.wait(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired:
+            except BaseException:
                 pass
-        captured = capture.finish(
-            timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS if timed_out else None
-        )
+        except BaseException:
+            cleanup_process_after_exception(
+                process,
+                capture,
+                cleanup_started=cleanup_started,
+            )
+            raise
+        try:
+            captured = capture.finish(
+                timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS if timed_out else None
+            )
+        except BaseException:
+            if timed_out:
+                captured = ProcessOutput(
+                    stdout=LimitedOutput(text="", truncated=False),
+                    stderr=LimitedOutput(text="", truncated=False),
+                )
+            else:
+                cleanup_process_after_exception(
+                    process,
+                    capture,
+                    cleanup_started=cleanup_started,
+                )
+                raise
         stdout = captured.stdout.text
         stderr = captured.stderr.text
         if timed_out:

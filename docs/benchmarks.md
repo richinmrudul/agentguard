@@ -109,8 +109,10 @@ filesystem polling.
 Benchmark `command_timeout_seconds` and Docker sandbox timeouts do not require
 additional user-facing cleanup configuration. On timeout or guard enforcement,
 AgentGuard attempts graceful process-tree termination, escalates to kill when
-needed, and records sanitized cleanup status. Docker-backed runs additionally
-attempt to remove the managed container on timeout/error. Cleanup hardening is
+needed, and records sanitized cleanup status. Interruptions and unexpected
+exceptions after process startup use the same bounded cleanup path while the
+original exception remains observable. Docker-backed runs additionally attempt
+to remove the managed container on timeout/error. Cleanup hardening is
 best-effort process containment, not syscall interception or a VM boundary.
 
 ## Core Suite

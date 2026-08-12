@@ -242,6 +242,8 @@ window, AgentGuard escalates to kill. Local command, agent-command, and test
 command timeouts use the same process-tree cleanup path. Docker-backed
 commands are run with a managed container name so timeout/error cleanup can
 attempt `docker rm -f` after terminating the local Docker client process.
+Interruptions and unexpected exceptions after process startup also invoke
+bounded cleanup without replacing the original exception.
 
 On POSIX hosts, cleanup status is not complete until the owned process group is
 observed to be gone after bounded graceful and forceful termination attempts.

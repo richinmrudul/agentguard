@@ -10,9 +10,76 @@ import pytest
 from agentguard.instrumentation import processes
 from agentguard.instrumentation.processes import (
     PROCESS_CLEANUP_INCOMPLETE_MESSAGE,
+    cleanup_process_after_exception,
     popen_with_process_group,
     terminate_process_tree,
 )
+
+
+def test_exception_cleanup_preserves_original_when_cleanup_steps_raise(
+    monkeypatch,
+) -> None:
+    class Capture:
+        def wait(self, timeout=None):
+            raise RuntimeError("drain failed")
+
+        def finish(self, timeout=None):
+            raise RuntimeError("finish failed")
+
+    calls = []
+    monkeypatch.setattr(
+        processes,
+        "terminate_process_tree",
+        lambda _process: (_ for _ in ()).throw(RuntimeError("terminate failed")),
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="original interrupt"):
+        try:
+            raise KeyboardInterrupt("original interrupt")
+        except KeyboardInterrupt:
+            cleanup_process_after_exception(
+                object(),
+                Capture(),
+                extra_cleanup=lambda: calls.append("extra"),
+            )
+            raise
+
+    assert calls == ["extra"]
+
+
+def test_exception_cleanup_runs_extra_cleanup_without_process() -> None:
+    calls = []
+
+    cleanup_process_after_exception(
+        None,
+        None,
+        extra_cleanup=lambda: calls.append("extra"),
+    )
+
+    assert calls == ["extra"]
+
+
+def test_exception_cleanup_preserves_cancellation_style_base_exception(
+    monkeypatch,
+) -> None:
+    class Cancelled(BaseException):
+        pass
+
+    cleanup_calls = []
+    monkeypatch.setattr(
+        processes,
+        "terminate_process_tree",
+        lambda process: cleanup_calls.append(process),
+    )
+
+    with pytest.raises(Cancelled, match="cancelled"):
+        try:
+            raise Cancelled("cancelled")
+        except BaseException:
+            cleanup_process_after_exception(object(), None)
+            raise
+
+    assert len(cleanup_calls) == 1
 
 
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX process groups")

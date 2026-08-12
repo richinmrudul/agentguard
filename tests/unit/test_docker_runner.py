@@ -348,6 +348,100 @@ def test_docker_command_runner_records_timeout(
     assert tracker.events[0].process_cleanup_complete is True
 
 
+def test_docker_interrupt_removes_container_and_preserves_interrupt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    process = FakeProcess(returncode=None)
+    removed = []
+
+    class InterruptingCapture:
+        def __init__(self, *_args):
+            pass
+
+        def wait(self, timeout=None):
+            raise KeyboardInterrupt("docker interrupted")
+
+        def finish(self, timeout=None):
+            return None
+
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.BoundedProcessOutput",
+        InterruptingCapture,
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.terminate_process_tree",
+        lambda _process: None,
+    )
+    runner = DockerCommandRunner(
+        CommandTracker(),
+        SandboxConfig(type="docker", image="python:3.11-slim"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_remove_container",
+        lambda name: removed.append(name),
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="docker interrupted"):
+        runner.run_argv(repo_dir, ["true"], "docker: true")
+
+    assert len(removed) == 1
+
+
+def test_docker_timeout_cleanup_failures_remain_controlled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    class TimeoutCapture:
+        def __init__(self, *_args):
+            pass
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("docker", timeout)
+
+        def finish(self, timeout=None):
+            raise RuntimeError("finish failed")
+
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.BoundedProcessOutput",
+        TimeoutCapture,
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.terminate_process_tree",
+        lambda _process: (_ for _ in ()).throw(RuntimeError("cleanup failed")),
+    )
+    runner = DockerCommandRunner(
+        CommandTracker(),
+        SandboxConfig(type="docker", image="python:3.11-slim"),
+        timeout_seconds=1,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_remove_container",
+        lambda _name: (_ for _ in ()).throw(RuntimeError("remove failed")),
+    )
+
+    result = runner.run_argv(repo_dir, ["true"], "docker: true")
+
+    assert result.exit_code == 124
+    assert result.timed_out is True
+    assert result.process_cleanup_complete is False
+
+
 def test_docker_command_runner_truncates_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

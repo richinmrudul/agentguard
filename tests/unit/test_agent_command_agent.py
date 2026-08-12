@@ -5,6 +5,8 @@ import shlex
 import sys
 import time
 
+import pytest
+
 from agentguard.agents.agent_command_agent import AgentCommandAgent
 from agentguard.config.loader import load_config
 from agentguard.instrumentation.command_tracker import CommandTracker
@@ -300,6 +302,46 @@ def test_agent_command_bounds_large_stdout_and_stderr(tmp_path: Path) -> None:
     assert len(event.stderr.encode("utf-8")) <= 128
     assert event.stdout.endswith("out-end")
     assert event.stderr.endswith("err-end")
+
+
+def test_agent_command_exception_cleans_up_and_preserves_exception(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    process = object()
+    cleanup_calls = []
+
+    class FailingCapture:
+        def __init__(self, *_args):
+            pass
+
+        def wait(self, timeout=None):
+            raise RuntimeError("output processing failed")
+
+        def finish(self, timeout=None):
+            return None
+
+    monkeypatch.setattr(
+        "agentguard.agents.agent_command_agent.popen_with_process_group",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        "agentguard.agents.agent_command_agent.BoundedProcessOutput",
+        FailingCapture,
+    )
+    monkeypatch.setattr(
+        "agentguard.instrumentation.processes.terminate_process_tree",
+        lambda owned: cleanup_calls.append(owned),
+    )
+
+    with pytest.raises(RuntimeError, match="output processing failed"):
+        AgentCommandAgent(_config(agent_command=["agent"])).run(
+            repo_dir, CommandTracker()
+        )
+
+    assert cleanup_calls == [process]
 
 
 def _read_pid(path: Path) -> int:
