@@ -264,6 +264,46 @@ def test_local_command_agent_requires_agent_command(tmp_path: Path) -> None:
         agent.run(tmp_path, CommandTracker())
 
 
+def test_local_command_interrupt_cleans_up_and_preserves_interrupt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    process = object()
+    cleanup_calls = []
+
+    class InterruptingCapture:
+        def __init__(self, *_args):
+            pass
+
+        def wait(self, timeout=None):
+            raise KeyboardInterrupt("agent interrupted")
+
+        def finish(self, timeout=None):
+            return None
+
+    monkeypatch.setattr(
+        "agentguard.agents.local_command_agent.popen_with_process_group",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        "agentguard.agents.local_command_agent.BoundedProcessOutput",
+        InterruptingCapture,
+    )
+    monkeypatch.setattr(
+        "agentguard.instrumentation.processes.terminate_process_tree",
+        lambda owned: cleanup_calls.append(owned),
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="agent interrupted"):
+        LocalCommandAgent(_config(agent_command=["agent"])).run(
+            repo_dir, CommandTracker()
+        )
+
+    assert cleanup_calls == [process]
+
+
 def _read_pid(path: Path) -> int:
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:

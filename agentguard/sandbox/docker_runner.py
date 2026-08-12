@@ -9,11 +9,18 @@ from agentguard.config.docker_image import validate_docker_image_reference
 from agentguard.config.schema import SandboxConfig
 from agentguard.core.result import CommandResult
 from agentguard.instrumentation.command_tracker import CommandTracker
-from agentguard.instrumentation.output_limits import BoundedProcessOutput, limit_output
+from agentguard.instrumentation.output_limits import (
+    BoundedProcessOutput,
+    LimitedOutput,
+    ProcessOutput,
+    limit_output,
+)
 from agentguard.instrumentation.processes import (
     PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS,
+    PROCESS_CLEANUP_INCOMPLETE_MESSAGE,
     ProcessCleanupResult,
     append_cleanup_message,
+    cleanup_process_after_exception,
     popen_with_process_group,
     process_timeout_message,
     terminate_process_tree,
@@ -215,6 +222,9 @@ class DockerCommandRunner:
         started = time.monotonic()
         timed_out = False
         cleanup = ProcessCleanupResult()
+        process = None
+        capture = None
+        cleanup_started = False
         try:
             process = popen_with_process_group(
                 docker_command,
@@ -227,6 +237,13 @@ class DockerCommandRunner:
             stdout = captured.stdout.text
             stderr = captured.stderr.text
         except FileNotFoundError:
+            if process is not None:
+                cleanup_process_after_exception(
+                    process,
+                    capture,
+                    extra_cleanup=lambda: self._remove_container(container_name),
+                )
+                raise
             exit_code = 127
             stdout = ""
             stderr = "Docker is not installed or is not available on PATH."
@@ -234,14 +251,37 @@ class DockerCommandRunner:
         except subprocess.TimeoutExpired:
             timed_out = True
             exit_code = 124
-            cleanup = terminate_process_tree(process)
-            docker_cleanup = self._remove_container(container_name)
+            cleanup_started = True
+            try:
+                cleanup = terminate_process_tree(process)
+            except BaseException:
+                cleanup = ProcessCleanupResult(
+                    attempted=True,
+                    complete=False,
+                    message=PROCESS_CLEANUP_INCOMPLETE_MESSAGE,
+                )
+            try:
+                docker_cleanup = self._remove_container(container_name)
+            except BaseException:
+                docker_cleanup = ProcessCleanupResult(
+                    attempted=True,
+                    complete=False,
+                    message=DOCKER_CLEANUP_INCOMPLETE_MESSAGE,
+                )
             cleanup = self._combine_cleanup(cleanup, docker_cleanup)
             try:
                 capture.wait(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired:
+            except BaseException:
                 pass
-            captured = capture.finish(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
+            try:
+                captured = capture.finish(
+                    timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS
+                )
+            except BaseException:
+                captured = ProcessOutput(
+                    stdout=LimitedOutput(text="", truncated=False),
+                    stderr=LimitedOutput(text="", truncated=False),
+                )
             stdout = captured.stdout.text
             stderr = captured.stderr.text
             stderr = (
@@ -250,6 +290,14 @@ class DockerCommandRunner:
                 f"\n{process_timeout_message(cleanup)}"
             ).strip()
             stderr = append_cleanup_message(stderr, cleanup)
+        except BaseException:
+            cleanup_process_after_exception(
+                process,
+                capture,
+                cleanup_started=cleanup_started,
+                extra_cleanup=lambda: self._remove_container(container_name),
+            )
+            raise
         duration_seconds = time.monotonic() - started
         limited_stdout = limit_output(stdout, self.max_output_bytes)
         limited_stderr = limit_output(stderr, self.max_output_bytes)

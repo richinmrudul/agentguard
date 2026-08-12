@@ -284,6 +284,45 @@ def test_version_command_bounds_large_output(tmp_path: Path) -> None:
     assert (version, status, warning) == ("agent 1.2.3", "detected", None)
 
 
+def test_version_command_interrupt_cleans_up_and_preserves_interrupt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = load_config(
+        _write_config(tmp_path, version_command=[sys.executable, "--version"])
+    )
+    process = object()
+    cleanup_calls = []
+
+    class InterruptingCapture:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def wait(self, timeout=None):
+            raise KeyboardInterrupt("version interrupted")
+
+        def finish(self, timeout=None):
+            return None
+
+    monkeypatch.setattr(
+        "agentguard.provenance.manifest.popen_with_process_group",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        "agentguard.provenance.manifest.BoundedProcessOutput",
+        InterruptingCapture,
+    )
+    monkeypatch.setattr(
+        "agentguard.instrumentation.processes.terminate_process_tree",
+        lambda owned: cleanup_calls.append(owned),
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="version interrupted"):
+        detect_agent_version(config)
+
+    assert cleanup_calls == [process]
+
+
 def test_version_command_failure_warns_without_failing_evaluation(
     tmp_path: Path,
 ) -> None:

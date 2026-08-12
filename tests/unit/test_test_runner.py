@@ -350,6 +350,175 @@ def test_test_runner_truncates_large_stdout(tmp_path: Path) -> None:
     assert tracker.events[0].stdout_truncated is True
 
 
+def test_test_runner_interrupt_after_spawn_cleans_up_and_preserves_interrupt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    process = object()
+    cleanup_calls = []
+    monkeypatch.setattr(
+        "agentguard.instrumentation.test_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        "agentguard.instrumentation.test_runner.BoundedProcessOutput",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            KeyboardInterrupt("capture interrupted")
+        ),
+    )
+    monkeypatch.setattr(
+        "agentguard.instrumentation.processes.terminate_process_tree",
+        lambda owned: cleanup_calls.append(owned),
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="capture interrupted"):
+        AgentGuardTestRunner(CommandTracker()).run(tmp_path, "python -V")
+
+    assert cleanup_calls == [process]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX process groups")
+def test_test_runner_interrupt_cleans_real_descendant(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    child_pid_path = tmp_path / "interrupt-child.pid"
+    late_write = tmp_path / "late-write.txt"
+    child_script = (
+        "import time\n"
+        "from pathlib import Path\n"
+        "time.sleep(0.8)\n"
+        f"Path({str(late_write)!r}).write_text('survived')\n"
+        "time.sleep(20)\n"
+    )
+    script = (
+        "import subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        f"{child_script!r}])\n"
+        f"Path({str(child_pid_path)!r}).write_text(str(child.pid))\n"
+        "time.sleep(20)\n"
+    )
+    original_wait = AgentGuardTestRunner.run.__globals__["BoundedProcessOutput"].wait
+    original_popen = AgentGuardTestRunner.run.__globals__["popen_with_process_group"]
+    spawned = []
+    first_wait = True
+
+    def capture_popen(*args, **kwargs):
+        process = original_popen(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    def interrupt_wait(capture, timeout=None):
+        nonlocal first_wait
+        if first_wait:
+            first_wait = False
+            _read_pid(child_pid_path)
+            raise KeyboardInterrupt("test interrupt")
+        return original_wait(capture, timeout)
+
+    monkeypatch.setattr(
+        "agentguard.instrumentation.output_limits.BoundedProcessOutput.wait",
+        interrupt_wait,
+    )
+    monkeypatch.setattr(
+        "agentguard.instrumentation.test_runner.popen_with_process_group",
+        capture_popen,
+    )
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(KeyboardInterrupt, match="test interrupt"):
+            AgentGuardTestRunner(CommandTracker()).run(
+                tmp_path,
+                shlex.join([sys.executable, "-c", script]),
+            )
+        child_pid = _read_pid(child_pid_path)
+        time.sleep(1)
+
+        assert time.monotonic() - started < 2.5
+        assert _process_exited(child_pid)
+        assert not late_write.exists()
+    finally:
+        for process in spawned:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_test_runner_finish_exception_cleans_up_and_preserves_exception(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    process = object()
+    cleanup_calls = []
+
+    class FinishFailure:
+        def __init__(self, *_args):
+            pass
+
+        def wait(self, timeout=None):
+            return 0
+
+        def finish(self, timeout=None):
+            raise RuntimeError("finish processing failed")
+
+    monkeypatch.setattr(
+        "agentguard.instrumentation.test_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        "agentguard.instrumentation.test_runner.BoundedProcessOutput",
+        FinishFailure,
+    )
+    monkeypatch.setattr(
+        "agentguard.instrumentation.processes.terminate_process_tree",
+        lambda owned: cleanup_calls.append(owned),
+    )
+
+    with pytest.raises(RuntimeError, match="finish processing failed"):
+        AgentGuardTestRunner(CommandTracker()).run(tmp_path, "python -V")
+
+    assert cleanup_calls == [process]
+
+
+def test_test_runner_timeout_cleanup_failures_remain_controlled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class TimeoutCapture:
+        def __init__(self, *_args):
+            pass
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("test", timeout)
+
+        def finish(self, timeout=None):
+            raise RuntimeError("finish failed")
+
+    monkeypatch.setattr(
+        "agentguard.instrumentation.test_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "agentguard.instrumentation.test_runner.BoundedProcessOutput",
+        TimeoutCapture,
+    )
+    monkeypatch.setattr(
+        "agentguard.instrumentation.test_runner.terminate_process_tree",
+        lambda _process: (_ for _ in ()).throw(RuntimeError("cleanup failed")),
+    )
+
+    result = AgentGuardTestRunner(CommandTracker(), timeout_seconds=1).run(
+        tmp_path, "python -V"
+    )
+
+    assert result.exit_code == 124
+    assert result.timed_out is True
+    assert result.process_cleanup_complete is False
+
+
 def _read_pid(path: Path) -> int:
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:

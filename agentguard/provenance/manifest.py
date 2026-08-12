@@ -17,6 +17,7 @@ from agentguard.io import atomic_write_text
 from agentguard.instrumentation.output_limits import BoundedProcessOutput
 from agentguard.instrumentation.processes import (
     PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS,
+    cleanup_process_after_exception,
     popen_with_process_group,
     terminate_process_tree,
 )
@@ -351,6 +352,9 @@ def detect_agent_version(config: AgentGuardConfig) -> tuple[Optional[str], str, 
     if not decision.allowed:
         return None, "blocked", "Agent version command was blocked by command policy."
 
+    process = None
+    capture = None
+    cleanup_started = False
     try:
         environment = (
             {
@@ -376,19 +380,48 @@ def detect_agent_version(config: AgentGuardConfig) -> tuple[Optional[str], str, 
             timeout=min(config.command_timeout_seconds, VERSION_TIMEOUT_SECONDS)
         )
     except FileNotFoundError:
+        if process is not None:
+            cleanup_process_after_exception(process, capture)
+            raise
         return None, "failed", "Agent version executable was not found."
     except subprocess.TimeoutExpired:
-        terminate_process_tree(process)
+        cleanup_started = True
+        try:
+            terminate_process_tree(process)
+        except BaseException:
+            pass
         try:
             capture.wait(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
+        except BaseException:
             pass
-        capture.finish(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
+        try:
+            capture.finish(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
+        except BaseException:
+            pass
         return None, "failed", "Agent version command timed out."
     except (OSError, TypeError, ValueError) as error:
+        cleanup_process_after_exception(
+            process,
+            capture,
+            cleanup_started=cleanup_started,
+        )
         return None, "failed", f"Agent version command failed: {type(error).__name__}."
+    except BaseException:
+        cleanup_process_after_exception(
+            process,
+            capture,
+            cleanup_started=cleanup_started,
+        )
+        raise
 
-    captured = capture.finish()
+    try:
+        captured = capture.finish()
+    except (OSError, TypeError, ValueError) as error:
+        cleanup_process_after_exception(process, capture)
+        return None, "failed", f"Agent version command failed: {type(error).__name__}."
+    except BaseException:
+        cleanup_process_after_exception(process, capture)
+        raise
     output = captured.stdout.text or captured.stderr.text
     output = sanitize_text(output, _sensitive_values(config))
     version = next((line.strip() for line in output.splitlines() if line.strip()), None)
