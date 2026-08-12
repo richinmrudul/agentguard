@@ -35,6 +35,14 @@ Pack-local paths are normalized:
 Config `repo_template` values and contract `config` values are rewritten to
 these pack-local paths during export.
 
+Pack paths use one portable filesystem identity on every platform. Each path
+component is normalized to Unicode NFC and case-folded for collision checks.
+AgentGuard also rejects Windows reserved device names, trailing dots or spaces,
+non-portable Windows characters, drive-like paths, non-canonical separators,
+and any file path that is a prefix of another member. This deliberately rejects
+some names that Linux can store so a pack verified on Linux has the same member
+identity when imported on case-insensitive macOS or Windows filesystems.
+
 ## Workflow
 
 Export one or more benchmark families:
@@ -101,7 +109,9 @@ Pack verification treats the archive and manifest as untrusted input. It
 recomputes every hash before trusting metadata and rejects:
 
 - absolute paths and `..` traversal
-- duplicate normalized paths
+- exact, case-equivalent, or Unicode-normalization-equivalent paths
+- non-canonical separators, Windows reserved names, and trailing-dot/space names
+- file/directory-prefix and symlink-member path collisions
 - missing or unlisted files
 - hard links, device files, directories, and other special files
 - absolute or traversing symlink targets
@@ -109,9 +119,11 @@ recomputes every hash before trusting metadata and rejects:
 - registry/config/contract mismatches
 
 Safe symlinks are allowed only when their target is relative and resolves within
-the imported tree. Import creates regular files and safe symlinks only after
-verification. It does not run setup scripts, benchmark commands, tests, agents,
-post-install hooks, or imported code.
+the imported tree. Import validates and prepares regular files, safe symlinks,
+and optional registry and suite outputs before writing. The final writes are a
+rollback-capable transaction, so a late preparation or write failure does not
+leave a partial imported pack. It does not run setup scripts, benchmark
+commands, tests, agents, post-install hooks, or imported code.
 
 Displayed metadata is kept concise, and file hashes are printed instead of file
 contents. Secrets, `.agentguard` outputs, caches, databases, logs, bytecode, and

@@ -1,7 +1,9 @@
 import hashlib
 import json
+import os
 import stat
 import tempfile
+import unicodedata
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -25,7 +27,6 @@ from agentguard.benchmarks.registry import (
 )
 from agentguard.config.loader import load_config
 from agentguard.config.yaml import load_yaml
-from agentguard.io import atomic_write_text
 
 
 PACK_SCHEMA = "agentguard.benchmark-pack"
@@ -43,6 +44,19 @@ EXCLUDED_NAMES = {
     "agentguard-junit.xml",
     "coverage.xml",
     ".coverage",
+}
+WINDOWS_RESERVED_NAMES = {
+    "con",
+    "prn",
+    "aux",
+    "nul",
+    "clock$",
+    "conin$",
+    "conout$",
+    *(f"com{number}" for number in range(1, 10)),
+    *(f"lpt{number}" for number in range(1, 10)),
+    *(f"com{number}" for number in ("¹", "²", "³")),
+    *(f"lpt{number}" for number in ("¹", "²", "³")),
 }
 
 
@@ -76,6 +90,22 @@ class PackImportPlan:
     registry_path: Optional[Path]
     suite_path: Optional[Path]
     trust_status: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class _ImportMutation:
+    target: Path
+    content: Optional[bytes] = None
+    symlink_target: Optional[str] = None
+    mode: int = 0o600
+
+
+@dataclass
+class _AppliedMutation:
+    target: Path
+    backup: Optional[Path] = None
+    original_moved: bool = False
+    replacement_moved: bool = False
 
 
 def export_benchmark_pack(
@@ -244,6 +274,7 @@ def import_benchmark_pack(
         (file.path, _safe_destination(dest, file.path))
         for file in verification.files
     ]
+    _validate_destination_identities(dest, [file.path for file in verification.files])
     extra_outputs = [path for path in (registry_output, suite_output) if path is not None]
     collisions = sorted(
         [target for _, target in files if target.exists() or target.is_symlink()]
@@ -265,41 +296,15 @@ def import_benchmark_pack(
             suite_path=suite_output,
             trust_status=trust_status,
         )
-    with zipfile.ZipFile(pack_path.expanduser(), "r") as archive:
-        symlinks: list[tuple[str, Path, str]] = []
-        file_types = {file.path: file.type for file in verification.files}
-        for relative_path, target in files:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if (target.exists() or target.is_symlink()) and not force:
-                raise FileExistsError(f"destination file already exists: {target}")
-            content = archive.read(relative_path)
-            if file_types[relative_path] == "symlink":
-                symlinks.append((relative_path, target, content.decode("utf-8")))
-            else:
-                if target.exists() or target.is_symlink():
-                    target.unlink()
-                target.write_bytes(content)
-        for relative_path, target, link_target in symlinks:
-            _validate_safe_symlink(relative_path, link_target)
-            if target.exists() or target.is_symlink():
-                target.unlink()
-            target.symlink_to(link_target)
-    if registry_output is not None:
-        source = dest / REGISTRY_FRAGMENT_PATH
-        registry_output.parent.mkdir(parents=True, exist_ok=True)
-        if registry_output.exists() and not force:
-            raise FileExistsError(f"registry output already exists: {registry_output}")
-        atomic_write_text(registry_output, _external_registry_text(source, dest), encoding="utf-8")
-    if suite_output is not None:
-        registry_for_suite = registry_output or (dest / REGISTRY_FRAGMENT_PATH)
-        registry = load_benchmark_registry(registry_for_suite)
-        suite_data = generate_suite_data(
-            registry,
-            suite_id=suite_output.stem or "imported_benchmarks",
-            description="Generated from imported AgentGuard benchmark pack.",
-            include=["safe", "adversarial"],
-        )
-        write_generated_suite(suite_data, suite_output, force=force)
+    mutations = _prepare_import_mutations(
+        pack_path=pack_path,
+        verification=verification,
+        files=files,
+        dest=dest,
+        registry_output=registry_output,
+        suite_output=suite_output,
+    )
+    _commit_import_mutations(mutations, force=force)
     return PackImportPlan(
         files=files,
         collisions=collisions,
@@ -307,6 +312,233 @@ def import_benchmark_pack(
         suite_path=suite_output,
         trust_status=trust_status,
     )
+
+
+def _prepare_import_mutations(
+    *,
+    pack_path: Path,
+    verification: PackVerification,
+    files: list[tuple[str, Path]],
+    dest: Path,
+    registry_output: Optional[Path],
+    suite_output: Optional[Path],
+) -> list[_ImportMutation]:
+    mutations: list[_ImportMutation] = []
+    file_types = {file.path: file.type for file in verification.files}
+    with tempfile.TemporaryDirectory(prefix="agentguard-pack-import-") as temp_name:
+        prepared_root = Path(temp_name).resolve() / "tree"
+        with zipfile.ZipFile(pack_path.expanduser(), "r") as archive:
+            for relative_path, target in files:
+                content = archive.read(relative_path)
+                prepared = _safe_destination(prepared_root, relative_path)
+                prepared.parent.mkdir(parents=True, exist_ok=True)
+                if file_types[relative_path] == "symlink":
+                    link_target = content.decode("utf-8")
+                    _validate_safe_symlink(relative_path, link_target)
+                    prepared.symlink_to(link_target)
+                    mutations.append(
+                        _ImportMutation(target=target, symlink_target=link_target)
+                    )
+                else:
+                    prepared.write_bytes(content)
+                    mutations.append(
+                        _ImportMutation(target=target, content=content, mode=0o644)
+                    )
+
+        external_registry = _external_registry_text(
+            prepared_root / REGISTRY_FRAGMENT_PATH,
+            dest,
+        )
+        if registry_output is not None:
+            mutations.append(
+                _ImportMutation(
+                    target=registry_output,
+                    content=external_registry.encode("utf-8"),
+                )
+            )
+        if suite_output is not None:
+            registry = load_benchmark_registry(prepared_root / REGISTRY_FRAGMENT_PATH)
+            suite_data = generate_suite_data(
+                registry,
+                suite_id=suite_output.stem or "imported_benchmarks",
+                description="Generated from imported AgentGuard benchmark pack.",
+                include=["safe", "adversarial"],
+            )
+            for run in suite_data["runs"]:
+                staged_config = Path(run["config"])
+                run["config"] = str(dest / staged_config.relative_to(prepared_root))
+            prepared_suite = Path(temp_name) / "suite.yaml"
+            write_generated_suite(suite_data, prepared_suite, force=True)
+            mutations.append(
+                _ImportMutation(
+                    target=suite_output, content=prepared_suite.read_bytes()
+                )
+            )
+    _validate_mutation_targets(mutations)
+    return mutations
+
+
+def _validate_mutation_targets(mutations: list[_ImportMutation]) -> None:
+    keys: set[tuple[str, ...]] = set()
+    for mutation in mutations:
+        target = mutation.target.expanduser().resolve(strict=False)
+        key = tuple(_filesystem_component_key(part) for part in target.parts)
+        if (
+            not all(key)
+            or key in keys
+            or any(
+                key[: len(other)] == other or other[: len(key)] == key for other in keys
+            )
+        ):
+            raise BenchmarkPackError("import output paths are filesystem-equivalent")
+        keys.add(key)
+        if target.is_dir() and not target.is_symlink():
+            raise BenchmarkPackError("an import output path is an existing directory")
+
+
+def _validate_destination_identities(root: Path, relative_paths: list[str]) -> None:
+    """Probe the destination filesystem's own alias behavior without importing."""
+    anchor = root.expanduser().absolute()
+    while not anchor.exists() and anchor.parent != anchor:
+        anchor = anchor.parent
+    if not anchor.is_dir():
+        anchor = anchor.parent
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix=".agentguard-pack-identity-",
+            dir=anchor,
+        ) as temp_name:
+            probe_root = Path(temp_name)
+            for relative_path in sorted(relative_paths):
+                target = probe_root / relative_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists() or target.is_symlink():
+                    raise BenchmarkPackError(
+                        "pack member paths alias on the destination filesystem"
+                    )
+                target.touch(exist_ok=False)
+    except BenchmarkPackError:
+        raise
+    except OSError as error:
+        raise BenchmarkPackError(
+            "destination filesystem identity could not be established"
+        ) from error
+
+
+def _commit_import_mutations(
+    mutations: list[_ImportMutation],
+    *,
+    force: bool,
+) -> None:
+    prepared: list[tuple[_ImportMutation, Path]] = []
+    created_directories: list[Path] = []
+    applied: list[_AppliedMutation] = []
+    committed = False
+    try:
+        for mutation in mutations:
+            target = mutation.target.expanduser()
+            _create_parent_directories(target.parent, created_directories)
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{target.name}.",
+                suffix=".pack-import",
+                dir=target.parent,
+            )
+            os.close(descriptor)
+            temporary = Path(temporary_name)
+            prepared.append((mutation, temporary))
+            if mutation.symlink_target is not None:
+                temporary.unlink()
+                temporary.symlink_to(mutation.symlink_target)
+            else:
+                temporary.write_bytes(mutation.content or b"")
+                temporary.chmod(mutation.mode)
+
+        for mutation, temporary in prepared:
+            target = mutation.target.expanduser()
+            if not force:
+                state = _AppliedMutation(target=target)
+                applied.append(state)
+                try:
+                    if mutation.symlink_target is not None:
+                        target.symlink_to(mutation.symlink_target)
+                    else:
+                        os.link(temporary, target)
+                except FileExistsError:
+                    raise FileExistsError(
+                        "import output appeared after collision validation"
+                    ) from None
+                state.replacement_moved = True
+                temporary.unlink()
+                continue
+
+            if target.exists() or target.is_symlink():
+                descriptor, backup_name = tempfile.mkstemp(
+                    prefix=f".{target.name}.",
+                    suffix=".pack-backup",
+                    dir=target.parent,
+                )
+                os.close(descriptor)
+                backup = Path(backup_name)
+                backup.unlink()
+                state = _AppliedMutation(target=target, backup=backup)
+                applied.append(state)
+                os.replace(target, backup)
+                state.original_moved = True
+            else:
+                state = _AppliedMutation(target=target)
+                applied.append(state)
+            os.replace(temporary, target)
+            state.replacement_moved = True
+        committed = True
+    except BaseException as primary_error:
+        rollback_failed = False
+        for state in reversed(applied):
+            try:
+                if state.replacement_moved and (
+                    state.target.exists() or state.target.is_symlink()
+                ):
+                    state.target.unlink()
+                if state.original_moved and state.backup is not None:
+                    os.replace(state.backup, state.target)
+            except OSError:
+                rollback_failed = True
+        if rollback_failed:
+            raise BenchmarkPackError(
+                "pack import failed and rollback could not be completed; "
+                "recoverable backup retained"
+            ) from primary_error
+        raise
+    finally:
+        for _, temporary in prepared:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+        if committed:
+            for state in applied:
+                if state.backup is not None:
+                    try:
+                        state.backup.unlink()
+                    except OSError:
+                        pass
+        for directory in reversed(created_directories):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+
+
+def _create_parent_directories(parent: Path, created: list[Path]) -> None:
+    missing: list[Path] = []
+    current = parent
+    while not current.exists():
+        missing.append(current)
+        if current.parent == current:
+            break
+        current = current.parent
+    for directory in reversed(missing):
+        directory.mkdir()
+        created.append(directory)
 
 
 def _select_benchmarks(
@@ -478,11 +710,15 @@ def _excluded(relative: Path) -> bool:
 
 def _dedupe_files(files: dict[str, bytes]) -> dict[str, bytes]:
     normalized: dict[str, bytes] = {}
+    collision_keys: set[tuple[str, ...]] = set()
     for path, content in files.items():
         safe = _validate_safe_relative(path)
+        key = _portable_collision_key(safe)
+        _reject_collision_key(key, collision_keys)
         if safe in normalized and normalized[safe] != content:
             raise ValueError(f"duplicate pack path with different content: {safe}")
         normalized[safe] = content
+        collision_keys.add(key)
     return normalized
 
 
@@ -543,11 +779,14 @@ def _manifest(
 
 def _safe_zip_members(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
     members: dict[str, zipfile.ZipInfo] = {}
+    collision_keys: set[tuple[str, ...]] = set()
     total = 0
     for info in archive.infolist():
         path = _validate_safe_relative(info.filename)
+        key = _portable_collision_key(path)
         if path in members:
             raise BenchmarkPackError(f"duplicate normalized path in pack: {path}")
+        _reject_collision_key(key, collision_keys)
         mode = (info.external_attr >> 16) & 0o170000
         if info.is_dir():
             raise BenchmarkPackError(f"directories are not allowed as pack members: {path}")
@@ -557,19 +796,73 @@ def _safe_zip_members(archive: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
         if total > MAX_PACK_BYTES:
             raise BenchmarkPackError(f"pack contents exceed {MAX_PACK_BYTES} byte limit")
         members[path] = info
+        collision_keys.add(key)
     return members
 
 
 def _validate_safe_relative(path: str) -> str:
+    if not isinstance(path, str) or "\x00" in path:
+        raise BenchmarkPackError("unsafe pack path")
     normalized = path.replace("\\", "/")
+    if normalized != path or "//" in normalized or normalized.endswith("/"):
+        raise BenchmarkPackError("non-canonical pack path")
     pure = PurePosixPath(normalized)
     if normalized.startswith("/") or pure.is_absolute():
-        raise BenchmarkPackError(f"unsafe absolute path in pack: {path}")
+        raise BenchmarkPackError("unsafe absolute path in pack")
     if not normalized or normalized in {".", ""}:
         raise BenchmarkPackError("empty pack path")
-    if any(part in {"", ".", ".."} for part in pure.parts):
-        raise BenchmarkPackError(f"unsafe relative path in pack: {path}")
+    raw_parts = normalized.split("/")
+    if any(part in {"", ".", ".."} for part in raw_parts):
+        raise BenchmarkPackError("unsafe relative path in pack")
+    if len(raw_parts[0]) >= 2 and raw_parts[0][0].isalpha() and raw_parts[0][1] == ":":
+        raise BenchmarkPackError("unsafe drive-like path in pack")
+    _portable_collision_key(normalized)
     return pure.as_posix()
+
+
+def _portable_collision_key(path: str) -> tuple[str, ...]:
+    """Return the filesystem identity used for every pack path comparison.
+
+    The key deliberately models the common denominator of supported filesystems:
+    NFC-normalized, case-insensitive components and Windows trailing-dot/space
+    aliases. Names Windows cannot represent portably are rejected.
+    """
+    components: list[str] = []
+    for raw_component in path.split("/"):
+        if any(
+            unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+            for character in raw_component
+        ):
+            raise BenchmarkPackError("pack path contains a control character")
+        if any(character in '<>:"|?*' for character in raw_component):
+            raise BenchmarkPackError("pack path contains a non-portable character")
+        normalized = unicodedata.normalize("NFC", raw_component).casefold()
+        normalized = unicodedata.normalize("NFC", normalized)
+        portable = _filesystem_component_key(raw_component)
+        if portable != normalized:
+            raise BenchmarkPackError("pack path has a non-portable trailing character")
+        reserved_stem = portable.split(".", 1)[0]
+        if reserved_stem in WINDOWS_RESERVED_NAMES:
+            raise BenchmarkPackError("pack path uses a reserved filesystem name")
+        components.append(portable)
+    return tuple(components)
+
+
+def _filesystem_component_key(component: str) -> str:
+    normalized = unicodedata.normalize("NFC", component).casefold()
+    return unicodedata.normalize("NFC", normalized).rstrip(". ")
+
+
+def _reject_collision_key(
+    key: tuple[str, ...],
+    existing: set[tuple[str, ...]],
+) -> None:
+    if key in existing or any(
+        key[: len(other)] == other or other[: len(key)] == key for other in existing
+    ):
+        raise BenchmarkPackError(
+            "filesystem-equivalent pack member paths are not allowed"
+        )
 
 
 def _safe_destination(root: Path, relative_path: str) -> Path:
@@ -579,7 +872,7 @@ def _safe_destination(root: Path, relative_path: str) -> Path:
     try:
         dest.relative_to(root_resolved)
     except ValueError as error:
-        raise BenchmarkPackError(f"pack path escapes destination: {relative_path}") from error
+        raise BenchmarkPackError("pack path escapes destination") from error
     return dest
 
 
@@ -644,10 +937,12 @@ def _manifest_file_map(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
     if not isinstance(files, list) or not files:
         raise BenchmarkPackError("manifest files must be a non-empty list")
     mapped: dict[str, dict[str, Any]] = {}
+    collision_keys: set[tuple[str, ...]] = set()
     for item in files:
         if not isinstance(item, dict):
             raise BenchmarkPackError("manifest file entries must be objects")
         path = _validate_safe_relative(str(item.get("path", "")))
+        key = _portable_collision_key(path)
         sha256 = item.get("sha256")
         size = item.get("size")
         if not isinstance(sha256, str) or len(sha256) != 64:
@@ -659,7 +954,9 @@ def _manifest_file_map(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
             raise BenchmarkPackError(f"manifest file has invalid type: {path}")
         if path in mapped:
             raise BenchmarkPackError(f"duplicate file path in manifest: {path}")
+        _reject_collision_key(key, collision_keys)
         mapped[path] = {"sha256": sha256, "size": size, "type": file_type}
+        collision_keys.add(key)
     return mapped
 
 
