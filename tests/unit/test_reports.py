@@ -150,6 +150,64 @@ def test_markdown_report_contains_summary_fields_severity_and_evidence(
     assert "version" not in report["benchmark"]
 
 
+def test_json_report_replaces_known_local_roots_with_portable_roles(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "runs" / "run-1"
+    repo_dir = run_dir / "repo"
+    config_path = tmp_path / "configs" / "agentguard.yaml"
+    report_paths = ReportPaths(
+        json=run_dir / "reports" / "report.json",
+        markdown=run_dir / "reports" / "report.md",
+        command_log=run_dir / "command_log.json",
+        manifest=run_dir / "manifest.json",
+        trace=run_dir / "trace.jsonl",
+    )
+    result = BenchmarkResult(
+        task_id="portable-paths",
+        agent="mock-safe",
+        result="PASS",
+        score=100,
+        config_path=config_path,
+        run_dir=run_dir,
+        repo_dir=repo_dir,
+        test_result=CommandResult(
+            command="pytest",
+            exit_code=0,
+            stdout=f"rootdir: {repo_dir}",
+            stderr="",
+            duration_seconds=0.01,
+        ),
+        diff_summary=DiffSummary([], [], [], 0, 0, ""),
+        check_results=[
+            CheckResult("Tests passed", True, "info", f"checked {repo_dir}")
+        ],
+        report_paths=report_paths,
+        command_events=[
+            CommandEvent(
+                command=["pytest"],
+                command_text="pytest",
+                cwd=str(repo_dir),
+                exit_code=0,
+                stdout=f"rootdir: {repo_dir}",
+                stderr="",
+                duration_seconds=0.01,
+                executed=True,
+                blocked=False,
+                reason=None,
+            )
+        ],
+    )
+
+    path = write_json_report(result, run_dir / "reports")
+    text = path.read_text(encoding="utf-8")
+
+    assert str(tmp_path) not in text
+    assert "<repository>" in text
+    assert "<run>" in text
+    assert "external/agentguard.yaml" in text
+
+
 def test_markdown_report_escapes_agent_events_and_config_metadata(
     tmp_path: Path,
 ) -> None:

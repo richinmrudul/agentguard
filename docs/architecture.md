@@ -438,6 +438,13 @@ The manifest never contains full environment variables or raw stdout/stderr.
 Agent environment names are retained without values. Secret-sensitive metadata
 keys and common credential argument forms are redacted. This is pattern-based
 sanitization and cannot recognize every possible positional or encoded secret.
+Known configuration, source, run, copied-repository, and workspace roots are
+persisted as repository-relative references or stable evidence roles. Paths
+outside the current workspace are recorded as `external/<name>` with their
+content hashes; because the local absolute location is intentionally omitted,
+`manifest verify` reports such an external reference as unavailable unless the
+artifact is restored at a portable reference visible from the verification
+workspace.
 
 ### Execution Trace
 

@@ -81,6 +81,7 @@ from agentguard.provenance.manifest import (
     utc_now_iso as manifest_utc_now_iso,
     write_manifest,
 )
+from agentguard.provenance.portable_paths import portable_text, portable_value
 from agentguard.reports.json_report import write_json_report
 from agentguard.reports.markdown_report import write_markdown_report
 from agentguard.scoring.scorer import score_checks
@@ -348,14 +349,14 @@ def _supports_guard_termination(agent_name: str) -> bool:
     return agent_name in {LocalCommandAgent.name, AgentCommandAgent.name}
 
 
-def _sanitize_value(value, sensitive_values: list[str]):
+def _sanitize_value(value, sensitive_values: list[str], path_roots):
     if isinstance(value, str):
-        return sanitize_text(value, sensitive_values)
+        return portable_text(sanitize_text(value, sensitive_values), path_roots)
     if isinstance(value, list):
-        return [_sanitize_value(item, sensitive_values) for item in value]
+        return [_sanitize_value(item, sensitive_values, path_roots) for item in value]
     if isinstance(value, dict):
         return {
-            key: _sanitize_value(item, sensitive_values)
+            key: _sanitize_value(item, sensitive_values, path_roots)
             for key, item in value.items()
         }
     return value
@@ -367,6 +368,7 @@ def _sanitize_profile_evidence(
     check_results: list[CheckResult],
     command_tracker: CommandTracker,
     sensitive_values: list[str],
+    path_roots,
 ) -> tuple[
     CommandResult,
     DiffSummary,
@@ -374,34 +376,51 @@ def _sanitize_profile_evidence(
 ]:
     for event in command_tracker.events:
         event.command = [
-            sanitize_text(argument, sensitive_values) for argument in event.command
+            portable_text(sanitize_text(argument, sensitive_values), path_roots)
+            for argument in event.command
         ]
-        event.command_text = sanitize_text(event.command_text, sensitive_values)
-        event.cwd = sanitize_text(event.cwd, sensitive_values)
-        event.stdout = sanitize_text(event.stdout, sensitive_values)
-        event.stderr = sanitize_text(event.stderr, sensitive_values)
+        event.command_text = portable_text(
+            sanitize_text(event.command_text, sensitive_values), path_roots
+        )
+        event.cwd = portable_text(sanitize_text(event.cwd, sensitive_values), path_roots)
+        event.stdout = portable_text(
+            sanitize_text(event.stdout, sensitive_values), path_roots
+        )
+        event.stderr = portable_text(
+            sanitize_text(event.stderr, sensitive_values), path_roots
+        )
         if event.reason is not None:
-            event.reason = sanitize_text(event.reason, sensitive_values)
+            event.reason = portable_text(
+                sanitize_text(event.reason, sensitive_values), path_roots
+            )
     return (
         replace(
             test_result,
-            command=sanitize_text(test_result.command, sensitive_values),
-            stdout=sanitize_text(test_result.stdout, sensitive_values),
-            stderr=sanitize_text(test_result.stderr, sensitive_values),
+            command=portable_text(
+                sanitize_text(test_result.command, sensitive_values), path_roots
+            ),
+            stdout=portable_text(
+                sanitize_text(test_result.stdout, sensitive_values), path_roots
+            ),
+            stderr=portable_text(
+                sanitize_text(test_result.stderr, sensitive_values), path_roots
+            ),
         ),
         replace(
             diff_summary,
-            unified_diff=sanitize_text(
-                diff_summary.unified_diff,
-                sensitive_values,
+            unified_diff=portable_text(
+                sanitize_text(diff_summary.unified_diff, sensitive_values),
+                path_roots,
             ),
         ),
         [
             replace(
                 check,
-                message=sanitize_text(check.message, sensitive_values),
+                message=portable_text(
+                    sanitize_text(check.message, sensitive_values), path_roots
+                ),
                 evidence=[
-                    sanitize_text(item, sensitive_values)
+                    portable_text(sanitize_text(item, sensitive_values), path_roots)
                     for item in check.evidence
                 ],
             )
@@ -417,12 +436,15 @@ def _config_sensitive_values(config) -> list[str]:
 def _sanitize_timeline_events(
     events: list[TimelineEvent],
     sensitive_values: list[str],
+    path_roots,
 ) -> list[TimelineEvent]:
     return [
         replace(
             event,
-            message=sanitize_text(event.message, sensitive_values),
-            metadata=_sanitize_value(event.metadata, sensitive_values),
+            message=portable_text(
+                sanitize_text(event.message, sensitive_values), path_roots
+            ),
+            metadata=_sanitize_value(event.metadata, sensitive_values, path_roots),
         )
         for event in events
     ]
@@ -897,23 +919,30 @@ def run_benchmark(
             "result": score_result.result,
         },
     )
+    path_roots = {
+        "repository": prepared.repo_dir,
+        "run": prepared.run_dir,
+        "source": config.repo_template or config.config_path.parent,
+        "configuration": config.config_path.parent,
+        "workspace": Path.cwd(),
+    }
     sensitive_values = _config_sensitive_values(config)
     if agent_name == CustomCommandAgent.name:
         sensitive_values.extend(
             [str(prepared.repo_dir), str(prepared.repo_dir.resolve())]
         )
-    if evaluation_profile is not None or sensitive_values:
-        (
-            test_result,
-            diff_summary,
-            check_results,
-        ) = _sanitize_profile_evidence(
-            test_result,
-            diff_summary,
-            check_results,
-            command_tracker,
-            sensitive_values,
-        )
+    (
+        test_result,
+        diff_summary,
+        check_results,
+    ) = _sanitize_profile_evidence(
+        test_result,
+        diff_summary,
+        check_results,
+        command_tracker,
+        sensitive_values,
+        path_roots,
+    )
     with _measure_stage(timing_recorder, "report_writing"):
         command_log_path = command_tracker.write_json(prepared.run_dir)
 
@@ -961,11 +990,11 @@ def run_benchmark(
         },
     )
     timeline_events = timeline.events
-    if evaluation_profile is not None or sensitive_values:
-        timeline_events = _sanitize_timeline_events(
-            timeline_events,
-            sensitive_values,
-        )
+    timeline_events = _sanitize_timeline_events(
+        timeline_events,
+        sensitive_values,
+        path_roots,
+    )
     partial_result = BenchmarkResult(
         task_id=config.task_id,
         agent=evaluation_profile.id if evaluation_profile else agent_name,
@@ -1095,19 +1124,24 @@ def run_benchmark(
         source=source_identity(config.repo_template),
         configuration=configuration_identity(
             config.config_path,
-            {
-                "task_id": config.task_id,
-                "mode": config.mode,
-                "guard_mode": guard_mode.value,
-                "guard_poll_interval_seconds": guard_poll_interval_seconds,
-                "guard_ignore_paths": list(config.guard_ignore_paths),
-                "agent_workdir": config.agent_workdir,
-                "profile_id": (
-                    evaluation_profile.id if evaluation_profile is not None else None
-                ),
-                "task_prompt_source": task_prompt_source,
-                "task_prompt_sha256": task_prompt_sha256,
-            },
+            portable_value(
+                {
+                    "task_id": config.task_id,
+                    "mode": config.mode,
+                    "guard_mode": guard_mode.value,
+                    "guard_poll_interval_seconds": guard_poll_interval_seconds,
+                    "guard_ignore_paths": list(config.guard_ignore_paths),
+                    "agent_workdir": config.agent_workdir,
+                    "profile_id": (
+                        evaluation_profile.id
+                        if evaluation_profile is not None
+                        else None
+                    ),
+                    "task_prompt_source": task_prompt_source,
+                    "task_prompt_sha256": task_prompt_sha256,
+                },
+                path_roots,
+            ),
         ),
         agent=agent_details,
         benchmarks=[benchmark_identity(config)],

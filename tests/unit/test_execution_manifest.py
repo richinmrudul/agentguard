@@ -25,6 +25,7 @@ from agentguard.provenance.manifest import (
     sha256_file,
     verify_manifest,
 )
+from agentguard.provenance.portable_paths import portable_text
 
 
 runner = CliRunner()
@@ -133,6 +134,26 @@ def test_git_identity_degrades_gracefully(tmp_path: Path) -> None:
 
     assert identity.git_commit is None
     assert identity.dirty_worktree is None
+
+
+def test_portable_text_replaces_posix_and_windows_roots_with_roles() -> None:
+    posix_root = "/Users/PATH_CANARY/workspace"
+    windows_root = r"C:\Users\PATH_CANARY\workspace"
+    text = (
+        f"source={posix_root}/examples/repo "
+        rf"config={windows_root}\configs\agentguard.yaml"
+    )
+
+    sanitized = portable_text(
+        text,
+        {"source": posix_root, "configuration": windows_root},
+    )
+
+    assert "PATH_CANARY" not in sanitized
+    assert sanitized == (
+        "source=<source>/examples/repo "
+        r"config=<configuration>\configs\agentguard.yaml"
+    )
 
 
 def test_sanitize_arguments_redacts_supported_secret_forms() -> None:
@@ -393,6 +414,56 @@ agent_metadata:
     )
 
 
+def test_run_artifacts_and_exports_omit_known_local_roots(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    result = run_benchmark(config_path, "mock-safe")
+    sarif = tmp_path / "portable.sarif"
+    junit = tmp_path / "portable.xml"
+
+    assert runner.invoke(
+        app,
+        [
+            "reports",
+            "export-sarif",
+            str(result.report_paths.json),
+            "--output",
+            str(sarif),
+        ],
+    ).exit_code == 0
+    assert runner.invoke(
+        app,
+        [
+            "reports",
+            "export-junit",
+            str(result.report_paths.json),
+            "--output",
+            str(junit),
+        ],
+    ).exit_code == 0
+
+    artifact_paths = [
+        result.report_paths.json,
+        result.report_paths.markdown,
+        result.report_paths.command_log,
+        result.report_paths.manifest,
+        result.report_paths.trace,
+        sarif,
+        junit,
+    ]
+    combined = "\n".join(
+        Path(path).read_text(encoding="utf-8")
+        for path in artifact_paths
+        if path is not None
+    )
+    for local_root in {str(tmp_path.resolve()), str(Path.cwd().resolve())}:
+        assert local_root not in combined
+    manifest = json.loads(Path(result.report_paths.manifest).read_text())
+    assert manifest["configuration"]["path"] == "external/agentguard.yaml"
+    assert len(manifest["configuration"]["sha256"]) == 64
+    assert manifest["artifacts"]["json_report"].endswith("reports/report.json")
+    assert "<repository>" in combined
+
+
 def test_suite_and_parallel_matrix_parent_child_provenance(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path)
     suite_path = _write_suite(tmp_path, config_path)
@@ -430,8 +501,12 @@ def test_manifest_verify_exit_codes_for_matching_changed_missing_and_invalid(
     result = run_benchmark(config_path, "mock-safe")
     manifest_path = Path(result.report_paths.manifest)
 
-    assert verify_manifest(manifest_path).exit_code == 0
-    assert runner.invoke(app, ["manifest", "verify", str(manifest_path)]).exit_code == 0
+    verification = verify_manifest(manifest_path)
+    assert verification.exit_code == 1
+    assert verification.messages == [
+        "MISSING configuration: external/agentguard.yaml"
+    ]
+    assert runner.invoke(app, ["manifest", "verify", str(manifest_path)]).exit_code == 1
 
     original = config_path.read_text(encoding="utf-8")
     config_path.write_text(original + "\n# changed\n", encoding="utf-8")
@@ -480,14 +555,16 @@ def test_manifest_verification_reports_changed_and_missing_references(
     changed = verify_manifest(manifest_path)
     assert changed.status == "changed"
     assert any(
-        message.startswith("CHANGED configuration:") for message in changed.messages
+        message == "MISSING configuration: external/agentguard.yaml"
+        for message in changed.messages
     )
 
     config_path.unlink()
     missing = verify_manifest(manifest_path)
     assert missing.status == "changed"
     assert any(
-        message.startswith("MISSING configuration:") for message in missing.messages
+        message == "MISSING configuration: external/agentguard.yaml"
+        for message in missing.messages
     )
 
 

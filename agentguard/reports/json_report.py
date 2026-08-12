@@ -4,6 +4,7 @@ from typing import Any
 
 from agentguard.core.result import BenchmarkResult
 from agentguard.io import atomic_write_json
+from agentguard.provenance.portable_paths import portable_reference, portable_value
 
 
 def _json_default(value: Any) -> str:
@@ -43,5 +44,15 @@ def write_json_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     data["evidence"] = [
         evidence for check in result.check_results for evidence in check.evidence
     ]
+    data["config_path"] = portable_reference(result.config_path)
+    data = portable_value(
+        data,
+        {
+            "repository": result.repo_dir,
+            "run": result.run_dir,
+            "configuration": result.config_path.parent,
+            "workspace": Path.cwd(),
+        },
+    )
     atomic_write_json(report_path, data, default=_json_default)
     return report_path

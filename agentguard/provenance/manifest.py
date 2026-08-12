@@ -25,6 +25,7 @@ from agentguard.instrumentation.processes import (
 from agentguard.policy.command_policy import evaluate_command_policy
 from agentguard.sandbox.docker_runner import DockerCommandRunner
 from agentguard.terminal import sanitize_terminal_text
+from agentguard.provenance.portable_paths import portable_reference
 
 
 MANIFEST_SCHEMA = "agentguard.execution-manifest"
@@ -191,12 +192,7 @@ def sha256_file(path: Path) -> str:
 def portable_path(path: Optional[Path], root: Optional[Path] = None) -> Optional[str]:
     if path is None:
         return None
-    resolved = path.expanduser().resolve()
-    base = (root or Path.cwd()).expanduser().resolve()
-    try:
-        return resolved.relative_to(base).as_posix()
-    except ValueError:
-        return resolved.as_posix()
+    return portable_reference(path, root)
 
 
 def git_identity(path: Path) -> GitIdentity:
