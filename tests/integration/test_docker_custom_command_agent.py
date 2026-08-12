@@ -1,8 +1,13 @@
+from dataclasses import replace
 from pathlib import Path
+import uuid
 
 import pytest
 
 from agentguard.core.orchestrator import run_benchmark
+from agentguard.config.loader import load_config
+from agentguard.instrumentation.command_tracker import CommandTracker
+from agentguard.provenance.manifest import detect_agent_version
 from agentguard.sandbox.docker_runner import docker_available
 
 
@@ -34,6 +39,36 @@ def test_docker_custom_command_safe_agent_passes() -> None:
     assert "docker agent: python agent_scripts/safe_agent.py" in [
         event.command_text for event in result.command_events
     ]
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(not docker_available(), reason="Docker is not available")
+def test_docker_version_command_cannot_create_host_marker(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    marker = Path("/tmp") / f"agentguard-host-marker-{uuid.uuid4().hex}"
+    config = replace(
+        load_config(Path("examples/configs/fix_auth_bug_docker.yaml")),
+        agent_version_command=[
+            "python",
+            "-c",
+            (
+                "from pathlib import Path; "
+                f"Path({str(marker)!r}).touch(); print('agent 4.2')"
+            ),
+        ],
+    )
+
+    try:
+        detected = detect_agent_version(
+            config,
+            repo_dir=repo_dir,
+            command_tracker=CommandTracker(),
+        )
+        assert detected == ("agent 4.2", "detected", None)
+        assert not marker.exists()
+    finally:
+        marker.unlink(missing_ok=True)
 
 
 @pytest.mark.docker
