@@ -1,4 +1,5 @@
 from pathlib import Path
+import gc
 import json
 import shlex
 import sys
@@ -8,6 +9,7 @@ from typer.testing import CliRunner
 
 from agentguard.cli.main import app
 from agentguard.core.orchestrator import run_benchmark
+from agentguard.repo.internal_artifacts import OwnedArtifact
 
 
 def _result_debug(result) -> str:
@@ -37,6 +39,51 @@ def test_local_command_safe_agent_passes_without_docker() -> None:
     assert "local agent: python3 agent_scripts/safe_agent.py" in [
         event.command_text for event in result.command_events
     ]
+
+
+def test_event_identity_descriptor_closes_when_test_execution_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed_descriptors: list[int] = []
+    original_close = OwnedArtifact.close
+
+    def record_close(artifact: OwnedArtifact) -> None:
+        descriptor = artifact.descriptor
+        original_close(artifact)
+        if descriptor >= 0:
+            closed_descriptors.append(descriptor)
+
+    def write_event_before_diff(_agent, repo_dir, *_args, **_kwargs) -> None:
+        (repo_dir / ".agentguard_agent_events.jsonl").write_text(
+            '{"type":"command_attempt","command_text":"echo ok"}\n',
+            encoding="utf-8",
+        )
+
+    def fail_before_diff(*_args, **_kwargs):
+        raise RuntimeError("injected pre-diff failure")
+
+    monkeypatch.setattr(OwnedArtifact, "close", record_close)
+    monkeypatch.setattr(
+        "agentguard.agents.local_command_agent.LocalCommandAgent.run",
+        write_event_before_diff,
+    )
+    monkeypatch.setattr(
+        "agentguard.instrumentation.test_runner.TestRunner.run",
+        fail_before_diff,
+    )
+
+    try:
+        run_benchmark(
+            Path("examples/configs/fix_auth_bug_local_command_safe.yaml"),
+            "local-command",
+        )
+    except RuntimeError as error:
+        assert str(error) == "injected pre-diff failure"
+    else:
+        raise AssertionError("injected pre-diff failure was not preserved")
+    gc.collect()
+
+    assert len(closed_descriptors) == 1
 
 
 def test_local_command_cheater_fails_with_test_tampering() -> None:

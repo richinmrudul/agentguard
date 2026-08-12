@@ -1,11 +1,9 @@
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 from agentguard.core.result import DiffSummary
-from agentguard.repo.internal_artifacts import (
-    git_exclusion_pathspecs,
-    is_internal_artifact,
-)
+from agentguard.repo.internal_artifacts import OwnedArtifact, verified_owned_paths
 
 
 def _git(repo_dir: Path, *args: str) -> str:
@@ -19,18 +17,28 @@ def _git(repo_dir: Path, *args: str) -> str:
     return result.stdout
 
 
-def _numstat(repo_dir: Path, baseline_ref: str = "HEAD") -> tuple[int, int]:
-    return _numstat_for_diff(repo_dir, baseline_ref)
+def _numstat(
+    repo_dir: Path,
+    baseline_ref: str = "HEAD",
+    *,
+    excluded_paths: set[str],
+) -> tuple[int, int]:
+    return _numstat_for_diff(repo_dir, baseline_ref, excluded_paths=excluded_paths)
 
 
-def _numstat_for_diff(repo_dir: Path, *diff_args: str) -> tuple[int, int]:
+def _numstat_for_diff(
+    repo_dir: Path,
+    *diff_args: str,
+    excluded_paths: Optional[set[str]] = None,
+) -> tuple[int, int]:
+    excluded_paths = excluded_paths or set()
     added = 0
     deleted = 0
     for line in _git(repo_dir, "diff", *diff_args, "--numstat").splitlines():
         parts = line.split("\t")
         if len(parts) < 3:
             continue
-        if is_internal_artifact(parts[-1]):
+        if parts[-1] in excluded_paths:
             continue
         if parts[0].isdigit():
             added += int(parts[0])
@@ -41,7 +49,10 @@ def _numstat_for_diff(repo_dir: Path, *diff_args: str) -> tuple[int, int]:
 
 def _classify_name_status(
     name_status: str,
+    *,
+    excluded_paths: Optional[set[str]] = None,
 ) -> tuple[list[str], list[str], list[str]]:
+    excluded_paths = excluded_paths or set()
     modified_files: list[str] = []
     added_files: list[str] = []
     deleted_files: list[str] = []
@@ -57,9 +68,7 @@ def _classify_name_status(
         path_count = 2 if status_type in {"C", "R"} else 1
         paths = fields[index : index + path_count]
         index += path_count
-        visible_paths = [
-            path for path in paths if path and not is_internal_artifact(path)
-        ]
+        visible_paths = [path for path in paths if path and path not in excluded_paths]
         if status_type == "A":
             added_files.extend(visible_paths)
         elif status_type == "D":
@@ -70,7 +79,12 @@ def _classify_name_status(
     return modified_files, added_files, deleted_files
 
 
-def _untracked_files(repo_dir: Path, *, include_ignored: bool = False) -> list[str]:
+def _untracked_files(
+    repo_dir: Path,
+    *,
+    include_ignored: bool = False,
+    excluded_paths: set[str],
+) -> list[str]:
     args = ["ls-files", "--others"]
     if not include_ignored:
         args.append("--exclude-standard")
@@ -80,7 +94,7 @@ def _untracked_files(repo_dir: Path, *, include_ignored: bool = False) -> list[s
             path
             for path in _git(repo_dir, *args).split("\0")
             if path
-            if not is_internal_artifact(path)
+            if path not in excluded_paths
         ]
     )
 
@@ -109,8 +123,10 @@ def collect_diff(
     baseline_ref: str = "HEAD",
     *,
     include_ignored: bool = False,
+    owned_artifacts: tuple[OwnedArtifact, ...] = (),
 ) -> DiffSummary:
     _require_baseline_commit(repo_dir, baseline_ref)
+    excluded_paths = verified_owned_paths(repo_dir, owned_artifacts)
     modified_files, added_files, deleted_files = _classify_name_status(
         _git(
             repo_dir,
@@ -119,11 +135,20 @@ def collect_diff(
             "--find-renames",
             "--name-status",
             "-z",
-        )
+        ),
+        excluded_paths=excluded_paths,
     )
-    untracked_files = _untracked_files(repo_dir, include_ignored=include_ignored)
+    untracked_files = _untracked_files(
+        repo_dir,
+        include_ignored=include_ignored,
+        excluded_paths=excluded_paths,
+    )
     added_files.extend(path for path in untracked_files if path not in added_files)
-    lines_added, lines_deleted = _numstat(repo_dir, baseline_ref)
+    lines_added, lines_deleted = _numstat(
+        repo_dir,
+        baseline_ref,
+        excluded_paths=excluded_paths,
+    )
     lines_added += sum(_line_count(repo_dir / path) for path in untracked_files)
 
     return DiffSummary(
@@ -138,7 +163,7 @@ def collect_diff(
             baseline_ref,
             "--",
             ".",
-            *git_exclusion_pathspecs(),
+            *(f":(literal,exclude){path}" for path in sorted(excluded_paths)),
         ),
     )
 

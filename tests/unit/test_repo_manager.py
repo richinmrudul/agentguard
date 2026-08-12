@@ -92,7 +92,7 @@ def test_prepare_excludes_git_metadata_recursively_and_preserves_similar_names(
     assert _git(prepared.repo_dir, "status", "--porcelain") == ""
 
 
-def test_prepare_tracks_ignored_source_but_excludes_internal_artifacts(
+def test_prepare_tracks_ignored_and_reserved_template_content(
     tmp_path: Path,
 ) -> None:
     template = tmp_path / "template"
@@ -110,6 +110,9 @@ def test_prepare_tracks_ignored_source_but_excludes_internal_artifacts(
         "{}\n", encoding="utf-8"
     )
     (template / "generated.pyc").write_bytes(b"bytecode")
+    (template / ".agentguard_agent_events.jsonl").write_text(
+        "template-owned\n", encoding="utf-8"
+    )
 
     prepared = RepoManager(tmp_path / "runs").prepare(
         _config_for(template), "custom-command"
@@ -117,7 +120,10 @@ def test_prepare_tracks_ignored_source_but_excludes_internal_artifacts(
 
     tracked = _git(prepared.repo_dir, "ls-files").splitlines()
     assert tracked == [
+        ".agentguard/runs/report.json",
+        ".agentguard_agent_events.jsonl",
         ".gitignore",
+        "generated.pyc",
         "ignored.txt",
         "nested/.gitignore",
         "nested/protected.secret",

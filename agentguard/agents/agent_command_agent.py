@@ -18,7 +18,7 @@ from agentguard.instrumentation.processes import (
     popen_with_process_group,
     terminate_process_tree,
 )
-from agentguard.instrumentation.test_runner import _build_test_env
+from agentguard.instrumentation.test_runner import _build_subprocess_env
 from agentguard.policy.command_policy import evaluate_command_policy
 from agentguard.provenance.manifest import sanitize_arguments, sanitize_text
 
@@ -136,7 +136,7 @@ class AgentCommandAgent(Agent):
             if src_path.exists():
                 env["PYTHONPATH"] = str(src_path)
             return env
-        env = _build_test_env(repo_dir)
+        env = _build_subprocess_env(repo_dir)
         env.update(self.config.agent_environment)
         return env
 

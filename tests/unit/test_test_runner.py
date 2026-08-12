@@ -1,5 +1,6 @@
 import os
 import shlex
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -7,8 +8,13 @@ from pathlib import Path
 import pytest
 
 from agentguard.instrumentation.command_tracker import CommandTracker
-from agentguard.instrumentation.test_runner import _build_test_env, _go_test_env
+from agentguard.instrumentation.test_runner import (
+    _build_test_env,
+    _go_test_env,
+    _is_pytest_argv,
+)
 from agentguard.instrumentation.test_runner import TestRunner as AgentGuardTestRunner
+from agentguard.repo.git_diff import collect_diff
 
 
 def test_build_test_env_uses_isolated_absolute_src_pythonpath(
@@ -28,8 +34,76 @@ def test_build_test_env_uses_isolated_absolute_src_pythonpath(
     assert Path(env["PYTHONPATH"]).is_absolute()
     assert "existing-path" not in env["PYTHONPATH"]
     assert "AGENTGUARD_AUDIT_CANARY" not in env
+    assert env["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert env["RUFF_CACHE_DIR"] == str(
+        repo_dir.resolve() / ".git" / "agentguard-cache" / "ruff"
+    )
+    assert "PYTEST_ADDOPTS" not in env
     assert "GOCACHE" not in env
     assert "GOMODCACHE" not in env
+
+
+def test_pytest_detection_covers_supported_command_forms() -> None:
+    assert _is_pytest_argv(["pytest", "-q"])
+    assert _is_pytest_argv([sys.executable, "-m", "pytest", "-q"])
+    assert not _is_pytest_argv([sys.executable, "-c", "print('pytest')"])
+
+
+def test_pytest_cache_option_is_appended_without_replacing_options(
+    tmp_path: Path,
+) -> None:
+    tracker = CommandTracker()
+    runner = AgentGuardTestRunner(tracker)
+
+    result = runner.run(tmp_path, "pytest --version")
+
+    assert result.exit_code == 0
+    assert tracker.events[0].command[:2] == [sys.executable, "-m"]
+    assert tracker.events[0].command[-2:] == [
+        "-o",
+        f"cache_dir={tmp_path / '.git' / 'agentguard-cache' / 'pytest'}",
+    ]
+
+
+def test_pytest_keeps_attacker_cache_evidence_and_contains_owned_cache(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "--template="], cwd=repo, check=True)
+    attacker_cache = repo / ".pytest_cache" / "attacker.txt"
+    attacker_cache.parent.mkdir()
+    attacker_cache.write_text("baseline\n", encoding="utf-8")
+    test_file = repo / "test_cache.py"
+    test_file.write_text(
+        "def test_cache_fixture(cache):\n"
+        "    cache.set('agentguard/test', 'ok')\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.local",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-m",
+            "Baseline",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    attacker_cache.write_text("agent changed\n", encoding="utf-8")
+
+    result = AgentGuardTestRunner(CommandTracker()).run(repo, "pytest -q")
+
+    assert result.exit_code == 0
+    assert attacker_cache.read_text(encoding="utf-8") == "agent changed\n"
+    assert not (repo / "__pycache__").exists()
+    assert not (repo / ".pytest_cache" / "v").exists()
+    assert (repo / ".git" / "agentguard-cache" / "pytest" / "v").is_dir()
 
 
 def test_go_test_env_uses_contained_caches_and_rejects_symlinks(
@@ -40,17 +114,83 @@ def test_go_test_env_uses_contained_caches_and_rejects_symlinks(
 
     env = _go_test_env(repo_dir)
 
-    assert env["GOCACHE"] == str(repo_dir / ".agentguard/cache/go-build")
-    assert env["GOMODCACHE"] == str(repo_dir / ".agentguard/cache/go-mod")
+    assert env["GOCACHE"] == str(repo_dir / ".git/agentguard-cache/go-build")
+    assert env["GOMODCACHE"] == str(repo_dir / ".git/agentguard-cache/go-mod")
     assert env["GOENV"] == "off"
     assert env["GOTOOLCHAIN"] == "local"
 
     outside = tmp_path / "outside"
     outside.mkdir()
-    (repo_dir / ".agentguard").symlink_to(outside, target_is_directory=True)
+    (repo_dir / ".git").symlink_to(outside, target_is_directory=True)
 
     with pytest.raises(ValueError, match="not a safe directory"):
         _go_test_env(repo_dir)
+
+
+def test_runner_caches_do_not_hide_attacker_owned_lookalikes(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "--template="], cwd=repo, check=True)
+    (repo / "sample_module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    attacker_paths = [
+        repo / ".agentguard" / "cache" / "payload.txt",
+        repo / ".ruff_cache" / "payload.txt",
+        repo / "__pycache__" / "payload.pyc",
+        repo / "attacker.pyc",
+    ]
+    for path in attacker_paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("baseline\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.local",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-m",
+            "Baseline",
+        ],
+        cwd=repo,
+        check=True,
+    )
+    for path in attacker_paths:
+        path.write_text("agent changed\n", encoding="utf-8")
+
+    python_result = AgentGuardTestRunner(CommandTracker()).run(
+        repo,
+        shlex.join(
+            [
+                sys.executable,
+                "-c",
+                "import sample_module; assert sample_module.VALUE == 1",
+            ]
+        ),
+    )
+    ruff_result = AgentGuardTestRunner(CommandTracker()).run(
+        repo,
+        shlex.join(
+            [str(Path(sys.executable).with_name("ruff")), "check", "sample_module.py"]
+        ),
+    )
+    diff = collect_diff(repo)
+
+    assert python_result.exit_code == 0
+    assert ruff_result.exit_code == 0
+    assert set(diff.modified_files) == {
+        path.relative_to(repo).as_posix() for path in attacker_paths
+    }
+    assert all(
+        path.read_text(encoding="utf-8") == "agent changed\n"
+        for path in attacker_paths
+    )
+    assert not (repo / "__pycache__" / "sample_module.pyc").exists()
+    assert not (repo / ".ruff_cache" / "CACHEDIR.TAG").exists()
+    assert not (repo / ".agentguard" / "cache" / "go-build").exists()
 
 
 def test_test_runner_excludes_ambient_environment_from_captured_output(

@@ -184,7 +184,10 @@ def test_docker_command_runner_records_readable_agent_command(
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
 
+    calls = []
+
     def fake_popen(command, **kwargs):
+        calls.append(command)
         return FakeProcess(returncode=0, stdout="agent ok", stderr="")
 
     monkeypatch.setattr(
@@ -205,6 +208,9 @@ def test_docker_command_runner_records_readable_agent_command(
 
     assert result.exit_code == 0
     assert tracker.commands == ["docker agent: python agent_scripts/safe_agent.py"]
+    assert "PYTHONDONTWRITEBYTECODE=1" not in calls[0]
+    assert not any(item.startswith("RUFF_CACHE_DIR=") for item in calls[0])
+    assert not any(item.startswith("GOCACHE=") for item in calls[0])
 
 
 def test_docker_runner_records_install_and_test_commands(
@@ -242,7 +248,18 @@ def test_docker_runner_records_install_and_test_commands(
         "-e",
         ".",
     ]
-    assert calls[1][0][-3:] == ["python", "-m", "pytest"]
+    assert calls[1][0][-5:] == [
+        "python",
+        "-m",
+        "pytest",
+        "-o",
+        "cache_dir=/workspace/.git/agentguard-cache/pytest",
+    ]
+    for command, _kwargs in calls:
+        assert "PYTHONDONTWRITEBYTECODE=1" in command
+        assert "RUFF_CACHE_DIR=/workspace/.git/agentguard-cache/ruff" in command
+        assert "GOCACHE=/workspace/.git/agentguard-cache/go-build" in command
+        assert "GOMODCACHE=/workspace/.git/agentguard-cache/go-mod" in command
     assert tracker.commands == [
         "docker: python -m pip install --no-build-isolation -e .",
         "docker: pytest",

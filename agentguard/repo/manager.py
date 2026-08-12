@@ -9,7 +9,6 @@ from uuid import uuid4
 
 from agentguard.artifact_paths import artifact_directory
 from agentguard.config.schema import AgentGuardConfig
-from agentguard.repo.internal_artifacts import git_exclusion_pathspecs
 
 
 @dataclass(frozen=True)
@@ -56,7 +55,6 @@ class RepoManager:
                 "--force",
                 "--",
                 ".",
-                *git_exclusion_pathspecs(),
             )
             self._git(
                 repo_dir,

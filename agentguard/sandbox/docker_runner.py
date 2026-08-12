@@ -32,6 +32,14 @@ DOCKER_CLEANUP_COMPLETE_MESSAGE = "docker container removed after timeout"
 DOCKER_CLEANUP_INCOMPLETE_MESSAGE = (
     "docker cleanup incomplete: container removal failed"
 )
+OWNED_TEST_ENVIRONMENT = {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "RUFF_CACHE_DIR": "/workspace/.git/agentguard-cache/ruff",
+    "GOCACHE": "/workspace/.git/agentguard-cache/go-build",
+    "GOMODCACHE": "/workspace/.git/agentguard-cache/go-mod",
+    "GOENV": "off",
+    "GOTOOLCHAIN": "local",
+}
 
 
 def _docker_test_argv(command: str) -> list[str]:
@@ -73,23 +81,27 @@ class DockerTestRunner:
     def _docker_command(self, repo_dir: Path, inner_command: list[str]) -> list[str]:
         return self.command_runner.build_command(repo_dir, inner_command)
 
-    def _run_inner_command(
-        self,
-        repo_dir: Path,
-        inner_command: list[str],
-        command_text: str,
-    ) -> CommandResult:
-        return self.command_runner.run_argv(repo_dir, inner_command, command_text)
-
     def run(self, repo_dir: Path, command: str) -> CommandResult:
         test_argv = _docker_test_argv(command)
         if not test_argv:
             raise ValueError("Test command cannot be empty.")
+        if test_argv[:3] == ["python", "-m", "pytest"]:
+            test_argv.extend(
+                [
+                    "-o",
+                    f"cache_dir={self.sandbox.workdir}/.git/agentguard-cache/pytest",
+                ]
+            )
 
-        install_result = self._run_inner_command(
+        owned_environment = {
+            name: value.replace("/workspace", self.sandbox.workdir)
+            for name, value in OWNED_TEST_ENVIRONMENT.items()
+        }
+        install_result = self.command_runner.run_argv(
             repo_dir=repo_dir,
             inner_command=INSTALL_COMMAND,
             command_text="docker: python -m pip install --no-build-isolation -e .",
+            environment=owned_environment,
         )
         if install_result.exit_code != 0:
             return CommandResult(
@@ -106,10 +118,11 @@ class DockerTestRunner:
                 process_cleanup_message=install_result.process_cleanup_message,
             )
 
-        test_result = self._run_inner_command(
+        test_result = self.command_runner.run_argv(
             repo_dir=repo_dir,
             inner_command=test_argv,
             command_text=f"docker: {command}",
+            environment=owned_environment,
         )
         return CommandResult(
             command=command,
@@ -148,6 +161,7 @@ class DockerCommandRunner:
         inner_command: list[str],
         *,
         container_name: Optional[str] = None,
+        environment: Optional[dict[str, str]] = None,
     ) -> list[str]:
         if self.sandbox.type != "docker":
             raise ValueError("DockerCommandRunner requires sandbox.type='docker'.")
@@ -168,9 +182,10 @@ class DockerCommandRunner:
             self.sandbox.workdir,
             "-e",
             f"PYTHONPATH={self.sandbox.workdir}/src",
-            "--network",
-            self.sandbox.network,
         ])
+        for name, value in sorted((environment or {}).items()):
+            command.extend(["-e", f"{name}={value}"])
+        command.extend(["--network", self.sandbox.network])
         if self.sandbox.memory is not None:
             command.extend(["--memory", self.sandbox.memory])
         if self.sandbox.cpus is not None:
@@ -187,12 +202,14 @@ class DockerCommandRunner:
         command_text: str,
         preflight_matched_patterns: Optional[list[str]] = None,
         policy_mode: Optional[str] = None,
+        environment: Optional[dict[str, str]] = None,
     ) -> CommandResult:
         container_name = self._container_name()
         docker_command = self.build_command(
             repo_dir,
             inner_command,
             container_name=container_name,
+            environment=environment,
         )
         started = time.monotonic()
         timed_out = False

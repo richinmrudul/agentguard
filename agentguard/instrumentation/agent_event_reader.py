@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from agentguard.instrumentation.command_tracker import CommandEvent
+from agentguard.repo.internal_artifacts import OwnedArtifact, adopt_owned_artifact
 
 
 DEFAULT_AGENT_EVENT_FILE = ".agentguard_agent_events.jsonl"
@@ -92,12 +93,14 @@ class AgentEventStreamReader:
         max_total_bytes: int = MAX_AGENT_EVENT_BYTES,
         max_line_bytes: int = MAX_AGENT_EVENT_LINE_BYTES,
         max_events: int = MAX_AGENT_EVENTS,
+        retain_source: bool = False,
     ) -> None:
         self.repo_dir = repo_dir.expanduser().resolve()
         self.event_path = _safe_event_path(self.repo_dir, event_file_name)
         self.max_total_bytes = max_total_bytes
         self.max_line_bytes = max_line_bytes
         self.max_events = max_events
+        self.retain_source = retain_source
         self.offset = 0
         self.total_bytes = 0
         self.events_observed = 0
@@ -108,6 +111,7 @@ class AgentEventStreamReader:
         self._source_identity: Optional[tuple[int, int]] = None
         self._diagnostic: Optional[str] = None
         self._terminal = False
+        self._retained_descriptor: Optional[int] = None
 
     def read_new(self, *, finalize: bool = False) -> AgentEventBatch:
         if self._terminal:
@@ -168,8 +172,28 @@ class AgentEventStreamReader:
         except OSError:
             self._fail(f"{INSTRUMENTATION_INCOMPLETE}: event source read failed.")
         finally:
-            os.close(descriptor)
+            if self.retain_source:
+                if self._retained_descriptor is not None:
+                    os.close(self._retained_descriptor)
+                self._retained_descriptor = descriptor
+            else:
+                os.close(descriptor)
         return self._batch(events)
+
+    def take_owned_artifact(self, relative_path: str) -> Optional[OwnedArtifact]:
+        """Transfer the validated source descriptor into evidence ownership."""
+        descriptor = self._retained_descriptor
+        self._retained_descriptor = None
+        if descriptor is None:
+            return None
+        return adopt_owned_artifact(self.repo_dir, relative_path, descriptor)
+
+    def __del__(self) -> None:
+        if self._retained_descriptor is not None:
+            try:
+                os.close(self._retained_descriptor)
+            except OSError:
+                pass
 
     def _consume(
         self,
@@ -321,3 +345,24 @@ def read_agent_events(
     if batch.diagnostic is not None:
         events.append(_diagnostic_event(repo_dir, batch.diagnostic))
     return events
+
+
+def read_agent_events_with_artifact(
+    repo_dir: Path,
+    event_file_name: str = DEFAULT_AGENT_EVENT_FILE,
+) -> tuple[list[CommandEvent], Optional[OwnedArtifact]]:
+    """Read events and transfer a safely validated source identity to the caller."""
+    reader = AgentEventStreamReader(
+        repo_dir,
+        event_file_name,
+        retain_source=True,
+    )
+    batch = reader.read_new(finalize=True)
+    events = [
+        event
+        for data in batch.events
+        if (event := _command_attempt_event(data, repo_dir)) is not None
+    ]
+    if batch.diagnostic is not None:
+        events.append(_diagnostic_event(repo_dir, batch.diagnostic))
+    return events, reader.take_owned_artifact(event_file_name)

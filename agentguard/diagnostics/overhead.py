@@ -18,7 +18,10 @@ from agentguard.config.schema import AgentGuardConfig
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.result import BenchmarkResult
 from agentguard.core.timing import StageTimingRecorder
-from agentguard.instrumentation.test_runner import _build_test_env
+from agentguard.instrumentation.test_runner import (
+    _build_subprocess_env,
+    _build_test_env,
+)
 from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.provenance.manifest import agentguard_identity, sha256_file
@@ -164,7 +167,7 @@ def _direct_agent(config: AgentGuardConfig, agent_name: str, repo_dir: Path) -> 
         if agent_name == "agent-command" and config.agent_workdir == "config_dir"
         else repo_dir
     )
-    env = _build_test_env(repo_dir)
+    env = _build_subprocess_env(repo_dir)
     env.update(config.agent_environment)
     completed = _run_command(
         _command_argv(config.agent_command),

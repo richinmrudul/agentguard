@@ -11,6 +11,7 @@ from agentguard.instrumentation.agent_event_reader import (
     AgentEventStreamReader,
     _open_regular_file,
     read_agent_events,
+    read_agent_events_with_artifact,
 )
 from agentguard.instrumentation.command_tracker import CommandTracker
 
@@ -45,6 +46,18 @@ def test_valid_blocked_command_attempt_becomes_command_event(tmp_path: Path) -> 
     assert events[0].exit_code is None
     assert events[0].cwd == str(tmp_path)
     assert events[0].reason == "Unsafe command attempt reported by custom agent"
+
+
+def test_valid_event_source_transfers_exact_owned_identity(tmp_path: Path) -> None:
+    event_path = tmp_path / ".agentguard_agent_events.jsonl"
+    event_path.write_text(_event("echo owned") + "\n", encoding="utf-8")
+
+    events, artifact = read_agent_events_with_artifact(tmp_path)
+
+    assert [event.command_text for event in events] == ["echo owned"]
+    assert artifact is not None
+    assert os.fstat(artifact.descriptor).st_ino == event_path.stat().st_ino
+    artifact.close()
 
 
 def test_missing_command_list_uses_shlex_split(tmp_path: Path) -> None:
@@ -213,6 +226,18 @@ def test_symlink_event_source_is_rejected_without_following(tmp_path: Path) -> N
 
     assert [event.command_text for event in events] == [INSTRUMENTATION_INCOMPLETE]
     assert "not a regular file" in (events[0].reason or "")
+    assert "AGENTGUARD_EVENT_CANARY_OUTSIDE" not in repr(events)
+
+
+def test_symlink_event_source_is_never_claimed(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text(_event("AGENTGUARD_EVENT_CANARY_OUTSIDE") + "\n")
+    (tmp_path / ".agentguard_agent_events.jsonl").symlink_to(outside)
+
+    events, artifact = read_agent_events_with_artifact(tmp_path)
+
+    assert artifact is None
+    assert [event.command_text for event in events] == [INSTRUMENTATION_INCOMPLETE]
     assert "AGENTGUARD_EVENT_CANARY_OUTSIDE" not in repr(events)
 
 
