@@ -247,7 +247,7 @@ The orchestrator coordinates a benchmark run from config load through report wri
 
 ### Repo Manager
 
-In benchmark mode, the repo manager copies the configured template repository into `.agentguard/runs/.../repo`, initializes a git repository, and commits the initial benchmark state. That baseline lets AgentGuard collect the agent's changes with ordinary git diff machinery.
+In benchmark mode, the repo manager copies the configured template repository into `.agentguard/runs/.../repo`, initializes a git repository, and commits the initial benchmark state. AgentGuard retains that exact commit identity and compares the final repository state against it, so agent-created commits or branch changes cannot replace the trusted baseline.
 
 ### Agent Adapters
 

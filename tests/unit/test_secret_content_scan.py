@@ -138,6 +138,35 @@ def test_deleted_only_secret_is_not_reported(tmp_path: Path) -> None:
     assert _scan(repo).matches == []
 
 
+def test_exact_rename_uses_fixed_baseline_after_agent_commit(tmp_path: Path) -> None:
+    repo = _repo(tmp_path, f"existing {LITERAL}\n")
+    baseline_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    _git(repo, "rm", "tracked.txt")
+    _git(repo, "commit", "-m", "agent deletes baseline path")
+    (repo / "renamed.txt").write_text(
+        f"existing {LITERAL}\n", encoding="utf-8"
+    )
+    diff = collect_diff(repo, baseline_commit)
+
+    result = scan_secret_content(
+        repo, diff, PATTERNS, baseline_ref=baseline_commit
+    )
+
+    assert diff.deleted_files == ["tracked.txt"]
+    assert diff.added_files == ["renamed.txt"]
+    assert result.complete is True
+    assert result.matches == []
+    assert scan_secret_content(repo, diff, PATTERNS).matches == [
+        "renamed.txt:1 matched secret-content detector demo-api-token"
+    ]
+
+
 def test_scans_untracked_text_and_skips_binary(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     (repo / "new.txt").write_text(f"value={LITERAL}\n", encoding="utf-8")

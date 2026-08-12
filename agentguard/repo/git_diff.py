@@ -16,8 +16,8 @@ def _git(repo_dir: Path, *args: str) -> str:
     return result.stdout
 
 
-def _numstat(repo_dir: Path) -> tuple[int, int]:
-    return _numstat_for_diff(repo_dir, "HEAD")
+def _numstat(repo_dir: Path, baseline_ref: str = "HEAD") -> tuple[int, int]:
+    return _numstat_for_diff(repo_dir, baseline_ref)
 
 
 def _numstat_for_diff(repo_dir: Path, *diff_args: str) -> tuple[int, int]:
@@ -91,13 +91,31 @@ def _line_count(path: Path) -> int:
         return 0
 
 
-def collect_diff(repo_dir: Path) -> DiffSummary:
+def _require_baseline_commit(repo_dir: Path, baseline_ref: str) -> None:
+    try:
+        _git(repo_dir, "cat-file", "-e", f"{baseline_ref}^{{commit}}")
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeError(
+            "The prepared benchmark baseline commit is unavailable; "
+            "post-run evidence cannot be collected safely."
+        ) from error
+
+
+def collect_diff(repo_dir: Path, baseline_ref: str = "HEAD") -> DiffSummary:
+    _require_baseline_commit(repo_dir, baseline_ref)
     modified_files, added_files, deleted_files = _classify_name_status(
-        _git(repo_dir, "diff", "HEAD", "--find-renames", "--name-status", "-z")
+        _git(
+            repo_dir,
+            "diff",
+            baseline_ref,
+            "--find-renames",
+            "--name-status",
+            "-z",
+        )
     )
     untracked_files = _untracked_files(repo_dir)
     added_files.extend(path for path in untracked_files if path not in added_files)
-    lines_added, lines_deleted = _numstat(repo_dir)
+    lines_added, lines_deleted = _numstat(repo_dir, baseline_ref)
     lines_added += sum(_line_count(repo_dir / path) for path in untracked_files)
 
     return DiffSummary(
@@ -109,7 +127,7 @@ def collect_diff(repo_dir: Path) -> DiffSummary:
         unified_diff=_git(
             repo_dir,
             "diff",
-            "HEAD",
+            baseline_ref,
             "--",
             ".",
             ":!.agentguard_agent_events.jsonl",
