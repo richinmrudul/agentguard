@@ -13,10 +13,12 @@ available from [PyPI](https://pypi.org/project/agentguard-evals/0.2.2/) and
 [GitHub](https://github.com/richinmrudul/agentguard/releases/tag/v0.2.2).
 AgentGuard v0.2.0 and v0.2.1 remain unchanged historical GitHub releases.
 
-The source tree is currently prepared as the v0.3.0 release candidate. That
-candidate is not tagged, released, or present on PyPI. Production installation
-examples below intentionally continue to use v0.2.2 until the separate release
-operation succeeds.
+AgentGuard v0.3.0 is the current production release. It is available from
+[PyPI](https://pypi.org/project/agentguard-evals/0.3.0/) and
+[GitHub](https://github.com/richinmrudul/agentguard/releases/tag/v0.3.0).
+The reviewed source-candidate record remains preserved as historical pre-release
+evidence; the completed publication is documented in
+[`results/release-v0.3.0.md`](results/release-v0.3.0.md).
 
 ## Release Stages
 
@@ -49,7 +51,7 @@ Users install the distribution but continue to import and run AgentGuard under
 its product identity:
 
 ```bash
-python -m pip install "agentguard-evals==0.2.2"
+python -m pip install "agentguard-evals==0.3.0"
 python -c "import agentguard; print(agentguard.__version__)"
 agentguard --version
 agentguard --help
@@ -58,7 +60,7 @@ agentguard --help
 For an isolated command installation:
 
 ```bash
-pipx install "agentguard-evals==0.2.2"
+pipx install "agentguard-evals==0.3.0"
 agentguard --version
 agentguard --help
 ```
@@ -90,8 +92,9 @@ uses GitHub OIDC exclusively.
 
 ### Production PyPI publisher
 
-The pending publisher configured before v0.2.2 was converted by the successful
-first upload into the active production project publisher with this identity:
+The pending publisher configured before v0.2.2 was converted by that successful
+first upload into the active production project publisher used by v0.3.0 with
+this identity:
 
 | Field | Value |
 | --- | --- |
@@ -108,8 +111,8 @@ publisher.
 ### GitHub environment
 
 The GitHub environment must be named `pypi` and require manual approval for
-production publication. Version 0.2.2 used a selected-tag deployment rule that
-allowed only `v0.2.2`. Before each future release, change that rule through a
+production publication. Version 0.3.0 uses a selected-tag deployment rule that
+allows only `v0.3.0`. Before each future release, change that rule through a
 separately reviewed administrative step to allow only the exact new release
 tag. Do not broaden it to arbitrary tags, branches, or repository
 administrators, and do not add a PyPI token or password as an environment or
@@ -223,6 +226,27 @@ package versions are exactly `0.3.0`. Pull requests, ordinary pushes, forks,
 other tags, workflow dispatches, arbitrary commits, and other releases cannot
 enter the publication path.
 
+## Completed v0.3.0 Publication
+
+The `v0.3.0` release followed the protected path above:
+
+- release commit `f19b54564bdd45fd438f7e48b055c102d2994a04`
+- annotated tag object `3a7671e422ff02e7171741da83b99329e0bcf0aa`
+- [GitHub Release](https://github.com/richinmrudul/agentguard/releases/tag/v0.3.0)
+- release-triggered workflow run
+  [`31545391719`](https://github.com/richinmrudul/agentguard/actions/runs/31545391719)
+- manual approval through the protected `pypi` environment
+- OIDC Trusted Publishing without a long-lived token or password
+- PyPI digital attestations bound to `richinmrudul/agentguard`, `publish.yml`,
+  and environment `pypi`
+- exact workflow and public wheel and sdist verified byte-identical
+- fresh production-index installation, initializer, mock-agent, and
+  baseline-aware reporting smoke checks passed
+
+See the [v0.3.0 release verification record](results/release-v0.3.0.md) for
+the authoritative filenames, SHA-256 hashes, workflow jobs, and public-install
+results.
+
 ## Completed v0.2.2 Publication
 
 The `v0.2.2` release followed the protected path above:
@@ -243,12 +267,12 @@ test, installation, filename, and SHA-256 evidence.
 Compare the release tag with both installed metadata and the CLI:
 
 ```bash
-RELEASE_TAG=$(gh release view v0.2.2 --json tagName --jq .tagName)
+RELEASE_TAG=$(gh release view v0.3.0 --json tagName --jq .tagName)
 python -m venv /tmp/agentguard-release-verify
 /tmp/agentguard-release-verify/bin/python -m pip install \
   --no-cache-dir \
   --index-url https://pypi.org/simple \
-  "agentguard-evals==0.2.2"
+  "agentguard-evals==0.3.0"
 INSTALLED_VERSION=$(
   /tmp/agentguard-release-verify/bin/python -c \
     'from importlib.metadata import version; print(version("agentguard-evals"))'
@@ -263,7 +287,7 @@ test "$RELEASE_TAG" = "v${INSTALLED_VERSION}"
 For pipx:
 
 ```bash
-pipx install --index-url https://pypi.org/simple "agentguard-evals==0.2.2"
+pipx install --index-url https://pypi.org/simple "agentguard-evals==0.3.0"
 agentguard --version
 agentguard --help
 ```
@@ -272,8 +296,8 @@ To compare public files with the exact retained workflow artifacts, download
 both into separate empty directories and hash each filename:
 
 ```bash
-gh run download 30400888141 \
-  --name agentguard-evals-v0.2.2-validated-distributions \
+gh run download 31545391719 \
+  --name agentguard-evals-v0.3.0-validated-distributions \
   --dir /tmp/agentguard-workflow
 python - <<'PY'
 import hashlib
@@ -284,7 +308,7 @@ from pathlib import Path
 public_dir = Path("/tmp/agentguard-public")
 public_dir.mkdir()
 with urllib.request.urlopen(
-    "https://pypi.org/pypi/agentguard-evals/0.2.2/json"
+    "https://pypi.org/pypi/agentguard-evals/0.3.0/json"
 ) as response:
     release = json.load(response)
 for file_info in release["urls"]:
@@ -310,10 +334,10 @@ to reuse a filename or overwrite a version.
 
 - **Environment approval rejected or not granted:** no upload occurs. Inspect
   the workflow artifact and logs, correct the concern, and rerun only if
-  version `0.2.2` is still absent from PyPI.
+  the proposed version is still absent from PyPI.
 - **Publication job fails before upload:** keep the release and tag unchanged,
   diagnose the OIDC publisher/environment configuration, and rerun only after
-  confirming PyPI has no files for `0.2.2`.
+  confirming PyPI has no files for the proposed version.
 - **Publication partially succeeds:** do not blindly rerun. Check the PyPI
   release file list and logs. Uploaded filenames cannot be reused, even after
   deletion; prepare a new version if the intended file set cannot be completed.

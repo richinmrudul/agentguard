@@ -5,8 +5,8 @@ post-execution validation by `agentguard ci`. They do not launch or contain a
 coding agent, do not sandbox the configured test command, and do not make
 hostile code safe to execute on the host.
 
-The preset commands are included in the v0.3.0 source candidate. They are not
-included in the currently public `agentguard-evals==0.2.2` package.
+The preset commands are included in the production
+`agentguard-evals==0.3.0` package.
 
 ## Compare Presets
 

@@ -177,14 +177,14 @@ def test_release_docs_record_active_publisher_and_recovery() -> None:
         "cannot be\noverwritten",
         "new package version",
         "selected-tag deployment rule",
-        "allowed only `v0.2.2`",
+        "allows only `v0.3.0`",
         "byte-identical",
     ):
         assert required in combined
 
     assert "pipx install" in release_doc
-    assert 'pip install "agentguard-evals==0.2.2"' in release_doc
-    assert 'pipx install "agentguard-evals==0.2.2"' in release_doc
+    assert 'pip install "agentguard-evals==0.3.0"' in release_doc
+    assert 'pipx install "agentguard-evals==0.3.0"' in release_doc
     assert "--index-url https://pypi.org/simple" in release_doc
     assert "RELEASE_TAG" in release_doc
     assert "unzip -l" in release_doc
@@ -195,23 +195,23 @@ def test_readme_documents_current_production_pypi_availability() -> None:
     readme = README.read_text(encoding="utf-8")
 
     assert "Current release:" in readme
-    assert "`v0.2.2`" in readme
+    assert "`v0.3.0`" in readme
     assert "production PyPI" in readme
     assert "pip install agentguard-evals" in readme
     assert "pipx install agentguard-evals" in readme
     assert "Python import | `agentguard`" in readme
     assert "Terminal command | `agentguard`" in readme
     assert (
-        "https://pypi.org/project/agentguard-evals/0.2.2/"
+        "https://pypi.org/project/agentguard-evals/0.3.0/"
         in readme
     )
     assert (
-        "https://github.com/richinmrudul/agentguard/releases/tag/v0.2.2"
+        "https://github.com/richinmrudul/agentguard/releases/tag/v0.3.0"
         in readme
     )
-    assert "docs/results/release-v0.2.2.md" in readme
+    assert "docs/results/release-v0.3.0.md" in readme
     assert "PyPI publication remains deferred" not in readme
-    assert "After v0.2.2 is published" not in readme
+    assert "v0.3.0 source candidate" not in readme
     assert "pip install agentguard\n" not in readme
     assert "pipx install agentguard\n" not in readme
     assert "test.pypi.org" not in readme.lower()

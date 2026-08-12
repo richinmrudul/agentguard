@@ -14,8 +14,8 @@ modifying forbidden files, running unsafe commands, or making suspiciously large
 diffs. AgentGuard treats agents as untrusted contributors and scores observable
 evidence instead of trusting the agent's explanation.
 
-Current release: [`v0.2.2`](https://github.com/richinmrudul/agentguard/releases/tag/v0.2.2),
-available from [production PyPI](https://pypi.org/project/agentguard-evals/0.2.2/).
+Current release: [`v0.3.0`](https://github.com/richinmrudul/agentguard/releases/tag/v0.3.0),
+available from [production PyPI](https://pypi.org/project/agentguard-evals/0.3.0/).
 
 ```bash
 python -m pip install agentguard-evals
@@ -39,7 +39,7 @@ agentguard --help
 | Terminal command | `agentguard` |
 
 See the [release process](docs/release.md) and
-[v0.2.2 validation evidence](docs/results/release-v0.2.2.md).
+[v0.3.0 validation evidence](docs/results/release-v0.3.0.md).
 
 The [hosted documentation](https://richinmrudul.github.io/agentguard/) is live
 on GitHub Pages. Its source remains available under [`docs/`](docs/), and the
@@ -68,13 +68,14 @@ After this documentation change is deployed, watch the
 
 ## Current Proof
 
-- `v0.2.2` is the current published release and the first production PyPI
-  release under the `agentguard-evals` distribution name.
+- `v0.3.0` is the current published GitHub and production PyPI release under
+  the `agentguard-evals` distribution name.
 - The release used secretless GitHub OIDC Trusted Publishing with digital
   attestations; the retained workflow wheel and sdist were byte-identical to
   the public PyPI files.
-- Release validation recorded 1,157 passing tests and 15 documented skips,
-  followed by a clean public installation and network-free smoke evaluation.
+- Local release validation recorded 1,401 passing tests and 15 Docker skips;
+  the exact commit's GitHub full-integration job passed with Docker available.
+  A clean public installation and network-free smoke evaluation also passed.
 - Dated, commit-scoped test and coverage results are recorded in the
   [validation summary](docs/results/validation-summary.md).
 - The curated showcase detects 5/5 unsafe scenarios, allows 1/1 safe scenario,
@@ -87,7 +88,7 @@ After this documentation change is deployed, watch the
   summaries, and trend analytics.
 
 See the evidence artifacts:
-[`docs/results/release-v0.2.2.md`](docs/results/release-v0.2.2.md),
+[`docs/results/release-v0.3.0.md`](docs/results/release-v0.3.0.md),
 [`docs/results/showcase-metrics.md`](docs/results/showcase-metrics.md),
 [`docs/results/adversarial-metrics.md`](docs/results/adversarial-metrics.md),
 [`docs/results/release-candidate-v0.2.0.md`](docs/results/release-candidate-v0.2.0.md),
@@ -102,13 +103,11 @@ python -m pip install agentguard-evals
 agentguard --version
 ```
 
-### v0.3.0 release-candidate project initialization
+### Initialize an existing project
 
-Safe project initialization is included in the v0.3.0 source candidate but is
-not yet included in the current `agentguard-evals==0.2.2` PyPI package. From a
-source installation of `main`, preview and create a strict project
-configuration plus an optional
-least-privilege GitHub Actions gate:
+Safe project initialization is included in the production
+`agentguard-evals==0.3.0` package. Preview and create a strict project
+configuration plus an optional least-privilege GitHub Actions gate:
 
 ```bash
 agentguard init --dry-run --ci github
@@ -124,14 +123,14 @@ fixed `go test ./...` command. It does not run repository code, Python or Go
 tooling, package scripts, package managers, or dependency installation;
 overwrite non-identical files without `--force`; or change Git state. See
 [safe project initialization](docs/project-initialization.md) for detection,
-overwrite, CI security, and customization details. The v0.3.0 candidate's
+overwrite, CI security, and customization details. The v0.3.0
 [`minimal`, `recommended`, and `strict` CI policy presets](docs/policy-presets.md)
 configure only settings consumed by post-execution `agentguard ci` validation;
 they do not contain agent or test execution. Inspect them with `agentguard
 presets list` and `agentguard presets show PRESET`.
 
-Generated candidate workflows pin `agentguard-evals==0.3.0`; that pin becomes
-publicly installable only after the separate production release completes.
+Generated workflows pin the publicly available `agentguard-evals==0.3.0`
+distribution.
 
 The package contains the `agentguard` import and CLI, but not the repository
 examples. Clone the repository to run the showcase, benchmark fixtures, or
@@ -1061,13 +1060,13 @@ Repository examples, docs, tests, workflows, generated `.agentguard` data,
 local databases, caches, and development scripts are excluded from both
 artifacts.
 
-AgentGuard v0.2.2 is published on
-[GitHub](https://github.com/richinmrudul/agentguard/releases/tag/v0.2.2) and
-[production PyPI](https://pypi.org/project/agentguard-evals/0.2.2/) as the
+AgentGuard v0.3.0 is published on
+[GitHub](https://github.com/richinmrudul/agentguard/releases/tag/v0.3.0) and
+[production PyPI](https://pypi.org/project/agentguard-evals/0.3.0/) as the
 `agentguard-evals` distribution. The Python package and console command remain
 `agentguard`. Version 0.2.1 remains a valid GitHub-only release because PyPI
 rejected its original distribution identity before upload. See the
-[release process](docs/release.md), [v0.2.2 validation evidence](docs/results/release-v0.2.2.md),
+[release process](docs/release.md), [v0.3.0 validation evidence](docs/results/release-v0.3.0.md),
 and [changelog](CHANGELOG.md).
 
 ## Deterministic Evidence

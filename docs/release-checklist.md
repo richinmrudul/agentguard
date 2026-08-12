@@ -1,9 +1,11 @@
 # Release Checklist
 
 This checklist is the reusable review gate for production releases. AgentGuard
-v0.2.2 completed this process on 2026-07-28; its immutable release evidence is
-recorded in [`results/release-v0.2.2.md`](results/release-v0.2.2.md). Checking
-an item does not publish anything.
+v0.3.0 completed this process on 2026-08-11; its immutable release evidence is
+recorded in [`results/release-v0.3.0.md`](results/release-v0.3.0.md). Historical
+v0.2.2 evidence remains in
+[`results/release-v0.2.2.md`](results/release-v0.2.2.md). Checking an item does
+not publish anything.
 
 ## Required CI And Local Checks
 
@@ -41,7 +43,7 @@ an item does not publish anything.
   environment `pypi`.
 - [ ] GitHub environment `pypi` exists and requires manual approval.
 - [ ] The environment allows only the exact proposed release tag. Version
-  0.2.2 used the selected tag rule `v0.2.2`.
+  0.3.0 uses the selected tag rule `v0.3.0`.
 - [ ] Before a future release, replace the prior tag rule with only the new
   reviewed version tag.
 - [ ] No PyPI token, password, or long-lived publication secret exists.
@@ -83,7 +85,8 @@ an item does not publish anything.
 - [ ] Record that v0.2.1 was GitHub-only and uploaded nothing to PyPI.
 - [ ] Preserve historical v0.1.0 and v0.2.0 release artifacts as historical
   evidence rather than renaming their old filenames.
-- [ ] Before rerunning any failed v0.2.2 job, inspect PyPI for partial upload.
+- [ ] Before rerunning any failed publication job, inspect PyPI for partial
+  upload of the proposed version.
 - [ ] If a version or filename was used, prepare a new version.
 - [ ] If tag, distribution name, or package version differ, do not approve.
 - [ ] PyPI files and released filenames cannot be overwritten or reused after

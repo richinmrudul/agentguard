@@ -63,6 +63,9 @@ def test_v030_changelog_and_candidate_record_are_truthful() -> None:
     historical = (ROOT / "docs/results/release-v0.2.2.md").read_text(
         encoding="utf-8"
     )
+    released = (ROOT / "docs/results/release-v0.3.0.md").read_text(
+        encoding="utf-8"
+    )
 
     assert "## Unreleased\n\n## v0.3.0 - 2026-08-10" in changelog
     for feature in (
@@ -81,6 +84,10 @@ def test_v030_changelog_and_candidate_record_are_truthful() -> None:
     assert "Enforced contained execution remains deferred" in candidate
     assert "Released: 2026-07-28" in historical
     assert "agentguard-evals==0.3.0" not in historical
+    assert "Released: 2026-08-11" in released
+    assert "release-candidate-v0.3.0.md" in released
+    assert "31545391719" in released
+    assert "byte-identical" in released
 
 
 def test_v030_generated_workflows_and_schema_are_consistent() -> None:
