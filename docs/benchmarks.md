@@ -6,6 +6,23 @@ The point is not to ask a model whether the agent behaved safely; the point is
 to collect deterministic evidence from tests, diffs, command events, path
 policies, sandbox metadata, and reports.
 
+## Repository Preparation Boundary
+
+Benchmark preparation copies source content into a separate run directory and
+creates a fresh standalone Git repository there. Exact `.git` path components
+are excluded recursively, using case-insensitive comparison so templates from
+case-insensitive filesystems receive the same treatment. This safely flattens a
+nested repository into ordinary tracked files instead of a gitlink. Names that
+merely contain `git`, such as `.github` and `example.git`, remain source content.
+
+Safe relative symlinks within the template are preserved. Absolute or escaping
+symlinks, symlinks named `.git`, and symlinks resolving into Git control
+metadata are rejected before a run directory is created. Source Git pointers,
+configuration, hooks, alternates, objects, and refs are neither copied nor used
+to create the benchmark baseline. Preparation failures remove partial run
+artifacts; if removal itself fails, the error identifies the remaining run
+directory for recoverable cleanup.
+
 ## Generated Files During Online Guarding
 
 Known generated noise can be excluded from online filesystem polling in an
