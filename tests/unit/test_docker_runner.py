@@ -10,6 +10,7 @@ from agentguard.agents.custom_command_agent import CustomCommandAgent
 from agentguard.config.loader import load_config
 from agentguard.config.schema import CommandPolicyConfig, SandboxConfig
 from agentguard.instrumentation.command_tracker import CommandTracker
+from agentguard.instrumentation.processes import ProcessCleanupResult
 from agentguard.provenance.manifest import detect_agent_version
 from agentguard.sandbox.docker_runner import (
     DockerCommandRunner,
@@ -828,6 +829,159 @@ def test_custom_command_agent_runs_in_docker_with_readable_event(
     assert calls[0][calls[0].index("--network") + 1] == "none"
     assert calls[0][-2:] == ["python", "agent_scripts/safe_agent.py"]
     assert tracker.commands == ["docker agent: python agent_scripts/safe_agent.py"]
+
+
+def test_custom_command_agent_retains_sanitized_nonzero_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "custom-agent-secret"
+    config = replace(
+        load_config(Path("examples/configs/fix_auth_bug_docker.yaml")),
+        agent_command=f"python agent.py --token {secret}",
+        agent_environment={},
+    )
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    def fake_popen(command, **kwargs):
+        return FakeProcess(
+            returncode=7,
+            stdout=(
+                f"Authorization: Bearer {secret}\n"
+                f"echoed={secret}\n{repo_dir}\x1b[31m"
+            ),
+            stderr=f"https://user:{secret}@example.invalid/error",
+        )
+
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        fake_popen,
+    )
+    tracker = CommandTracker()
+
+    CustomCommandAgent(config).run(repo_dir, tracker)
+
+    event = tracker.events[0]
+    serialized = repr(event)
+    assert event.exit_code == 7
+    assert event.executed is True
+    assert event.cwd == "[REPOSITORY]"
+    assert "[REDACTED]" in serialized
+    assert secret not in serialized
+    assert str(repo_dir) not in serialized
+    assert "\x1b" not in event.stdout
+    assert "\\x1b" in event.stdout
+
+
+@pytest.mark.parametrize(
+    ("returncode", "expected"),
+    [
+        (125, "Docker could not start the custom agent container."),
+    ],
+)
+def test_custom_command_agent_reports_stable_container_setup_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    expected: str,
+) -> None:
+    config = replace(
+        load_config(Path("examples/configs/fix_auth_bug_docker.yaml")),
+        agent_command="python agent.py",
+    )
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    canary = "raw-docker-daemon-error\x1b[31m"
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: FakeProcess(
+            returncode=returncode,
+            stderr=canary,
+        ),
+    )
+
+    with pytest.raises(ValueError) as caught:
+        CustomCommandAgent(config).run(repo_dir, CommandTracker())
+
+    assert str(caught.value) == expected
+    assert canary not in str(caught.value)
+
+
+def test_custom_command_agent_reports_stable_missing_docker_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = replace(
+        load_config(Path("examples/configs/fix_auth_bug_docker.yaml")),
+        agent_command="python agent.py",
+    )
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError()),
+    )
+
+    with pytest.raises(ValueError) as caught:
+        CustomCommandAgent(config).run(repo_dir, CommandTracker())
+
+    assert str(caught.value) == (
+        "Docker is unavailable; the custom agent container did not start."
+    )
+
+
+def test_custom_command_agent_retains_bounded_timeout_and_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = replace(
+        load_config(Path("examples/configs/fix_auth_bug_docker.yaml")),
+        agent_command="python agent.py",
+        command_timeout_seconds=2,
+        max_output_bytes=96,
+    )
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    process = FakeProcess(
+        returncode=None,
+        stdout="output\x1b[31m" * 30,
+        stderr="failure\x1b[31m" * 30,
+        timeout=True,
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.terminate_process_tree",
+        lambda *_args, **_kwargs: ProcessCleanupResult(
+            attempted=True,
+            complete=False,
+            kill_required=True,
+            message="process cleanup incomplete",
+        ),
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="",
+            stderr="",
+        ),
+    )
+    tracker = CommandTracker()
+
+    CustomCommandAgent(config).run(repo_dir, tracker)
+
+    event = tracker.events[0]
+    assert event.exit_code == 124
+    assert event.timed_out is True
+    assert event.process_cleanup_attempted is True
+    assert event.process_cleanup_complete is False
+    assert len(event.stdout.encode("utf-8")) <= 96
+    assert len(event.stderr.encode("utf-8")) <= 96
+    assert "\x1b" not in event.stdout
 
 
 def test_sandbox_defaults_to_local(tmp_path: Path) -> None:
