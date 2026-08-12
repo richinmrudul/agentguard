@@ -68,10 +68,15 @@ are not stored in trace policy snapshots or payloads. Content-based `Secret
 scan` evidence records only safe detector IDs, normalized relative locations,
 and sanitized incomplete-scan messages.
 
-Strings, evidence lists, argv, changed-file lists, patterns, and optional diffs
-are bounded. Truncation metadata is recorded. Sanitization is pattern-based and
-cannot guarantee detection of every encoded, transformed, or previously
-unknown secret.
+The shared loader used by `show`, `verify`, `replayability`, and `replay`
+incrementally enforces a 16 MiB trace limit, a 1 MiB per-line limit, at most
+10,000 events, 64 levels of JSON nesting, and 100,000 JSON values per record.
+These limits are applied before a complete untrusted trace is allocated.
+Malformed JSON, invalid UTF-8, and excessive nesting produce the same controlled
+invalid-trace result. Strings, evidence lists, argv, changed-file lists,
+patterns, and optional diffs have narrower field-level bounds. Truncation
+metadata is recorded. Sanitization is pattern-based and cannot guarantee
+detection of every encoded, transformed, or previously unknown secret.
 
 ## Commands
 

@@ -592,6 +592,102 @@ def test_trace_parser_rejects_malformed_records(
         load_execution_trace(scalar)
 
 
+def test_trace_loader_enforces_byte_line_event_and_complexity_limits(
+    benchmark_result,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace = _rebuilt_trace(benchmark_result, tmp_path / "trace.jsonl")
+    path = tmp_path / "bounded.jsonl"
+    write_execution_trace(trace, path)
+
+    monkeypatch.setattr(trace_module, "MAX_TRACE_BYTES", 8)
+    with pytest.raises(ValueError, match="8-byte limit"):
+        load_execution_trace(path)
+
+    monkeypatch.setattr(trace_module, "MAX_TRACE_BYTES", 16 * 1024 * 1024)
+    monkeypatch.setattr(trace_module, "MAX_TRACE_LINE_BYTES", 8)
+    with pytest.raises(ValueError, match="line 1 exceeds the 8-byte limit"):
+        load_execution_trace(path)
+
+    monkeypatch.setattr(trace_module, "MAX_TRACE_LINE_BYTES", 1024 * 1024)
+    monkeypatch.setattr(trace_module, "MAX_TRACE_EVENTS", 0)
+    with pytest.raises(ValueError, match="0-event limit"):
+        load_execution_trace(path)
+
+    monkeypatch.setattr(trace_module, "MAX_TRACE_EVENTS", 10000)
+    deeply_nested: object = "leaf"
+    for _ in range(trace_module.MAX_TRACE_NESTING + 1):
+        deeply_nested = {"child": deeply_nested}
+    deep = tmp_path / "deep.jsonl"
+    deep.write_text(
+        canonical_json({"value": deeply_nested}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="nesting limit"):
+        load_execution_trace(deep)
+
+    monkeypatch.setattr(trace_module, "MAX_TRACE_NODES", 2)
+    with pytest.raises(ValueError, match="node limit"):
+        load_execution_trace(path)
+
+
+def test_trace_loader_normalizes_invalid_utf8_and_json_recursion(
+    benchmark_result,
+    tmp_path: Path,
+) -> None:
+    trace = _rebuilt_trace(benchmark_result, tmp_path / "trace.jsonl")
+    valid = serialize_execution_trace(trace).encode("utf-8")
+    first_newline = valid.index(b"\n")
+    invalid_utf8 = tmp_path / "invalid-utf8.jsonl"
+    invalid_utf8.write_bytes(
+        valid[: first_newline + 1] + b"\xff" + valid[first_newline + 2 :]
+    )
+    with pytest.raises(ValueError, match="Invalid trace UTF-8 on line 2"):
+        load_execution_trace(invalid_utf8)
+
+    recursive = tmp_path / "recursive.jsonl"
+    recursive.write_text("[" * 1500 + "]" * 1500 + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Invalid trace JSON on line 1"):
+        load_execution_trace(recursive)
+
+    records = [
+        json.loads(line)
+        for line in serialize_execution_trace(trace).splitlines()
+    ]
+    records[0]["source_artifacts"] = [
+        {
+            "role": "report",
+            "path": [],
+            "sha256": "a" * 64,
+            "required": True,
+        }
+    ]
+    wrong_shape = tmp_path / "wrong-shape.jsonl"
+    _write_records(wrong_shape, records)
+    with pytest.raises(ValueError, match="Invalid trace record on line 1"):
+        load_execution_trace(wrong_shape)
+    assert verify_execution_trace(wrong_shape).exit_code == 2
+
+
+@pytest.mark.parametrize("command", ["show", "verify", "replayability", "replay"])
+def test_trace_commands_share_bounded_loader(
+    benchmark_result,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    trace = _rebuilt_trace(benchmark_result, tmp_path / "trace.jsonl")
+    path = tmp_path / "oversized-line.jsonl"
+    write_execution_trace(trace, path)
+    monkeypatch.setattr(trace_module, "MAX_TRACE_LINE_BYTES", 8)
+
+    result = runner.invoke(app, ["trace", command, str(path)])
+
+    assert result.exit_code == 2
+    assert "line 1 exceeds the 8-byte limit" in result.output
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
