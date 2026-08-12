@@ -61,7 +61,6 @@ from agentguard.repo.git_diff import collect_diff
 from agentguard.repo.manager import RepoManager
 from agentguard.provenance.manifest import (
     ExecutionManifest,
-    SECRET_KEY_PATTERN,
     agent_identity,
     agentguard_identity,
     artifact_identity,
@@ -71,6 +70,7 @@ from agentguard.provenance.manifest import (
     host_identity,
     policy_identity,
     sanitize_text,
+    sensitive_values_for_config,
     sha256_file,
     source_identity,
     utc_now_iso as manifest_utc_now_iso,
@@ -165,7 +165,7 @@ def _preflight_blocked_event(command_tracker: CommandTracker):
     return None
 
 
-def _failed_local_agent_event(command_tracker: CommandTracker):
+def _failed_agent_event(command_tracker: CommandTracker):
     for event in command_tracker.events:
         if (
             event.executed
@@ -173,6 +173,7 @@ def _failed_local_agent_event(command_tracker: CommandTracker):
                 event.command_text.startswith("local agent:")
                 or event.command_text.startswith("agent command:")
                 or event.command_text.startswith("agent profile ")
+                or event.command_text.startswith("docker agent:")
             )
             and event.exit_code != 0
         ):
@@ -404,19 +405,7 @@ def _sanitize_profile_evidence(
 
 
 def _config_sensitive_values(config) -> list[str]:
-    return (
-        [value for value in config.agent_environment.values() if value]
-        + [
-            str(value)
-            for key, value in config.agent_metadata.items()
-            if SECRET_KEY_PATTERN.search(key) and str(value)
-        ]
-        + [
-            pattern.contains
-            for pattern in config.secret_content_patterns
-            if pattern.contains
-        ]
-    )
+    return sensitive_values_for_config(config)
 
 
 def _sanitize_timeline_events(
@@ -761,7 +750,7 @@ def run_benchmark(
     )
 
     preflight_blocked = _preflight_blocked_event(command_tracker)
-    failed_local_agent = _failed_local_agent_event(command_tracker)
+    failed_agent = _failed_agent_event(command_tracker)
     if preflight_blocked is not None:
         test_result = CommandResult(
             command=config.test_command,
@@ -775,36 +764,42 @@ def run_benchmark(
             "Tests skipped because command preflight policy blocked the agent.",
             {"test_exit_code": test_result.exit_code},
         )
-    elif guard_terminated_agent and failed_local_agent is not None:
+    elif guard_terminated_agent and failed_agent is not None:
         test_result = CommandResult(
-            command=failed_local_agent.command_text,
-            exit_code=failed_local_agent.exit_code or 1,
-            stdout=failed_local_agent.stdout,
-            stderr=failed_local_agent.stderr,
-            duration_seconds=failed_local_agent.duration_seconds or 0.0,
-            timed_out=failed_local_agent.timed_out,
-            stdout_truncated=failed_local_agent.stdout_truncated,
-            stderr_truncated=failed_local_agent.stderr_truncated,
+            command=failed_agent.command_text,
+            exit_code=failed_agent.exit_code or 1,
+            stdout=failed_agent.stdout,
+            stderr=failed_agent.stderr,
+            duration_seconds=failed_agent.duration_seconds or 0.0,
+            timed_out=failed_agent.timed_out,
+            stdout_truncated=failed_agent.stdout_truncated,
+            stderr_truncated=failed_agent.stderr_truncated,
+            process_cleanup_attempted=failed_agent.process_cleanup_attempted,
+            process_cleanup_complete=failed_agent.process_cleanup_complete,
+            process_cleanup_message=failed_agent.process_cleanup_message,
         )
         timeline.add(
             "tests_skipped",
             "Tests skipped because online guard terminated the agent.",
             {"test_exit_code": test_result.exit_code},
         )
-    elif failed_local_agent is not None:
+    elif failed_agent is not None:
         test_result = CommandResult(
-            command=failed_local_agent.command_text,
-            exit_code=failed_local_agent.exit_code or 1,
-            stdout=failed_local_agent.stdout,
-            stderr=failed_local_agent.stderr,
-            duration_seconds=failed_local_agent.duration_seconds or 0.0,
-            timed_out=failed_local_agent.timed_out,
-            stdout_truncated=failed_local_agent.stdout_truncated,
-            stderr_truncated=failed_local_agent.stderr_truncated,
+            command=failed_agent.command_text,
+            exit_code=failed_agent.exit_code or 1,
+            stdout=failed_agent.stdout,
+            stderr=failed_agent.stderr,
+            duration_seconds=failed_agent.duration_seconds or 0.0,
+            timed_out=failed_agent.timed_out,
+            stdout_truncated=failed_agent.stdout_truncated,
+            stderr_truncated=failed_agent.stderr_truncated,
+            process_cleanup_attempted=failed_agent.process_cleanup_attempted,
+            process_cleanup_complete=failed_agent.process_cleanup_complete,
+            process_cleanup_message=failed_agent.process_cleanup_message,
         )
         timeline.add(
             "tests_skipped",
-            "Tests skipped because local agent command failed.",
+            "Tests skipped because the agent command failed.",
             {"test_exit_code": test_result.exit_code},
         )
     else:
@@ -894,7 +889,12 @@ def run_benchmark(
             "result": score_result.result,
         },
     )
-    if evaluation_profile is not None or config.secret_content_patterns:
+    sensitive_values = _config_sensitive_values(config)
+    if agent_name == CustomCommandAgent.name:
+        sensitive_values.extend(
+            [str(prepared.repo_dir), str(prepared.repo_dir.resolve())]
+        )
+    if evaluation_profile is not None or sensitive_values:
         (
             test_result,
             diff_summary,
@@ -904,7 +904,7 @@ def run_benchmark(
             diff_summary,
             check_results,
             command_tracker,
-            _config_sensitive_values(config),
+            sensitive_values,
         )
     with _measure_stage(timing_recorder, "report_writing"):
         command_log_path = command_tracker.write_json(prepared.run_dir)
@@ -953,10 +953,10 @@ def run_benchmark(
         },
     )
     timeline_events = timeline.events
-    if evaluation_profile is not None or config.secret_content_patterns:
+    if evaluation_profile is not None or sensitive_values:
         timeline_events = _sanitize_timeline_events(
             timeline_events,
-            _config_sensitive_values(config),
+            sensitive_values,
         )
     partial_result = BenchmarkResult(
         task_id=config.task_id,
@@ -1015,7 +1015,7 @@ def run_benchmark(
                 json=json_path,
                 markdown=markdown_path,
             ),
-            sensitive_values=_config_sensitive_values(config),
+            sensitive_values=sensitive_values,
         )
         if incident is not None:
             incident_paths = write_guard_incident(incident, prepared.run_dir)
@@ -1160,7 +1160,7 @@ def run_benchmark(
             ),
             policy_snapshot=build_policy_snapshot(config),
             execution_duration_seconds=manifest.duration_seconds,
-            sensitive_values=_config_sensitive_values(config),
+            sensitive_values=sensitive_values,
         )
         write_execution_trace(trace, trace_path)
     except (OSError, TypeError, ValueError) as error:

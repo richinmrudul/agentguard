@@ -14,7 +14,7 @@ from typing import Any, Optional, Union
 from agentguard import __version__
 from agentguard.config.schema import AgentGuardConfig, ScalarMetadata
 from agentguard.io import atomic_write_text
-from agentguard.instrumentation.output_limits import BoundedProcessOutput
+from agentguard.instrumentation.output_limits import BoundedProcessOutput, limit_output
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.processes import (
     PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS,
@@ -24,6 +24,7 @@ from agentguard.instrumentation.processes import (
 )
 from agentguard.policy.command_policy import evaluate_command_policy
 from agentguard.sandbox.docker_runner import DockerCommandRunner
+from agentguard.terminal import sanitize_terminal_text
 
 
 MANIFEST_SCHEMA = "agentguard.execution-manifest"
@@ -261,7 +262,10 @@ def _argv(command: Optional[Union[str, list[str]]]) -> list[str]:
     return list(command or [])
 
 
-def _sensitive_values(config: AgentGuardConfig) -> list[str]:
+def sensitive_values_for_config(
+    config: AgentGuardConfig,
+    additional_values: Optional[list[str]] = None,
+) -> list[str]:
     values = [value for value in config.agent_environment.values() if value]
     if config.agent_environment_isolated and os.environ.get("PATH"):
         values.append(os.environ["PATH"])
@@ -275,6 +279,28 @@ def _sensitive_values(config: AgentGuardConfig) -> list[str]:
         for pattern in config.secret_content_patterns
         if pattern.contains
     )
+    secret_options = {
+        "--token",
+        "--api-key",
+        "--apikey",
+        "--password",
+        "--passwd",
+        "--client-secret",
+        "--access-token",
+        "--auth-token",
+    }
+    for command in (config.agent_command, config.agent_version_command):
+        argv = _argv(command)
+        for index, argument in enumerate(argv):
+            lowered = argument.lower()
+            if lowered in secret_options and index + 1 < len(argv):
+                values.append(argv[index + 1])
+                continue
+            if any(
+                lowered.startswith(f"{option}=") for option in secret_options
+            ):
+                values.append(argument.split("=", 1)[1])
+    values.extend(value for value in additional_values or [] if value)
     return sorted(set(values), key=len, reverse=True)
 
 
@@ -382,7 +408,9 @@ def detect_agent_version(
                 inner_command=argv,
                 command_text=(
                     "docker agent version: "
-                    + shlex.join(sanitize_arguments(argv, _sensitive_values(config)))
+                    + shlex.join(
+                        sanitize_arguments(argv, sensitive_values_for_config(config))
+                    )
                 ),
                 preflight_matched_patterns=decision.matched_patterns,
                 policy_mode=decision.mode if decision.matched_patterns else None,
@@ -393,21 +421,51 @@ def detect_agent_version(
                 "failed",
                 f"Agent version command failed: {type(error).__name__}.",
             )
-        sensitive_values = _sensitive_values(config)
+        sensitive_values = [
+            *sensitive_values_for_config(
+                config,
+                [str(repo_dir), str(repo_dir.resolve())],
+            ),
+        ]
         for event in version_tracker.events:
             event.command = sanitize_arguments(event.command, sensitive_values)
-            event.command_text = sanitize_text(event.command_text, sensitive_values)
-            event.stdout = sanitize_text(event.stdout, sensitive_values)
-            event.stderr = sanitize_text(event.stderr, sensitive_values)
+            event.cwd = "[REPOSITORY]"
+            event.command_text = sanitize_terminal_text(
+                sanitize_text(event.command_text, sensitive_values),
+                preserve_newlines=False,
+            )
+            stdout = limit_output(
+                sanitize_terminal_text(
+                    sanitize_text(event.stdout, sensitive_values)
+                ),
+                VERSION_OUTPUT_LIMIT,
+            )
+            stderr = limit_output(
+                sanitize_terminal_text(
+                    sanitize_text(event.stderr, sensitive_values)
+                ),
+                VERSION_OUTPUT_LIMIT,
+            )
+            event.stdout = stdout.text
+            event.stderr = stderr.text
+            event.stdout_truncated = event.stdout_truncated or stdout.truncated
+            event.stderr_truncated = event.stderr_truncated or stderr.truncated
             if event.reason is not None:
-                event.reason = sanitize_text(event.reason, sensitive_values)
+                event.reason = sanitize_terminal_text(
+                    sanitize_text(event.reason, sensitive_values)
+                )
         command_tracker.extend(version_tracker.events)
-        output = sanitize_text(
-            result.stdout if result.stdout.strip() else result.stderr,
-            sensitive_values,
+        output = limit_output(
+            sanitize_terminal_text(
+                sanitize_text(
+                    result.stdout if result.stdout.strip() else result.stderr,
+                    sensitive_values,
+                )
+            ),
+            VERSION_OUTPUT_LIMIT,
         )
         version = next(
-            (line.strip() for line in output.splitlines() if line.strip()),
+            (line.strip() for line in output.text.splitlines() if line.strip()),
             None,
         )
         if result.timed_out:
@@ -497,7 +555,7 @@ def detect_agent_version(
         cleanup_process_after_exception(process, capture)
         raise
     output = captured.stdout.text or captured.stderr.text
-    output = sanitize_text(output, _sensitive_values(config))
+    output = sanitize_text(output, sensitive_values_for_config(config))
     version = next((line.strip() for line in output.splitlines() if line.strip()), None)
     if returncode != 0:
         return (
@@ -518,7 +576,7 @@ def agent_identity(
     version_warning: Optional[str],
 ) -> AgentIdentity:
     command = config.agent_display_command or config.agent_command
-    arguments = sanitize_arguments(command, _sensitive_values(config))
+    arguments = sanitize_arguments(command, sensitive_values_for_config(config))
     return AgentIdentity(
         adapter=adapter,
         configured_name=config.agent_name,

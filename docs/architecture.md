@@ -323,7 +323,7 @@ remain a deferred presentation layer.
 
 ### Docker Sandbox / Command Runner
 
-The Docker runner executes configured commands inside a container using a mounted repository workspace, working directory, environment, network mode, optional memory and CPU limits, timeout handling, and output limits. Timeout-managed Docker commands receive a generated container name so AgentGuard can attempt forced container removal on timeout or cleanup failure. It also records executed command events through the command tracker.
+The Docker runner executes configured commands inside a container using a mounted repository workspace, working directory, environment, network mode, optional memory and CPU limits, timeout handling, and output limits. Timeout-managed Docker commands receive a generated container name so AgentGuard can attempt forced container removal on timeout or cleanup failure. It also records executed command events through the command tracker. A nonzero or timed-out `custom-command` that reached execution becomes a controlled failed benchmark result, so reports, diffs, traces, manifests, and history remain available. Docker client or container-start failures instead return a concise setup error without incorporating raw Docker output.
 
 ### Instrumentation / Command Tracker
 
