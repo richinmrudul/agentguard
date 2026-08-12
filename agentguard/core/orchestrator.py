@@ -506,6 +506,24 @@ def _measure_stage(
     return timing_recorder.measure(stage)
 
 
+def _warn_online_guard_cleanup_failures(errors: list[BaseException]) -> None:
+    """Report cleanup failures without exposing exception-controlled text."""
+    if not errors:
+        return
+    kinds = ", ".join(type(error).__name__ for error in errors)
+    try:
+        warnings.warn(
+            "AgentGuard online guard cleanup reported "
+            f"{len(errors)} failure(s): {kinds}.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+    except BaseException:
+        # Warning filters may promote warnings to exceptions. Cleanup reporting
+        # must never replace the exception that triggered cleanup.
+        pass
+
+
 def run_benchmark(
     config_path: Path,
     agent_name: str,
@@ -624,42 +642,71 @@ def run_benchmark(
         watcher_mode=config.filesystem_watcher.mode,
     )
     command_guard_summary = CommandGuardSummary(mode=guard_mode.value)
-    if guard_mode != GuardMode.OFF:
+    guard_start_attempted = False
+    command_guard_start_attempted = False
+    primary_error: Optional[BaseException] = None
+    try:
+        if guard_mode != GuardMode.OFF:
+            timeline.add(
+                "guard_started",
+                f"Online filesystem guard started in {guard_mode.value} mode.",
+                {
+                    "mode": guard_mode.value,
+                    "poll_interval_seconds": guard_poll_interval_seconds,
+                    "termination_supported": process_controller is not None,
+                    "configured_ignore_patterns": list(config.guard_ignore_paths),
+                    "filesystem_watcher_mode": config.filesystem_watcher.mode,
+                },
+            )
+            guard_start_attempted = True
+            guard.start()
+            timeline.add(
+                "command_guard_started",
+                f"Online command guard started in {guard_mode.value} mode.",
+                {
+                    "mode": guard_mode.value,
+                    "poll_interval_seconds": guard_poll_interval_seconds,
+                    "termination_supported": process_controller is not None,
+                    "event_file": DEFAULT_AGENT_EVENT_FILE,
+                },
+            )
+            command_guard_start_attempted = True
+            command_guard.start()
         timeline.add(
-            "guard_started",
-            f"Online filesystem guard started in {guard_mode.value} mode.",
-            {
-                "mode": guard_mode.value,
-                "poll_interval_seconds": guard_poll_interval_seconds,
-                "termination_supported": process_controller is not None,
-                "configured_ignore_patterns": list(config.guard_ignore_paths),
-                "filesystem_watcher_mode": config.filesystem_watcher.mode,
-            },
+            "agent_started", f"Agent {agent_name} started", {"agent": agent_name}
         )
-        guard.start()
-        timeline.add(
-            "command_guard_started",
-            f"Online command guard started in {guard_mode.value} mode.",
-            {
-                "mode": guard_mode.value,
-                "poll_interval_seconds": guard_poll_interval_seconds,
-                "termination_supported": process_controller is not None,
-                "event_file": DEFAULT_AGENT_EVENT_FILE,
-            },
-        )
-        command_guard.start()
-    timeline.add("agent_started", f"Agent {agent_name} started", {"agent": agent_name})
-    with _measure_stage(timing_recorder, "agent_execution"):
-        agent.run(
-            prepared.repo_dir,
-            command_tracker,
-            process_controller=process_controller,
-        )
+        with _measure_stage(timing_recorder, "agent_execution"):
+            agent.run(
+                prepared.repo_dir,
+                command_tracker,
+                process_controller=process_controller,
+            )
+    except BaseException as error:
+        primary_error = error
+        raise
+    finally:
+        cleanup_errors: list[BaseException] = []
+        if command_guard_start_attempted:
+            try:
+                command_guard_summary = command_guard.stop()
+            except BaseException as error:
+                cleanup_errors.append(error)
+        if guard_start_attempted:
+            try:
+                guard_summary = guard.stop()
+                guard.scan_once()
+                guard_summary = guard.summary()
+            except BaseException as error:
+                cleanup_errors.append(error)
+        if cleanup_errors:
+            if primary_error is not None:
+                _warn_online_guard_cleanup_failures(cleanup_errors)
+            else:
+                first_cleanup_error = cleanup_errors[0]
+                if len(cleanup_errors) > 1:
+                    _warn_online_guard_cleanup_failures(cleanup_errors[1:])
+                raise first_cleanup_error
     if guard_mode != GuardMode.OFF:
-        guard.scan_once()
-        guard_summary = guard.stop()
-        command_guard.scan_once()
-        command_guard_summary = command_guard.stop()
         _guard_timeline_events(timeline, guard_summary)
         _command_guard_timeline_events(timeline, command_guard_summary)
     guard_terminated_agent = (
