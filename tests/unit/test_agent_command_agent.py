@@ -8,6 +8,10 @@ import time
 from agentguard.agents.agent_command_agent import AgentCommandAgent
 from agentguard.config.loader import load_config
 from agentguard.instrumentation.command_tracker import CommandTracker
+from agentguard.instrumentation.processes import (
+    PROCESS_CLEANUP_INCOMPLETE_MESSAGE,
+    ProcessCleanupResult,
+)
 from agentguard.policy.command_policy import evaluate_command_policy
 
 
@@ -238,6 +242,38 @@ def test_agent_command_timeout_cleans_up_child_process(tmp_path: Path) -> None:
     assert event.timed_out is True
     assert event.process_cleanup_attempted is True
     assert event.process_cleanup_complete is True
+
+
+def test_agent_command_records_incomplete_guard_cleanup(tmp_path: Path) -> None:
+    class IncompleteController:
+        termination_requested = True
+        termination_reason = "policy violation"
+
+        @staticmethod
+        def attach(_process) -> None:
+            return None
+
+        @staticmethod
+        def termination_cleanup_result() -> ProcessCleanupResult:
+            return ProcessCleanupResult(
+                attempted=True,
+                complete=False,
+                kill_required=True,
+                message=PROCESS_CLEANUP_INCOMPLETE_MESSAGE,
+            )
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    tracker = CommandTracker()
+
+    AgentCommandAgent(
+        _config(agent_command=[sys.executable, "-c", "print(123)"])
+    ).run(repo_dir, tracker, process_controller=IncompleteController())
+
+    event = tracker.events[0]
+    assert event.process_cleanup_attempted is True
+    assert event.process_cleanup_complete is False
+    assert event.process_cleanup_message == PROCESS_CLEANUP_INCOMPLETE_MESSAGE
 
 
 def test_agent_command_bounds_large_stdout_and_stderr(tmp_path: Path) -> None:

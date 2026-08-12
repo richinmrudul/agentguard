@@ -1,4 +1,5 @@
 import os
+import signal
 import shlex
 import subprocess
 import sys
@@ -250,6 +251,60 @@ def test_test_runner_timeout_cleans_up_child_process(tmp_path: Path) -> None:
     assert _process_exited(pid), f"child process still running: {pid}"
     assert result.timed_out is True
     assert tracker.events[0].process_cleanup_complete is True
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX process groups")
+def test_test_runner_timeout_bounds_retained_pipes_and_prevents_late_write(
+    tmp_path: Path,
+) -> None:
+    child_pid_path = tmp_path / "retained-pipe-child.pid"
+    child_ready_path = tmp_path / "retained-pipe-child.ready"
+    late_write = tmp_path / "late-write.txt"
+    child_script = (
+        "import signal, sys, time\n"
+        "from pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"Path({str(child_ready_path)!r}).write_text('ready', encoding='utf-8')\n"
+        "sys.stdout.write('child-out\\n'); sys.stdout.flush()\n"
+        "sys.stderr.write('child-err\\n'); sys.stderr.flush()\n"
+        "time.sleep(2.8)\n"
+        f"Path({str(late_write)!r}).write_text('survived', encoding='utf-8')\n"
+        "time.sleep(1.2)\n"
+    )
+    leader_script = (
+        "import subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        f"child = subprocess.Popen([sys.executable, '-c', {child_script!r}])\n"
+        f"Path({str(child_pid_path)!r}).write_text(str(child.pid), encoding='utf-8')\n"
+        f"deadline = time.monotonic() + 0.8\n"
+        f"ready = Path({str(child_ready_path)!r})\n"
+        "while not ready.exists() and time.monotonic() < deadline: time.sleep(0.01)\n"
+        "time.sleep(10)\n"
+    )
+    tracker = CommandTracker()
+    runner = AgentGuardTestRunner(tracker, timeout_seconds=1)
+    started = time.monotonic()
+    child_pid = None
+
+    try:
+        result = runner.run(
+            tmp_path,
+            shlex.join([sys.executable, "-c", leader_script]),
+        )
+        elapsed = time.monotonic() - started
+        child_pid = _read_pid(child_pid_path)
+        time.sleep(max(0.0, 3.0 - elapsed))
+
+        assert elapsed < 2.75
+        assert result.timed_out is True
+        assert result.process_cleanup_attempted is True
+        assert result.process_cleanup_complete is True
+        assert "command timed out and process tree was terminated" in result.stderr
+        assert _process_exited(child_pid)
+        assert not late_write.exists()
+    finally:
+        if child_pid is not None and not _process_exited(child_pid):
+            os.kill(child_pid, signal.SIGKILL)
 
 
 def test_test_runner_timeout_keeps_large_output_bounded(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ from agentguard.config.schema import AgentGuardConfig, ScalarMetadata
 from agentguard.io import atomic_write_text
 from agentguard.instrumentation.output_limits import BoundedProcessOutput
 from agentguard.instrumentation.processes import (
+    PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS,
     popen_with_process_group,
     terminate_process_tree,
 )
@@ -378,8 +379,11 @@ def detect_agent_version(config: AgentGuardConfig) -> tuple[Optional[str], str, 
         return None, "failed", "Agent version executable was not found."
     except subprocess.TimeoutExpired:
         terminate_process_tree(process)
-        capture.wait()
-        capture.finish()
+        try:
+            capture.wait(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+        capture.finish(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
         return None, "failed", "Agent version command timed out."
     except (OSError, TypeError, ValueError) as error:
         return None, "failed", f"Agent version command failed: {type(error).__name__}."

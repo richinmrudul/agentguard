@@ -25,7 +25,10 @@ from agentguard.guard.watcher import (
     FilesystemWatcherMode,
     PollingFilesystemWatcher,
 )
-from agentguard.instrumentation.processes import terminate_process_tree
+from agentguard.instrumentation.processes import (
+    ProcessCleanupResult,
+    terminate_process_tree,
+)
 from agentguard.policy.path_matcher import matching_patterns
 from agentguard.repo.live_diff import (
     LiveDiffCandidate,
@@ -109,6 +112,7 @@ class ProcessController:
         self._process: Optional[subprocess.Popen] = None
         self.termination_requested = False
         self.kill_required = False
+        self._cleanup_result = ProcessCleanupResult()
         self.termination_reason: Optional[str] = None
 
     def attach(self, process: subprocess.Popen) -> None:
@@ -125,15 +129,19 @@ class ProcessController:
             self.termination_reason = reason
             self._terminate_locked()
 
+    def termination_cleanup_result(self) -> ProcessCleanupResult:
+        with self._lock:
+            return self._cleanup_result
+
     def _terminate_locked(self) -> None:
         process = self._process
-        if process is None or process.poll() is not None:
+        if process is None:
             return
-        cleanup = terminate_process_tree(
+        self._cleanup_result = terminate_process_tree(
             process,
             terminate_timeout_seconds=self.graceful_timeout_seconds,
         )
-        self.kill_required = cleanup.kill_required
+        self.kill_required = self._cleanup_result.kill_required
 
 
 class RuntimeFilesystemGuard:
