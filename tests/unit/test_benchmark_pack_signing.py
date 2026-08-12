@@ -8,6 +8,7 @@ import yaml
 from typer.testing import CliRunner
 
 from agentguard.benchmarks.packs import (
+    BenchmarkPackError,
     BenchmarkPackIntegrityError,
     export_benchmark_pack,
     import_benchmark_pack,
@@ -270,6 +271,21 @@ def test_trust_policy_init_add_and_list(tmp_path: Path) -> None:
     assert _load_yaml(policy)["trusted_keys"][0]["key_id"] == keys.key_id
 
 
+def test_trust_policy_lists_freshly_initialized_policy(tmp_path: Path) -> None:
+    policy = tmp_path / "trust.yaml"
+    init_trust_policy(policy)
+
+    lines = trust_policy_summary(policy)
+    cli_result = runner.invoke(
+        app,
+        ["benchmarks", "pack", "trust", "list", str(policy)],
+    )
+
+    assert lines[-2:] == ["Trusted keys:", "- none"]
+    assert cli_result.exit_code == 0
+    assert "Trusted keys:\n- none" in cli_result.output
+
+
 def test_trust_policy_refuses_overwrite_and_duplicate_key(tmp_path: Path) -> None:
     keys = _keys(tmp_path)
     policy = _policy(tmp_path, keys.public_key_path)
@@ -363,8 +379,10 @@ def test_trust_verify_rejects_untrusted_key(tmp_path: Path) -> None:
 def test_trust_verify_enforces_required_signature_count(tmp_path: Path) -> None:
     pack = _pack(tmp_path)
     keys = _keys(tmp_path)
+    second = _keys(tmp_path / "second", "second")
     signature = _signature(tmp_path, pack, keys.private_key_path)
     policy = _policy(tmp_path, keys.public_key_path)
+    add_trusted_key(policy, second.public_key_path)
     data = _load_yaml(policy)
     data["required_signatures"] = 2
     _write_yaml(policy, data)
@@ -373,6 +391,112 @@ def test_trust_verify_enforces_required_signature_count(tmp_path: Path) -> None:
 
     assert not result.valid
     assert result.status == "insufficient-trusted-signatures"
+
+
+def test_trust_verify_counts_repeated_and_copied_signature_once(tmp_path: Path) -> None:
+    pack = _pack(tmp_path)
+    keys = _keys(tmp_path)
+    second = _keys(tmp_path / "second", "second")
+    signature = _signature(tmp_path, pack, keys.private_key_path)
+    copied_signature = tmp_path / "copied.sig.json"
+    copied_signature.write_bytes(signature.read_bytes())
+    policy = _policy(tmp_path, keys.public_key_path)
+    add_trusted_key(policy, second.public_key_path)
+    data = _load_yaml(policy)
+    data["required_signatures"] = 2
+    _write_yaml(policy, data)
+
+    result = verify_trust_policy(
+        pack,
+        policy,
+        [signature, signature, copied_signature],
+    )
+
+    assert not result.valid
+    assert result.trusted_signatures == 1
+    assert [item.status for item in result.signatures] == [
+        "valid",
+        "duplicate-trusted-key",
+        "duplicate-trusted-key",
+    ]
+    assert keys.key_id not in result.signatures[1].message
+
+
+def test_trust_verify_counts_multiple_signatures_from_one_key_once(tmp_path: Path) -> None:
+    pack = _pack(tmp_path)
+    keys = _keys(tmp_path)
+    second = _keys(tmp_path / "second", "second")
+    first_signature = _signature(tmp_path, pack, keys.private_key_path)
+    second_signature = tmp_path / "second.sig.json"
+    sign_benchmark_pack(pack, keys.private_key_path, second_signature)
+    policy = _policy(tmp_path, keys.public_key_path)
+    add_trusted_key(policy, second.public_key_path)
+    data = _load_yaml(policy)
+    data["required_signatures"] = 2
+    _write_yaml(policy, data)
+
+    result = verify_trust_policy(pack, policy, [first_signature, second_signature])
+
+    assert not result.valid
+    assert result.trusted_signatures == 1
+    assert result.signatures[1].status == "duplicate-trusted-key"
+
+
+def test_trust_verify_accepts_distinct_trusted_signers_at_threshold(tmp_path: Path) -> None:
+    pack = _pack(tmp_path)
+    first = _keys(tmp_path / "first", "first")
+    second = _keys(tmp_path / "second", "second")
+    first_signature = tmp_path / "first.sig.json"
+    second_signature = tmp_path / "second.sig.json"
+    sign_benchmark_pack(pack, first.private_key_path, first_signature)
+    sign_benchmark_pack(pack, second.private_key_path, second_signature)
+    policy = _policy(tmp_path, first.public_key_path)
+    add_trusted_key(policy, second.public_key_path)
+    data = _load_yaml(policy)
+    data["required_signatures"] = 2
+    _write_yaml(policy, data)
+
+    result = verify_trust_policy(pack, policy, [first_signature, second_signature])
+
+    assert result.valid
+    assert result.status == "trusted"
+    assert result.trusted_signatures == 2
+    assert [item.key_id for item in result.signatures] == [first.key_id, second.key_id]
+
+
+def test_trust_verify_duplicate_results_are_deterministic(tmp_path: Path) -> None:
+    pack = _pack(tmp_path)
+    keys = _keys(tmp_path)
+    signature = _signature(tmp_path, pack, keys.private_key_path)
+    policy = _policy(tmp_path, keys.public_key_path)
+
+    first = verify_trust_policy(pack, policy, [signature, signature])
+    second = verify_trust_policy(pack, policy, [signature, signature])
+
+    assert first == second
+    assert first.trusted_signatures == 1
+
+
+def test_trust_verify_only_deduplicates_valid_trusted_signatures(tmp_path: Path) -> None:
+    pack = _pack(tmp_path)
+    keys = _keys(tmp_path)
+    signature = _signature(tmp_path, pack, keys.private_key_path)
+    tampered = _tamper_signature(signature, tmp_path / "tampered.sig.json")
+    malformed = tmp_path / "malformed.sig.json"
+    malformed.write_text("{", encoding="utf-8")
+    policy = _policy(tmp_path, keys.public_key_path)
+
+    result = verify_trust_policy(pack, policy, [tampered, signature, signature])
+
+    assert result.valid
+    assert result.trusted_signatures == 1
+    assert [item.status for item in result.signatures] == [
+        "invalid",
+        "valid",
+        "duplicate-trusted-key",
+    ]
+    with pytest.raises(BenchmarkPackError, match="not valid JSON"):
+        verify_trust_policy(pack, policy, [malformed, signature])
 
 
 def test_trust_policy_supports_inline_public_key(tmp_path: Path) -> None:
@@ -455,6 +579,31 @@ def test_load_trust_policy_rejects_bad_trusted_key_shapes(tmp_path: Path) -> Non
         _write_yaml(policy, {**base, "trusted_keys": trusted_keys})
         with pytest.raises(Exception, match=message):
             load_trust_policy(policy)
+
+
+def test_load_trust_policy_rejects_duplicate_key_identifiers(tmp_path: Path) -> None:
+    keys = _keys(tmp_path)
+    policy = _policy(tmp_path, keys.public_key_path)
+    data = _load_yaml(policy)
+    data["trusted_keys"].append(dict(data["trusted_keys"][0]))
+    _write_yaml(policy, data)
+
+    with pytest.raises(BenchmarkPackError, match="duplicate trusted key id"):
+        load_trust_policy(policy)
+
+
+def test_load_trust_policy_rejects_impossible_signature_threshold(tmp_path: Path) -> None:
+    keys = _keys(tmp_path)
+    policy = _policy(tmp_path, keys.public_key_path)
+    data = _load_yaml(policy)
+    data["required_signatures"] = 2
+    _write_yaml(policy, data)
+
+    with pytest.raises(BenchmarkPackError) as exc_info:
+        load_trust_policy(policy)
+
+    assert "cannot exceed the number of trusted keys" in str(exc_info.value)
+    assert keys.key_id not in str(exc_info.value)
 
 
 def test_malformed_key_material_is_rejected(tmp_path: Path) -> None:

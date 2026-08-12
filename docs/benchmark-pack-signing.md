@@ -121,7 +121,9 @@ agentguard benchmarks pack trust verify /tmp/auth.zip \
 
 `allow_unsigned: true` permits unsigned packs when no signatures are supplied.
 Otherwise the policy requires at least `required_signatures` valid signatures
-from trusted keys.
+from distinct trusted keys. Repeating a signature or providing multiple valid
+signatures from one trusted key counts only once. Policies cannot require more
+signatures than they define trusted keys.
 
 ## Import Integration
 
