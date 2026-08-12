@@ -586,7 +586,11 @@ def run_benchmark(
         task_prompt_sha256 = invocation.task_prompt.sha256
         _validate_agent_config(config, agent_name)
     with _measure_stage(timing_recorder, "agent_setup"):
-        detected_version, version_status, version_warning = detect_agent_version(config)
+        detected_version, version_status, version_warning = detect_agent_version(
+            config,
+            repo_dir=prepared.repo_dir,
+            command_tracker=command_tracker,
+        )
     if version_warning is not None:
         warnings.warn(
             f"AgentGuard agent version detection: {version_warning}",

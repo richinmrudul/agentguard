@@ -541,7 +541,12 @@ agent_metadata:
 
 `agent_version_command` accepts the same string-or-argv shape as
 `agent_command`, runs with `shell=False`, and is bounded by timeout and output
-limits. Detection failure produces a warning but does not fail evaluation.
+limits. It is executable configuration: review it with the same care as the
+agent command. For Docker-backed configurations, version detection runs in the
+selected Docker sandbox with the prepared repository mounted at the configured
+container workdir and with the same image, network, resource, and read-only
+policy. It does not fall back to host execution when Docker is unavailable.
+Detection failure produces a warning but does not fail evaluation.
 `agent_metadata` accepts only scalar string, integer, float, or boolean values.
 
 ## Real-Agent Evaluations

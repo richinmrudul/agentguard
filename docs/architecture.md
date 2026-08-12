@@ -272,6 +272,13 @@ parsed with `shlex.split`; list commands are used as argv directly.
 that location by default, while `agent_workdir: config_dir` runs it relative to
 the config file directory.
 
+`agent_version_command` is executable configuration. Local adapters execute it
+locally under the configured command policy. Docker-backed configurations route
+it through the same Docker runner, prepared-repository mount, container workdir,
+image, network, resource, read-only, timeout, bounded-output, and cleanup policy
+as Docker agent execution. Docker version detection never falls back to a host
+agent command if Docker is unavailable.
+
 ### External-Agent Evaluation Profiles
 
 The evaluation harness adds a provider-neutral profile and task-rendering layer

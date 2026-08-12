@@ -15,6 +15,7 @@ from agentguard import __version__
 from agentguard.config.schema import AgentGuardConfig, ScalarMetadata
 from agentguard.io import atomic_write_text
 from agentguard.instrumentation.output_limits import BoundedProcessOutput
+from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.processes import (
     PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS,
     cleanup_process_after_exception,
@@ -22,6 +23,7 @@ from agentguard.instrumentation.processes import (
     terminate_process_tree,
 )
 from agentguard.policy.command_policy import evaluate_command_policy
+from agentguard.sandbox.docker_runner import DockerCommandRunner
 
 
 MANIFEST_SCHEMA = "agentguard.execution-manifest"
@@ -339,7 +341,12 @@ def sanitize_metadata(
     }
 
 
-def detect_agent_version(config: AgentGuardConfig) -> tuple[Optional[str], str, Optional[str]]:
+def detect_agent_version(
+    config: AgentGuardConfig,
+    *,
+    repo_dir: Optional[Path] = None,
+    command_tracker: Optional[CommandTracker] = None,
+) -> tuple[Optional[str], str, Optional[str]]:
     if config.agent_version_command is None:
         return None, "not_configured", None
     argv = _argv(config.agent_version_command)
@@ -351,6 +358,73 @@ def detect_agent_version(config: AgentGuardConfig) -> tuple[Optional[str], str, 
     )
     if not decision.allowed:
         return None, "blocked", "Agent version command was blocked by command policy."
+
+    if config.sandbox.type == "docker":
+        if repo_dir is None or command_tracker is None:
+            return (
+                None,
+                "failed",
+                "Docker agent version detection requires a prepared repository "
+                "and command tracker.",
+            )
+        version_tracker = CommandTracker()
+        try:
+            result = DockerCommandRunner(
+                version_tracker,
+                config.sandbox,
+                timeout_seconds=min(
+                    config.command_timeout_seconds,
+                    VERSION_TIMEOUT_SECONDS,
+                ),
+                max_output_bytes=VERSION_OUTPUT_LIMIT,
+            ).run_argv(
+                repo_dir=repo_dir,
+                inner_command=argv,
+                command_text=(
+                    "docker agent version: "
+                    + shlex.join(sanitize_arguments(argv, _sensitive_values(config)))
+                ),
+                preflight_matched_patterns=decision.matched_patterns,
+                policy_mode=decision.mode if decision.matched_patterns else None,
+            )
+        except (OSError, TypeError, ValueError) as error:
+            return (
+                None,
+                "failed",
+                f"Agent version command failed: {type(error).__name__}.",
+            )
+        sensitive_values = _sensitive_values(config)
+        for event in version_tracker.events:
+            event.command = sanitize_arguments(event.command, sensitive_values)
+            event.command_text = sanitize_text(event.command_text, sensitive_values)
+            event.stdout = sanitize_text(event.stdout, sensitive_values)
+            event.stderr = sanitize_text(event.stderr, sensitive_values)
+            if event.reason is not None:
+                event.reason = sanitize_text(event.reason, sensitive_values)
+        command_tracker.extend(version_tracker.events)
+        output = sanitize_text(
+            result.stdout if result.stdout.strip() else result.stderr,
+            sensitive_values,
+        )
+        version = next(
+            (line.strip() for line in output.splitlines() if line.strip()),
+            None,
+        )
+        if result.timed_out:
+            return None, "failed", "Agent version command timed out."
+        if result.exit_code == 127 and result.stderr.startswith(
+            "Docker is not installed"
+        ):
+            return None, "failed", "Docker is unavailable for agent version detection."
+        if result.exit_code != 0:
+            return (
+                None,
+                "failed",
+                f"Agent version command exited with status {result.exit_code}.",
+            )
+        if not version:
+            return None, "failed", "Agent version command produced no version output."
+        return version, "detected", None
 
     process = None
     capture = None

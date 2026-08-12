@@ -8,8 +8,9 @@ import pytest
 
 from agentguard.agents.custom_command_agent import CustomCommandAgent
 from agentguard.config.loader import load_config
-from agentguard.config.schema import SandboxConfig
+from agentguard.config.schema import CommandPolicyConfig, SandboxConfig
 from agentguard.instrumentation.command_tracker import CommandTracker
+from agentguard.provenance.manifest import detect_agent_version
 from agentguard.sandbox.docker_runner import (
     DockerCommandRunner,
     DockerTestRunner,
@@ -32,8 +33,12 @@ class FakeProcess:
         self.timeout = timeout
         self.pid = 12345
         self._waited = False
+        self.last_timeout = None
+        self.wait_timeouts = []
 
     def wait(self, timeout=None):
+        self.last_timeout = timeout
+        self.wait_timeouts.append(timeout)
         if self.timeout and not self._waited:
             self._waited = True
             raise subprocess.TimeoutExpired(
@@ -45,6 +50,266 @@ class FakeProcess:
 
     def poll(self):
         return self.returncode
+
+
+def _docker_version_config(**changes):
+    config = replace(
+        load_config(Path("examples/configs/fix_auth_bug_docker.yaml")),
+        agent_version_command=["agent", "--version"],
+        command_timeout_seconds=30,
+    )
+    return replace(config, **changes)
+
+
+def test_docker_version_detection_uses_only_docker_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    calls = []
+
+    def fake_popen(command, **kwargs):
+        calls.append((command, kwargs))
+        return FakeProcess(returncode=0, stdout="agent 4.2\n")
+
+    monkeypatch.setattr(
+        "agentguard.provenance.manifest.popen_with_process_group",
+        lambda *_args, **_kwargs: pytest.fail("host version command executed"),
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        fake_popen,
+    )
+    tracker = CommandTracker()
+    config = _docker_version_config(
+        sandbox=SandboxConfig(
+            type="docker",
+            image="python:3.11-slim",
+            workdir="/agent-work",
+            network="none",
+            memory="256m",
+            cpus=0.5,
+            read_only=True,
+            timeout_seconds=23,
+        ),
+        agent_environment={
+            "PATH": "/host-only/bin",
+            "PYTHONPATH": "/host-only/python",
+            "API_TOKEN": "host-secret",
+        },
+    )
+
+    detected = detect_agent_version(
+        config,
+        repo_dir=repo_dir,
+        command_tracker=tracker,
+    )
+
+    assert detected == ("agent 4.2", "detected", None)
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert command[:3] == ["docker", "run", "--rm"]
+    assert f"{repo_dir.resolve()}:/agent-work" in command
+    assert command[command.index("-w") + 1] == "/agent-work"
+    assert command[command.index("--network") + 1] == "none"
+    assert command[command.index("--memory") + 1] == "256m"
+    assert command[command.index("--cpus") + 1] == "0.5"
+    assert "--read-only" in command
+    assert command[command.index("--tmpfs") + 1] == "/tmp"
+    assert command[-3:] == ["python:3.11-slim", "agent", "--version"]
+    assert not any("host-only" in part or "host-secret" in part for part in command)
+    assert "env" not in kwargs
+    assert tracker.commands == ["docker agent version: agent --version"]
+
+
+def test_docker_version_detection_fails_closed_without_boundary_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = tmp_path / "host-marker"
+    config = _docker_version_config(
+        agent_version_command=[
+            "python",
+            "-c",
+            f"from pathlib import Path; Path({str(marker)!r}).touch()",
+        ]
+    )
+    monkeypatch.setattr(
+        "agentguard.provenance.manifest.popen_with_process_group",
+        lambda *_args, **_kwargs: pytest.fail("host version command executed"),
+    )
+
+    version, status, warning = detect_agent_version(config)
+
+    assert version is None
+    assert status == "failed"
+    assert "prepared repository" in (warning or "")
+    assert not marker.exists()
+
+
+def test_docker_version_detection_reports_missing_docker_without_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    launched = []
+
+    def missing_docker(command, **_kwargs):
+        launched.append(command)
+        raise FileNotFoundError
+
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        missing_docker,
+    )
+
+    version, status, warning = detect_agent_version(
+        _docker_version_config(),
+        repo_dir=repo_dir,
+        command_tracker=CommandTracker(),
+    )
+
+    assert version is None
+    assert status == "failed"
+    assert warning == "Docker is unavailable for agent version detection."
+    assert len(launched) == 1
+    assert launched[0][0:2] == ["docker", "run"]
+
+
+def test_docker_version_detection_controls_boundary_and_command_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    launches = []
+
+    def fake_popen(command, **_kwargs):
+        launches.append(command)
+        return FakeProcess(returncode=127, stderr="agent: executable not found\n")
+
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        fake_popen,
+    )
+    version, status, warning = detect_agent_version(
+        _docker_version_config(),
+        repo_dir=repo_dir,
+        command_tracker=CommandTracker(),
+    )
+    assert version is None
+    assert status == "failed"
+    assert warning == "Agent version command exited with status 127."
+    assert len(launches) == 1
+
+    invalid = _docker_version_config(
+        sandbox=SandboxConfig(type="docker", image="--privileged"),
+    )
+    version, status, warning = detect_agent_version(
+        invalid,
+        repo_dir=repo_dir,
+        command_tracker=CommandTracker(),
+    )
+    assert version is None
+    assert status == "failed"
+    assert warning == "Agent version command failed: ValueError."
+    assert len(launches) == 1
+
+
+def test_docker_version_detection_applies_policy_before_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _docker_version_config(
+        agent_version_command=["blocked-version"],
+        unsafe_commands=["blocked-version"],
+        command_policy=CommandPolicyConfig(mode="enforce"),
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: pytest.fail("blocked command launched"),
+    )
+
+    version, status, warning = detect_agent_version(
+        config,
+        repo_dir=tmp_path,
+        command_tracker=CommandTracker(),
+    )
+
+    assert version is None
+    assert status == "blocked"
+    assert warning == "Agent version command was blocked by command policy."
+
+
+def test_docker_version_detection_bounds_timeout_and_sanitizes_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    process = FakeProcess(
+        returncode=0,
+        stdout="Authorization: Bearer canary-version-token\n",
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: process,
+    )
+    tracker = CommandTracker()
+
+    version, status, warning = detect_agent_version(
+        _docker_version_config(command_timeout_seconds=99),
+        repo_dir=repo_dir,
+        command_tracker=tracker,
+    )
+
+    assert (version, status, warning) == (
+        "Authorization: [REDACTED]",
+        "detected",
+        None,
+    )
+    assert process.last_timeout == 10
+    assert "canary-version-token" not in tracker.events[0].stdout
+    assert tracker.events[0].stdout == "Authorization: [REDACTED]\n"
+
+
+def test_docker_version_detection_returns_controlled_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    process = FakeProcess(returncode=None, timeout=True)
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.terminate_process_tree",
+        lambda _process: SimpleNamespace(
+            attempted=True,
+            complete=True,
+            kill_required=True,
+            message="process tree terminated",
+        ),
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+
+    version, status, warning = detect_agent_version(
+        _docker_version_config(command_timeout_seconds=2),
+        repo_dir=repo_dir,
+        command_tracker=CommandTracker(),
+    )
+
+    assert version is None
+    assert status == "failed"
+    assert warning == "Agent version command timed out."
+    assert process.wait_timeouts[0] == 2
 
 
 def test_docker_command_includes_expected_container_options(tmp_path: Path) -> None:
