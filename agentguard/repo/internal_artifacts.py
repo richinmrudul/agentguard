@@ -12,6 +12,16 @@ INTERNAL_ARTIFACT_PATTERNS = [
 ]
 
 
+def git_exclusion_pathspecs() -> list[str]:
+    """Return Git pathspecs for built-in generated-artifact exclusions."""
+    patterns: list[str] = []
+    for pattern in INTERNAL_ARTIFACT_PATTERNS:
+        patterns.append(f":(exclude){pattern}")
+        if pattern.startswith("**/"):
+            patterns.append(f":(exclude){pattern.removeprefix('**/')}")
+    return patterns
+
+
 def is_internal_artifact(path: str) -> bool:
     normalized = normalize_posix_path(path)
     return any(

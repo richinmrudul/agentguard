@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from agentguard.artifact_paths import artifact_directory
 from agentguard.config.schema import AgentGuardConfig
+from agentguard.repo.internal_artifacts import git_exclusion_pathspecs
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,15 @@ class RepoManager:
             git_dir = repo_dir / ".git"
             if not git_dir.is_dir() or git_dir.is_symlink():
                 raise RuntimeError("Prepared repository did not receive fresh Git metadata.")
-            self._git(repo_dir, "add", ".")
+            self._git(
+                repo_dir,
+                "add",
+                "--all",
+                "--force",
+                "--",
+                ".",
+                *git_exclusion_pathspecs(),
+            )
             self._git(
                 repo_dir,
                 "-c",

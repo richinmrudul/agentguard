@@ -8,6 +8,7 @@ import pytest
 from agentguard.checks.secret_content import (
     BUILTIN_SECRET_CONTENT_DETECTORS,
     MAX_SECRET_SCAN_BYTES_PER_FILE,
+    MAX_SECRET_SCAN_FILES,
     MAX_SECRET_SCAN_MATCHES_PER_DETECTOR_FILE,
     scan_secret_content,
 )
@@ -178,6 +179,26 @@ def test_scans_untracked_text_and_skips_binary(tmp_path: Path) -> None:
     assert result.matches == [
         "new.txt:1 matched secret-content detector demo-api-token"
     ]
+
+
+def test_ignored_additions_remain_subject_to_candidate_file_bound(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    (repo / ".gitignore").write_text("ignored/**\n", encoding="utf-8")
+    for index in range(MAX_SECRET_SCAN_FILES + 1):
+        path = repo / "ignored" / f"candidate-{index:03d}.txt"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(f"value={LITERAL}\n", encoding="utf-8")
+
+    diff = collect_diff(repo, include_ignored=True)
+    result = scan_secret_content(repo, diff, PATTERNS)
+
+    assert len(diff.added_files) == MAX_SECRET_SCAN_FILES + 2
+    assert diff.added_files == sorted(diff.added_files)
+    assert result.complete is False
+    assert result.matches == []
+    assert result.error == "candidate file limit exceeded"
 
 
 def test_invalid_utf8_fails_closed_without_raw_parser_error(tmp_path: Path) -> None:
