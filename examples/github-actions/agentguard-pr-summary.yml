@@ -75,4 +75,5 @@ jobs:
             .agentguard/ci/**/command_log.json
             .agentguard/ci/**/manifest.json
             .agentguard/pr-report.json
-          if-no-files-found: warn
+          include-hidden-files: true
+          if-no-files-found: error

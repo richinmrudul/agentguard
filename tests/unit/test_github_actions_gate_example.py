@@ -119,6 +119,49 @@ def test_github_actions_examples_upload_expected_artifacts() -> None:
             assert ".agentguard/ci" in serialized
 
 
+def test_hidden_agentguard_artifacts_are_narrow_and_required() -> None:
+    expected_hidden_paths = {
+        "agentguard-ci.yml": {
+            ".agentguard/ci/**/*.json",
+            ".agentguard/ci/**/*.md",
+            ".agentguard/ci/**/command_log.json",
+            ".agentguard/ci/**/manifest.json",
+        },
+        "agentguard-gate.yml": {
+            ".agentguard/suites/**/*.json",
+            ".agentguard/suites/**/*.md",
+            ".agentguard/suites/**/manifest.json",
+        },
+        "agentguard-pr-summary.yml": {
+            ".agentguard/ci/**/*.json",
+            ".agentguard/ci/**/*.md",
+            ".agentguard/ci/**/command_log.json",
+            ".agentguard/ci/**/manifest.json",
+            ".agentguard/pr-report.json",
+        },
+        "agentguard-showcase.yml": {
+            ".agentguard/showcase/**/*.json",
+            ".agentguard/showcase/**/*.md",
+        },
+    }
+    for name, expected in expected_hidden_paths.items():
+        artifacts = _artifact_steps(_workflow(name))
+        assert len(artifacts) == 1
+        settings = artifacts[0].get("with")
+        assert isinstance(settings, dict)
+        assert settings.get("include-hidden-files") is True
+        assert settings.get("if-no-files-found") == "error"
+        paths = settings.get("path")
+        assert isinstance(paths, str)
+        hidden_paths = {
+            line.strip()
+            for line in paths.splitlines()
+            if line.strip().startswith(".")
+        }
+        assert hidden_paths == expected
+        assert ".agentguard/**" not in hidden_paths
+
+
 def test_basic_ci_gate_example_fails_pr_and_writes_summary() -> None:
     workflow = _workflow("agentguard-ci.yml")
     text = _text("agentguard-ci.yml")

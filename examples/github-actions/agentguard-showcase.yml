@@ -45,4 +45,5 @@ jobs:
             docs/results/showcase-metrics.md
             .agentguard/showcase/**/*.json
             .agentguard/showcase/**/*.md
+          include-hidden-files: true
           if-no-files-found: error

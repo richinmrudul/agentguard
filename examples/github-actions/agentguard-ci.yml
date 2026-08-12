@@ -44,4 +44,5 @@ jobs:
             .agentguard/ci/**/*.md
             .agentguard/ci/**/command_log.json
             .agentguard/ci/**/manifest.json
-          if-no-files-found: warn
+          include-hidden-files: true
+          if-no-files-found: error

@@ -34,7 +34,8 @@ jobs:
             .agentguard/suites/**/*.json
             .agentguard/suites/**/*.md
             .agentguard/suites/**/manifest.json
-          if-no-files-found: warn
+          include-hidden-files: true
+          if-no-files-found: error
 
       # This example writes the baseline to /tmp so it is copyable and
       # self-contained. In a real repository, store an approved baseline in a

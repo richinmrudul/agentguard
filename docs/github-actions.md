@@ -140,9 +140,12 @@ Workflow-command properties and messages are escaped. Existing findings are
 not re-annotated.
 
 The example workflows upload JSON, Markdown, command-log, and manifest artifacts
-with `actions/upload-artifact@v6.0.0`. Generated artifacts remain under
-`.agentguard/...` or `docs/results/...`; do not commit `.agentguard/` runtime
-directories.
+with `actions/upload-artifact@v6.0.0`. Upload steps explicitly enable hidden-file
+handling for narrowly scoped `.agentguard/ci`, `.agentguard/suites`, or
+`.agentguard/showcase` patterns; unrelated hidden files are not selected, and a
+missing required evidence set fails the upload step. Generated artifacts remain
+under `.agentguard/...` or `docs/results/...`; do not commit `.agentguard/`
+runtime directories.
 
 ## Example Config
 
@@ -290,6 +293,8 @@ metrics flow:
       docs/results/showcase-metrics.md
       .agentguard/showcase/**/*.json
       .agentguard/showcase/**/*.md
+    include-hidden-files: true
+    if-no-files-found: error
 ```
 
 The full workflow is
@@ -320,4 +325,6 @@ annotations, or other write operations outside AgentGuard.
 - If expected unsafe demo scenarios fail the job, use suite baselines or
   `--allow-fail-result` only for demo/evidence jobs, not merge-blocking gates.
 - If artifacts are missing, keep upload steps guarded with `if: always()` so
-  reports are preserved after a failed gate.
+  reports are preserved after a failed gate. Keep `include-hidden-files: true`
+  for the narrow `.agentguard/...` patterns and `if-no-files-found: error` so a
+  missing required evidence set is visible rather than silently ignored.
