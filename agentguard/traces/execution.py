@@ -1097,15 +1097,20 @@ def _require_exact_fields(
     expected: set[str],
     label: str,
 ) -> None:
+    # `missing` names come from `expected`, a fixed hardcoded set, so they are
+    # safe to report. `actual` keys are untrusted trace content and must never
+    # be echoed back: an attacker can put anything -- including a credential
+    # canary or a near-line-limit string -- in a JSON object key.
     actual = set(data)
     if actual != expected:
         missing = sorted(expected - actual)
-        unknown = sorted(actual - expected)
+        unknown_count = len(actual - expected)
         details = []
         if missing:
             details.append(f"missing {', '.join(missing)}")
-        if unknown:
-            details.append(f"unknown {', '.join(unknown)}")
+        if unknown_count:
+            plural = "s" if unknown_count != 1 else ""
+            details.append(f"{unknown_count} unknown field{plural}")
         raise ValueError(f"Invalid {label} fields: {'; '.join(details)}.")
 
 
@@ -1319,6 +1324,11 @@ def _validate_sha256(value: object, label: str) -> None:
 
 
 def _validate_bounds(value: object, key: Optional[str] = None) -> None:
+    # Diagnostics here must stay fixed/bounded text only. `current_key` and
+    # dict keys below come straight from untrusted trace content, so no
+    # branch may interpolate them into a raised message -- that would let a
+    # malformed trace echo an attacker-chosen string (e.g. a credential
+    # canary) back through `trace show`/`verify`/`replayability`/`replay`.
     pending: list[tuple[object, Optional[str], int]] = [(value, key, 0)]
     nodes = 0
     while pending:
@@ -1340,12 +1350,14 @@ def _validate_bounds(value: object, key: Optional[str] = None) -> None:
             )
             if len(current) > limit:
                 raise ValueError(
-                    f"Trace string field {current_key or '<value>'} is too long."
+                    f"Trace string field at nesting depth {depth} exceeds "
+                    f"the {limit}-character limit."
                 )
         elif isinstance(current, list):
             if len(current) > MAX_CHANGED_FILES:
                 raise ValueError(
-                    f"Trace list field {current_key or '<value>'} is too long."
+                    f"Trace list field at nesting depth {depth} exceeds "
+                    f"the {MAX_CHANGED_FILES}-item limit."
                 )
             pending.extend(
                 (item, current_key, depth + 1) for item in reversed(current)
@@ -1355,6 +1367,11 @@ def _validate_bounds(value: object, key: Optional[str] = None) -> None:
             for child_key, item in current.items():
                 if not isinstance(child_key, str):
                     raise ValueError("Trace object keys must be strings.")
+                if len(child_key) > MAX_STRING_CHARS:
+                    raise ValueError(
+                        f"Trace object key at nesting depth {depth} exceeds "
+                        f"the {MAX_STRING_CHARS}-character limit."
+                    )
                 children.append((item, child_key, depth + 1))
             pending.extend(reversed(children))
 
