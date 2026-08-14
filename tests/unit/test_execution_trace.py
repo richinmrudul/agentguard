@@ -827,6 +827,97 @@ def test_trace_loader_normalizes_invalid_utf8_and_json_recursion(
     assert verify_execution_trace(wrong_shape).exit_code == 2
 
 
+# Markers seeded into every hostile trace below. Each stands for one class of
+# thing an attacker controls and a diagnostic must never reproduce: a
+# credential-shaped value, a field name, a bulk fragment, and an absolute path
+# belonging to whoever authored the trace.
+_HOSTILE_CANARY = "AGENTGUARD-FAKE-CREDENTIAL-CANARY-4D7A-"
+_HOSTILE_KEY = "agentguard_attacker_controlled_key"
+_HOSTILE_ABSOLUTE_PATH = "/private/attacker-home/.ssh/id_rsa"
+
+_HOSTILE_KINDS = ("invalid_utf8", "malformed_json", "deep_json", "wrong_shape")
+
+
+def _hostile_trace_file(
+    kind: str,
+    benchmark_result,
+    tmp_path: Path,
+) -> tuple[Path, str]:
+    """Write one hostile trace of `kind`, seeded with the leak markers.
+
+    Returns the path and the bulk filler, so a caller can assert that no large
+    fragment of the input is echoed back.
+    """
+    filler = "y" * (trace_module.MAX_STRING_CHARS + 64)
+    path = tmp_path / f"hostile-{kind}.jsonl"
+
+    if kind == "invalid_utf8":
+        trace = _rebuilt_trace(benchmark_result, tmp_path / f"src-{kind}.jsonl")
+        base = tmp_path / f"base-{kind}.jsonl"
+        write_execution_trace(trace, base)
+        records = _records(base)
+        records[0][_HOSTILE_KEY] = _HOSTILE_CANARY + filler
+        payload = "\n".join(json.dumps(record) for record in records).encode("utf-8")
+        newline = payload.index(b"\n")
+        # Corrupt the byte after the first newline so line 2 is undecodable.
+        path.write_bytes(payload[: newline + 1] + b"\xff" + payload[newline + 2 :])
+    elif kind == "malformed_json":
+        truncated = json.dumps(
+            {_HOSTILE_KEY: _HOSTILE_CANARY + filler, "path": _HOSTILE_ABSOLUTE_PATH}
+        )[:-1]
+        path.write_text(truncated + "\n", encoding="utf-8")
+    elif kind == "deep_json":
+        nested = json.dumps(_HOSTILE_CANARY + filler)
+        path.write_text("[" * 1500 + nested + "]" * 1500 + "\n", encoding="utf-8")
+    elif kind == "wrong_shape":
+        trace = _rebuilt_trace(benchmark_result, tmp_path / f"src-{kind}.jsonl")
+        base = tmp_path / f"base-{kind}.jsonl"
+        write_execution_trace(trace, base)
+        records = _records(base)
+        records[0]["source_artifacts"] = [
+            {
+                "role": _HOSTILE_CANARY,
+                "path": [_HOSTILE_ABSOLUTE_PATH],
+                "sha256": "a" * 64,
+                "required": True,
+                _HOSTILE_KEY: filler,
+            }
+        ]
+        _write_records(path, records)
+    else:  # pragma: no cover - guards the parametrisation itself
+        raise AssertionError(f"unknown hostile kind {kind!r}")
+
+    return path, filler
+
+
+@pytest.mark.parametrize("command", ["show", "verify", "replayability", "replay"])
+@pytest.mark.parametrize("kind", _HOSTILE_KINDS)
+def test_trace_commands_reject_hostile_input_without_leaking(
+    benchmark_result,
+    tmp_path: Path,
+    command: str,
+    kind: str,
+) -> None:
+    """Every public command against every hostile-input category.
+
+    The loader-level tests above prove the parse is rejected; this proves each
+    command surface rejects it the same way and says nothing about the contents
+    while doing so.
+    """
+    path, filler = _hostile_trace_file(kind, benchmark_result, tmp_path)
+
+    result = runner.invoke(app, ["trace", command, str(path)])
+
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output
+    assert _HOSTILE_CANARY not in result.output
+    assert _HOSTILE_KEY not in result.output
+    # A bounded structural position may be reported; a slice of the input
+    # itself may not.
+    assert filler[:64] not in result.output
+    assert _HOSTILE_ABSOLUTE_PATH not in result.output
+
+
 @pytest.mark.parametrize("command", ["show", "verify", "replayability", "replay"])
 def test_trace_commands_share_bounded_loader(
     benchmark_result,
