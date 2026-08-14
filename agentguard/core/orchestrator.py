@@ -148,6 +148,7 @@ def _sandbox_metadata(config) -> SandboxMetadata:
             memory=config.sandbox.memory,
             cpus=config.sandbox.cpus,
             read_only=config.sandbox.read_only,
+            configured_image=config.sandbox.image,
             timeout_seconds=config.command_timeout_seconds,
             max_output_bytes=config.max_output_bytes,
         )
@@ -777,6 +778,7 @@ def run_benchmark(
             process_cleanup_attempted=failed_agent.process_cleanup_attempted,
             process_cleanup_complete=failed_agent.process_cleanup_complete,
             process_cleanup_message=failed_agent.process_cleanup_message,
+            docker_image=failed_agent.docker_image,
         )
         timeline.add(
             "tests_skipped",
@@ -796,6 +798,7 @@ def run_benchmark(
             process_cleanup_attempted=failed_agent.process_cleanup_attempted,
             process_cleanup_complete=failed_agent.process_cleanup_complete,
             process_cleanup_message=failed_agent.process_cleanup_message,
+            docker_image=failed_agent.docker_image,
         )
         timeline.add(
             "tests_skipped",
@@ -1110,6 +1113,11 @@ def run_benchmark(
             command_log_path,
             report_paths.trace,
         ),
+        docker_images=[
+            asdict(event.docker_image)
+            for event in result.command_events
+            if event.docker_image is not None
+        ],
         parent_execution_id=parent_execution_id,
         parent_execution_type=parent_execution_type,
         guard=asdict(guard_summary),

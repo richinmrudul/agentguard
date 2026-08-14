@@ -10,7 +10,33 @@ from agentguard.cli.main import app
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.guard.filesystem import GuardMode
 from agentguard.history.store import HistoryRecord
+from agentguard.sandbox.docker_identity import DockerImageIdentity
+from agentguard.sandbox.docker_runner import DockerCommandRunner
+from agentguard.instrumentation.processes import ProcessCleanupResult
 
+
+@pytest.fixture(autouse=True)
+def _established_docker_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        DockerCommandRunner,
+        "_prepare_container_identity",
+        lambda self, *_args, **_kwargs: DockerImageIdentity(
+            configured_reference=self.sandbox.image or "",
+            local_image_id="sha256:" + "1" * 64,
+            executed_image_id="sha256:" + "1" * 64,
+            platform="linux/amd64",
+            cache_status="present",
+        ),
+    )
+    monkeypatch.setattr(
+        DockerCommandRunner,
+        "_remove_container",
+        lambda self, _name: ProcessCleanupResult(
+            attempted=True,
+            complete=True,
+            message="docker container removed after timeout",
+        ),
+    )
 
 
 class _FakeProcess:
@@ -86,8 +112,7 @@ def test_docker_custom_command_failure_preserves_controlled_evidence(
     )
 
     def fake_popen(command, **kwargs):
-        mount = next(item for item in command if item.endswith(":/workspace"))
-        checkout = mount.removesuffix(":/workspace")
+        checkout = str(next((tmp_path / ".agentguard" / "runs").glob("*/repo")))
         if "--version" in command:
             return _FakeProcess(
                 returncode=127,

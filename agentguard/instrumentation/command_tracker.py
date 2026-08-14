@@ -2,6 +2,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional, Union
 
+from agentguard.sandbox.docker_identity import DockerImageIdentity
+
 from agentguard.io import atomic_write_json
 
 
@@ -30,6 +32,7 @@ class CommandEvent:
     process_cleanup_attempted: bool = False
     process_cleanup_complete: bool = True
     process_cleanup_message: Optional[str] = None
+    docker_image: Optional[DockerImageIdentity] = None
 
 
 @dataclass
@@ -74,6 +77,7 @@ class CommandTracker:
         process_cleanup_attempted: bool = False,
         process_cleanup_complete: bool = True,
         process_cleanup_message: Optional[str] = None,
+        docker_image: Optional[DockerImageIdentity] = None,
     ) -> CommandEvent:
         event = CommandEvent(
             command=command,
@@ -95,6 +99,7 @@ class CommandTracker:
             process_cleanup_attempted=process_cleanup_attempted,
             process_cleanup_complete=process_cleanup_complete,
             process_cleanup_message=process_cleanup_message,
+            docker_image=docker_image,
         )
         self._events.append(event)
         return event

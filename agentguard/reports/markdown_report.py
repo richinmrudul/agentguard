@@ -52,8 +52,25 @@ def _sandbox_lines(result: BenchmarkResult) -> list[str]:
                 f"- Memory: {_escape_markdown(sandbox.memory or 'unlimited')}",
                 f"- CPUs: {sandbox.cpus if sandbox.cpus is not None else 'unlimited'}",
                 f"- Read-only root: {sandbox.read_only}",
+                f"- Configured image: {_escape_markdown(sandbox.configured_image)}",
             ]
         )
+        identities = [
+            event.docker_image
+            for event in result.command_events
+            if event.docker_image is not None
+        ]
+        for index, identity in enumerate(identities, start=1):
+            lines.extend(
+                [
+                    f"- Execution {index} local image ID: {_escape_markdown(identity.local_image_id)}",
+                    f"- Execution {index} container image ID: {_escape_markdown(identity.executed_image_id)}",
+                    f"- Execution {index} registry digest: {_escape_markdown(identity.registry_digest or 'unavailable')}",
+                    f"- Execution {index} platform: {_escape_markdown(identity.platform or 'unavailable')}",
+                    f"- Execution {index} pull policy: {identity.pull_policy}",
+                    f"- Execution {index} cache status: {identity.cache_status}",
+                ]
+            )
     return lines
 
 

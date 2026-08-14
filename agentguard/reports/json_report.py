@@ -28,6 +28,10 @@ def write_json_report(result: BenchmarkResult, reports_dir: Path) -> Path:
             "timeout_seconds": result.sandbox.timeout_seconds,
             "max_output_bytes": result.sandbox.max_output_bytes,
         }
+    elif isinstance(data.get("sandbox"), dict):
+        data["sandbox"] = {
+            key: value for key, value in data["sandbox"].items() if value is not None
+        }
     data["command_log_path"] = result.report_paths.command_log
     data["manifest_path"] = result.report_paths.manifest
     data["trace_path"] = result.report_paths.trace

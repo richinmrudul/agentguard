@@ -7,6 +7,7 @@ from agentguard.core.timeline import TimelineEvent
 from agentguard.guard.command import CommandGuardSummary
 from agentguard.guard.filesystem import LiveGuardSummary
 from agentguard.instrumentation.command_tracker import CommandEvent
+from agentguard.sandbox.docker_identity import DockerImageIdentity
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class CommandResult:
     process_cleanup_attempted: bool = False
     process_cleanup_complete: bool = True
     process_cleanup_message: Optional[str] = None
+    docker_image: Optional[DockerImageIdentity] = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,7 @@ class SandboxMetadata:
     memory: Optional[str] = None
     cpus: Optional[float] = None
     read_only: Optional[bool] = None
+    configured_image: Optional[str] = None
 
 
 @dataclass(frozen=True)

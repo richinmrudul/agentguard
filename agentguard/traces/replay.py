@@ -13,6 +13,7 @@ from agentguard.config.schema import (
 )
 from agentguard.core.result import CheckResult, CommandResult, DiffSummary
 from agentguard.instrumentation.command_tracker import CommandEvent
+from agentguard.sandbox.docker_identity import parse_docker_image_identity
 from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.policy.evaluation import (
@@ -192,6 +193,11 @@ def reconstruct_replay_evidence(trace: ExecutionTrace) -> ReplayEvidence:
             else True
         ),
         process_cleanup_message=(test.get("process_cleanup") or {}).get("message"),
+        docker_image=(
+            parse_docker_image_identity(test["docker_image"])
+            if test.get("docker_image") is not None
+            else None
+        ),
     )
     command_events = []
     for event in trace.events:
@@ -228,6 +234,11 @@ def reconstruct_replay_evidence(trace: ExecutionTrace) -> ReplayEvidence:
                     else True
                 ),
                 process_cleanup_message=cleanup.get("message"),
+                docker_image=(
+                    parse_docker_image_identity(payload["docker_image"])
+                    if payload.get("docker_image") is not None
+                    else None
+                ),
             )
         )
     return ReplayEvidence(

@@ -605,6 +605,32 @@ def test_shared_policy_evaluation_rejects_unknown_check(pass_result) -> None:
         evaluate_policy_checks(context, enabled_identifiers=["future-check"])
 
 
+def test_replay_rejects_malformed_docker_identity(pass_result) -> None:
+    trace = replay_module.load_execution_trace(_trace_path(pass_result))
+    test_index = next(
+        index
+        for index, event in enumerate(trace.events)
+        if event.event_type == "test_result"
+    )
+    event = trace.events[test_index]
+    payload = dict(event.payload)
+    payload["docker_image"] = {
+        "configured_reference": "example/app:latest",
+        "local_image_id": "sha256:" + "1" * 64,
+        "executed_image_id": "sha256:" + "1" * 64,
+        "registry_digest": None,
+        "platform": "linux/amd64",
+        "pull_policy": "surprise",
+        "cache_status": "present",
+    }
+    events = list(trace.events)
+    events[test_index] = replace(event, payload=payload)
+    malformed = replace(trace, events=events)
+
+    with pytest.raises(ValueError, match="pull policy"):
+        replay_module.reconstruct_replay_evidence(malformed)
+
+
 def test_source_strict_and_non_strict_replay_behavior(
     pass_result,
     tmp_path: Path,

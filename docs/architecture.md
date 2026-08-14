@@ -323,7 +323,33 @@ remain a deferred presentation layer.
 
 ### Docker Sandbox / Command Runner
 
-The Docker runner executes configured commands inside a container using a mounted repository workspace, working directory, environment, network mode, optional memory and CPU limits, timeout handling, and output limits. Timeout-managed Docker commands receive a generated container name so AgentGuard can attempt forced container removal on timeout or cleanup failure. It also records executed command events through the command tracker. A nonzero or timed-out `custom-command` that reached execution becomes a controlled failed benchmark result, so reports, diffs, traces, manifests, and history remain available. Docker client or container-start failures instead return a concise setup error without incorporating raw Docker output.
+The Docker runner creates a named, stopped container, inspects the container's
+actual local image ID, inspects that exact image, and only then starts it. Evidence
+distinguishes the configured reference, local image ID, container image ID,
+available registry `RepoDigest`, selected platform, Docker-default pull policy,
+and whether the reference was already present locally. A mutable tag is therefore
+not treated as immutable provenance; two runs of the same tag record different
+provenance when Docker creates their containers from different image IDs.
+
+AgentGuard preserves Docker's existing default pull/cache behavior and introduces
+no mandatory registry access. Offline runs can attest the local and executed image
+IDs but may have no registry digest; that absence is recorded and is not described
+as registry verification. The current execution configuration has no retained
+high-assurance or signed-pack mode, so digest-pin enforcement is not inferred from
+the post-execution `strict` policy preset. Workflows requiring portable registry
+identity should configure a digest-pinned image and verify that a `RepoDigest` is
+present in evidence.
+
+The Docker runner executes configured commands using a mounted repository
+workspace, working directory, environment, network mode, optional memory and CPU
+limits, timeout handling, and output limits. Timeout-managed Docker commands use
+the generated container name so AgentGuard can attempt forced removal on timeout
+or cleanup failure. It records executed command events through the command tracker.
+A nonzero or timed-out `custom-command` that reached execution becomes a controlled
+failed benchmark result, so reports, diffs, traces, manifests, and history remain
+available. Docker identity, client, or container-start failures instead return a
+concise setup error without incorporating raw Docker output, and identity failures
+occur before the agent command starts.
 
 ### Instrumentation / Command Tracker
 
