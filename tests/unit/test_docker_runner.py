@@ -558,7 +558,7 @@ def test_docker_identity_is_bound_to_created_container_before_start(
             returncode=0,
             stdout=(
                 f'{{"Id":"{image_id}","RepoDigests":["{digest}"],'
-                '"Os":"linux","Architecture":"arm64","Variant":"v8"}'
+                '"Os":"linux","Architecture":"arm64"}'
             ),
             stderr="",
         )
@@ -576,7 +576,7 @@ def test_docker_identity_is_bound_to_created_container_before_start(
     assert identity.local_image_id == image_id
     assert identity.executed_image_id == image_id
     assert identity.registry_digest == digest
-    assert identity.platform == "linux/arm64/v8"
+    assert identity.platform == "linux/arm64"
     assert identity.pull_policy == "docker-default"
     assert identity.cache_status == "present"
     assert [command[0][1] for command in calls] == [
@@ -586,6 +586,8 @@ def test_docker_identity_is_bound_to_created_container_before_start(
         "image",
     ]
     assert [timeout for _, timeout in calls] == [10, 137, 10, 10]
+    assert calls[2][0][4] == "{{json .}}"
+    assert calls[3][0][4] == "{{json .}}"
 
 
 def test_registry_digest_selection_is_repository_precise() -> None:

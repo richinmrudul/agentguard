@@ -408,17 +408,13 @@ class DockerCommandRunner:
             container = self._inspect_json(
                 [
                     "docker", "container", "inspect", "--format",
-                    '{"Image":{{json .Image}}}', container_name,
+                    "{{json .}}", container_name,
                 ]
             )
             executed_id = self._normalized_image_id(container.get("Image"))
             image = self._inspect_json([
                 "docker", "image", "inspect", "--format",
-                (
-                    '{"Id":{{json .Id}},"RepoDigests":{{json .RepoDigests}},'
-                    '"Os":{{json .Os}},"Architecture":{{json .Architecture}},'
-                    '"Variant":{{json .Variant}}}'
-                ),
+                "{{json .}}",
                 executed_id,
             ])
             local_id = self._normalized_image_id(image.get("Id"))
