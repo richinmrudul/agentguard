@@ -35,6 +35,15 @@ Pack-local paths are normalized:
 Config `repo_template` values and contract `config` values are rewritten to
 these pack-local paths during export.
 
+Repository fixture files are read through open file descriptors with bounded
+size and stable identity checks. Export requires every regular fixture file to
+have exactly one filesystem link before and after the read. Consequently,
+hardlinks are rejected whether their other name is inside or outside the
+fixture tree. This fail-closed rule prevents path containment from being
+mistaken for content ownership. Platforms that cannot expose stable file
+identity and link-count metadata cannot export regular fixture files. Safe
+relative symlinks continue to be represented as symlinks rather than followed.
+
 Pack paths use one portable filesystem identity on every platform. Each path
 component is normalized to Unicode NFC and case-folded for collision checks.
 AgentGuard also rejects Windows reserved device names, trailing dots or spaces,

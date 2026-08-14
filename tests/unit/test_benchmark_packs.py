@@ -247,6 +247,172 @@ def test_export_excludes_agentguard_caches_dbs_and_reports(tmp_path: Path) -> No
     assert not any(path.endswith(".db") or path.endswith(".log") for path in paths)
 
 
+def test_export_rejects_external_hardlink_and_preserves_force_target(
+    tmp_path: Path,
+) -> None:
+    registry = _minimal_registry(tmp_path)
+    source = tmp_path / "outside-canary.txt"
+    source.write_text("benign external canary", encoding="utf-8")
+    linked = tmp_path / "repos" / "mini" / "linked.txt"
+    try:
+        os.link(source, linked)
+    except OSError as error:
+        pytest.skip(f"hardlinks unavailable: {error}")
+    output = tmp_path / "mini.zip"
+    output.write_bytes(b"existing pack")
+
+    with pytest.raises(BenchmarkPackError, match="multiply linked") as error:
+        export_benchmark_pack(
+            registry_path=registry,
+            output_path=output,
+            force=True,
+        )
+
+    assert str(source) not in str(error.value)
+    assert str(linked) not in str(error.value)
+    assert output.read_bytes() == b"existing pack"
+
+
+def test_export_rejects_multiple_in_root_hardlinks(tmp_path: Path) -> None:
+    registry = _minimal_registry(tmp_path)
+    source = tmp_path / "repos" / "mini" / "src.py"
+    alias = source.with_name("alias.py")
+    try:
+        os.link(source, alias)
+    except OSError as error:
+        pytest.skip(f"hardlinks unavailable: {error}")
+
+    with pytest.raises(BenchmarkPackError, match="multiply linked"):
+        export_benchmark_pack(
+            registry_path=registry,
+            output_path=tmp_path / "mini.zip",
+        )
+
+    assert not (tmp_path / "mini.zip").exists()
+
+
+def test_export_accepts_single_link_file_and_safe_symlink(tmp_path: Path) -> None:
+    registry = _minimal_registry(tmp_path)
+    repo = tmp_path / "repos" / "mini"
+    (repo / "linked.py").symlink_to("src.py")
+    output = tmp_path / "mini.zip"
+
+    export_benchmark_pack(registry_path=registry, output_path=output)
+
+    result = verify_benchmark_pack(output)
+    exported = {item.path: item for item in result.files}
+    assert exported["repos/mini/src.py"].type == "regular"
+    assert exported["repos/mini/linked.py"].type == "symlink"
+
+
+def test_export_fails_closed_when_link_count_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _minimal_registry(tmp_path)
+
+    def unavailable(_value: os.stat_result) -> None:
+        raise BenchmarkPackError(
+            "repository file link ownership cannot be verified on this platform"
+        )
+
+    monkeypatch.setattr(packs_module, "_require_single_link", unavailable)
+
+    with pytest.raises(BenchmarkPackError, match="cannot be verified"):
+        export_benchmark_pack(
+            registry_path=registry,
+            output_path=tmp_path / "mini.zip",
+        )
+
+    assert not (tmp_path / "mini.zip").exists()
+
+
+def test_export_detects_replacement_between_inspection_and_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _minimal_registry(tmp_path)
+    source = tmp_path / "repos" / "mini" / "src.py"
+    real_open = packs_module.os.open
+    replaced = False
+
+    def replacing_open(path, flags, *args, **kwargs):
+        nonlocal replaced
+        if Path(path) == source and not replaced:
+            replaced = True
+            source.unlink()
+            source.write_text("replacement", encoding="utf-8")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(packs_module.os, "open", replacing_open)
+
+    with pytest.raises(BenchmarkPackError, match="changed"):
+        export_benchmark_pack(
+            registry_path=registry,
+            output_path=tmp_path / "mini.zip",
+        )
+
+    assert not (tmp_path / "mini.zip").exists()
+
+
+def test_export_detects_regular_file_mutation_during_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _minimal_registry(tmp_path)
+    source = tmp_path / "repos" / "mini" / "src.py"
+    real_read = packs_module.os.read
+    mutated = False
+
+    def mutating_read(descriptor: int, size: int) -> bytes:
+        nonlocal mutated
+        if not mutated:
+            mutated = True
+            with source.open("ab") as file:
+                file.write(b"x")
+        return real_read(descriptor, size)
+
+    monkeypatch.setattr(packs_module.os, "read", mutating_read)
+
+    with pytest.raises(BenchmarkPackError, match="changed"):
+        export_benchmark_pack(
+            registry_path=registry,
+            output_path=tmp_path / "mini.zip",
+        )
+
+    assert not (tmp_path / "mini.zip").exists()
+
+
+def test_export_accepts_file_exactly_at_size_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _minimal_registry(tmp_path)
+    (tmp_path / "repos" / "mini" / "src.py").write_bytes(b"1234")
+    monkeypatch.setattr(packs_module, "MAX_FILE_BYTES", 4)
+    output = tmp_path / "mini.zip"
+
+    export_benchmark_pack(registry_path=registry, output_path=output)
+
+    assert _zip_map(output)["repos/mini/src.py"] == b"1234"
+
+
+def test_export_rejects_file_above_size_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _minimal_registry(tmp_path)
+    monkeypatch.setattr(packs_module, "MAX_FILE_BYTES", 4)
+
+    with pytest.raises(BenchmarkPackError, match="byte export limit"):
+        export_benchmark_pack(
+            registry_path=registry,
+            output_path=tmp_path / "mini.zip",
+        )
+
+    assert not (tmp_path / "mini.zip").exists()
+
+
 def test_verify_detects_hash_mismatch(tmp_path: Path) -> None:
     pack = _export_pack(tmp_path, "auth_bug")
     files = _zip_map(pack)
