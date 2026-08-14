@@ -9,7 +9,11 @@ from typing import Optional
 from agentguard.config.docker_image import validate_docker_image_reference
 from agentguard.config.schema import SandboxConfig
 from agentguard.core.result import CommandResult
-from agentguard.sandbox.docker_identity import DockerImageIdentity
+from agentguard.sandbox.docker_identity import (
+    DockerImageIdentity,
+    parse_docker_image_identity,
+    select_registry_digest,
+)
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.output_limits import (
     BoundedProcessOutput,
@@ -252,7 +256,9 @@ class DockerCommandRunner:
             captured = capture.finish()
             stdout = captured.stdout.text
             stderr = captured.stderr.text
-            self._remove_container(container_name)
+            cleanup = self._remove_container(container_name)
+            if not cleanup.complete:
+                stderr = append_cleanup_message(stderr, cleanup)
         except FileNotFoundError:
             if process is not None:
                 cleanup_process_after_exception(
@@ -265,6 +271,10 @@ class DockerCommandRunner:
             stdout = ""
             stderr = "Docker is not installed or is not available on PATH."
             captured = None
+            if docker_image is not None:
+                cleanup = self._remove_container(container_name)
+                if not cleanup.complete:
+                    stderr = append_cleanup_message(stderr, cleanup)
         except DockerIdentityError as error:
             self._remove_container(container_name)
             exit_code = error.exit_code
@@ -404,15 +414,9 @@ class DockerCommandRunner:
         if not executed_id or not local_id or executed_id != local_id:
             raise DockerIdentityError()
 
-        repo_digests = image.get("RepoDigests")
-        registry_digest = None
-        if isinstance(repo_digests, list):
-            candidates = sorted(
-                value
-                for value in repo_digests
-                if isinstance(value, str) and "@sha256:" in value
-            )
-            registry_digest = candidates[0] if candidates else None
+        registry_digest = select_registry_digest(
+            self.sandbox.image or "", image.get("RepoDigests")
+        )
         os_name = image.get("Os")
         architecture = image.get("Architecture")
         variant = image.get("Variant")
@@ -421,13 +425,16 @@ class DockerCommandRunner:
             platform = f"{os_name}/{architecture}"
             if isinstance(variant, str) and variant:
                 platform += f"/{variant}"
-        return DockerImageIdentity(
-            configured_reference=self.sandbox.image or "",
-            local_image_id=local_id,
-            executed_image_id=executed_id,
-            registry_digest=registry_digest,
-            platform=platform,
-            cache_status=cache_status,
+        return parse_docker_image_identity(
+            {
+                "configured_reference": self.sandbox.image or "",
+                "local_image_id": local_id,
+                "executed_image_id": executed_id,
+                "registry_digest": registry_digest,
+                "platform": platform,
+                "pull_policy": "docker-default",
+                "cache_status": cache_status,
+            }
         )
 
     def _image_is_present(self) -> bool:

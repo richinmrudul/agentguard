@@ -14,7 +14,7 @@ from agentguard.checks.registry import registered_checks
 from agentguard.config.schema import VALID_SEVERITIES, AgentGuardConfig
 from agentguard.core.result import BenchmarkResult, CheckResult, CommandResult
 from agentguard.instrumentation.command_tracker import CommandEvent
-from agentguard.sandbox.docker_identity import DockerImageIdentity
+from agentguard.sandbox.docker_identity import parse_docker_image_identity
 from agentguard.io import atomic_write_text
 from agentguard.provenance.manifest import (
     SECRET_KEY_PATTERN,
@@ -1491,6 +1491,8 @@ def _validate_payload(event: TraceEvent) -> None:
             and "docker_image" in event.payload
         ):
             event_fields = event_fields | {"docker_image"}
+            if event.payload["docker_image"] is not None:
+                parse_docker_image_identity(event.payload["docker_image"])
     _require_exact_fields(event.payload, event_fields, f"{event.event_type} payload")
     _validate_bounds(event.payload)
     if event.event_type == "guard_summary":
@@ -1976,8 +1978,8 @@ def _command_event_from_dict(data: dict[str, Any]) -> CommandEvent:
         ),
         process_cleanup_message=data.get("process_cleanup_message"),
         docker_image=(
-            DockerImageIdentity(**data["docker_image"])
-            if isinstance(data.get("docker_image"), dict)
+            parse_docker_image_identity(data["docker_image"])
+            if data.get("docker_image") is not None
             else None
         ),
     )
@@ -2242,8 +2244,8 @@ def _result_from_report(
         ),
         process_cleanup_message=test_data.get("process_cleanup_message"),
         docker_image=(
-            DockerImageIdentity(**test_data["docker_image"])
-            if isinstance(test_data.get("docker_image"), dict)
+            parse_docker_image_identity(test_data["docker_image"])
+            if test_data.get("docker_image") is not None
             else None
         ),
     )

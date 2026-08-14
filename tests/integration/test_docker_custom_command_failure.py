@@ -12,6 +12,7 @@ from agentguard.guard.filesystem import GuardMode
 from agentguard.history.store import HistoryRecord
 from agentguard.sandbox.docker_identity import DockerImageIdentity
 from agentguard.sandbox.docker_runner import DockerCommandRunner
+from agentguard.instrumentation.processes import ProcessCleanupResult
 
 
 @pytest.fixture(autouse=True)
@@ -25,6 +26,15 @@ def _established_docker_identity(monkeypatch: pytest.MonkeyPatch) -> None:
             executed_image_id="sha256:" + "1" * 64,
             platform="linux/amd64",
             cache_status="present",
+        ),
+    )
+    monkeypatch.setattr(
+        DockerCommandRunner,
+        "_remove_container",
+        lambda self, _name: ProcessCleanupResult(
+            attempted=True,
+            complete=True,
+            message="docker container removed after timeout",
         ),
     )
 

@@ -516,6 +516,38 @@ def test_trace_helper_validation_rejects_malformed_values() -> None:
             {"sha256": "a" * 64, "bytes": -1, "truncated": False},
             "output",
         )
+
+
+def test_trace_and_report_reject_malformed_docker_identity(
+    benchmark_result,
+    tmp_path: Path,
+) -> None:
+    trace = _rebuilt_trace(benchmark_result, tmp_path / "trace.jsonl")
+    test_event = next(event for event in trace.events if event.event_type == "test_result")
+    malformed = replace(
+        test_event,
+        payload={
+            **test_event.payload,
+            "docker_image": {
+                "configured_reference": "example/app:latest",
+                "local_image_id": "sha256:" + "1" * 64,
+                "executed_image_id": "sha256:" + "2" * 64,
+                "registry_digest": None,
+                "platform": "linux/amd64",
+                "pull_policy": "docker-default",
+                "cache_status": "present",
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="does not match"):
+        trace_module._validate_payload(malformed)
+
+    report = json.loads(benchmark_result.report_paths.json.read_text(encoding="utf-8"))
+    report["test_result"]["docker_image"] = {"unexpected": True}
+    report_path = tmp_path / "report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="fields are invalid"):
+        trace_module._result_from_report(report_path, None)
     with pytest.raises(ValueError, match="flag must be boolean"):
         trace_module._validate_output_identity(
             {"sha256": "a" * 64, "bytes": 0, "truncated": "no"},
