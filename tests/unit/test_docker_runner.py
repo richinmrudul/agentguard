@@ -502,6 +502,10 @@ def test_docker_command_runner_records_readable_agent_command(
     assert result.docker_image.local_image_id == result.docker_image.executed_image_id
     assert tracker.commands == ["docker agent: python agent_scripts/safe_agent.py"]
     assert tracker.events[0].docker_image == result.docker_image
+    assert tracker.events[0].command == calls[0]
+    assert tracker.events[0].command[:3] == ["docker", "start", "-a"]
+    assert "run" not in tracker.events[0].command
+    assert "--rm" not in tracker.events[0].command
     assert "PYTHONDONTWRITEBYTECODE=1" not in calls[0]
     assert not any(item.startswith("RUFF_CACHE_DIR=") for item in calls[0])
     assert not any(item.startswith("GOCACHE=") for item in calls[0])
@@ -750,6 +754,10 @@ def test_docker_identity_failure_prevents_container_execution(
     assert result.process_cleanup_complete is True
     assert result.stderr == "Docker could not establish the immutable image identity before execution."
     assert [command[1] for command in controls] == ["image", "create", "container"]
+    assert runner.command_tracker.events[0].command == controls[1]
+    assert runner.command_tracker.events[0].command[:2] == ["docker", "create"]
+    assert "run" not in runner.command_tracker.events[0].command
+    assert "--rm" not in runner.command_tracker.events[0].command
 
 
 def test_inspect_failure_records_incomplete_cleanup_without_start(
@@ -799,6 +807,9 @@ def test_inspect_failure_records_incomplete_cleanup_without_start(
     )
     assert "docker cleanup incomplete" in result.stderr
     assert runner.command_tracker.events[0].process_cleanup_complete is False
+    assert runner.command_tracker.events[0].command[:2] == ["docker", "create"]
+    assert "run" not in runner.command_tracker.events[0].command
+    assert "--rm" not in runner.command_tracker.events[0].command
 
 
 def test_create_failure_does_not_claim_cleanup_or_start(
@@ -839,6 +850,9 @@ def test_create_failure_does_not_claim_cleanup_or_start(
     assert result.exit_code == 125
     assert result.process_cleanup_attempted is False
     assert result.process_cleanup_complete is True
+    assert runner.command_tracker.events[0].command[:2] == ["docker", "create"]
+    assert "run" not in runner.command_tracker.events[0].command
+    assert "--rm" not in runner.command_tracker.events[0].command
 
 
 def test_docker_runner_records_install_and_test_commands(

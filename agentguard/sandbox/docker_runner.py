@@ -226,12 +226,13 @@ class DockerCommandRunner:
         environment: Optional[dict[str, str]] = None,
     ) -> CommandResult:
         container_name = self._container_name()
-        docker_command = self.build_command(
+        create_command = self._build_create_command(
             repo_dir,
             inner_command,
             container_name=container_name,
             environment=environment,
         )
+        recorded_command = create_command
         started = time.monotonic()
         timed_out = False
         cleanup = ProcessCleanupResult()
@@ -245,9 +246,11 @@ class DockerCommandRunner:
                 inner_command,
                 container_name=container_name,
                 environment=environment,
+                create_command=create_command,
             )
+            recorded_command = ["docker", "start", "-a", container_name]
             process = popen_with_process_group(
-                ["docker", "start", "-a", container_name],
+                recorded_command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -345,7 +348,7 @@ class DockerCommandRunner:
         ) or limited_stderr.truncated
 
         self.command_tracker.record_executed(
-            command=docker_command,
+            command=recorded_command,
             command_text=command_text,
             cwd=repo_dir,
             exit_code=exit_code,
@@ -384,19 +387,21 @@ class DockerCommandRunner:
         *,
         container_name: str,
         environment: Optional[dict[str, str]],
+        create_command: Optional[list[str]] = None,
     ) -> DockerImageIdentity:
         cache_status = "present" if self._image_is_present() else "not-present"
-        create_command = self.build_command(
-            repo_dir,
-            inner_command,
-            container_name=container_name,
-            environment=environment,
-        )
-        create_command[1:3] = ["create"]
+        if create_command is None:
+            create_command = self._build_create_command(
+                repo_dir,
+                inner_command,
+                container_name=container_name,
+                environment=environment,
+            )
         completed = self._docker_control(
             create_command,
             timeout_seconds=self.timeout_seconds,
         )
+
         if completed.returncode != 0:
             raise DockerIdentityError(completed.returncode or 125)
         try:
@@ -447,6 +452,23 @@ class DockerCommandRunner:
             raise
         except ValueError as error:
             raise DockerIdentityError(container_created=True) from error
+
+    def _build_create_command(
+        self,
+        repo_dir: Path,
+        inner_command: list[str],
+        *,
+        container_name: str,
+        environment: Optional[dict[str, str]],
+    ) -> list[str]:
+        command = self.build_command(
+            repo_dir,
+            inner_command,
+            container_name=container_name,
+            environment=environment,
+        )
+        command[1:3] = ["create"]
+        return command
 
     def _image_is_present(self) -> bool:
         completed = self._docker_control(
