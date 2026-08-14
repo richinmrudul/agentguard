@@ -521,16 +521,18 @@ def test_docker_identity_is_bound_to_created_container_before_start(
             cpus=0.5,
             read_only=True,
         ),
+        timeout_seconds=137,
     )
     image_id = "sha256:" + "a" * 64
     digest = "example/app@sha256:" + "b" * 64
     calls = []
 
-    def control(command):
-        calls.append(command)
+    def control(command, **kwargs):
+        calls.append((command, kwargs.get("timeout_seconds", 10)))
         if command[1:3] == ["image", "inspect"] and command[-1] == "example/app:latest":
             return SimpleNamespace(returncode=0, stdout="[]", stderr="")
         if command[1] == "create":
+            assert kwargs["timeout_seconds"] == 137
             assert f"{repo_dir.resolve()}:/workspace" in command
             assert command[command.index("-w") + 1] == "/workspace"
             assert command[command.index("--network") + 1] == "none"
@@ -573,7 +575,13 @@ def test_docker_identity_is_bound_to_created_container_before_start(
     assert identity.platform == "linux/arm64/v8"
     assert identity.pull_policy == "docker-default"
     assert identity.cache_status == "present"
-    assert [command[1] for command in calls] == ["image", "create", "container", "image"]
+    assert [command[0][1] for command in calls] == [
+        "image",
+        "create",
+        "container",
+        "image",
+    ]
+    assert [timeout for _, timeout in calls] == [10, 137, 10, 10]
 
 
 def test_registry_digest_selection_is_repository_precise() -> None:
@@ -682,7 +690,7 @@ def test_docker_identity_change_produces_distinct_provenance(tmp_path: Path) -> 
         )
         image_id = "sha256:" + hex_character * 64
 
-        def control(command):
+        def control(command, **_kwargs):
             if command[1:3] == ["image", "inspect"] and command[-1].endswith(":latest"):
                 return SimpleNamespace(returncode=1, stdout="", stderr="offline")
             if command[1] == "create":
@@ -708,7 +716,7 @@ def test_docker_identity_failure_prevents_container_execution(
     )
     controls = []
 
-    def control(command):
+    def control(command, **_kwargs):
         controls.append(command)
         if command[1:3] == ["image", "inspect"]:
             return SimpleNamespace(returncode=0, stdout="[]", stderr="")
@@ -728,14 +736,109 @@ def test_docker_identity_failure_prevents_container_execution(
         "agentguard.sandbox.docker_runner.popen_with_process_group",
         lambda *_args, **_kwargs: pytest.fail("container execution started"),
     )
-    monkeypatch.setattr(runner, "_remove_container", lambda _name: ProcessCleanupResult())
+    monkeypatch.setattr(
+        runner,
+        "_remove_container",
+        lambda _name: ProcessCleanupResult(attempted=True, complete=True),
+    )
 
     result = runner.run_argv(tmp_path, ["true"], "docker: true")
 
     assert result.exit_code == 125
     assert result.docker_image is None
+    assert result.process_cleanup_attempted is True
+    assert result.process_cleanup_complete is True
     assert result.stderr == "Docker could not establish the immutable image identity before execution."
     assert [command[1] for command in controls] == ["image", "create", "container"]
+
+
+def test_inspect_failure_records_incomplete_cleanup_without_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = DockerCommandRunner(
+        CommandTracker(), SandboxConfig(type="docker", image="example/app:latest")
+    )
+
+    def control(command, **_kwargs):
+        if command[1:3] == ["image", "inspect"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="not present")
+        if command[1] == "create":
+            return SimpleNamespace(returncode=0, stdout="container\n", stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="inspect failed")
+
+    runner._docker_control = control
+    monkeypatch.setattr(
+        runner,
+        "_prepare_container_identity",
+        lambda *args, **kwargs: _PREPARE_CONTAINER_IDENTITY(
+            runner, *args, **kwargs
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_remove_container",
+        lambda _name: ProcessCleanupResult(
+            attempted=True,
+            complete=False,
+            message="docker cleanup incomplete: container removal failed",
+        ),
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: pytest.fail("container execution started"),
+    )
+
+    result = runner.run_argv(tmp_path, ["true"], "docker: true")
+
+    assert result.exit_code == 125
+    assert result.process_cleanup_attempted is True
+    assert result.process_cleanup_complete is False
+    assert result.stderr.startswith(
+        "Docker could not establish the immutable image identity before execution."
+    )
+    assert "docker cleanup incomplete" in result.stderr
+    assert runner.command_tracker.events[0].process_cleanup_complete is False
+
+
+def test_create_failure_does_not_claim_cleanup_or_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = DockerCommandRunner(
+        CommandTracker(), SandboxConfig(type="docker", image="example/app:latest")
+    )
+
+    def control(command, **_kwargs):
+        return SimpleNamespace(
+            returncode=125 if command[1] == "create" else 1,
+            stdout="",
+            stderr="create failed",
+        )
+
+    runner._docker_control = control
+    monkeypatch.setattr(
+        runner,
+        "_prepare_container_identity",
+        lambda *args, **kwargs: _PREPARE_CONTAINER_IDENTITY(
+            runner, *args, **kwargs
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_remove_container",
+        lambda _name: pytest.fail("cleanup claimed for failed create"),
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: pytest.fail("container execution started"),
+    )
+
+    result = runner.run_argv(tmp_path, ["true"], "docker: true")
+
+    assert result.exit_code == 125
+    assert result.process_cleanup_attempted is False
+    assert result.process_cleanup_complete is True
 
 
 def test_docker_runner_records_install_and_test_commands(

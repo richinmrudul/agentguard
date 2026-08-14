@@ -276,11 +276,14 @@ class DockerCommandRunner:
                 if not cleanup.complete:
                     stderr = append_cleanup_message(stderr, cleanup)
         except DockerIdentityError as error:
-            self._remove_container(container_name)
             exit_code = error.exit_code
             stdout = ""
             stderr = DOCKER_IDENTITY_ERROR
             captured = None
+            if error.container_created:
+                cleanup = self._remove_container(container_name)
+                if not cleanup.complete:
+                    stderr = append_cleanup_message(stderr, cleanup)
         except subprocess.TimeoutExpired:
             timed_out = True
             exit_code = 124
@@ -390,52 +393,60 @@ class DockerCommandRunner:
             environment=environment,
         )
         create_command[1:3] = ["create"]
-        completed = self._docker_control(create_command)
+        completed = self._docker_control(
+            create_command,
+            timeout_seconds=self.timeout_seconds,
+        )
         if completed.returncode != 0:
             raise DockerIdentityError(completed.returncode or 125)
+        try:
+            container = self._inspect_json(
+                [
+                    "docker", "container", "inspect", "--format",
+                    '{"Image":{{json .Image}}}', container_name,
+                ]
+            )
+            executed_id = self._normalized_image_id(container.get("Image"))
+            image = self._inspect_json([
+                "docker", "image", "inspect", "--format",
+                (
+                    '{"Id":{{json .Id}},"RepoDigests":{{json .RepoDigests}},'
+                    '"Os":{{json .Os}},"Architecture":{{json .Architecture}},'
+                    '"Variant":{{json .Variant}}}'
+                ),
+                executed_id,
+            ])
+            local_id = self._normalized_image_id(image.get("Id"))
+            if not executed_id or not local_id or executed_id != local_id:
+                raise DockerIdentityError()
 
-        container = self._inspect_json(
-            [
-                "docker", "container", "inspect", "--format",
-                '{"Image":{{json .Image}}}', container_name,
-            ]
-        )
-        executed_id = self._normalized_image_id(container.get("Image"))
-        image = self._inspect_json([
-            "docker", "image", "inspect", "--format",
-            (
-                '{"Id":{{json .Id}},"RepoDigests":{{json .RepoDigests}},'
-                '"Os":{{json .Os}},"Architecture":{{json .Architecture}},'
-                '"Variant":{{json .Variant}}}'
-            ),
-            executed_id,
-        ])
-        local_id = self._normalized_image_id(image.get("Id"))
-        if not executed_id or not local_id or executed_id != local_id:
-            raise DockerIdentityError()
-
-        registry_digest = select_registry_digest(
-            self.sandbox.image or "", image.get("RepoDigests")
-        )
-        os_name = image.get("Os")
-        architecture = image.get("Architecture")
-        variant = image.get("Variant")
-        platform = None
-        if isinstance(os_name, str) and isinstance(architecture, str):
-            platform = f"{os_name}/{architecture}"
-            if isinstance(variant, str) and variant:
-                platform += f"/{variant}"
-        return parse_docker_image_identity(
-            {
-                "configured_reference": self.sandbox.image or "",
-                "local_image_id": local_id,
-                "executed_image_id": executed_id,
-                "registry_digest": registry_digest,
-                "platform": platform,
-                "pull_policy": "docker-default",
-                "cache_status": cache_status,
-            }
-        )
+            registry_digest = select_registry_digest(
+                self.sandbox.image or "", image.get("RepoDigests")
+            )
+            os_name = image.get("Os")
+            architecture = image.get("Architecture")
+            variant = image.get("Variant")
+            platform = None
+            if isinstance(os_name, str) and isinstance(architecture, str):
+                platform = f"{os_name}/{architecture}"
+                if isinstance(variant, str) and variant:
+                    platform += f"/{variant}"
+            return parse_docker_image_identity(
+                {
+                    "configured_reference": self.sandbox.image or "",
+                    "local_image_id": local_id,
+                    "executed_image_id": executed_id,
+                    "registry_digest": registry_digest,
+                    "platform": platform,
+                    "pull_policy": "docker-default",
+                    "cache_status": cache_status,
+                }
+            )
+        except DockerIdentityError as error:
+            error.container_created = True
+            raise
+        except ValueError as error:
+            raise DockerIdentityError(container_created=True) from error
 
     def _image_is_present(self) -> bool:
         completed = self._docker_control(
@@ -460,7 +471,12 @@ class DockerCommandRunner:
             raise DockerIdentityError()
         return value
 
-    def _docker_control(self, command: list[str]):
+    def _docker_control(
+        self,
+        command: list[str],
+        *,
+        timeout_seconds: int = DOCKER_IDENTITY_TIMEOUT_SECONDS,
+    ):
         process = None
         capture = None
         try:
@@ -470,7 +486,7 @@ class DockerCommandRunner:
                 stderr=subprocess.PIPE,
             )
             capture = BoundedProcessOutput(process, DOCKER_IDENTITY_OUTPUT_BYTES)
-            returncode = capture.wait(timeout=DOCKER_IDENTITY_TIMEOUT_SECONDS)
+            returncode = capture.wait(timeout=timeout_seconds)
             output = capture.finish()
         except FileNotFoundError:
             raise
@@ -547,6 +563,12 @@ class DockerCommandRunner:
 
 
 class DockerIdentityError(RuntimeError):
-    def __init__(self, exit_code: int = 125) -> None:
+    def __init__(
+        self,
+        exit_code: int = 125,
+        *,
+        container_created: bool = False,
+    ) -> None:
         super().__init__(DOCKER_IDENTITY_ERROR)
         self.exit_code = exit_code
+        self.container_created = container_created
