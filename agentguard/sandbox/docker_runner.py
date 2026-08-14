@@ -1,3 +1,4 @@
+import json
 import shlex
 import subprocess
 import time
@@ -8,6 +9,7 @@ from typing import Optional
 from agentguard.config.docker_image import validate_docker_image_reference
 from agentguard.config.schema import SandboxConfig
 from agentguard.core.result import CommandResult
+from agentguard.sandbox.docker_identity import DockerImageIdentity
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.output_limits import (
     BoundedProcessOutput,
@@ -48,6 +50,11 @@ OWNED_TEST_ENVIRONMENT = {
     "GOENV": "off",
     "GOTOOLCHAIN": "local",
 }
+DOCKER_IDENTITY_TIMEOUT_SECONDS = 10
+DOCKER_IDENTITY_OUTPUT_BYTES = 65536
+DOCKER_IDENTITY_ERROR = (
+    "Docker could not establish the immutable image identity before execution."
+)
 
 
 def _docker_test_argv(command: str) -> list[str]:
@@ -124,6 +131,7 @@ class DockerTestRunner:
                 process_cleanup_attempted=install_result.process_cleanup_attempted,
                 process_cleanup_complete=install_result.process_cleanup_complete,
                 process_cleanup_message=install_result.process_cleanup_message,
+                docker_image=install_result.docker_image,
             )
 
         test_result = self.command_runner.run_argv(
@@ -145,6 +153,7 @@ class DockerTestRunner:
             process_cleanup_attempted=test_result.process_cleanup_attempted,
             process_cleanup_complete=test_result.process_cleanup_complete,
             process_cleanup_message=test_result.process_cleanup_message,
+            docker_image=test_result.docker_image,
         )
 
 
@@ -225,9 +234,16 @@ class DockerCommandRunner:
         process = None
         capture = None
         cleanup_started = False
+        docker_image = None
         try:
+            docker_image = self._prepare_container_identity(
+                repo_dir,
+                inner_command,
+                container_name=container_name,
+                environment=environment,
+            )
             process = popen_with_process_group(
-                docker_command,
+                ["docker", "start", "-a", container_name],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
@@ -236,6 +252,7 @@ class DockerCommandRunner:
             captured = capture.finish()
             stdout = captured.stdout.text
             stderr = captured.stderr.text
+            self._remove_container(container_name)
         except FileNotFoundError:
             if process is not None:
                 cleanup_process_after_exception(
@@ -247,6 +264,12 @@ class DockerCommandRunner:
             exit_code = 127
             stdout = ""
             stderr = "Docker is not installed or is not available on PATH."
+            captured = None
+        except DockerIdentityError as error:
+            self._remove_container(container_name)
+            exit_code = error.exit_code
+            stdout = ""
+            stderr = DOCKER_IDENTITY_ERROR
             captured = None
         except subprocess.TimeoutExpired:
             timed_out = True
@@ -324,6 +347,7 @@ class DockerCommandRunner:
             process_cleanup_attempted=cleanup.attempted,
             process_cleanup_complete=cleanup.complete,
             process_cleanup_message=cleanup.message,
+            docker_image=docker_image,
         )
         return CommandResult(
             command=command_text,
@@ -337,7 +361,134 @@ class DockerCommandRunner:
             process_cleanup_attempted=cleanup.attempted,
             process_cleanup_complete=cleanup.complete,
             process_cleanup_message=cleanup.message,
+            docker_image=docker_image,
         )
+
+    def _prepare_container_identity(
+        self,
+        repo_dir: Path,
+        inner_command: list[str],
+        *,
+        container_name: str,
+        environment: Optional[dict[str, str]],
+    ) -> DockerImageIdentity:
+        cache_status = "present" if self._image_is_present() else "not-present"
+        create_command = self.build_command(
+            repo_dir,
+            inner_command,
+            container_name=container_name,
+            environment=environment,
+        )
+        create_command[1:3] = ["create"]
+        completed = self._docker_control(create_command)
+        if completed.returncode != 0:
+            raise DockerIdentityError(completed.returncode or 125)
+
+        container = self._inspect_json(
+            [
+                "docker", "container", "inspect", "--format",
+                '{"Image":{{json .Image}}}', container_name,
+            ]
+        )
+        executed_id = self._normalized_image_id(container.get("Image"))
+        image = self._inspect_json([
+            "docker", "image", "inspect", "--format",
+            (
+                '{"Id":{{json .Id}},"RepoDigests":{{json .RepoDigests}},'
+                '"Os":{{json .Os}},"Architecture":{{json .Architecture}},'
+                '"Variant":{{json .Variant}}}'
+            ),
+            executed_id,
+        ])
+        local_id = self._normalized_image_id(image.get("Id"))
+        if not executed_id or not local_id or executed_id != local_id:
+            raise DockerIdentityError()
+
+        repo_digests = image.get("RepoDigests")
+        registry_digest = None
+        if isinstance(repo_digests, list):
+            candidates = sorted(
+                value
+                for value in repo_digests
+                if isinstance(value, str) and "@sha256:" in value
+            )
+            registry_digest = candidates[0] if candidates else None
+        os_name = image.get("Os")
+        architecture = image.get("Architecture")
+        variant = image.get("Variant")
+        platform = None
+        if isinstance(os_name, str) and isinstance(architecture, str):
+            platform = f"{os_name}/{architecture}"
+            if isinstance(variant, str) and variant:
+                platform += f"/{variant}"
+        return DockerImageIdentity(
+            configured_reference=self.sandbox.image or "",
+            local_image_id=local_id,
+            executed_image_id=executed_id,
+            registry_digest=registry_digest,
+            platform=platform,
+            cache_status=cache_status,
+        )
+
+    def _image_is_present(self) -> bool:
+        completed = self._docker_control(
+            ["docker", "image", "inspect", self.sandbox.image or ""]
+        )
+        return completed.returncode == 0
+
+    def _inspect_json(self, command: list[str]) -> dict[str, object]:
+        completed = self._docker_control(command)
+        if completed.returncode != 0:
+            raise DockerIdentityError()
+        try:
+            bounded = limit_output(completed.stdout, DOCKER_IDENTITY_OUTPUT_BYTES)
+            if bounded.truncated:
+                raise DockerIdentityError()
+            value = json.loads(bounded.text)
+        except (json.JSONDecodeError, TypeError):
+            raise DockerIdentityError() from None
+        if isinstance(value, list) and len(value) == 1:
+            value = value[0]
+        if not isinstance(value, dict):
+            raise DockerIdentityError()
+        return value
+
+    def _docker_control(self, command: list[str]):
+        process = None
+        capture = None
+        try:
+            process = popen_with_process_group(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            capture = BoundedProcessOutput(process, DOCKER_IDENTITY_OUTPUT_BYTES)
+            returncode = capture.wait(timeout=DOCKER_IDENTITY_TIMEOUT_SECONDS)
+            output = capture.finish()
+        except FileNotFoundError:
+            raise
+        except subprocess.TimeoutExpired as error:
+            cleanup_process_after_exception(process, capture)
+            raise DockerIdentityError() from error
+        except (OSError, subprocess.SubprocessError) as error:
+            cleanup_process_after_exception(process, capture)
+            raise DockerIdentityError() from error
+        return subprocess.CompletedProcess(
+            command,
+            returncode,
+            stdout=output.stdout.text,
+            stderr=output.stderr.text,
+        )
+
+    @staticmethod
+    def _normalized_image_id(value: object) -> str:
+        if not isinstance(value, str):
+            return ""
+        candidate = value.lower()
+        if candidate.startswith("sha256:") and len(candidate) == 71:
+            if all(character in "0123456789abcdef" for character in candidate[7:]):
+                return candidate
+        return ""
 
     def _container_name(self) -> str:
         return f"agentguard-{uuid.uuid4().hex[:12]}"
@@ -386,3 +537,9 @@ class DockerCommandRunner:
                 else docker_cleanup.message or process_cleanup.message
             ),
         )
+
+
+class DockerIdentityError(RuntimeError):
+    def __init__(self, exit_code: int = 125) -> None:
+        super().__init__(DOCKER_IDENTITY_ERROR)
+        self.exit_code = exit_code

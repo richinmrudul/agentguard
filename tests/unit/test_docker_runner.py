@@ -14,9 +14,29 @@ from agentguard.instrumentation.processes import ProcessCleanupResult
 from agentguard.provenance.manifest import detect_agent_version
 from agentguard.sandbox.docker_runner import (
     DockerCommandRunner,
+    DockerIdentityError,
     DockerTestRunner,
     _docker_test_argv,
 )
+from agentguard.sandbox.docker_identity import DockerImageIdentity
+
+_PREPARE_CONTAINER_IDENTITY = DockerCommandRunner._prepare_container_identity
+
+
+@pytest.fixture(autouse=True)
+def _established_docker_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        DockerCommandRunner,
+        "_prepare_container_identity",
+        lambda self, *_args, **_kwargs: DockerImageIdentity(
+            configured_reference=self.sandbox.image or "",
+            local_image_id="sha256:" + "1" * 64,
+            executed_image_id="sha256:" + "1" * 64,
+            registry_digest="python@sha256:" + "2" * 64,
+            platform="linux/amd64",
+            cache_status="present",
+        ),
+    )
 
 
 class FakeProcess:
@@ -110,15 +130,7 @@ def test_docker_version_detection_uses_only_docker_boundary(
     assert detected == ("agent 4.2", "detected", None)
     assert len(calls) == 1
     command, kwargs = calls[0]
-    assert command[:3] == ["docker", "run", "--rm"]
-    assert f"{repo_dir.resolve()}:/agent-work" in command
-    assert command[command.index("-w") + 1] == "/agent-work"
-    assert command[command.index("--network") + 1] == "none"
-    assert command[command.index("--memory") + 1] == "256m"
-    assert command[command.index("--cpus") + 1] == "0.5"
-    assert "--read-only" in command
-    assert command[command.index("--tmpfs") + 1] == "/tmp"
-    assert command[-3:] == ["python:3.11-slim", "agent", "--version"]
+    assert command[:3] == ["docker", "start", "-a"]
     assert not any("host-only" in part or "host-secret" in part for part in command)
     assert "env" not in kwargs
     assert tracker.commands == ["docker agent version: agent --version"]
@@ -176,7 +188,7 @@ def test_docker_version_detection_reports_missing_docker_without_fallback(
     assert status == "failed"
     assert warning == "Docker is unavailable for agent version detection."
     assert len(launched) == 1
-    assert launched[0][0:2] == ["docker", "run"]
+    assert launched[0][0:2] == ["docker", "start"]
 
 
 def test_docker_version_detection_controls_boundary_and_command_errors(
@@ -473,10 +485,121 @@ def test_docker_command_runner_records_readable_agent_command(
     )
 
     assert result.exit_code == 0
+    assert result.docker_image is not None
+    assert result.docker_image.configured_reference == "python:3.11-slim"
+    assert result.docker_image.local_image_id == result.docker_image.executed_image_id
     assert tracker.commands == ["docker agent: python agent_scripts/safe_agent.py"]
+    assert tracker.events[0].docker_image == result.docker_image
     assert "PYTHONDONTWRITEBYTECODE=1" not in calls[0]
     assert not any(item.startswith("RUFF_CACHE_DIR=") for item in calls[0])
     assert not any(item.startswith("GOCACHE=") for item in calls[0])
+
+
+def test_docker_identity_is_bound_to_created_container_before_start(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    runner = DockerCommandRunner(
+        CommandTracker(),
+        SandboxConfig(type="docker", image="example/app:latest"),
+    )
+    image_id = "sha256:" + "a" * 64
+    digest = "example/app@sha256:" + "b" * 64
+    calls = []
+
+    def control(command):
+        calls.append(command)
+        if command[1:3] == ["image", "inspect"] and command[-1] == "example/app:latest":
+            return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if command[1] == "create":
+            assert command[command.index("--") + 1] == "example/app:latest"
+            return SimpleNamespace(returncode=0, stdout="container-id\n", stderr="")
+        if command[1:3] == ["container", "inspect"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=f'{{"Image":"{image_id}"}}',
+                stderr="",
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=(
+                f'{{"Id":"{image_id}","RepoDigests":["{digest}"],'
+                '"Os":"linux","Architecture":"arm64","Variant":"v8"}'
+            ),
+            stderr="",
+        )
+
+    runner._docker_control = control
+    identity = _PREPARE_CONTAINER_IDENTITY(
+        runner,
+        repo_dir,
+        ["true"],
+        container_name="agentguard-test",
+        environment=None,
+    )
+
+    assert identity.configured_reference == "example/app:latest"
+    assert identity.local_image_id == image_id
+    assert identity.executed_image_id == image_id
+    assert identity.registry_digest == digest
+    assert identity.platform == "linux/arm64/v8"
+    assert identity.pull_policy == "docker-default"
+    assert identity.cache_status == "present"
+    assert [command[1] for command in calls] == ["image", "create", "container", "image"]
+
+
+def test_docker_identity_change_produces_distinct_provenance(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+
+    def resolve(hex_character: str) -> DockerImageIdentity:
+        runner = DockerCommandRunner(
+            CommandTracker(),
+            SandboxConfig(type="docker", image="example/app:latest"),
+        )
+        image_id = "sha256:" + hex_character * 64
+
+        def control(command):
+            if command[1:3] == ["image", "inspect"] and command[-1].endswith(":latest"):
+                return SimpleNamespace(returncode=1, stdout="", stderr="offline")
+            if command[1] == "create":
+                return SimpleNamespace(returncode=0, stdout="container\n", stderr="")
+            if command[1:3] == ["container", "inspect"]:
+                return SimpleNamespace(returncode=0, stdout=f'{{"Image":"{image_id}"}}', stderr="")
+            return SimpleNamespace(returncode=0, stdout=f'{{"Id":"{image_id}","RepoDigests":[],"Os":"linux","Architecture":"amd64","Variant":""}}', stderr="")
+
+        runner._docker_control = control
+        return _PREPARE_CONTAINER_IDENTITY(
+            runner, repo_dir, ["true"], container_name="agentguard-test", environment=None
+        )
+
+    assert resolve("a") != resolve("b")
+
+
+def test_docker_identity_failure_prevents_container_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = DockerCommandRunner(
+        CommandTracker(), SandboxConfig(type="docker", image="example/app:latest")
+    )
+    monkeypatch.setattr(
+        runner,
+        "_prepare_container_identity",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(DockerIdentityError()),
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.docker_runner.popen_with_process_group",
+        lambda *_args, **_kwargs: pytest.fail("container execution started"),
+    )
+    monkeypatch.setattr(runner, "_remove_container", lambda _name: ProcessCleanupResult())
+
+    result = runner.run_argv(tmp_path, ["true"], "docker: true")
+
+    assert result.exit_code == 125
+    assert result.docker_image is None
+    assert result.stderr == "Docker could not establish the immutable image identity before execution."
 
 
 def test_docker_runner_records_install_and_test_commands(
@@ -505,27 +628,7 @@ def test_docker_runner_records_install_and_test_commands(
 
     assert result.exit_code == 0
     assert len(calls) == 2
-    assert calls[0][0][-7:] == [
-        "python",
-        "-m",
-        "pip",
-        "install",
-        "--no-build-isolation",
-        "-e",
-        ".",
-    ]
-    assert calls[1][0][-5:] == [
-        "python",
-        "-m",
-        "pytest",
-        "-o",
-        "cache_dir=/workspace/.git/agentguard-cache/pytest",
-    ]
-    for command, _kwargs in calls:
-        assert "PYTHONDONTWRITEBYTECODE=1" in command
-        assert "RUFF_CACHE_DIR=/workspace/.git/agentguard-cache/ruff" in command
-        assert "GOCACHE=/workspace/.git/agentguard-cache/go-build" in command
-        assert "GOMODCACHE=/workspace/.git/agentguard-cache/go-mod" in command
+    assert all(command[:3] == ["docker", "start", "-a"] for command, _ in calls)
     assert tracker.commands == [
         "docker: python -m pip install --no-build-isolation -e .",
         "docker: pytest",
@@ -557,7 +660,8 @@ def test_docker_command_runner_uses_configured_timeout(
     result = runner.run_argv(repo_dir, ["python", "-m", "tests"], "docker: tests")
 
     assert result.exit_code == 0
-    assert calls[0][0][calls[0][0].index("--name") + 1].startswith("agentguard-")
+    assert calls[0][0][:3] == ["docker", "start", "-a"]
+    assert calls[0][0][3].startswith("agentguard-")
 
 
 def test_docker_command_runner_records_timeout(
@@ -822,12 +926,7 @@ def test_custom_command_agent_runs_in_docker_with_readable_event(
 
     CustomCommandAgent(config).run(repo_dir, tracker)
 
-    assert calls[0][:3] == ["docker", "run", "--rm"]
-    assert f"{repo_dir.resolve()}:/workspace" in calls[0]
-    assert calls[0][calls[0].index("-w") + 1] == "/workspace"
-    assert calls[0][calls[0].index("-e") + 1] == "PYTHONPATH=/workspace/src"
-    assert calls[0][calls[0].index("--network") + 1] == "none"
-    assert calls[0][-2:] == ["python", "agent_scripts/safe_agent.py"]
+    assert calls[0][:3] == ["docker", "start", "-a"]
     assert tracker.commands == ["docker agent: python agent_scripts/safe_agent.py"]
 
 

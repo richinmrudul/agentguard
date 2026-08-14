@@ -14,6 +14,7 @@ from agentguard.checks.registry import registered_checks
 from agentguard.config.schema import VALID_SEVERITIES, AgentGuardConfig
 from agentguard.core.result import BenchmarkResult, CheckResult, CommandResult
 from agentguard.instrumentation.command_tracker import CommandEvent
+from agentguard.sandbox.docker_identity import DockerImageIdentity
 from agentguard.io import atomic_write_text
 from agentguard.provenance.manifest import (
     SECRET_KEY_PATTERN,
@@ -375,6 +376,9 @@ def _command_payload(
             "complete": event.process_cleanup_complete,
             "message": event.process_cleanup_message,
         },
+        "docker_image": (
+            asdict(event.docker_image) if event.docker_image is not None else None
+        ),
         "truncation": {
             "command": command_truncated,
             "argv": len(argv) > 128,
@@ -563,6 +567,11 @@ def _test_payload(
             "complete": test_result.process_cleanup_complete,
             "message": test_result.process_cleanup_message,
         },
+        "docker_image": (
+            asdict(test_result.docker_image)
+            if test_result.docker_image is not None
+            else None
+        ),
         "truncation": {"command": command_truncated},
     }
 
@@ -1477,6 +1486,11 @@ def _validate_payload(event: TraceEvent) -> None:
             and "process_cleanup" in event.payload
         ):
             event_fields = event_fields | {"process_cleanup"}
+        if (
+            event.event_type in {"agent_command", "test_result"}
+            and "docker_image" in event.payload
+        ):
+            event_fields = event_fields | {"docker_image"}
     _require_exact_fields(event.payload, event_fields, f"{event.event_type} payload")
     _validate_bounds(event.payload)
     if event.event_type == "guard_summary":
@@ -1961,6 +1975,11 @@ def _command_event_from_dict(data: dict[str, Any]) -> CommandEvent:
             else True
         ),
         process_cleanup_message=data.get("process_cleanup_message"),
+        docker_image=(
+            DockerImageIdentity(**data["docker_image"])
+            if isinstance(data.get("docker_image"), dict)
+            else None
+        ),
     )
 
 
@@ -2222,6 +2241,11 @@ def _result_from_report(
             else True
         ),
         process_cleanup_message=test_data.get("process_cleanup_message"),
+        docker_image=(
+            DockerImageIdentity(**test_data["docker_image"])
+            if isinstance(test_data.get("docker_image"), dict)
+            else None
+        ),
     )
     result = BenchmarkResult(
         task_id=str(report["task_id"]),

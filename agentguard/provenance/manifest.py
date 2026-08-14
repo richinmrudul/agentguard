@@ -149,6 +149,7 @@ class ExecutionManifest:
     benchmarks: list[BenchmarkIdentity]
     policies: list[PolicyIdentity]
     artifacts: ArtifactIdentity
+    docker_images: list[dict[str, object]] = field(default_factory=list)
     parent_execution_id: Optional[str] = None
     parent_execution_type: Optional[str] = None
     child_executions: list[ChildExecution] = field(default_factory=list)
