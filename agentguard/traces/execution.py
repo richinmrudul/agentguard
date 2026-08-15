@@ -276,7 +276,13 @@ def _normalized_path(value: str) -> str:
         or path.is_absolute()
         or any(part in {"", ".", ".."} for part in path.parts)
     ):
-        raise ValueError(f"Trace path must be repository-relative: {value!r}.")
+        # Reports why the path was refused, never the path itself. Echoing it
+        # reproduces attacker-controlled bytes in a diagnostic the operator
+        # reads, which is the leak the rest of this loader closes.
+        raise ValueError(
+            "Trace path must be repository-relative "
+            f"(rejected a {len(value)}-character path)."
+        )
     normalized = path.as_posix()
     if len(normalized) > MAX_STRING_CHARS:
         raise ValueError("Trace path exceeds the maximum length.")

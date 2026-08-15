@@ -919,6 +919,55 @@ def test_trace_commands_reject_hostile_input_without_leaking(
 
 
 @pytest.mark.parametrize("command", ["show", "verify", "replayability", "replay"])
+def test_trace_commands_reject_hostile_modified_path_without_echoing_it(
+    benchmark_result,
+    tmp_path: Path,
+    command: str,
+) -> None:
+    """An attacker-owned absolute path in modified_files.paths.
+
+    load_execution_trace validates every event payload, and an
+    execution_completed event's modified_files.paths list flows into
+    _normalized_path. The record is otherwise well-shaped, so the only thing
+    that refuses it is the repository-relative check -- which must report why
+    without echoing the path it rejected.
+    """
+    # Absolute, so it trips the repository-relative check that is the leak
+    # site -- and short, so it reaches that check rather than a length bound
+    # first. The earlier version buried the path in oversized filler, which
+    # was rejected at a non-echoing stage and made the test vacuous.
+    canary = "AGENTGUARD-FAKE-CREDENTIAL-CANARY-PATH-4E1A"
+    hostile = f"/private/attacker-home/.ssh/{canary}/id_rsa"
+
+    trace = _rebuilt_trace(benchmark_result, tmp_path / f"mp-src-{command}.jsonl")
+    base = tmp_path / f"mp-base-{command}.jsonl"
+    write_execution_trace(trace, base)
+    records = _records(base)
+    completed = next(
+        record
+        for record in records
+        if record.get("record_type") == "event"
+        and record["event_type"] == "execution_completed"
+    )
+    modified = completed["payload"].setdefault(
+        "modified_files",
+        {"count": 1, "paths": [], "truncated": False,
+         "lines_added": 0, "lines_deleted": 0},
+    )
+    modified["paths"] = [hostile]
+
+    path = tmp_path / f"mp-hostile-{command}.jsonl"
+    _write_records(path, records)
+
+    result = runner.invoke(app, ["trace", command, str(path)])
+
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output
+    assert canary not in result.output
+    assert "/private/attacker-home" not in result.output
+
+
+@pytest.mark.parametrize("command", ["show", "verify", "replayability", "replay"])
 def test_trace_commands_share_bounded_loader(
     benchmark_result,
     tmp_path: Path,
