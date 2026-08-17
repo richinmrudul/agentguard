@@ -124,7 +124,16 @@ When `--github-summary` is provided, AgentGuard appends a compact Markdown summa
 the file path in `GITHUB_STEP_SUMMARY`. GitHub renders that content on the Actions run
 summary page. The summary includes result, score, failed and warning checks, changed
 file counts, baseline state, bounded new/existing/resolved lists, and report
-paths; it does not include full command stdout or stderr.
+paths; it does not include full command stdout or stderr. AgentGuard prepares both
+summary sections before appending them and rolls back a partial append when the
+destination still has the expected size.
+
+If `GITHUB_STEP_SUMMARY` is unset, AgentGuard emits a warning and retains the primary
+gate exit (`0` for `PASS`, or `1` for `FAIL` unless `--allow-fail-result` is used).
+If the configured summary cannot be created or written, the completed AgentGuard
+result is still printed, followed by a sanitized diagnostic; the command exits `2`
+and does not claim that the summary was published. This operational exit takes
+precedence over the gate exit because summary publication was explicitly requested.
 
 Finding paths are limited to 500 characters, 500 UTF-8 bytes, and 255 characters
 per component.

@@ -246,7 +246,7 @@ def test_ci_cli_writes_github_step_summary(
     repo_dir = _init_repo(tmp_path)
     _write(repo_dir / ".env", "TOKEN=secret\n")
     config_path = _config(tmp_path, task_id="ci_summary")
-    summary_path = tmp_path / "github" / "summary.md"
+    summary_path = tmp_path / "github summary ü" / "summary file.md"
     monkeypatch.chdir(repo_dir)
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
 
@@ -262,12 +262,128 @@ def test_ci_cli_writes_github_step_summary(
     )
 
     assert result.exit_code == 0
-    assert f"GitHub summary path: {summary_path}" in result.output
+    assert "GitHub summary: written." in result.output
     assert summary_path.exists()
     summary = summary_path.read_text(encoding="utf-8")
     assert "## AgentGuard CI Report" in summary
     assert "- Result: **FAIL**" in summary
     assert "- [critical] Forbidden paths:" in summary
+
+
+def test_ci_cli_reports_summary_directory_failure_after_pass_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_dir = _init_repo(tmp_path)
+    _write(repo_dir / "src" / "app.py", "VALUE = 2\n")
+    config_path = _config(tmp_path, task_id="ci_summary_directory")
+    private_path = tmp_path / "private hostile\nsummary"
+    private_path.mkdir()
+    monkeypatch.chdir(repo_dir)
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(private_path))
+
+    result = runner.invoke(
+        app,
+        ["ci", "--config", str(config_path), "--github-summary"],
+    )
+
+    assert result.exit_code == 2
+    assert "AgentGuard CI Report" in result.output
+    assert "Result: PASS" in result.output
+    assert "GitHub step summary could not be written" in result.output
+    assert "was not published to the step summary" in result.output
+    assert "GitHub summary: written." not in result.output
+    assert str(private_path) not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_ci_cli_summary_failure_preserves_fail_result_visibility(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_dir = _init_repo(tmp_path)
+    _write(repo_dir / ".env", "TOKEN=secret\n")
+    config_path = _config(tmp_path, task_id="ci_summary_failed_gate")
+    summary_directory = tmp_path / "summary-directory"
+    summary_directory.mkdir()
+    monkeypatch.chdir(repo_dir)
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_directory))
+
+    result = runner.invoke(
+        app,
+        ["ci", "--config", str(config_path), "--github-summary"],
+    )
+
+    assert result.exit_code == 2
+    assert "Result: FAIL" in result.output
+    assert "GitHub step summary could not be written" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_ci_cli_rejects_empty_summary_destination(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_dir = _init_repo(tmp_path)
+    _write(repo_dir / "src" / "app.py", "VALUE = 2\n")
+    config_path = _config(tmp_path, task_id="ci_summary_empty")
+    monkeypatch.chdir(repo_dir)
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", "")
+
+    result = runner.invoke(
+        app,
+        ["ci", "--config", str(config_path), "--github-summary"],
+    )
+
+    assert result.exit_code == 2
+    assert "Result: PASS" in result.output
+    assert "GitHub step summary could not be written" in result.output
+    assert "GITHUB_STEP_SUMMARY is not set" not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_ci_cli_prepares_one_combined_summary_append(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_dir = _init_repo(tmp_path)
+    _write(repo_dir / "src" / "app.py", "VALUE = 2\n")
+    config_path = _config(tmp_path, task_id="ci_summary_second_append")
+    summary_path = tmp_path / "summary.md"
+    summary_path.write_text("Existing summary\n", encoding="utf-8")
+    original_open = Path.open
+    summary_opens = 0
+
+    def fail_second_summary_open(
+        path: Path,
+        *args: object,
+        **kwargs: object,
+    ):
+        nonlocal summary_opens
+        if path == summary_path and args and args[0] == "a":
+            summary_opens += 1
+            if summary_opens == 2:
+                raise OSError("second append failed at /private/hostile")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.chdir(repo_dir)
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
+    monkeypatch.setattr(Path, "open", fail_second_summary_open)
+
+    result = runner.invoke(
+        app,
+        ["ci", "--config", str(config_path), "--github-summary"],
+    )
+
+    assert result.exit_code == 0
+    assert summary_opens == 0
+    summary = summary_path.read_text(encoding="utf-8")
+    assert summary.startswith("Existing summary\n")
+    assert "## AgentGuard CI Report" in summary
+    assert "## AgentGuard baseline comparison" in summary
+    assert "Result: PASS" in result.output
+    assert "/private/hostile" not in result.output
+    assert "Traceback" not in result.output
 
 
 def test_ci_cli_warns_when_github_summary_env_is_missing(
