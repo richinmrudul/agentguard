@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -54,6 +56,14 @@ class PlannedFile:
     relative_path: Path
     content: str
     action: str
+    original_content: Optional[str]
+
+
+@dataclass(frozen=True)
+class _RollbackSnapshot:
+    item: PlannedFile
+    backup_path: Optional[Path]
+    missing_parents: tuple[Path, ...]
 
 
 @dataclass(frozen=True)
@@ -139,7 +149,8 @@ def _read_text_if_file(path: Path, relative_path: Path) -> Optional[str]:
     if not path.is_file():
         raise ValueError(f"initialization target is not a file: {relative_path}")
     try:
-        return path.read_text(encoding="utf-8")
+        with path.open("r", encoding="utf-8", newline="") as target_file:
+            return target_file.read()
     except (OSError, UnicodeError) as error:
         raise ValueError(f"initialization target is not readable: {relative_path}") from error
 
@@ -543,7 +554,12 @@ def _plan_file(root: Path, relative_path: Path, content: str, force: bool) -> Pl
         action = "replace"
     else:
         action = "conflict"
-    return PlannedFile(relative_path=relative_path, content=content, action=action)
+    return PlannedFile(
+        relative_path=relative_path,
+        content=content,
+        action=action,
+        original_content=existing,
+    )
 
 
 def _plan_gitignore(root: Path, existing: Optional[str], content: str) -> PlannedFile:
@@ -554,7 +570,12 @@ def _plan_gitignore(root: Path, existing: Optional[str], content: str) -> Planne
         action = "current"
     else:
         action = "update"
-    return PlannedFile(relative_path=GITIGNORE_PATH, content=content, action=action)
+    return PlannedFile(
+        relative_path=GITIGNORE_PATH,
+        content=content,
+        action=action,
+        original_content=existing,
+    )
 
 
 def build_initialization_plan(
@@ -621,10 +642,177 @@ def _validate_generated_content(plan: InitializationPlan) -> None:
                 raise ValueError("generated GitHub workflow is invalid YAML.")
 
 
+def _missing_parent_paths(root: Path, target: Path) -> tuple[Path, ...]:
+    missing = []
+    parent = target.parent
+    while parent != root and not parent.exists():
+        missing.append(parent)
+        parent = parent.parent
+    return tuple(missing)
+
+
+def _write_backup(target: Path, content: bytes) -> Path:
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{target.name}.agentguard-rollback-",
+        suffix=".bak",
+        dir=target.parent,
+    )
+    backup = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as backup_file:
+            backup_file.write(content)
+            backup_file.flush()
+            os.fsync(backup_file.fileno())
+    except BaseException:
+        try:
+            backup.unlink()
+        except OSError:
+            pass
+        raise
+    return backup
+
+
+def _stage_rollback_snapshots(
+    plan: InitializationPlan,
+) -> tuple[_RollbackSnapshot, ...]:
+    snapshots = []
+    try:
+        for item in plan.files:
+            if item.action not in {"create", "update", "replace"}:
+                continue
+            target = _target_path(plan.root, item.relative_path)
+            current = _read_text_if_file(target, item.relative_path)
+            if current != item.original_content:
+                raise ValueError(
+                    "initialization target changed after planning: "
+                    f"{item.relative_path}"
+                )
+            backup = None
+            if current is not None:
+                backup = _write_backup(target, current.encode("utf-8"))
+            snapshots.append(
+                _RollbackSnapshot(
+                    item=item,
+                    backup_path=backup,
+                    missing_parents=_missing_parent_paths(plan.root, target),
+                )
+            )
+    except (OSError, ValueError) as error:
+        cleanup_failures = []
+        for snapshot in snapshots:
+            if snapshot.backup_path is None:
+                continue
+            try:
+                snapshot.backup_path.unlink()
+            except OSError:
+                cleanup_failures.append(snapshot.item.relative_path.as_posix())
+        if cleanup_failures:
+            joined = ", ".join(cleanup_failures)
+            raise ValueError(
+                "could not prepare initialization rollback; recovery backups "
+                f"were preserved for: {joined}"
+            ) from error
+        raise ValueError(
+            "could not prepare initialization rollback; no project targets were changed"
+        ) from error
+    return tuple(snapshots)
+
+
+def _remove_empty_created_parents(snapshot: _RollbackSnapshot) -> list[str]:
+    failures = []
+    for parent in snapshot.missing_parents:
+        try:
+            parent.rmdir()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            if parent.exists():
+                failures.append(snapshot.item.relative_path.as_posix())
+    return failures
+
+
+def _rollback_snapshots(
+    plan: InitializationPlan,
+    snapshots: tuple[_RollbackSnapshot, ...],
+    attempted_count: int,
+) -> tuple[str, ...]:
+    failures = []
+    attempted = snapshots[:attempted_count]
+    for snapshot in reversed(attempted):
+        item = snapshot.item
+        try:
+            target = _target_path(plan.root, item.relative_path)
+            current = _read_text_if_file(target, item.relative_path)
+            if item.original_content is None:
+                if current == item.content:
+                    target.unlink()
+                elif current is not None:
+                    raise OSError("target changed during rollback")
+            elif current != item.original_content:
+                if current != item.content or snapshot.backup_path is None:
+                    raise OSError("target changed during rollback")
+                backup_content = snapshot.backup_path.read_bytes().decode("utf-8")
+                atomic_write_text(target, backup_content)
+                restored = _read_text_if_file(target, item.relative_path)
+                if restored != item.original_content:
+                    raise OSError("rollback verification failed")
+            failures.extend(_remove_empty_created_parents(snapshot))
+        except (OSError, UnicodeError, ValueError):
+            failures.append(item.relative_path.as_posix())
+
+    failed = set(failures)
+    for snapshot in snapshots:
+        if (
+            snapshot.backup_path is None
+            or snapshot.item.relative_path.as_posix() in failed
+        ):
+            continue
+        try:
+            snapshot.backup_path.unlink()
+        except OSError:
+            failures.append(snapshot.item.relative_path.as_posix())
+    return tuple(dict.fromkeys(failures))
+
+
+def _discard_backups(snapshots: tuple[_RollbackSnapshot, ...]) -> None:
+    failures = []
+    for snapshot in snapshots:
+        if snapshot.backup_path is None:
+            continue
+        try:
+            snapshot.backup_path.unlink()
+        except OSError:
+            failures.append(snapshot.item.relative_path.as_posix())
+    if failures:
+        joined = ", ".join(failures)
+        raise ValueError(
+            "initialization completed, but recovery backups could not be removed for: "
+            f"{joined}"
+        )
+
+
 def apply_initialization_plan(plan: InitializationPlan, *, dry_run: bool) -> None:
     if dry_run or plan.conflicts:
         return
-    for item in plan.files:
-        if item.action in {"create", "update", "replace"}:
+    snapshots = _stage_rollback_snapshots(plan)
+    attempted_count = 0
+    try:
+        for snapshot in snapshots:
+            attempted_count += 1
+            item = snapshot.item
             target = _target_path(plan.root, item.relative_path)
             atomic_write_text(target, item.content)
+    except (OSError, ValueError) as error:
+        failures = _rollback_snapshots(plan, snapshots, attempted_count)
+        failed_target = snapshots[attempted_count - 1].item.relative_path.as_posix()
+        if failures:
+            joined = ", ".join(failures)
+            raise ValueError(
+                f"could not write initialization target {failed_target}; rollback "
+                f"was incomplete for {joined}; recovery backups were preserved"
+            ) from error
+        raise ValueError(
+            f"could not write initialization target {failed_target}; "
+            "all earlier changes were rolled back"
+        ) from error
+    _discard_backups(snapshots)
