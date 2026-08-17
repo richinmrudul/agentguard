@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from agentguard.core.result import (
     CheckResult,
     CiResult,
@@ -7,7 +9,11 @@ from agentguard.core.result import (
     DiffSummary,
     ReportPaths,
 )
-from agentguard.reports.github_summary import write_github_step_summary
+from agentguard.reports import github_summary
+from agentguard.reports.github_summary import (
+    append_github_step_summary,
+    write_github_step_summary,
+)
 
 
 def _ci_result(tmp_path: Path) -> CiResult:
@@ -149,3 +155,55 @@ def test_github_step_summary_bounds_checks_fields_and_workspace_paths(
     assert "...and 5 more" in summary
     assert "truncated" in summary
     assert str(tmp_path) not in summary
+
+
+def test_github_step_summary_creates_missing_unicode_parent(tmp_path: Path) -> None:
+    summary_path = tmp_path / "summary output ü" / "step summary.md"
+
+    written = write_github_step_summary(_ci_result(tmp_path), summary_path)
+
+    assert written == summary_path
+    assert "## AgentGuard CI Report" in summary_path.read_text(encoding="utf-8")
+
+
+def test_github_step_summary_rejects_directory_destination(tmp_path: Path) -> None:
+    with pytest.raises(OSError):
+        write_github_step_summary(_ci_result(tmp_path), tmp_path)
+
+
+def test_github_step_summary_propagates_permission_denial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def deny_open(*args: object, **kwargs: object) -> int:
+        raise PermissionError("private destination")
+
+    monkeypatch.setattr(github_summary.os, "open", deny_open)
+
+    with pytest.raises(PermissionError):
+        write_github_step_summary(_ci_result(tmp_path), tmp_path / "summary.md")
+
+
+def test_github_step_summary_rolls_back_failure_after_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary_path = tmp_path / "summary.md"
+    summary_path.write_text("Existing summary\n", encoding="utf-8")
+    original_write = github_summary.os.write
+    calls = 0
+
+    def fail_second_write(descriptor: int, payload: bytes) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return original_write(descriptor, payload[:10])
+        raise OSError("hostile/private/write failure")
+
+    monkeypatch.setattr(github_summary.os, "write", fail_second_write)
+
+    with pytest.raises(OSError):
+        append_github_step_summary(summary_path, "new summary payload")
+
+    assert calls == 2
+    assert summary_path.read_text(encoding="utf-8") == "Existing summary\n"

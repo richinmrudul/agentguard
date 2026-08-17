@@ -642,7 +642,7 @@ def _finding_line(finding: PrFinding) -> str:
     )
 
 
-def append_pr_summary(report: PrReport, summary_path: Path) -> Path:
+def pr_summary_markdown(report: PrReport) -> str:
     lines = [
         "## AgentGuard baseline comparison",
         "",
@@ -676,9 +676,13 @@ def append_pr_summary(report: PrReport, summary_path: Path) -> Path:
         lines.append("- None")
     elif len(report.resolved) > MAX_SUMMARY_FINDINGS:
         lines.append(f"- ...and {len(report.resolved) - MAX_SUMMARY_FINDINGS} more")
+    return "\n".join(lines) + "\n"
+
+
+def append_pr_summary(report: PrReport, summary_path: Path) -> Path:
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     with summary_path.open("a", encoding="utf-8") as file:
-        file.write("\n".join(lines) + "\n")
+        file.write(pr_summary_markdown(report))
     return summary_path
 
 

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from agentguard.core.result import CheckResult, CiResult
@@ -39,8 +40,7 @@ def _file_lines(label: str, paths: list[str], limit: int = 10) -> list[str]:
     return lines
 
 
-def write_github_step_summary(result: CiResult, summary_path: Path) -> Path:
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
+def github_step_summary_markdown(result: CiResult) -> str:
     failed_checks = [
         check
         for check in result.check_results
@@ -98,7 +98,37 @@ def write_github_step_summary(result: CiResult, summary_path: Path) -> Path:
             f"{markdown_inline_code(_portable_report_path(result, result.report_paths.command_log))}"
         )
 
-    with summary_path.open("a", encoding="utf-8") as file:
-        file.write("\n".join(lines) + "\n")
+    return "\n".join(lines) + "\n"
+
+
+def append_github_step_summary(summary_path: Path, content: str) -> Path:
+    """Append one complete summary payload, rolling back partial writes when safe."""
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(summary_path, flags, 0o666)
+    initial_size = os.fstat(descriptor).st_size
+    payload = content.encode("utf-8")
+    written = 0
+    try:
+        while written < len(payload):
+            count = os.write(descriptor, payload[written:])
+            if count <= 0:
+                raise OSError("step-summary write made no progress")
+            written += count
+    except OSError:
+        try:
+            if os.fstat(descriptor).st_size == initial_size + written:
+                os.ftruncate(descriptor, initial_size)
+        except OSError:
+            pass
+        raise
+    finally:
+        os.close(descriptor)
+
+    return summary_path
+
+
+def write_github_step_summary(result: CiResult, summary_path: Path) -> Path:
+    append_github_step_summary(summary_path, github_step_summary_markdown(result))
 
     return summary_path

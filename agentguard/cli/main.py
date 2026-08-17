@@ -137,11 +137,14 @@ from agentguard.reports.exports import (
     export_junit,
     export_sarif,
 )
-from agentguard.reports.github_summary import write_github_step_summary
+from agentguard.reports.github_summary import (
+    append_github_step_summary,
+    github_step_summary_markdown,
+)
 from agentguard.reports.pr_report import (
-    append_pr_summary,
     build_pr_report,
     github_annotations,
+    pr_summary_markdown,
     write_pr_report,
 )
 from agentguard.reports.site import (
@@ -3079,12 +3082,19 @@ def ci_command(
     except (OSError, ValueError) as error:
         safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    github_summary_path = None
+    github_summary_written = False
+    github_summary_error = False
     if github_summary:
         summary_env = os.environ.get("GITHUB_STEP_SUMMARY")
-        if summary_env:
-            github_summary_path = write_github_step_summary(result, Path(summary_env))
-            append_pr_summary(pr_report, github_summary_path)
+        if summary_env is not None:
+            try:
+                summary = github_step_summary_markdown(result) + pr_summary_markdown(
+                    pr_report
+                )
+                append_github_step_summary(Path(summary_env), summary)
+                github_summary_written = True
+            except OSError:
+                github_summary_error = True
         else:
             safe_echo(
                 "Warning: --github-summary was provided but "
@@ -3125,8 +3135,15 @@ def ci_command(
         f"resolved {pr_report.counts['resolved']}; "
         f"unclassified {pr_report.counts['unclassified']}"
     )
-    if github_summary_path is not None:
-        safe_echo(f"GitHub summary path: {github_summary_path}")
+    if github_summary_written:
+        safe_echo("GitHub summary: written.")
+    if github_summary_error:
+        safe_echo(
+            "Error: GitHub step summary could not be written; "
+            "the AgentGuard result above was not published to the step summary.",
+            err=True,
+        )
+        raise typer.Exit(2)
     if result.result == "FAIL" and not allow_fail_result:
         raise typer.Exit(1)
 
