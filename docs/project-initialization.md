@@ -239,6 +239,12 @@ The initializer computes and validates the complete plan before writing:
   files.
 - Existing `.gitignore` content is retained and `.agentguard/` is not
   duplicated.
+- If a filesystem error occurs after writing has started, the initializer
+  removes newly created targets and restores replaced or updated targets from
+  byte-preserving backups. A target changed concurrently is left untouched.
+  If restoration cannot be completed safely, the command reports the affected
+  initializer-owned path and preserves its hidden sibling recovery backup
+  instead of deleting the only recoverable copy.
 - Symlink targets and parent directories that escape the selected root are
   rejected, including with `--force`.
 - Selecting a different preset changes `agentguard.yaml`, so it conflicts by

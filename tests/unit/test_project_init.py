@@ -8,6 +8,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+import agentguard.project_init as project_init_module
 from agentguard.cli.main import app
 from agentguard.config.loader import load_config
 from agentguard.project_init import (
@@ -867,6 +868,140 @@ def test_default_refuses_nonidentical_existing_config_without_partial_writes(
     assert not (root / ".gitignore").exists()
     assert not (root / GITHUB_WORKFLOW_PATH).exists()
     assert "Conflict:\n- agentguard.yaml" in result.output
+
+
+@pytest.mark.parametrize(
+    "failed_target",
+    [CONFIG_PATH, Path(".gitignore"), GITHUB_WORKFLOW_PATH],
+)
+def test_write_failure_at_each_stage_rolls_back_every_initializer_target(
+    tmp_path: Path,
+    monkeypatch,
+    failed_target: Path,
+) -> None:
+    root = tmp_path / "project with spaces café 日本語"
+    root.mkdir()
+    original_write = project_init_module.atomic_write_text
+    failed = False
+
+    def fail_after_write(path: Path, content: str, **kwargs):
+        nonlocal failed
+        result = original_write(path, content, **kwargs)
+        if path.relative_to(root) == failed_target and not failed:
+            failed = True
+            raise OSError("hostile private failure detail")
+        return result
+
+    monkeypatch.setattr(project_init_module, "atomic_write_text", fail_after_write)
+
+    result = _invoke(root, "--ci", "github")
+
+    assert result.exit_code == 2
+    assert "all earlier changes were rolled back" in _error_output(result)
+    assert "hostile private failure detail" not in result.output
+    assert str(tmp_path) not in result.output
+    assert not (root / CONFIG_PATH).exists()
+    assert not (root / ".gitignore").exists()
+    assert not (root / GITHUB_WORKFLOW_PATH).exists()
+    assert not (root / ".github").exists()
+    assert not list(root.glob(".*.agentguard-rollback-*.bak"))
+
+
+def test_later_write_failure_restores_preexisting_gitignore_byte_for_byte(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    ignore = root / ".gitignore"
+    original = b"dist/\r\ncustom-caf\xc3\xa9/\r\n"
+    ignore.write_bytes(original)
+    original_write = project_init_module.atomic_write_text
+
+    def fail_workflow(path: Path, content: str, **kwargs):
+        if path.relative_to(root) == GITHUB_WORKFLOW_PATH:
+            raise PermissionError("private storage path")
+        return original_write(path, content, **kwargs)
+
+    monkeypatch.setattr(project_init_module, "atomic_write_text", fail_workflow)
+
+    result = _invoke(root, "--ci", "github")
+
+    assert result.exit_code == 2
+    assert ignore.read_bytes() == original
+    assert not (root / CONFIG_PATH).exists()
+    assert not (root / GITHUB_WORKFLOW_PATH).exists()
+    assert "private storage path" not in result.output
+    assert not list(root.glob(".*.agentguard-rollback-*.bak"))
+
+
+def test_force_replacement_is_restored_when_later_write_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    config = root / CONFIG_PATH
+    config_original = b"user: config\r\n"
+    config.write_bytes(config_original)
+    original_write = project_init_module.atomic_write_text
+
+    def fail_workflow(path: Path, content: str, **kwargs):
+        if path.relative_to(root) == GITHUB_WORKFLOW_PATH:
+            raise OSError("write refused")
+        return original_write(path, content, **kwargs)
+
+    monkeypatch.setattr(project_init_module, "atomic_write_text", fail_workflow)
+
+    result = _invoke(root, "--force", "--ci", "github")
+
+    assert result.exit_code == 2
+    assert config.read_bytes() == config_original
+    assert not (root / ".gitignore").exists()
+    assert not (root / GITHUB_WORKFLOW_PATH).exists()
+
+
+def test_rollback_failure_preserves_recoverable_backup_and_reports_target(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    ignore = root / ".gitignore"
+    original = b"keep-this-user-content/\n"
+    ignore.write_bytes(original)
+    original_write = project_init_module.atomic_write_text
+    workflow_failed = False
+
+    def fail_write_and_restore(path: Path, content: str, **kwargs):
+        nonlocal workflow_failed
+        relative = path.relative_to(root)
+        if relative == GITHUB_WORKFLOW_PATH:
+            workflow_failed = True
+            raise OSError("workflow failure")
+        if relative == Path(".gitignore") and workflow_failed:
+            raise OSError("rollback failure")
+        return original_write(path, content, **kwargs)
+
+    monkeypatch.setattr(
+        project_init_module,
+        "atomic_write_text",
+        fail_write_and_restore,
+    )
+
+    result = _invoke(root, "--ci", "github")
+    backups = list(root.glob("..gitignore.agentguard-rollback-*.bak"))
+
+    assert result.exit_code == 2
+    assert "rollback was incomplete for .gitignore" in _error_output(result)
+    assert "recovery backups were preserved" in _error_output(result)
+    assert "workflow failure" not in result.output
+    assert "rollback failure" not in result.output
+    assert ignore.read_bytes().endswith(b".agentguard/\n")
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == original
+    assert not (root / CONFIG_PATH).exists()
+    assert not (root / GITHUB_WORKFLOW_PATH).exists()
 
 
 def test_force_replaces_only_owned_targets(tmp_path: Path) -> None:
