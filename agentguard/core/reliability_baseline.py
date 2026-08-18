@@ -1,11 +1,18 @@
-import json
 import math
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from agentguard.io import atomic_write_json
+from agentguard.core.baseline_validation import (
+    load_baseline_json,
+    require_bool,
+    require_fields,
+    require_int,
+    require_number,
+    require_string,
+)
 
 MATRIX_RELIABILITY_SCHEMA = "agentguard.matrix-reliability-baseline"
 MATRIX_RELIABILITY_SCHEMA_VERSION = 1
@@ -318,11 +325,17 @@ def _confidence_interval_from_dict(
     data: dict[str, Any],
     label: str,
 ) -> ConfidenceInterval:
-    try:
-        lower = float(data["lower_bound"])
-        upper = float(data["upper_bound"])
-    except (KeyError, TypeError, ValueError) as error:
-        raise ValueError(f"Invalid confidence interval for {label}.") from error
+    require_fields(
+        data,
+        required={"lower_bound", "upper_bound"},
+        label=f"Confidence interval for {label}",
+    )
+    lower = require_number(
+        data["lower_bound"], f"Confidence interval lower bound for {label}"
+    )
+    upper = require_number(
+        data["upper_bound"], f"Confidence interval upper bound for {label}"
+    )
     if lower < 0 or upper > 100 or lower > upper:
         raise ValueError(f"Invalid confidence interval for {label}.")
     return ConfidenceInterval(lower_bound=lower, upper_bound=upper)
@@ -331,91 +344,229 @@ def _confidence_interval_from_dict(
 def _metrics_from_dict(
     data: dict[str, Any],
     label: str,
+    *,
+    aggregate: bool,
+    allowed_extra: Iterable[str] = (),
 ) -> ReliabilityBaselineMetrics:
-    try:
-        attempts = int(data["attempts"])
-        passed = int(data["passed"])
-        failed = int(data["failed"])
-        metrics = ReliabilityBaselineMetrics(
-            attempts=attempts,
-            passed=passed,
-            failed=failed,
-            success_rate=float(data["success_rate"]),
-            average_score=float(data["average_score"]),
-            minimum_score=int(data["minimum_score"]),
-            maximum_score=int(data["maximum_score"]),
-            score_standard_deviation=float(data["score_standard_deviation"]),
-            confidence_interval_95=_confidence_interval_from_dict(
-                _required_mapping(data, "confidence_interval_95"),
-                label,
-            ),
-            combinations_with_any_pass=(
-                int(data["combinations_with_any_pass"])
-                if data.get("combinations_with_any_pass") is not None
-                else None
-            ),
-            combinations_with_all_passes=(
-                int(data["combinations_with_all_passes"])
-                if data.get("combinations_with_all_passes") is not None
-                else None
-            ),
-        )
-    except (KeyError, TypeError, ValueError) as error:
-        raise ValueError(f"Invalid reliability metrics for {label}.") from error
-    if attempts <= 0 or passed < 0 or failed < 0 or passed + failed != attempts:
+    fields = {
+        "attempts",
+        "passed",
+        "failed",
+        "success_rate",
+        "average_score",
+        "minimum_score",
+        "maximum_score",
+        "score_standard_deviation",
+        "confidence_interval_95",
+    }
+    aggregate_fields = {
+        "combinations_with_any_pass",
+        "combinations_with_all_passes",
+    }
+    require_fields(
+        data,
+        required=fields | aggregate_fields if aggregate else fields,
+        optional=(aggregate_fields if not aggregate else set()) | set(allowed_extra),
+        label=f"Reliability metrics for {label}",
+    )
+    attempts = require_int(data["attempts"], f"{label} attempts", minimum=1)
+    passed = require_int(data["passed"], f"{label} passed", minimum=0)
+    failed = require_int(data["failed"], f"{label} failed", minimum=0)
+    if passed + failed != attempts:
         raise ValueError(f"Invalid reliability metrics for {label}.")
+    success_rate = require_number(
+        data["success_rate"], f"{label} success_rate", minimum=0, maximum=100
+    )
+    if success_rate != round((passed / attempts) * 100, 1):
+        raise ValueError(f"Invalid reliability metrics for {label}.")
+    minimum_score = require_int(
+        data["minimum_score"], f"{label} minimum_score", minimum=0, maximum=100
+    )
+    maximum_score = require_int(
+        data["maximum_score"], f"{label} maximum_score", minimum=0, maximum=100
+    )
+    average_score = require_number(
+        data["average_score"], f"{label} average_score", minimum=0, maximum=100
+    )
+    if minimum_score > maximum_score or not minimum_score <= average_score <= maximum_score:
+        raise ValueError(f"Invalid reliability metrics for {label}.")
+    deviation = require_number(
+        data["score_standard_deviation"],
+        f"{label} score_standard_deviation",
+        minimum=0,
+    )
+    score_range = maximum_score - minimum_score
+    if attempts == 1 or score_range == 0:
+        if deviation != 0:
+            raise ValueError(f"Invalid reliability metrics for {label}.")
+    else:
+        maximum_variance = (
+            score_range**2
+            * (attempts**2 // 4)
+            / (attempts * (attempts - 1))
+        )
+        if deviation > math.sqrt(maximum_variance) + 0.01:
+            raise ValueError(f"Invalid reliability metrics for {label}.")
+    interval = _confidence_interval_from_dict(
+        _required_mapping(data, "confidence_interval_95"), label
+    )
+    expected_interval = wilson_score_interval(passed, attempts)
+    if interval != expected_interval:
+        raise ValueError(f"Invalid reliability metrics for {label}.")
+    any_count = data.get("combinations_with_any_pass")
+    all_count = data.get("combinations_with_all_passes")
+    if aggregate:
+        if any_count is not None:
+            any_count = require_int(
+                any_count, f"{label} combinations_with_any_pass", minimum=0
+            )
+        if all_count is not None:
+            all_count = require_int(
+                all_count, f"{label} combinations_with_all_passes", minimum=0
+            )
+        if any_count is not None and all_count is not None and all_count > any_count:
+            raise ValueError(f"Invalid reliability metrics for {label}.")
+    elif any_count is not None or all_count is not None:
+        raise ValueError(f"Invalid reliability metrics for {label}.")
+    metrics = ReliabilityBaselineMetrics(
+        attempts=attempts,
+        passed=passed,
+        failed=failed,
+        success_rate=success_rate,
+        average_score=average_score,
+        minimum_score=minimum_score,
+        maximum_score=maximum_score,
+        score_standard_deviation=deviation,
+        confidence_interval_95=interval,
+        combinations_with_any_pass=any_count,
+        combinations_with_all_passes=all_count,
+    )
     return metrics
 
 
 def _row_from_dict(data: dict[str, Any], key: str) -> ReliabilityBaselineRow:
-    try:
-        metrics = _metrics_from_dict(data, key)
-        return ReliabilityBaselineRow(
-            key=key,
-            identity_key=str(data["identity_key"]),
-            task_id=str(data["task_id"]),
-            config_path=str(data["config_path"]),
-            benchmark_id=(
-                str(data["benchmark_id"])
-                if data.get("benchmark_id") is not None
-                else None
-            ),
-            benchmark_version=(
-                int(data["benchmark_version"])
-                if data.get("benchmark_version") is not None
-                else None
-            ),
-            agent=str(data["agent"]),
-            attempts=metrics.attempts,
-            passed=metrics.passed,
-            failed=metrics.failed,
-            success_rate=metrics.success_rate,
-            average_score=metrics.average_score,
-            minimum_score=metrics.minimum_score,
-            maximum_score=metrics.maximum_score,
-            score_standard_deviation=metrics.score_standard_deviation,
-            confidence_interval_95=metrics.confidence_interval_95,
-            any_pass=bool(data["any_pass"]),
-            all_passed=bool(data["all_passed"]),
+    row_fields = {
+        "key",
+        "identity_key",
+        "task_id",
+        "config_path",
+        "benchmark_id",
+        "benchmark_version",
+        "agent",
+        "any_pass",
+        "all_passed",
+    }
+    metric_fields = {
+        "attempts",
+        "passed",
+        "failed",
+        "success_rate",
+        "average_score",
+        "minimum_score",
+        "maximum_score",
+        "score_standard_deviation",
+        "confidence_interval_95",
+    }
+    require_fields(
+        data,
+        required=row_fields | metric_fields,
+        label="Reliability baseline combination",
+    )
+    metrics = _metrics_from_dict(
+        data, "combination", aggregate=False, allowed_extra=row_fields
+    )
+    task_id = require_string(data["task_id"], "Reliability combination task_id")
+    config_path = require_string(
+        data["config_path"], "Reliability combination config_path"
+    )
+    agent = require_string(data["agent"], "Reliability combination agent")
+    benchmark_id = data["benchmark_id"]
+    if benchmark_id is not None:
+        benchmark_id = require_string(
+            benchmark_id, "Reliability combination benchmark_id"
         )
-    except (KeyError, TypeError, ValueError) as error:
-        raise ValueError(f"Invalid reliability baseline combination '{key}'.") from error
+    benchmark_version = data["benchmark_version"]
+    if benchmark_version is not None:
+        benchmark_version = require_int(
+            benchmark_version, "Reliability combination benchmark_version", minimum=1
+        )
+    identity_key = require_string(
+        data["identity_key"], "Reliability combination identity_key"
+    )
+    expected_identity = reliability_identity_key(
+        config_path, benchmark_id, task_id, agent
+    )
+    expected_key = reliability_combination_key(
+        config_path, benchmark_id, benchmark_version, task_id, agent
+    )
+    if identity_key != expected_identity or data["key"] != key or key != expected_key:
+        raise ValueError("Reliability baseline combination has an invalid identity.")
+    any_pass = require_bool(data["any_pass"], "Reliability combination any_pass")
+    all_passed = require_bool(
+        data["all_passed"], "Reliability combination all_passed"
+    )
+    if any_pass != (metrics.passed > 0) or all_passed != (
+        metrics.passed == metrics.attempts
+    ):
+        raise ValueError("Reliability baseline combination has invalid flags.")
+    return ReliabilityBaselineRow(
+        key=key,
+        identity_key=identity_key,
+        task_id=task_id,
+        config_path=config_path,
+        benchmark_id=benchmark_id,
+        benchmark_version=benchmark_version,
+        agent=agent,
+        attempts=metrics.attempts,
+        passed=metrics.passed,
+        failed=metrics.failed,
+        success_rate=metrics.success_rate,
+        average_score=metrics.average_score,
+        minimum_score=metrics.minimum_score,
+        maximum_score=metrics.maximum_score,
+        score_standard_deviation=metrics.score_standard_deviation,
+        confidence_interval_95=metrics.confidence_interval_95,
+        any_pass=any_pass,
+        all_passed=all_passed,
+    )
+
+
+def _metrics_match_rows(
+    metrics: ReliabilityBaselineMetrics,
+    rows: list[ReliabilityBaselineRow],
+) -> bool:
+    if not rows:
+        return False
+    attempts = sum(row.attempts for row in rows)
+    unrounded_average = (
+        sum(row.average_score * row.attempts for row in rows) / attempts
+    )
+    weighted_average = round(unrounded_average, 2)
+    if attempts == 1:
+        pooled_deviation = 0.0
+    else:
+        pooled_variance = sum(
+            ((row.attempts - 1) * row.score_standard_deviation**2)
+            + (row.attempts * (row.average_score - unrounded_average) ** 2)
+            for row in rows
+        ) / (attempts - 1)
+        pooled_deviation = round(math.sqrt(max(0.0, pooled_variance)), 2)
+    return (
+        metrics.attempts == attempts
+        and metrics.passed == sum(row.passed for row in rows)
+        and metrics.failed == sum(row.failed for row in rows)
+        and metrics.minimum_score == min(row.minimum_score for row in rows)
+        and metrics.maximum_score == max(row.maximum_score for row in rows)
+        and abs(metrics.average_score - weighted_average) <= 0.02
+        and abs(metrics.score_standard_deviation - pooled_deviation) <= 0.05
+        and metrics.combinations_with_any_pass == sum(row.any_pass for row in rows)
+        and metrics.combinations_with_all_passes
+        == sum(row.all_passed for row in rows)
+    )
 
 
 def load_matrix_reliability_baseline(path: Path) -> MatrixReliabilityBaseline:
-    baseline_path = path.expanduser()
-    try:
-        with baseline_path.open("r", encoding="utf-8") as file:
-            data = json.load(file)
-    except OSError as error:
-        raise ValueError(
-            f"Could not read reliability baseline: {baseline_path}"
-        ) from error
-    except json.JSONDecodeError as error:
-        raise ValueError(
-            f"Reliability baseline is not valid JSON: {baseline_path}"
-        ) from error
-
+    data = load_baseline_json(path, "reliability baseline")
     if not isinstance(data, dict):
         raise ValueError("Reliability baseline must be a JSON object.")
     if data.get("schema") != MATRIX_RELIABILITY_SCHEMA:
@@ -423,59 +574,116 @@ def load_matrix_reliability_baseline(path: Path) -> MatrixReliabilityBaseline:
             "Reliability baseline schema must be "
             f"'{MATRIX_RELIABILITY_SCHEMA}'."
         )
-    if data.get("schema_version") != MATRIX_RELIABILITY_SCHEMA_VERSION:
+    require_fields(
+        data,
+        required={
+            "schema",
+            "schema_version",
+            "suite_id",
+            "created_at",
+            "trials",
+            "filters",
+            "agents",
+            "overall",
+            "per_agent",
+            "per_combination",
+        },
+        label="Reliability baseline",
+    )
+    if data["schema_version"] != MATRIX_RELIABILITY_SCHEMA_VERSION or isinstance(
+        data["schema_version"], bool
+    ):
         raise ValueError("Reliability baseline schema_version must be 1.")
 
     raw_filters = _required_mapping(data, "filters")
     raw_agents = data.get("agents")
     raw_per_agent = _required_mapping(data, "per_agent")
     raw_combinations = _required_mapping(data, "per_combination")
-    if not isinstance(raw_agents, list) or not all(
-        isinstance(agent, str) for agent in raw_agents
-    ):
-        raise ValueError("Reliability baseline field 'agents' must be a string list.")
+    if not isinstance(raw_agents, list) or not raw_agents:
+        raise ValueError("Reliability baseline field 'agents' must be a non-empty string list.")
+    agents = [
+        require_string(agent, "Reliability baseline agent") for agent in raw_agents
+    ]
+    if len(agents) != len(set(agents)):
+        raise ValueError("Reliability baseline agents must be unique.")
     if any(not isinstance(metrics, dict) for metrics in raw_per_agent.values()):
         raise ValueError("Reliability baseline per_agent values must be objects.")
     if any(not isinstance(row, dict) for row in raw_combinations.values()):
         raise ValueError("Reliability baseline per_combination values must be objects.")
-    raw_tags = raw_filters.get("tags", [])
+    require_fields(
+        raw_filters,
+        required={"category", "difficulty", "tags"},
+        label="Reliability baseline filters",
+    )
+    raw_tags = raw_filters["tags"]
     if not isinstance(raw_tags, list) or not all(
-        isinstance(tag, str) for tag in raw_tags
+        isinstance(tag, str) and tag for tag in raw_tags
     ):
-        raise ValueError("Reliability baseline filter tags must be a string list.")
-    trials = int(data.get("trials", 0))
-    if trials <= 0:
-        raise ValueError("Reliability baseline trials must be positive.")
+        raise ValueError(
+            "Reliability baseline filter tags must be a non-empty string list."
+        )
+    if len(raw_tags) != len(set(raw_tags)):
+        raise ValueError("Reliability baseline filter tags must be unique.")
+    trials = require_int(data["trials"], "Reliability baseline trials", minimum=1)
+    category = raw_filters["category"]
+    if category is not None:
+        category = require_string(category, "Reliability baseline filter category")
+    difficulty = raw_filters["difficulty"]
+    if difficulty is not None:
+        difficulty = require_string(
+            difficulty, "Reliability baseline filter difficulty"
+        )
+    if set(raw_per_agent) != set(agents):
+        raise ValueError("Reliability baseline per_agent keys must match agents.")
+    overall = _metrics_from_dict(
+        _required_mapping(data, "overall"), "overall", aggregate=True
+    )
+    per_agent = {
+        require_string(agent, "Reliability baseline per_agent key"): _metrics_from_dict(
+            metrics, "agent", aggregate=True
+        )
+        for agent, metrics in sorted(raw_per_agent.items())
+    }
+    per_combination = {
+        require_string(key, "Reliability baseline combination key"): _row_from_dict(
+            row, key
+        )
+        for key, row in sorted(raw_combinations.items())
+    }
+    if not per_combination:
+        raise ValueError("Reliability baseline per_combination must not be empty.")
+    identities = [row.identity_key for row in per_combination.values()]
+    if len(identities) != len(set(identities)):
+        raise ValueError("Reliability baseline combination identities must be unique.")
+    if any(row.agent not in agents for row in per_combination.values()):
+        raise ValueError("Reliability baseline combination agent is not declared.")
+    if any(row.attempts != trials for row in per_combination.values()):
+        raise ValueError("Reliability baseline combination attempts must match trials.")
+    all_rows = list(per_combination.values())
+    if not _metrics_match_rows(overall, all_rows):
+        raise ValueError("Reliability baseline overall metrics do not match combinations.")
+    for agent, metrics in per_agent.items():
+        rows = [row for row in per_combination.values() if row.agent == agent]
+        if not _metrics_match_rows(metrics, rows):
+            raise ValueError("Reliability per-agent metrics do not match combinations.")
 
     return MatrixReliabilityBaseline(
         schema=MATRIX_RELIABILITY_SCHEMA,
         schema_version=MATRIX_RELIABILITY_SCHEMA_VERSION,
-        suite_id=str(data.get("suite_id", "")),
-        created_at=str(data.get("created_at", "")),
+        suite_id=require_string(data["suite_id"], "Reliability baseline suite_id"),
+        created_at=require_string(
+            data["created_at"], "Reliability baseline created_at"
+        ),
         trials=trials,
         filters=ReliabilityBaselineFilters(
-            category=(
-                str(raw_filters["category"])
-                if raw_filters.get("category") is not None
-                else None
-            ),
-            difficulty=(
-                str(raw_filters["difficulty"])
-                if raw_filters.get("difficulty") is not None
-                else None
-            ),
+            category=category,
+            difficulty=difficulty,
             tags=sorted(raw_tags),
         ),
-        agents=sorted(raw_agents),
-        overall=_metrics_from_dict(_required_mapping(data, "overall"), "overall"),
-        per_agent={
-            str(agent): _metrics_from_dict(metrics, f"agent {agent}")
-            for agent, metrics in sorted(raw_per_agent.items())
-        },
-        per_combination={
-            str(key): _row_from_dict(row, str(key))
-            for key, row in sorted(raw_combinations.items())
-        },
+        agents=sorted(agents),
+        overall=overall,
+        per_agent=per_agent,
+        per_combination=per_combination,
     )
 
 

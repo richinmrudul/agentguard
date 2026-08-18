@@ -1,7 +1,9 @@
 import json
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Callable
 
 import pytest
 
@@ -104,14 +106,19 @@ def _result(tmp_path: Path, combinations=None):
         row.all_passed for row in combinations
     )
     agents = sorted({row.agent for row in combinations})
-    per_agent = {
-        agent: _metrics(
+    per_agent = {}
+    for agent in agents:
+        agent_rows = [row for row in combinations if row.agent == agent]
+        metrics = _metrics(
             attempts=sum(row.attempts for row in combinations if row.agent == agent),
             passed=sum(row.passed for row in combinations if row.agent == agent),
             average_score=average_score,
         )
-        for agent in agents
-    }
+        metrics.combinations_with_any_pass = sum(row.any_pass for row in agent_rows)
+        metrics.combinations_with_all_passes = sum(
+            row.all_passed for row in agent_rows
+        )
+        per_agent[agent] = metrics
     return SimpleNamespace(
         suite_id="core",
         trials=combinations[0].trials,
@@ -205,6 +212,97 @@ def test_corrupt_reliability_metrics_are_rejected_with_context(tmp_path: Path) -
     path.write_text(json.dumps(data), encoding="utf-8")
 
     with pytest.raises(ValueError, match="Invalid reliability metrics for overall"):
+        load_matrix_reliability_baseline(path)
+
+
+def _valid_reliability_data(tmp_path: Path) -> dict[str, Any]:
+    path = write_matrix_reliability_baseline(_result(tmp_path), tmp_path / "valid.json")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _first_combination(data: dict[str, Any]) -> dict[str, Any]:
+    return next(iter(data["per_combination"].values()))
+
+
+def test_boundary_valid_zero_pass_reliability_baseline_loads(tmp_path: Path) -> None:
+    result = _result(
+        tmp_path,
+        [_combination(tmp_path, attempts=1, passed=0, average_score=0)],
+    )
+    path = write_matrix_reliability_baseline(result, tmp_path / "zero.json")
+
+    loaded = load_matrix_reliability_baseline(path)
+
+    assert loaded.overall.success_rate == 0.0
+    assert loaded.overall.minimum_score == 0
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda data: data.update(schema_version=True),
+        lambda data: data.update(trials="4"),
+        lambda data: data.update(extra="unexpected"),
+        lambda data: data["filters"].update(tags=["duplicate", "duplicate"]),
+        lambda data: data["filters"].update(tags=[""]),
+        lambda data: data.update(agents=["mock-safe", "mock-safe"]),
+        lambda data: data["overall"].update(success_rate=float("nan")),
+        lambda data: data["overall"].update(score_standard_deviation=99),
+        lambda data: data["overall"].update(passed=3),
+        lambda data: data["overall"]["confidence_interval_95"].update(
+            lower_bound=-1
+        ),
+        lambda data: _first_combination(data).update(any_pass="false"),
+        lambda data: _first_combination(data).update(score_standard_deviation=99),
+        lambda data: _first_combination(data).update(
+            minimum_score=0, score_standard_deviation=99
+        ),
+        lambda data: _first_combination(data).update(all_passed=False),
+        lambda data: _first_combination(data).update(key="wrong"),
+        lambda data: _first_combination(data).update(identity_key="wrong"),
+        lambda data: data["per_agent"]["mock-safe"].update(attempts=5),
+    ],
+)
+def test_malformed_reliability_baseline_is_rejected(
+    tmp_path: Path,
+    mutate: Callable[[dict[str, Any]], None],
+) -> None:
+    data = deepcopy(_valid_reliability_data(tmp_path))
+    mutate(data)
+    path = tmp_path / "malformed.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError) as captured:
+        load_matrix_reliability_baseline(path)
+
+    assert str(path) not in str(captured.value)
+
+
+@pytest.mark.parametrize("content", ["", "[]", "{not json", '{"x": Infinity}'])
+def test_invalid_reliability_documents_are_rejected(
+    tmp_path: Path,
+    content: str,
+) -> None:
+    path = tmp_path / "private reliability baseline.json"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError) as captured:
+        load_matrix_reliability_baseline(path)
+
+    assert str(path) not in str(captured.value)
+
+
+def test_one_attempt_combination_rejects_nonzero_deviation(tmp_path: Path) -> None:
+    result = _result(
+        tmp_path,
+        [_combination(tmp_path, attempts=1, passed=1, average_score=100)],
+    )
+    path = write_matrix_reliability_baseline(result, tmp_path / "one.json")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    _first_combination(data)["score_standard_deviation"] = 99
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid reliability metrics for combination"):
         load_matrix_reliability_baseline(path)
 
 
