@@ -395,6 +395,18 @@ def _metrics_from_dict(
         f"{label} score_standard_deviation",
         minimum=0,
     )
+    score_range = maximum_score - minimum_score
+    if attempts == 1 or score_range == 0:
+        if deviation != 0:
+            raise ValueError(f"Invalid reliability metrics for {label}.")
+    else:
+        maximum_variance = (
+            score_range**2
+            * (attempts**2 // 4)
+            / (attempts * (attempts - 1))
+        )
+        if deviation > math.sqrt(maximum_variance) + 0.01:
+            raise ValueError(f"Invalid reliability metrics for {label}.")
     interval = _confidence_interval_from_dict(
         _required_mapping(data, "confidence_interval_95"), label
     )

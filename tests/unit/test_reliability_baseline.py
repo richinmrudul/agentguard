@@ -253,6 +253,10 @@ def test_boundary_valid_zero_pass_reliability_baseline_loads(tmp_path: Path) -> 
             lower_bound=-1
         ),
         lambda data: _first_combination(data).update(any_pass="false"),
+        lambda data: _first_combination(data).update(score_standard_deviation=99),
+        lambda data: _first_combination(data).update(
+            minimum_score=0, score_standard_deviation=99
+        ),
         lambda data: _first_combination(data).update(all_passed=False),
         lambda data: _first_combination(data).update(key="wrong"),
         lambda data: _first_combination(data).update(identity_key="wrong"),
@@ -286,6 +290,20 @@ def test_invalid_reliability_documents_are_rejected(
         load_matrix_reliability_baseline(path)
 
     assert str(path) not in str(captured.value)
+
+
+def test_one_attempt_combination_rejects_nonzero_deviation(tmp_path: Path) -> None:
+    result = _result(
+        tmp_path,
+        [_combination(tmp_path, attempts=1, passed=1, average_score=100)],
+    )
+    path = write_matrix_reliability_baseline(result, tmp_path / "one.json")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    _first_combination(data)["score_standard_deviation"] = 99
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid reliability metrics for combination"):
+        load_matrix_reliability_baseline(path)
 
 
 def test_matching_comparison_has_no_regression(tmp_path: Path) -> None:
