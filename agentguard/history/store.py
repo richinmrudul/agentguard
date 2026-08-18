@@ -5,6 +5,7 @@ import threading
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import wraps
 from io import StringIO
 from pathlib import Path
 from typing import Optional
@@ -41,6 +42,31 @@ HISTORY_CSV_COLUMNS = [
 _SCHEMA_LOCK = threading.Lock()
 _SQLITE_TIMEOUT_SECONDS = 30
 _CSV_FORMULA_MARKERS = frozenset("=+-@")
+
+
+class HistoryStorageError(RuntimeError):
+    """A sanitized expected failure of the local history store."""
+
+    def __init__(self, operation: str) -> None:
+        super().__init__(f"History storage is unavailable during {operation}.")
+
+
+def _translate_storage_errors(operation: str, extra_errors: tuple = ()):
+    expected_errors = (OSError, sqlite3.Error, *extra_errors)
+
+    def decorator(function):
+        @wraps(function)
+        def translated(*args, **kwargs):
+            try:
+                return function(*args, **kwargs)
+            except HistoryStorageError:
+                raise
+            except expected_errors as error:
+                raise HistoryStorageError(operation) from error
+
+        return translated
+
+    return decorator
 
 
 @dataclass(frozen=True)
@@ -96,11 +122,13 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+@_translate_storage_errors("setup")
 def init_history_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     # Schema setup is process-local serialized; record writes still use separate connections.
     with _SCHEMA_LOCK:
         with sqlite3.connect(db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as connection:
+            connection.execute("BEGIN")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS runs (
@@ -145,9 +173,12 @@ def init_history_db(db_path: Path) -> None:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)"
             )
-            connection.execute("PRAGMA user_version = 4")
+            current_version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if current_version != 4:
+                connection.execute("PRAGMA user_version = 4")
 
 
+@_translate_storage_errors("write")
 def record_history(
     record: HistoryRecord,
     db_path: Path = DEFAULT_HISTORY_DB_PATH,
@@ -229,6 +260,7 @@ def record_history(
         )
 
 
+@_translate_storage_errors("read")
 def list_history(
     db_path: Path = DEFAULT_HISTORY_DB_PATH,
     limit: Optional[int] = 20,
@@ -294,11 +326,12 @@ def list_history(
     if limit is not None:
         params.append(limit)
 
-    with sqlite3.connect(db_path) as connection:
+    with sqlite3.connect(db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as connection:
         rows = connection.execute(query, params).fetchall()
     return [_record_from_row(row) for row in rows]
 
 
+@_translate_storage_errors("read")
 def history_stats(
     db_path: Path = DEFAULT_HISTORY_DB_PATH,
     run_type: Optional[str] = None,
@@ -320,7 +353,7 @@ def history_stats(
         category=category,
         difficulty=difficulty,
     )
-    with sqlite3.connect(db_path) as connection:
+    with sqlite3.connect(db_path, timeout=_SQLITE_TIMEOUT_SECONDS) as connection:
         rows = connection.execute(
             f"SELECT run_type, result, score, created_at FROM runs {where}",
             params,
@@ -537,6 +570,10 @@ def _single_run_type(records: list[HistoryRecord]) -> Optional[str]:
     return None
 
 
+@_translate_storage_errors(
+    "read",
+    (json.JSONDecodeError, IndexError, TypeError, ValueError),
+)
 def _record_from_row(row: tuple) -> HistoryRecord:
     return HistoryRecord(
         id=row[0],

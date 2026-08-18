@@ -21,6 +21,7 @@ from agentguard.core.result import (
 )
 from agentguard.history.store import (
     HistoryRecord,
+    HistoryStorageError,
     export_history_csv,
     export_history_json,
     history_records_to_dicts,
@@ -684,7 +685,7 @@ def test_history_write_failure_warns_without_raising(
     monkeypatch,
 ) -> None:
     def fail_record_history(*args, **kwargs) -> None:
-        raise sqlite3.OperationalError("readonly database")
+        raise HistoryStorageError("write")
 
     monkeypatch.setattr(orchestrator, "record_history", fail_record_history)
     result = BenchmarkResult(

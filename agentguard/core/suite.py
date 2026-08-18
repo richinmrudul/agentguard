@@ -18,7 +18,12 @@ from agentguard.guard.filesystem import (
     GuardMode,
     validate_guard_configuration,
 )
-from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
+from agentguard.history.store import (
+    HistoryRecord,
+    HistoryStorageError,
+    record_history,
+    utc_now_iso,
+)
 from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.provenance.manifest import (
@@ -498,9 +503,9 @@ def _record_suite_history(result: SuiteResult) -> None:
                 failed_checks=sorted(result.failed_check_counts),
             )
         )
-    except Exception as error:
+    except HistoryStorageError:
         warnings.warn(
-            f"AgentGuard history write failed: {error}",
+            "AgentGuard history write failed: history storage is unavailable.",
             RuntimeWarning,
             stacklevel=2,
         )

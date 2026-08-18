@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional, TypeVar
 
 import typer
 import yaml
@@ -77,6 +77,7 @@ from agentguard.diagnostics.matrix_stress import (
 )
 from agentguard.history.store import (
     HistoryRecord,
+    HistoryStorageError,
     HistoryStats,
     HistoryTrends,
     export_history_csv,
@@ -174,6 +175,7 @@ from agentguard.traces.replay import (
 app = typer.Typer(
     help="Local-first safety and reliability evaluation framework for AI coding agents."
 )
+_HistoryResult = TypeVar("_HistoryResult")
 reports_app = typer.Typer(help="List and inspect local AgentGuard reports.")
 app.add_typer(reports_app, name="reports")
 history_app = typer.Typer(help="List and summarize local AgentGuard run history.")
@@ -1039,7 +1041,8 @@ def guard_list(
         guard_blocked = _validate_guard_history_status(status, allow_all=True)
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="--status") from error
-    records = list_history(
+    records = _history_cli_call(
+        list_history,
         limit=limit,
         incidents_only=True,
         guard_blocked=guard_blocked,
@@ -1462,7 +1465,7 @@ def evaluate_run(
             resolved = active_checkpoint.expanduser().resolve()
             safe_echo(f"Checkpoint marked interrupted: {resolved}", err=True)
         raise typer.Exit(130) from error
-    except (OSError, ValueError, yaml.YAMLError) as error:
+    except (HistoryStorageError, OSError, ValueError, yaml.YAMLError) as error:
         safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
     safe_echo("AgentGuard External Agent Evaluation")
@@ -1630,6 +1633,18 @@ def _validate_guard_history_status(
         accepted = "all, audit, blocked" if allow_all else "audit, blocked"
         raise ValueError(f"guard status must be one of: {accepted}.")
     return statuses[normalized]
+
+
+def _history_cli_call(
+    function: Callable[..., _HistoryResult],
+    *args: Any,
+    **kwargs: Any,
+) -> _HistoryResult:
+    try:
+        return function(*args, **kwargs)
+    except HistoryStorageError as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
 
 
 def _echo_gate_summary(result, baseline_path: Path, gate_result: str) -> None:
@@ -2706,7 +2721,8 @@ def history_list(
     except ValueError as error:
         raise typer.BadParameter(str(error)) from error
 
-    records = list_history(
+    records = _history_cli_call(
+        list_history,
         limit=limit,
         run_type=validated_type,
         result=validated_result,
@@ -2750,7 +2766,8 @@ def history_stats_command(
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="--type") from error
 
-    stats = history_stats(
+    stats = _history_cli_call(
+        history_stats,
         run_type=validated_type,
         name=name,
         category=category,
@@ -2805,7 +2822,8 @@ def history_trends_command(
     except ValueError as error:
         raise typer.BadParameter(str(error), param_hint="--type") from error
 
-    trends = history_trends(
+    trends = _history_cli_call(
+        history_trends,
         name=name,
         limit=limit,
         run_type=validated_type,
@@ -2897,7 +2915,8 @@ def history_export_command(
     except ValueError as error:
         raise typer.BadParameter(str(error)) from error
 
-    records = list_history(
+    records = _history_cli_call(
+        list_history,
         limit=limit,
         run_type=validated_type,
         result=validated_result,
@@ -2923,11 +2942,15 @@ def history_export_command(
 
     if output.exists() and not force:
         safe_echo(
-            f"Error: output already exists: {output}. Use --force to overwrite.",
+            "Error: history export output already exists. Use --force to overwrite.",
             err=True,
         )
         raise typer.Exit(2)
-    atomic_write_text(output, content)
+    try:
+        atomic_write_text(output, content)
+    except OSError as error:
+        safe_echo("Error: could not write history export output.", err=True)
+        raise typer.Exit(2) from error
     safe_echo(f"History exported: {output}")
 
 
@@ -3609,7 +3632,7 @@ def matrix_command(
                 err=True,
             )
         raise typer.Exit(130) from error
-    except (OSError, ValueError, yaml.YAMLError) as error:
+    except (HistoryStorageError, OSError, ValueError, yaml.YAMLError) as error:
         safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
 

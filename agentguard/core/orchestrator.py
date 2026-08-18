@@ -29,7 +29,12 @@ from agentguard.evaluation.profile import (
     render_invocation,
     resolve_profile_argv,
 )
-from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
+from agentguard.history.store import (
+    HistoryRecord,
+    HistoryStorageError,
+    record_history,
+    utc_now_iso,
+)
 from agentguard.guard.command import (
     CommandGuardSummary,
     RuntimeCommandGuard,
@@ -482,9 +487,9 @@ def _record_run_history(result: BenchmarkResult) -> None:
                 ),
             )
         )
-    except Exception as error:
+    except HistoryStorageError:
         warnings.warn(
-            f"AgentGuard history write failed: {error}",
+            "AgentGuard history write failed: history storage is unavailable.",
             RuntimeWarning,
             stacklevel=2,
         )

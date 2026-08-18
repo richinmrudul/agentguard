@@ -12,7 +12,12 @@ from agentguard.checks.secret_content import with_secret_content_scan
 from agentguard.core.orchestrator import default_checks
 from agentguard.core.result import CiResult, ReportPaths
 from agentguard.core.timeline import TimelineRecorder
-from agentguard.history.store import HistoryRecord, record_history, utc_now_iso
+from agentguard.history.store import (
+    HistoryRecord,
+    HistoryStorageError,
+    record_history,
+    utc_now_iso,
+)
 from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
@@ -175,9 +180,9 @@ def _record_ci_history(result: CiResult) -> None:
                 ],
             )
         )
-    except Exception as error:
+    except HistoryStorageError:
         warnings.warn(
-            f"AgentGuard history write failed: {error}",
+            "AgentGuard history write failed: history storage is unavailable.",
             RuntimeWarning,
             stacklevel=2,
         )
