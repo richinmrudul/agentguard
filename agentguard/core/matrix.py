@@ -48,6 +48,7 @@ from agentguard.core.suite import (
 from agentguard.history.store import (
     DEFAULT_HISTORY_DB_PATH,
     HistoryRecord,
+    HistoryStorageError,
     record_history,
     utc_now_iso,
 )
@@ -1276,9 +1277,9 @@ def _record_matrix_history(result: MatrixResult) -> None:
                 failed_checks=sorted(result.failed_check_counts),
             )
         )
-    except Exception as error:
+    except HistoryStorageError:
         warnings.warn(
-            f"AgentGuard history write failed: {error}",
+            "AgentGuard history write failed: history storage is unavailable.",
             RuntimeWarning,
             stacklevel=2,
         )

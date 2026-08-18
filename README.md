@@ -907,7 +907,11 @@ column by prefixing one apostrophe when the first non-whitespace/control
 character is `=`, `+`, `-`, or `@`. The encoding is reversible by removing
 that leading apostrophe from affected cells. Stored history and JSON exports
 retain the original values. JSON and Markdown reports remain the source of
-truth.
+truth. If history storage cannot be initialized or read, history and guard
+listing commands exit with a concise error instead of returning invented empty
+results. Evaluation commands preserve their primary result and report a warning
+when that result could not be persisted to history. Export destination failures
+are reported separately from history storage failures.
 
 ## Execution Provenance
 
