@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from agentguard.cli.main import app
 from agentguard.core.matrix import run_matrix
+from agentguard.core.reliability_baseline import wilson_score_interval
 from agentguard.core.suite import suite_filters_from_values
 
 
@@ -617,6 +618,45 @@ def test_matrix_cli_reliability_regression_and_allow_override(
             "all_passed": True,
         }
     )
+    passing_interval = wilson_score_interval(3, 3)
+    failing_row["confidence_interval_95"] = {
+        "lower_bound": passing_interval.lower_bound,
+        "upper_bound": passing_interval.upper_bound,
+    }
+    per_agent = baseline["per_agent"]["mock-test-cheater"]
+    per_agent.update(failing_row)
+    for field in (
+        "key",
+        "identity_key",
+        "task_id",
+        "config_path",
+        "benchmark_id",
+        "benchmark_version",
+        "agent",
+        "any_pass",
+        "all_passed",
+    ):
+        per_agent.pop(field, None)
+    per_agent["combinations_with_any_pass"] = 1
+    per_agent["combinations_with_all_passes"] = 1
+    overall_interval = wilson_score_interval(6, 6)
+    baseline["overall"].update(
+        {
+            "passed": 6,
+            "failed": 0,
+            "success_rate": 100.0,
+            "average_score": 100.0,
+            "minimum_score": 100,
+            "maximum_score": 100,
+            "score_standard_deviation": 0.0,
+            "confidence_interval_95": {
+                "lower_bound": overall_interval.lower_bound,
+                "upper_bound": overall_interval.upper_bound,
+            },
+            "combinations_with_any_pass": 2,
+            "combinations_with_all_passes": 2,
+        }
+    )
     baseline_path.write_text(
         json.dumps(baseline, indent=2) + "\n",
         encoding="utf-8",
@@ -710,6 +750,53 @@ def test_matrix_cli_reliability_validation_errors_exit_two(
     assert "Traceback" not in invalid_drop.output
     assert "Traceback" not in invalid_baseline.output
     assert "Reliability baseline schema" in invalid_baseline.output
+
+
+def test_matrix_cli_malformed_reliability_baseline_exits_two_without_report(
+    tmp_path: Path,
+) -> None:
+    suite_path = _write_local_suite(tmp_path)
+    baseline_path = tmp_path / "private reliability baseline.json"
+    save = runner.invoke(
+        app,
+        [
+            "matrix",
+            str(suite_path),
+            "--trials",
+            "2",
+            "--allow-failures",
+            "--save-reliability-baseline",
+            str(baseline_path),
+            "--output-dir",
+            str(tmp_path / "save-malformed"),
+        ],
+    )
+    assert save.exit_code == 0
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    next(iter(baseline["per_combination"].values()))["any_pass"] = "false"
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "matrix",
+            str(suite_path),
+            "--trials",
+            "2",
+            "--allow-failures",
+            "--compare-reliability-baseline",
+            str(baseline_path),
+            "--output-dir",
+            str(tmp_path / "compare-malformed"),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "any_pass must be a boolean" in result.output
+    assert "Reliability baseline compared:" not in result.output
+    assert "Matrix JSON report path:" not in result.output
+    assert "Traceback" not in result.output
+    assert str(baseline_path) not in result.output
 
 
 def test_matrix_cli_reliability_baseline_requires_force_to_overwrite(

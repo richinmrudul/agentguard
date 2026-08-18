@@ -771,6 +771,32 @@ def test_gate_suite_invalid_baseline_exits_2(tmp_path: Path) -> None:
     assert "Could not read baseline" in result.output
 
 
+def test_gate_suite_malformed_baseline_exits_2_without_comparison(
+    tmp_path: Path,
+) -> None:
+    suite_path = _write_versioned_suite(tmp_path, _write_versioned_config(tmp_path))
+    baseline_path = tmp_path / "private malformed baseline.json"
+    save = runner.invoke(
+        app,
+        ["suite", str(suite_path), "--save-baseline", str(baseline_path)],
+    )
+    assert save.exit_code == 0
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    baseline["runs"][next(iter(baseline["runs"]))] = "not-an-object"
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["gate", "suite", str(suite_path), "--baseline", str(baseline_path)],
+    )
+
+    assert result.exit_code == 2
+    assert "Baseline run entry must be an object" in result.output
+    assert "Gate result:" not in result.output
+    assert "Traceback" not in result.output
+    assert str(baseline_path) not in result.output
+
+
 def test_gate_suite_save_current_baseline_writes_file(tmp_path: Path) -> None:
     suite_path = _write_versioned_suite(tmp_path, _write_versioned_config(tmp_path))
     baseline_path = tmp_path / "baseline.json"

@@ -1,10 +1,17 @@
-import json
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from agentguard.io import atomic_write_json
+from agentguard.core.baseline_validation import (
+    load_baseline_json,
+    require_fields,
+    require_int,
+    require_number,
+    require_string,
+)
 
 BASELINE_SCHEMA_VERSION = 1
 
@@ -122,69 +129,160 @@ def write_suite_baseline(result: Any, path: Path) -> Path:
     return output_path
 
 
+def _string_list(value: Any, label: str) -> list[str]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item for item in value
+    ):
+        raise ValueError(f"{label} must be a list of non-empty strings.")
+    if len(value) != len(set(value)):
+        raise ValueError(f"{label} must not contain duplicates.")
+    return list(value)
+
+
+def _count_mapping(value: Any, label: str) -> dict[str, int]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object.")
+    counts: dict[str, int] = {}
+    for key, count in value.items():
+        name = require_string(key, f"{label} key")
+        counts[name] = require_int(count, f"{label} value", minimum=0)
+    return counts
+
+
 def _baseline_run_from_dict(data: dict[str, Any], run_id: str) -> BaselineRun:
-    try:
-        return BaselineRun(
-            task_id=str(data["task_id"]),
-            agent=str(data["agent"]),
-            config_path=str(data["config_path"]),
-            result=str(data["result"]),
-            score=int(data["score"]),
-            failed_checks=list(data.get("failed_checks", [])),
-            warning_checks=list(data.get("warning_checks", [])),
-            benchmark_id=(
-                str(data["benchmark_id"])
-                if data.get("benchmark_id") is not None
-                else None
-            ),
-            benchmark_version=(
-                int(data["benchmark_version"])
-                if data.get("benchmark_version") is not None
-                else None
-            ),
+    label = "Baseline run entry"
+    require_fields(
+        data,
+        required={
+            "task_id",
+            "agent",
+            "config_path",
+            "result",
+            "score",
+            "failed_checks",
+            "warning_checks",
+        },
+        optional={"benchmark_id", "benchmark_version"},
+        label=label,
+    )
+    result = require_string(data["result"], f"{label} field 'result'")
+    if result not in {"PASS", "FAIL"}:
+        raise ValueError(f"{label} field 'result' must be PASS or FAIL.")
+    benchmark_id = data.get("benchmark_id")
+    if benchmark_id is not None:
+        benchmark_id = require_string(benchmark_id, f"{label} field 'benchmark_id'")
+    benchmark_version = data.get("benchmark_version")
+    if benchmark_version is not None:
+        benchmark_version = require_int(
+            benchmark_version,
+            f"{label} field 'benchmark_version'",
+            minimum=1,
         )
-    except (KeyError, TypeError, ValueError) as error:
-        raise ValueError(f"Invalid baseline run '{run_id}'.") from error
+    run = BaselineRun(
+        task_id=require_string(data["task_id"], f"{label} field 'task_id'"),
+        agent=require_string(data["agent"], f"{label} field 'agent'"),
+        config_path=require_string(
+            data["config_path"], f"{label} field 'config_path'"
+        ),
+        result=result,
+        score=require_int(data["score"], f"{label} field 'score'", minimum=0, maximum=100),
+        failed_checks=_string_list(data["failed_checks"], f"{label} field 'failed_checks'"),
+        warning_checks=_string_list(
+            data["warning_checks"], f"{label} field 'warning_checks'"
+        ),
+        benchmark_id=benchmark_id,
+        benchmark_version=benchmark_version,
+    )
+    if run_id != _run_id(run.task_id, run.agent, run.config_path):
+        raise ValueError(f"{label} identity does not match its object key.")
+    return run
 
 
 def load_suite_baseline(path: Path) -> SuiteBaseline:
-    baseline_path = path.expanduser()
-    try:
-        with baseline_path.open("r", encoding="utf-8") as file:
-            data = json.load(file)
-    except OSError as error:
-        raise ValueError(f"Could not read baseline: {baseline_path}") from error
-    except json.JSONDecodeError as error:
-        raise ValueError(f"Baseline is not valid JSON: {baseline_path}") from error
-
+    data = load_baseline_json(path, "baseline")
     if not isinstance(data, dict):
         raise ValueError("Baseline must be a JSON object.")
-    if data.get("schema_version") != BASELINE_SCHEMA_VERSION:
+    require_fields(
+        data,
+        required={
+            "schema_version",
+            "suite_id",
+            "description",
+            "created_at",
+            "pass_rate",
+            "average_score",
+            "result_counts",
+            "failed_check_counts",
+            "runs",
+        },
+        label="Baseline",
+    )
+    if data["schema_version"] != BASELINE_SCHEMA_VERSION or isinstance(
+        data["schema_version"], bool
+    ):
         raise ValueError("Baseline schema_version must be 1.")
-    raw_runs = data.get("runs")
+    raw_runs = data["runs"]
     if not isinstance(raw_runs, dict):
         raise ValueError("Baseline field 'runs' must be an object.")
+    if not raw_runs:
+        raise ValueError("Baseline field 'runs' must not be empty.")
+    runs: dict[str, BaselineRun] = {}
+    identities: set[tuple[str, str, str]] = set()
+    for run_id, raw_run in raw_runs.items():
+        safe_run_id = require_string(run_id, "Baseline run key")
+        if not isinstance(raw_run, dict):
+            raise ValueError("Baseline run entry must be an object.")
+        run = _baseline_run_from_dict(raw_run, safe_run_id)
+        identity = (run.task_id, run.agent, run.config_path)
+        if identity in identities:
+            raise ValueError("Baseline contains duplicate run identities.")
+        identities.add(identity)
+        runs[safe_run_id] = run
+
+    result_counts = _count_mapping(data["result_counts"], "Baseline result_counts")
+    if set(result_counts) - {"PASS", "FAIL"}:
+        raise ValueError("Baseline result_counts contains an unsupported result.")
+    expected_result_counts = dict(Counter(run.result for run in runs.values()))
+    if result_counts != expected_result_counts:
+        raise ValueError("Baseline result_counts does not match its runs.")
+    failed_check_counts = _count_mapping(
+        data["failed_check_counts"], "Baseline failed_check_counts"
+    )
+    expected_failed_counts = dict(
+        Counter(check for run in runs.values() for check in run.failed_checks)
+    )
+    if failed_check_counts != expected_failed_counts:
+        raise ValueError("Baseline failed_check_counts does not match its runs.")
+    pass_rate = require_number(
+        data["pass_rate"], "Baseline field 'pass_rate'", minimum=0, maximum=100
+    )
+    expected_pass_rate = round(
+        (expected_result_counts.get("PASS", 0) / len(runs)) * 100,
+        1,
+    )
+    if pass_rate != expected_pass_rate:
+        raise ValueError("Baseline pass_rate does not match its runs.")
+    average_score = require_int(
+        data["average_score"],
+        "Baseline field 'average_score'",
+        minimum=0,
+        maximum=100,
+    )
+    if average_score != int(round(sum(run.score for run in runs.values()) / len(runs))):
+        raise ValueError("Baseline average_score does not match its runs.")
 
     return SuiteBaseline(
         schema_version=BASELINE_SCHEMA_VERSION,
-        suite_id=str(data.get("suite_id", "")),
-        description=str(data.get("description", "")),
-        created_at=str(data.get("created_at", "")),
-        pass_rate=float(data.get("pass_rate", 0.0)),
-        average_score=int(data.get("average_score", 0)),
-        result_counts={
-            str(key): int(value)
-            for key, value in dict(data.get("result_counts", {})).items()
-        },
-        failed_check_counts={
-            str(key): int(value)
-            for key, value in dict(data.get("failed_check_counts", {})).items()
-        },
-        runs={
-            str(run_id): _baseline_run_from_dict(run, str(run_id))
-            for run_id, run in raw_runs.items()
-            if isinstance(run, dict)
-        },
+        suite_id=require_string(data["suite_id"], "Baseline field 'suite_id'"),
+        description=require_string(
+            data["description"], "Baseline field 'description'", allow_empty=True
+        ),
+        created_at=require_string(data["created_at"], "Baseline field 'created_at'"),
+        pass_rate=pass_rate,
+        average_score=average_score,
+        result_counts=result_counts,
+        failed_check_counts=failed_check_counts,
+        runs=runs,
     )
 
 

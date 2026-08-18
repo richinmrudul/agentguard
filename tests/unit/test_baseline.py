@@ -1,13 +1,21 @@
 import json
+from collections import Counter
+from copy import deepcopy
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import pytest
 
 from agentguard.core.baseline import (
     baseline_from_suite_result,
     compare_suite_to_baseline,
+    load_suite_baseline,
     write_suite_baseline,
+)
+from agentguard.core.baseline_validation import (
+    MAX_BASELINE_BYTES,
+    MAX_BASELINE_DEPTH,
+    MAX_BASELINE_ITEMS,
 )
 from agentguard.config.loader import load_config
 from agentguard.core.suite import (
@@ -93,9 +101,11 @@ def _suite_result(
             result=runs[-1].result,
             score=runs[-1].score,
         ),
-        failed_check_counts={"Test tampering": 1},
+        failed_check_counts=dict(
+            Counter(check for run in runs for check in run.failed_checks)
+        ),
         warning_check_counts={"Scope adherence": 1},
-        result_counts={"PASS": 1, "FAIL": 1},
+        result_counts=dict(Counter(run.result for run in runs)),
         runs=runs,
         json_report_path=tmp_path / "suite.json",
         markdown_report_path=tmp_path / "suite.md",
@@ -238,7 +248,14 @@ def test_absent_benchmark_versions_keep_existing_compare_behavior(
 
 def test_compare_detects_pass_rate_decrease(tmp_path: Path) -> None:
     baseline_path = write_suite_baseline(
-        _suite_result(tmp_path, pass_rate=100.0),
+        _suite_result(
+            tmp_path,
+            pass_rate=100.0,
+            average_score=100,
+            second_result="PASS",
+            second_score=100,
+            second_failed_checks=[],
+        ),
         tmp_path / "core.json",
     )
 
@@ -250,7 +267,14 @@ def test_compare_detects_pass_rate_decrease(tmp_path: Path) -> None:
 
 def test_compare_detects_pass_to_fail_regression(tmp_path: Path) -> None:
     baseline_path = write_suite_baseline(
-        _suite_result(tmp_path, pass_rate=100.0),
+        _suite_result(
+            tmp_path,
+            pass_rate=100.0,
+            average_score=100,
+            second_result="PASS",
+            second_score=100,
+            second_failed_checks=[],
+        ),
         tmp_path / "core.json",
     )
 
@@ -330,3 +354,127 @@ def test_baseline_from_suite_result_uses_stable_run_keys(tmp_path: Path) -> None
         "fix_auth_bug/mock-safe/examples/configs/fix_auth_bug.yaml",
         "fix_cli_parser_bug/mock-test-cheater/examples/configs/fix_cli_parser_bug.yaml",
     ]
+
+
+def _valid_baseline_data(tmp_path: Path) -> dict[str, Any]:
+    path = write_suite_baseline(_suite_result(tmp_path), tmp_path / "valid.json")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_historical_v1_run_without_benchmark_fields_remains_valid(
+    tmp_path: Path,
+) -> None:
+    data = _valid_baseline_data(tmp_path)
+    for run in data["runs"].values():
+        run.pop("benchmark_id")
+        run.pop("benchmark_version")
+    path = tmp_path / "historical.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    loaded = load_suite_baseline(path)
+
+    assert all(run.benchmark_id is None for run in loaded.runs.values())
+    assert all(run.benchmark_version is None for run in loaded.runs.values())
+
+
+def test_boundary_valid_zero_score_suite_baseline_loads(tmp_path: Path) -> None:
+    path = write_suite_baseline(
+        _suite_result(
+            tmp_path,
+            pass_rate=0.0,
+            average_score=0,
+            first_result="FAIL",
+            first_score=0,
+            first_failed_checks=[],
+            include_second=False,
+        ),
+        tmp_path / "zero.json",
+    )
+
+    loaded = load_suite_baseline(path)
+
+    assert loaded.pass_rate == 0.0
+    assert loaded.average_score == 0
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda data: data.update(schema_version=True),
+        lambda data: data.update(pass_rate="50"),
+        lambda data: data.update(pass_rate=float("nan")),
+        lambda data: data.update(average_score=True),
+        lambda data: data.update(result_counts={"PASS": 2}),
+        lambda data: data.update(failed_check_counts={}),
+        lambda data: data.update(extra="unexpected"),
+        lambda data: data["runs"].update(
+            {next(iter(data["runs"])): "not-an-object"}
+        ),
+        lambda data: next(iter(data["runs"].values())).update(score="100"),
+        lambda data: next(iter(data["runs"].values())).update(result="UNKNOWN"),
+        lambda data: next(iter(data["runs"].values())).update(task_id="wrong"),
+        lambda data: next(iter(data["runs"].values())).update(
+            failed_checks=["duplicate", "duplicate"]
+        ),
+    ],
+)
+def test_malformed_suite_baseline_is_rejected(
+    tmp_path: Path,
+    mutate: Callable[[dict[str, Any]], None],
+) -> None:
+    data = deepcopy(_valid_baseline_data(tmp_path))
+    mutate(data)
+    path = tmp_path / "malformed.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        load_suite_baseline(path)
+
+
+@pytest.mark.parametrize("content", ["", "[]", "{not json", '{"x": NaN}'])
+def test_invalid_suite_baseline_documents_are_rejected(
+    tmp_path: Path,
+    content: str,
+) -> None:
+    path = tmp_path / "private-baseline-name.json"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError) as captured:
+        load_suite_baseline(path)
+
+    assert str(path) not in str(captured.value)
+
+
+def test_suite_baseline_rejects_duplicate_json_fields(tmp_path: Path) -> None:
+    path = tmp_path / "duplicate.json"
+    path.write_text('{"schema_version": 1, "schema_version": 1}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate object field"):
+        load_suite_baseline(path)
+
+
+def test_suite_baseline_rejects_oversized_input(tmp_path: Path) -> None:
+    path = tmp_path / "oversized.json"
+    path.write_bytes(b" " * (MAX_BASELINE_BYTES + 1))
+
+    with pytest.raises(ValueError, match="byte limit"):
+        load_suite_baseline(path)
+
+
+def test_suite_baseline_rejects_excessive_nesting(tmp_path: Path) -> None:
+    nested = "0"
+    for _ in range(MAX_BASELINE_DEPTH + 2):
+        nested = f"[{nested}]"
+    path = tmp_path / "deep.json"
+    path.write_text(nested, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="nesting depth"):
+        load_suite_baseline(path)
+
+
+def test_suite_baseline_rejects_excessive_collection_size(tmp_path: Path) -> None:
+    path = tmp_path / "many.json"
+    path.write_text(json.dumps(list(range(MAX_BASELINE_ITEMS + 1))), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="item limit"):
+        load_suite_baseline(path)

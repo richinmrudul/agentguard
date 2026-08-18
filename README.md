@@ -701,6 +701,14 @@ observed pass probability. With few trials, including `--trials 1`, these
 intervals are broad. They describe observed results and do not prove future
 behavior, determinism, or statistical significance.
 
+Suite and reliability baselines are validated before comparison. Version 1
+suite baselines written before benchmark identity fields were added remain
+supported, but malformed JSON, unsupported or unexpected fields, incorrectly
+typed or non-finite metrics, duplicate identities, and inconsistent aggregate
+counts are rejected with exit code 2. Invalid baseline input never produces a
+comparison. Baselines are limited to 5,000,000 bytes, 10,000 entries per JSON
+collection, and 32 levels of nesting.
+
 `agentguard gate suite` runs a benchmark suite, compares it with a saved suite
 baseline, and exits nonzero when the gate detects a regression or invalid
 input. The usual flow is:
