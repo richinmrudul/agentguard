@@ -236,6 +236,72 @@
       }
     }
   ],
+  "dependentSchemas": {
+    "secret_content_builtin_detectors": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "secret_content_builtin_detectors": {"minItems": 1}
+            }
+          },
+          "then": {
+            "properties": {
+              "secret_content_patterns": {"maxItems": 31}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "secret_content_builtin_detectors": {"minItems": 2}
+            }
+          },
+          "then": {
+            "properties": {
+              "secret_content_patterns": {"maxItems": 30}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "secret_content_builtin_detectors": {"minItems": 3}
+            }
+          },
+          "then": {
+            "properties": {
+              "secret_content_patterns": {"maxItems": 29}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "secret_content_builtin_detectors": {"minItems": 4}
+            }
+          },
+          "then": {
+            "properties": {
+              "secret_content_patterns": {"maxItems": 28}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "secret_content_builtin_detectors": {"minItems": 5}
+            }
+          },
+          "then": {
+            "properties": {
+              "secret_content_patterns": {"maxItems": 27}
+            }
+          }
+        }
+      ]
+    }
+  },
   "$defs": {
     "nonEmptyString": {"type": "string", "minLength": 1},
     "nonBlankString": {"type": "string", "pattern": ".*\\S.*"},

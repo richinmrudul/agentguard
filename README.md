@@ -839,6 +839,9 @@ secret_content_builtin_detectors:
   - private-key-header
 ```
 
+AgentGuard accepts at most 32 total secret-content detectors across
+`secret_content_patterns` and `secret_content_builtin_detectors`.
+
 Detector literals, built-in regex internals, and matched secret values are used
 only inside the scanner. Reports, manifests, traces, replay output, history,
 incidents, and CLI output show detector IDs plus sanitized relative paths/line
