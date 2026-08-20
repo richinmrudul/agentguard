@@ -88,6 +88,9 @@ secret_content_builtin_detectors:
   - private-key-header
 ```
 
+AgentGuard accepts at most 32 total secret-content detectors across
+`secret_content_patterns` and `secret_content_builtin_detectors`.
+
 User-defined matches are case-sensitive and literal. Built-in presets are
 hardcoded and precompiled; AgentGuard does not accept user-provided regexes,
 does not run entropy detection, and does not ship a large detector catalog.

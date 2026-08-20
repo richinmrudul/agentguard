@@ -64,6 +64,17 @@ def _ci_config(**overrides: object) -> dict:
     return document
 
 
+def _secret_content_patterns(count: int) -> list[dict[str, str]]:
+    return [
+        {"id": f"detector-{index}", "contains": f"SECRET_TOKEN_{index:03d}"}
+        for index in range(count)
+    ]
+
+
+def _builtin_secret_content_detectors(count: int) -> list[str]:
+    return sorted(BUILTIN_SECRET_CONTENT_DETECTORS)[:count]
+
+
 @pytest.fixture(scope="module")
 def schema() -> dict:
     value = load_config_json_schema()
@@ -194,11 +205,87 @@ def test_every_public_property_has_a_description(schema: dict) -> None:
 def test_all_maintained_examples_validate_with_schema_and_loader(schema: dict) -> None:
     validator = Draft202012Validator(schema)
     paths = sorted((ROOT / "examples" / "configs").glob("*.yaml"))
-    assert paths
+    assert len(paths) == 40
     for config_path in paths:
         with config_path.open("r", encoding="utf-8") as stream:
             validator.validate(yaml.safe_load(stream))
         load_config(config_path)
+
+
+@pytest.mark.parametrize(
+    ("builtins", "custom", "accepted"),
+    [
+        (0, 0, True),
+        (0, MAX_SECRET_CONTENT_PATTERNS, True),
+        (len(BUILTIN_SECRET_CONTENT_DETECTORS), 0, True),
+        (len(BUILTIN_SECRET_CONTENT_DETECTORS), 27, True),
+        (len(BUILTIN_SECRET_CONTENT_DETECTORS), 28, False),
+        (1, MAX_SECRET_CONTENT_PATTERNS - 1, True),
+        (1, MAX_SECRET_CONTENT_PATTERNS, False),
+    ],
+)
+def test_secret_content_detector_combined_limit_schema_loader_parity(
+    schema: dict,
+    tmp_path: Path,
+    builtins: int,
+    custom: int,
+    accepted: bool,
+) -> None:
+    document = _ci_config(secret_content_patterns=_secret_content_patterns(custom))
+    if builtins:
+        document["secret_content_builtin_detectors"] = (
+            _builtin_secret_content_detectors(builtins)
+        )
+
+    validator = Draft202012Validator(schema)
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    assert validator.is_valid(document) is accepted
+    if accepted:
+        load_config(config_path)
+    else:
+        with pytest.raises(ValueError, match="exceed the maximum"):
+            load_config(config_path)
+
+
+def test_secret_content_detector_combined_limit_allows_empty_or_omitted_collections(
+    schema: dict,
+    tmp_path: Path,
+) -> None:
+    validator = Draft202012Validator(schema)
+    documents = [
+        _ci_config(),
+        _ci_config(secret_content_builtin_detectors=[]),
+        _ci_config(secret_content_patterns=[]),
+        _ci_config(
+            secret_content_builtin_detectors=[],
+            secret_content_patterns=_secret_content_patterns(
+                MAX_SECRET_CONTENT_PATTERNS
+            ),
+        ),
+    ]
+
+    for index, document in enumerate(documents):
+        validator.validate(document)
+        config_path = tmp_path / f"agentguard-{index}.yaml"
+        config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+        load_config(config_path)
+
+
+def test_packaged_schema_enforces_combined_detector_limit_like_source_schema() -> None:
+    source_schema_path = ROOT / "agentguard" / "schemas" / CONFIG_SCHEMA_FILENAME
+    source_schema = json.loads(source_schema_path.read_text(encoding="utf-8"))
+    packaged_schema = load_config_json_schema()
+    document = _ci_config(
+        secret_content_builtin_detectors=_builtin_secret_content_detectors(
+            len(BUILTIN_SECRET_CONTENT_DETECTORS)
+        ),
+        secret_content_patterns=_secret_content_patterns(28),
+    )
+
+    assert Draft202012Validator(source_schema).is_valid(document) is False
+    assert Draft202012Validator(packaged_schema).is_valid(document) is False
 
 
 @pytest.mark.parametrize(
