@@ -1243,6 +1243,35 @@ def _parse_event(data: dict[str, Any]) -> TraceEvent:
     return TraceEvent(**data)
 
 
+
+def _validate_json_nesting(line: str) -> None:
+    """Reject excessive JSON nesting before parser recursion varies by Python."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for char in line:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+            # _validate_bounds() treats the parsed root as depth zero, so the
+            # lexical form may contain the root plus MAX_TRACE_NESTING nested
+            # containers without narrowing the existing accepted boundary.
+            if depth > MAX_TRACE_NESTING + 1:
+                raise ValueError(
+                    f"Trace JSON exceeds the {MAX_TRACE_NESTING}-level nesting limit."
+                )
+        elif char in "]}" and depth:
+            depth -= 1
+
 def load_execution_trace(path: Path) -> ExecutionTrace:
     try:
         trace_file = path.open("rb")
@@ -1289,8 +1318,9 @@ def load_execution_trace(path: Path) -> ExecutionTrace:
                         f"Invalid trace UTF-8 on line {line_number}: {error}"
                     ) from error
                 try:
+                    _validate_json_nesting(line)
                     record = json.loads(line)
-                except (json.JSONDecodeError, RecursionError) as error:
+                except (json.JSONDecodeError, RecursionError, ValueError) as error:
                     raise ValueError(
                         f"Invalid trace JSON on line {line_number}: {error}"
                     ) from error

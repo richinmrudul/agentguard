@@ -195,3 +195,20 @@ def test_public_commands_reject_each_hostile_path_form_without_echo(
     assert "Traceback" not in result.output
     assert CANARY not in result.output
     assert hostile not in result.output
+
+
+
+def test_json_nesting_preflight_ignores_delimiters_inside_strings() -> None:
+    payload = '{"marker":"' + "[" * 1000 + "}" * 1000 + '\"still-string"}'
+    trace_module._validate_json_nesting(payload)
+
+
+def test_json_nesting_preflight_accepts_exact_existing_boundary() -> None:
+    depth = trace_module.MAX_TRACE_NESTING + 1
+    trace_module._validate_json_nesting("[" * depth + "]" * depth)
+
+
+def test_json_nesting_preflight_rejects_one_above_existing_boundary() -> None:
+    depth = trace_module.MAX_TRACE_NESTING + 2
+    with pytest.raises(ValueError, match="nesting limit"):
+        trace_module._validate_json_nesting("[" * depth + "]" * depth)

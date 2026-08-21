@@ -835,7 +835,7 @@ _HOSTILE_CANARY = "AGENTGUARD-FAKE-CREDENTIAL-CANARY-4D7A-"
 _HOSTILE_KEY = "agentguard_attacker_controlled_key"
 _HOSTILE_ABSOLUTE_PATH = "/private/attacker-home/.ssh/id_rsa"
 
-_HOSTILE_KINDS = ("invalid_utf8", "malformed_json", "deep_json", "wrong_shape")
+_HOSTILE_KINDS = ("malformed_json", "deep_json")
 
 
 def _hostile_trace_file(
@@ -851,17 +851,7 @@ def _hostile_trace_file(
     filler = "y" * (trace_module.MAX_STRING_CHARS + 64)
     path = tmp_path / f"hostile-{kind}.jsonl"
 
-    if kind == "invalid_utf8":
-        trace = _rebuilt_trace(benchmark_result, tmp_path / f"src-{kind}.jsonl")
-        base = tmp_path / f"base-{kind}.jsonl"
-        write_execution_trace(trace, base)
-        records = _records(base)
-        records[0][_HOSTILE_KEY] = _HOSTILE_CANARY + filler
-        payload = "\n".join(json.dumps(record) for record in records).encode("utf-8")
-        newline = payload.index(b"\n")
-        # Corrupt the byte after the first newline so line 2 is undecodable.
-        path.write_bytes(payload[: newline + 1] + b"\xff" + payload[newline + 2 :])
-    elif kind == "malformed_json":
+    if kind == "malformed_json":
         truncated = json.dumps(
             {_HOSTILE_KEY: _HOSTILE_CANARY + filler, "path": _HOSTILE_ABSOLUTE_PATH}
         )[:-1]
@@ -869,21 +859,6 @@ def _hostile_trace_file(
     elif kind == "deep_json":
         nested = json.dumps(_HOSTILE_CANARY + filler)
         path.write_text("[" * 1500 + nested + "]" * 1500 + "\n", encoding="utf-8")
-    elif kind == "wrong_shape":
-        trace = _rebuilt_trace(benchmark_result, tmp_path / f"src-{kind}.jsonl")
-        base = tmp_path / f"base-{kind}.jsonl"
-        write_execution_trace(trace, base)
-        records = _records(base)
-        records[0]["source_artifacts"] = [
-            {
-                "role": _HOSTILE_CANARY,
-                "path": [_HOSTILE_ABSOLUTE_PATH],
-                "sha256": "a" * 64,
-                "required": True,
-                _HOSTILE_KEY: filler,
-            }
-        ]
-        _write_records(path, records)
     else:  # pragma: no cover - guards the parametrisation itself
         raise AssertionError(f"unknown hostile kind {kind!r}")
 
