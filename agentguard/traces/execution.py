@@ -274,6 +274,7 @@ def _normalized_path(value: str) -> str:
         not candidate
         or candidate.startswith("/")
         or path.is_absolute()
+        or re.match(r"^[A-Za-z]:/", candidate) is not None
         or any(part in {"", ".", ".."} for part in path.parts)
     ):
         # Reports why the path was refused, never the path itself. Echoing it
