@@ -2204,16 +2204,19 @@ def _result_from_report(
         raise ValueError(
             "Required report evidence is unavailable: " + ", ".join(missing)
         )
+    from agentguard.provenance.portable_paths import resolve_portable
+
     run_dir = report_path.parent.parent
-    repo_dir = Path(str(report["repo_dir"]))
-    if not repo_dir.is_dir():
-        candidate = run_dir / "repo"
-        if candidate.is_dir():
-            repo_dir = candidate
-        else:
-            raise ValueError(
-                "Required repository evidence is unavailable for file changes."
-            )
+    repo_dir = Path(
+        resolve_portable(
+            report["repo_dir"],
+            {
+                "report": report_path.parent,
+                "repository": run_dir / "repo",
+                "run": run_dir,
+            },
+        )
+    )
     command_log_path = run_dir / "command_log.json"
     command_events = report["command_events"]
     if command_log_path.is_file():
@@ -2249,6 +2252,10 @@ def _result_from_report(
             else None
         ),
     )
+    if not repo_dir.is_dir():
+        raise ValueError(
+            "Required repository evidence is unavailable for file changes."
+        )
     result = BenchmarkResult(
         task_id=str(report["task_id"]),
         agent=str(report["agent"]),

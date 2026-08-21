@@ -714,7 +714,13 @@ def verify_completed_attempt(
     if messages:
         return AttemptVerification("corrupted", messages)
     assert report_path is not None and manifest_path is not None
-    verification = verify_manifest(manifest_path)
+    config_path = Path(attempt.config_path)
+    verification = verify_manifest(
+        manifest_path,
+        trusted_references={
+            f"external/{config_path.name}": config_path,
+        },
+    )
     if verification.status != "valid":
         return AttemptVerification(
             "corrupted",

@@ -9,7 +9,7 @@ import warnings
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Mapping, Optional, Union
 
 from agentguard import __version__
 from agentguard.config.schema import AgentGuardConfig, ScalarMetadata
@@ -694,7 +694,10 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return data
 
 
-def verify_manifest(path: Path) -> VerificationResult:
+def verify_manifest(
+    path: Path,
+    trusted_references: Optional[Mapping[str, Path]] = None,
+) -> VerificationResult:
     try:
         data = load_manifest(path)
         _validate_manifest_structure(data)
@@ -724,7 +727,13 @@ def verify_manifest(path: Path) -> VerificationResult:
         if key in seen:
             continue
         seen.add(key)
-        input_path = _resolve_reference(path, reference)
+        input_path = None
+        if trusted_references is not None and reference in trusted_references:
+            trusted = trusted_references[reference].expanduser()
+            if trusted.is_file():
+                input_path = trusted.resolve()
+        if input_path is None:
+            input_path = _resolve_reference(path, reference)
         if input_path is None:
             changed = True
             messages.append(f"MISSING {label}: {reference}")

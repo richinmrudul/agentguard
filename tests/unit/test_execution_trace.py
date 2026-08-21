@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -553,6 +554,36 @@ def test_trace_and_report_reject_malformed_docker_identity(
             {"sha256": "a" * 64, "bytes": 0, "truncated": "no"},
             "output",
         )
+
+
+def test_result_from_report_rehydrates_repository_in_moved_run_bundle(
+    benchmark_result,
+    tmp_path: Path,
+) -> None:
+    moved_run = tmp_path / "moved" / "run"
+    shutil.copytree(benchmark_result.run_dir, moved_run)
+    report_path = moved_run / "reports" / "report.json"
+
+    result, _ = trace_module._result_from_report(report_path, None)
+
+    assert result.run_dir == moved_run
+    assert result.repo_dir == moved_run / "repo"
+
+
+def test_result_from_standalone_report_refuses_missing_repository_bundle(
+    benchmark_result,
+    tmp_path: Path,
+) -> None:
+    reports_dir = tmp_path / "standalone" / "reports"
+    reports_dir.mkdir(parents=True)
+    report_path = reports_dir / "report.json"
+    report_path.write_bytes(benchmark_result.report_paths.json.read_bytes())
+
+    with pytest.raises(
+        ValueError,
+        match="Required repository evidence is unavailable",
+    ):
+        trace_module._result_from_report(report_path, None)
 
 
 def test_trace_parser_rejects_malformed_records(

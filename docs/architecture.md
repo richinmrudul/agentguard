@@ -445,6 +445,9 @@ content hashes; because the local absolute location is intentionally omitted,
 `manifest verify` reports such an external reference as unavailable unless the
 artifact is restored at a portable reference visible from the verification
 workspace.
+Readers resolve symbolic roles only against explicit trusted run or report roots.
+Unknown or malformed roles, path traversal, symlink escapes, and unavailable
+repository bundles fail closed instead of falling back to an ambient local path.
 
 ### Execution Trace
 

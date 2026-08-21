@@ -25,7 +25,11 @@ from agentguard.provenance.manifest import (
     sha256_file,
     verify_manifest,
 )
-from agentguard.provenance.portable_paths import portable_text
+from agentguard.provenance.portable_paths import (
+    portable_text,
+    portable_value,
+    resolve_portable,
+)
 
 
 runner = CliRunner()
@@ -154,6 +158,61 @@ def test_portable_text_replaces_posix_and_windows_roots_with_roles() -> None:
         "source=<source>/examples/repo "
         r"config=<configuration>\configs\agentguard.yaml"
     )
+
+
+def test_portable_values_round_trip_with_multiple_posix_and_windows_roots() -> None:
+    roots = {
+        "source": "/Users/PATH_CANARY/workspace",
+        "configuration": r"C:\Users\PATH_CANARY\config",
+    }
+    value = {
+        "text": (
+            "source=/Users/PATH_CANARY/workspace/examples/repo "
+            r"config=C:\Users\PATH_CANARY\config\agentguard.yaml"
+        ),
+        "paths": [
+            "/Users/PATH_CANARY/workspace/examples/repo",
+            r"C:\Users\PATH_CANARY\config\agentguard.yaml",
+        ],
+    }
+
+    portable = portable_value(value, roots)
+
+    assert resolve_portable(portable, roots) == value
+
+
+@pytest.mark.parametrize(
+    "reference, roots, message",
+    [
+        ("<unknown>/repo", {"run": "/trusted/run"}, "Unknown"),
+        ("<run", {"run": "/trusted/run"}, "Malformed"),
+        ("<run>/repo", {"run": ""}, "empty"),
+        ("<run>/../escape", {"run": "/trusted/run"}, "escapes"),
+        (
+            r"<repository>\..\escape",
+            {"repository": r"C:\trusted\repo"},
+            "escapes",
+        ),
+    ],
+)
+def test_resolve_portable_rejects_unknown_malformed_and_escaping_references(
+    reference: str,
+    roots,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        resolve_portable(reference, roots)
+
+
+def test_resolve_portable_rejects_symlink_escape(tmp_path: Path) -> None:
+    trusted = tmp_path / "trusted"
+    outside = tmp_path / "outside"
+    trusted.mkdir()
+    outside.mkdir()
+    (trusted / "link").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="escapes"):
+        resolve_portable("<run>/link/evidence.json", {"run": trusted})
 
 
 def test_sanitize_arguments_redacts_supported_secret_forms() -> None:
@@ -508,9 +567,22 @@ def test_manifest_verify_exit_codes_for_matching_changed_missing_and_invalid(
     ]
     assert runner.invoke(app, ["manifest", "verify", str(manifest_path)]).exit_code == 1
 
+    trusted = verify_manifest(
+        manifest_path,
+        trusted_references={"external/agentguard.yaml": config_path},
+    )
+    assert trusted.status == "valid"
+    assert trusted.messages == [
+        "MATCH configuration: external/agentguard.yaml"
+    ]
+
     original = config_path.read_text(encoding="utf-8")
     config_path.write_text(original + "\n# changed\n", encoding="utf-8")
     assert verify_manifest(manifest_path).exit_code == 1
+    assert verify_manifest(
+        manifest_path,
+        trusted_references={"external/agentguard.yaml": config_path},
+    ).status == "changed"
     config_path.unlink()
     assert verify_manifest(manifest_path).exit_code == 1
 
