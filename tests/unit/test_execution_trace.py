@@ -492,8 +492,15 @@ def test_event_payload_validation_rejects_invalid_values(
 
 
 def test_trace_helper_validation_rejects_malformed_values() -> None:
-    with pytest.raises(ValueError, match="missing b; unknown c"):
+    with pytest.raises(ValueError, match="missing b; 1 unknown field"):
         trace_module._require_exact_fields({"a": 1, "c": 2}, {"a", "b"}, "x")
+    with pytest.raises(ValueError, match="2 unknown fields") as excinfo:
+        trace_module._require_exact_fields(
+            {"CANARY-KEY-1": 1, "CANARY-KEY-2": 2},
+            {"a"},
+            "x",
+        )
+    assert "CANARY" not in str(excinfo.value)
     with pytest.raises(ValueError, match="source artifact must be an object"):
         trace_module._parse_source_artifact("raw")
     with pytest.raises(ValueError, match="paths must be relative"):
@@ -507,10 +514,20 @@ def test_trace_helper_validation_rejects_malformed_values() -> None:
         )
     with pytest.raises(ValueError, match="Invalid hash"):
         trace_module._validate_sha256("bad", "hash")
-    with pytest.raises(ValueError, match="too long"):
+    with pytest.raises(ValueError, match="exceeds the"):
         trace_module._validate_bounds("x" * (trace_module.MAX_STRING_CHARS + 1))
     with pytest.raises(ValueError, match="keys must be strings"):
         trace_module._validate_bounds({1: "value"})
+    with pytest.raises(ValueError, match="exceeds the") as excinfo:
+        trace_module._validate_bounds(
+            {"CANARY-" + "k" * trace_module.MAX_STRING_CHARS: "value"}
+        )
+    assert "CANARY" not in str(excinfo.value)
+    with pytest.raises(ValueError, match="exceeds the") as excinfo:
+        trace_module._validate_bounds(
+            {"field": "CANARY-" + "v" * trace_module.MAX_STRING_CHARS}
+        )
+    assert "CANARY" not in str(excinfo.value)
     with pytest.raises(ValueError, match="byte count"):
         trace_module._validate_output_identity(
             {"sha256": "a" * 64, "bytes": -1, "truncated": False},
@@ -590,6 +607,357 @@ def test_trace_parser_rejects_malformed_records(
     scalar.write_text("[]\n{}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="must be an object"):
         load_execution_trace(scalar)
+
+
+def test_trace_loader_enforces_byte_line_event_and_complexity_limits(
+    benchmark_result,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace = _rebuilt_trace(benchmark_result, tmp_path / "trace.jsonl")
+    path = tmp_path / "bounded.jsonl"
+    write_execution_trace(trace, path)
+
+    monkeypatch.setattr(trace_module, "MAX_TRACE_BYTES", 8)
+    with pytest.raises(ValueError, match="8-byte limit"):
+        load_execution_trace(path)
+
+    monkeypatch.setattr(trace_module, "MAX_TRACE_BYTES", 16 * 1024 * 1024)
+    monkeypatch.setattr(trace_module, "MAX_TRACE_LINE_BYTES", 8)
+    with pytest.raises(ValueError, match="line 1 exceeds the 8-byte limit"):
+        load_execution_trace(path)
+
+    monkeypatch.setattr(trace_module, "MAX_TRACE_LINE_BYTES", 1024 * 1024)
+    monkeypatch.setattr(trace_module, "MAX_TRACE_EVENTS", 0)
+    with pytest.raises(ValueError, match="0-event limit"):
+        load_execution_trace(path)
+
+    monkeypatch.setattr(trace_module, "MAX_TRACE_EVENTS", 10000)
+    deeply_nested: object = "leaf"
+    for _ in range(trace_module.MAX_TRACE_NESTING + 1):
+        deeply_nested = {"child": deeply_nested}
+    deep = tmp_path / "deep.jsonl"
+    deep.write_text(
+        canonical_json({"value": deeply_nested}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="nesting limit"):
+        load_execution_trace(deep)
+
+    monkeypatch.setattr(trace_module, "MAX_TRACE_NODES", 2)
+    with pytest.raises(ValueError, match="node limit"):
+        load_execution_trace(path)
+
+
+def test_trace_loader_accepts_exact_boundary_and_rejects_one_above(
+    benchmark_result,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace = _rebuilt_trace(benchmark_result, tmp_path / "trace.jsonl")
+    path = tmp_path / "boundary.jsonl"
+    write_execution_trace(trace, path)
+    raw_lines = path.read_bytes().splitlines(keepends=True)
+    total_bytes = sum(len(line) for line in raw_lines)
+    longest_line = max(len(line) for line in raw_lines)
+    event_count = len(raw_lines) - 1
+
+    # Total trace bytes: exact size is accepted, one byte less is rejected.
+    monkeypatch.setattr(trace_module, "MAX_TRACE_BYTES", total_bytes)
+    load_execution_trace(path)
+    monkeypatch.setattr(trace_module, "MAX_TRACE_BYTES", total_bytes - 1)
+    with pytest.raises(ValueError, match="byte limit"):
+        load_execution_trace(path)
+    monkeypatch.setattr(trace_module, "MAX_TRACE_BYTES", 16 * 1024 * 1024)
+
+    # Per-line bytes counts the raw physical line, terminator included:
+    # the exact longest-line length is accepted, one byte less is rejected.
+    monkeypatch.setattr(trace_module, "MAX_TRACE_LINE_BYTES", longest_line)
+    load_execution_trace(path)
+    monkeypatch.setattr(trace_module, "MAX_TRACE_LINE_BYTES", longest_line - 1)
+    with pytest.raises(ValueError, match="byte limit"):
+        load_execution_trace(path)
+    monkeypatch.setattr(trace_module, "MAX_TRACE_LINE_BYTES", 1024 * 1024)
+
+    # Event count: header plus exactly event_count events is accepted;
+    # capping the limit one below the actual event count is rejected.
+    monkeypatch.setattr(trace_module, "MAX_TRACE_EVENTS", event_count)
+    load_execution_trace(path)
+    monkeypatch.setattr(trace_module, "MAX_TRACE_EVENTS", event_count - 1)
+    with pytest.raises(ValueError, match="event limit"):
+        load_execution_trace(path)
+    monkeypatch.setattr(trace_module, "MAX_TRACE_EVENTS", 10000)
+
+
+def test_validate_bounds_accepts_exact_nesting_and_node_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Nesting: a value wrapped exactly MAX_TRACE_NESTING levels deep is
+    # accepted; one level deeper is rejected.
+    at_limit: object = "leaf"
+    for _ in range(trace_module.MAX_TRACE_NESTING):
+        at_limit = {"child": at_limit}
+    trace_module._validate_bounds(at_limit)
+
+    with pytest.raises(ValueError, match="nesting limit"):
+        trace_module._validate_bounds({"child": at_limit})
+
+    # Node count: the container itself counts as a node, so a 4-item list
+    # under a limit of 5 is exactly at the boundary; a 5-item list is not.
+    monkeypatch.setattr(trace_module, "MAX_TRACE_NODES", 5)
+    trace_module._validate_bounds([1, 2, 3, 4])
+    with pytest.raises(ValueError, match="node limit"):
+        trace_module._validate_bounds([1, 2, 3, 4, 5])
+
+
+def test_loader_rejects_on_byte_limit_before_reading_rest_of_hostile_trace(
+    benchmark_result,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace = _rebuilt_trace(benchmark_result, tmp_path / "trace.jsonl")
+    header_line = (
+        serialize_execution_trace(trace).splitlines()[0].encode("utf-8") + b"\n"
+    )
+    hostile = tmp_path / "hostile.jsonl"
+    # Everything after the header is invalid UTF-8. If the loader ever read
+    # past line 1, it would fail on that instead with a UTF-8 decode error.
+    # It must not need to: the byte budget below is already exhausted by the
+    # header line alone, so the hostile remainder is never read or buffered.
+    with hostile.open("wb") as handle:
+        handle.write(header_line)
+        for _ in range(5000):
+            handle.write(b"\xff" * 64 + b"\n")
+
+    monkeypatch.setattr(trace_module, "MAX_TRACE_BYTES", len(header_line) - 1)
+
+    with pytest.raises(ValueError, match="byte limit") as excinfo:
+        load_execution_trace(hostile)
+    assert "UTF-8" not in str(excinfo.value)
+
+
+@pytest.mark.parametrize("command", ["show", "verify", "replayability", "replay"])
+def test_trace_commands_never_echo_untrusted_field_names_or_values(
+    benchmark_result,
+    tmp_path: Path,
+    command: str,
+) -> None:
+    canary = "AGENTGUARD-FAKE-CREDENTIAL-CANARY-9F3B"
+    trace = _rebuilt_trace(benchmark_result, tmp_path / f"trace-{command}.jsonl")
+    base_path = tmp_path / f"base-{command}.jsonl"
+    write_execution_trace(trace, base_path)
+    records = _records(base_path)
+    # An unknown header field named after the canary: `_require_exact_fields`
+    # must report only a count, never the offending key.
+    records[0][canary] = "value"
+    path = tmp_path / f"canary-key-{command}.jsonl"
+    _write_records(path, records)
+
+    result = runner.invoke(app, ["trace", command, str(path)])
+
+    assert result.exit_code == 2
+    assert canary not in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("command", ["show", "verify", "replayability", "replay"])
+def test_trace_commands_never_echo_oversized_field_value(
+    benchmark_result,
+    tmp_path: Path,
+    command: str,
+) -> None:
+    canary = "AGENTGUARD-FAKE-CREDENTIAL-CANARY-9F3B-"
+    oversized = canary + "x" * trace_module.MAX_STRING_CHARS
+    trace = _rebuilt_trace(benchmark_result, tmp_path / f"trace-{command}.jsonl")
+    base_path = tmp_path / f"base-{command}.jsonl"
+    write_execution_trace(trace, base_path)
+    records = _records(base_path)
+    event_record = next(
+        record
+        for record in records
+        if record.get("record_type") == "event"
+        and record["event_type"] == "execution_completed"
+    )
+    event_record["payload"]["result"] = oversized
+    path = tmp_path / f"canary-value-{command}.jsonl"
+    _write_records(path, records)
+
+    result = runner.invoke(app, ["trace", command, str(path)])
+
+    assert result.exit_code == 2
+    assert canary not in result.output
+    assert "Traceback" not in result.output
+
+
+def test_trace_loader_normalizes_invalid_utf8_and_json_recursion(
+    benchmark_result,
+    tmp_path: Path,
+) -> None:
+    trace = _rebuilt_trace(benchmark_result, tmp_path / "trace.jsonl")
+    valid = serialize_execution_trace(trace).encode("utf-8")
+    first_newline = valid.index(b"\n")
+    invalid_utf8 = tmp_path / "invalid-utf8.jsonl"
+    invalid_utf8.write_bytes(
+        valid[: first_newline + 1] + b"\xff" + valid[first_newline + 2 :]
+    )
+    with pytest.raises(ValueError, match="Invalid trace UTF-8 on line 2"):
+        load_execution_trace(invalid_utf8)
+
+    recursive = tmp_path / "recursive.jsonl"
+    recursive.write_text("[" * 1500 + "]" * 1500 + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Invalid trace JSON on line 1"):
+        load_execution_trace(recursive)
+
+    records = [
+        json.loads(line)
+        for line in serialize_execution_trace(trace).splitlines()
+    ]
+    records[0]["source_artifacts"] = [
+        {
+            "role": "report",
+            "path": [],
+            "sha256": "a" * 64,
+            "required": True,
+        }
+    ]
+    wrong_shape = tmp_path / "wrong-shape.jsonl"
+    _write_records(wrong_shape, records)
+    with pytest.raises(ValueError, match="Invalid trace record on line 1"):
+        load_execution_trace(wrong_shape)
+    assert verify_execution_trace(wrong_shape).exit_code == 2
+
+
+# Markers seeded into every hostile trace below. Each stands for one class of
+# thing an attacker controls and a diagnostic must never reproduce: a
+# credential-shaped value, a field name, a bulk fragment, and an absolute path
+# belonging to whoever authored the trace.
+_HOSTILE_CANARY = "AGENTGUARD-FAKE-CREDENTIAL-CANARY-4D7A-"
+_HOSTILE_KEY = "agentguard_attacker_controlled_key"
+_HOSTILE_ABSOLUTE_PATH = "/private/attacker-home/.ssh/id_rsa"
+
+_HOSTILE_KINDS = ("malformed_json", "deep_json")
+
+
+def _hostile_trace_file(
+    kind: str,
+    benchmark_result,
+    tmp_path: Path,
+) -> tuple[Path, str]:
+    """Write one hostile trace of `kind`, seeded with the leak markers.
+
+    Returns the path and the bulk filler, so a caller can assert that no large
+    fragment of the input is echoed back.
+    """
+    filler = "y" * (trace_module.MAX_STRING_CHARS + 64)
+    path = tmp_path / f"hostile-{kind}.jsonl"
+
+    if kind == "malformed_json":
+        truncated = json.dumps(
+            {_HOSTILE_KEY: _HOSTILE_CANARY + filler, "path": _HOSTILE_ABSOLUTE_PATH}
+        )[:-1]
+        path.write_text(truncated + "\n", encoding="utf-8")
+    elif kind == "deep_json":
+        nested = json.dumps(_HOSTILE_CANARY + filler)
+        path.write_text("[" * 1500 + nested + "]" * 1500 + "\n", encoding="utf-8")
+    else:  # pragma: no cover - guards the parametrisation itself
+        raise AssertionError(f"unknown hostile kind {kind!r}")
+
+    return path, filler
+
+
+@pytest.mark.parametrize("command", ["show", "verify", "replayability", "replay"])
+@pytest.mark.parametrize("kind", _HOSTILE_KINDS)
+def test_trace_commands_reject_hostile_input_without_leaking(
+    benchmark_result,
+    tmp_path: Path,
+    command: str,
+    kind: str,
+) -> None:
+    """Every public command against every hostile-input category.
+
+    The loader-level tests above prove the parse is rejected; this proves each
+    command surface rejects it the same way and says nothing about the contents
+    while doing so.
+    """
+    path, filler = _hostile_trace_file(kind, benchmark_result, tmp_path)
+
+    result = runner.invoke(app, ["trace", command, str(path)])
+
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output
+    assert _HOSTILE_CANARY not in result.output
+    assert _HOSTILE_KEY not in result.output
+    # A bounded structural position may be reported; a slice of the input
+    # itself may not.
+    assert filler[:64] not in result.output
+    assert _HOSTILE_ABSOLUTE_PATH not in result.output
+
+
+@pytest.mark.parametrize("command", ["show", "verify", "replayability", "replay"])
+def test_trace_commands_reject_hostile_modified_path_without_echoing_it(
+    benchmark_result,
+    tmp_path: Path,
+    command: str,
+) -> None:
+    """An attacker-owned absolute path in modified_files.paths.
+
+    load_execution_trace validates every event payload, and an
+    execution_completed event's modified_files.paths list flows into
+    _normalized_path. The record is otherwise well-shaped, so the only thing
+    that refuses it is the repository-relative check -- which must report why
+    without echoing the path it rejected.
+    """
+    # Absolute, so it trips the repository-relative check that is the leak
+    # site -- and short, so it reaches that check rather than a length bound
+    # first. The earlier version buried the path in oversized filler, which
+    # was rejected at a non-echoing stage and made the test vacuous.
+    canary = "AGENTGUARD-FAKE-CREDENTIAL-CANARY-PATH-4E1A"
+    hostile = f"/private/attacker-home/.ssh/{canary}/id_rsa"
+
+    trace = _rebuilt_trace(benchmark_result, tmp_path / f"mp-src-{command}.jsonl")
+    base = tmp_path / f"mp-base-{command}.jsonl"
+    write_execution_trace(trace, base)
+    records = _records(base)
+    completed = next(
+        record
+        for record in records
+        if record.get("record_type") == "event"
+        and record["event_type"] == "execution_completed"
+    )
+    modified = completed["payload"].setdefault(
+        "modified_files",
+        {"count": 1, "paths": [], "truncated": False,
+         "lines_added": 0, "lines_deleted": 0},
+    )
+    modified["paths"] = [hostile]
+
+    path = tmp_path / f"mp-hostile-{command}.jsonl"
+    _write_records(path, records)
+
+    result = runner.invoke(app, ["trace", command, str(path)])
+
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output
+    assert canary not in result.output
+    assert "/private/attacker-home" not in result.output
+
+
+@pytest.mark.parametrize("command", ["show", "verify", "replayability", "replay"])
+def test_trace_commands_share_bounded_loader(
+    benchmark_result,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    trace = _rebuilt_trace(benchmark_result, tmp_path / "trace.jsonl")
+    path = tmp_path / "oversized-line.jsonl"
+    write_execution_trace(trace, path)
+    monkeypatch.setattr(trace_module, "MAX_TRACE_LINE_BYTES", 8)
+
+    result = runner.invoke(app, ["trace", command, str(path)])
+
+    assert result.exit_code == 2
+    assert "line 1 exceeds the 8-byte limit" in result.output
 
 
 @pytest.mark.parametrize(

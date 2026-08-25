@@ -68,10 +68,29 @@ are not stored in trace policy snapshots or payloads. Content-based `Secret
 scan` evidence records only safe detector IDs, normalized relative locations,
 and sanitized incomplete-scan messages.
 
-Strings, evidence lists, argv, changed-file lists, patterns, and optional diffs
-are bounded. Truncation metadata is recorded. Sanitization is pattern-based and
-cannot guarantee detection of every encoded, transformed, or previously
-unknown secret.
+The shared loader used by `show`, `verify`, `replayability`, and `replay`
+incrementally enforces a 16 MiB trace limit, a 1 MiB per-line limit, at most
+10,000 events, 64 levels of JSON nesting, and 100,000 JSON values per record.
+The per-line limit counts the raw physical line as read from disk, including
+its terminator (`\n`, or `\r\n` before the trailing `\r` is stripped); it is
+checked before JSON parsing, so an oversized line is rejected without being
+decoded. Every limit is checked line by line as the trace is read, so a trace
+that violates the total-byte or per-line limit is rejected using only the
+bytes read up to that point -- the loader never buffers a complete oversized
+or hostile trace before rejecting it. Malformed JSON, invalid UTF-8, and
+excessive nesting produce the same controlled invalid-trace result. Strings,
+evidence lists, argv, changed-file lists, patterns, and optional diffs have
+narrower field-level bounds. Truncation metadata is recorded. Sanitization is
+pattern-based and cannot guarantee detection of every encoded, transformed, or
+previously unknown secret.
+
+Diagnostic messages for malformed or out-of-bounds trace content (missing or
+unknown fields, oversized strings, oversized or excessively nested values)
+never reproduce the untrusted field names or values that triggered them --
+only fixed text, counts, and structural position (nesting depth). A trace
+that uses a fake credential or other sensitive-looking text as a JSON object
+key or as an oversized field value cannot cause that text to be echoed back
+through `show`, `verify`, `replayability`, or `replay`.
 
 ## Commands
 

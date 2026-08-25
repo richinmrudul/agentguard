@@ -48,6 +48,11 @@ MAX_EVIDENCE_ITEMS = 64
 MAX_CHANGED_FILES = 4096
 MAX_DIFF_CHARS = 32768
 MAX_PATTERNS = 64
+MAX_TRACE_BYTES = 16 * 1024 * 1024
+MAX_TRACE_LINE_BYTES = 1024 * 1024
+MAX_TRACE_EVENTS = 10000
+MAX_TRACE_NESTING = 64
+MAX_TRACE_NODES = 100000
 
 
 @dataclass(frozen=True)
@@ -269,9 +274,16 @@ def _normalized_path(value: str) -> str:
         not candidate
         or candidate.startswith("/")
         or path.is_absolute()
+        or re.match(r"^[A-Za-z]:/", candidate) is not None
         or any(part in {"", ".", ".."} for part in path.parts)
     ):
-        raise ValueError(f"Trace path must be repository-relative: {value!r}.")
+        # Reports why the path was refused, never the path itself. Echoing it
+        # reproduces attacker-controlled bytes in a diagnostic the operator
+        # reads, which is the leak the rest of this loader closes.
+        raise ValueError(
+            "Trace path must be repository-relative "
+            f"(rejected a {len(value)}-character path)."
+        )
     normalized = path.as_posix()
     if len(normalized) > MAX_STRING_CHARS:
         raise ValueError("Trace path exceeds the maximum length.")
@@ -1092,15 +1104,20 @@ def _require_exact_fields(
     expected: set[str],
     label: str,
 ) -> None:
+    # `missing` names come from `expected`, a fixed hardcoded set, so they are
+    # safe to report. `actual` keys are untrusted trace content and must never
+    # be echoed back: an attacker can put anything -- including a credential
+    # canary or a near-line-limit string -- in a JSON object key.
     actual = set(data)
     if actual != expected:
         missing = sorted(expected - actual)
-        unknown = sorted(actual - expected)
+        unknown_count = len(actual - expected)
         details = []
         if missing:
             details.append(f"missing {', '.join(missing)}")
-        if unknown:
-            details.append(f"unknown {', '.join(unknown)}")
+        if unknown_count:
+            plural = "s" if unknown_count != 1 else ""
+            details.append(f"{unknown_count} unknown field{plural}")
         raise ValueError(f"Invalid {label} fields: {'; '.join(details)}.")
 
 
@@ -1226,29 +1243,115 @@ def _parse_event(data: dict[str, Any]) -> TraceEvent:
     return TraceEvent(**data)
 
 
+
+def _validate_json_nesting(line: str) -> None:
+    """Reject excessive JSON nesting before parser recursion varies by Python."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for char in line:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+            # _validate_bounds() treats the parsed root as depth zero, so the
+            # lexical form may contain the root plus MAX_TRACE_NESTING nested
+            # containers without narrowing the existing accepted boundary.
+            if depth > MAX_TRACE_NESTING + 1:
+                raise ValueError(
+                    f"Trace JSON exceeds the {MAX_TRACE_NESTING}-level nesting limit."
+                )
+        elif char in "]}" and depth:
+            depth -= 1
+
 def load_execution_trace(path: Path) -> ExecutionTrace:
     try:
-        content = path.read_text(encoding="utf-8")
+        trace_file = path.open("rb")
     except OSError as error:
         raise ValueError(f"Unable to read trace: {error}") from error
-    if not content.endswith("\n"):
-        raise ValueError("Trace is truncated: final newline is missing.")
-    lines = content.splitlines()
-    if len(lines) < 2:
+
+    header_record: Optional[dict[str, Any]] = None
+    header: Optional[TraceHeader] = None
+    events: list[TraceEvent] = []
+    total_bytes = 0
+    line_number = 0
+    try:
+        with trace_file:
+            while True:
+                raw_line = trace_file.readline(MAX_TRACE_LINE_BYTES + 1)
+                if not raw_line:
+                    break
+                line_number += 1
+                total_bytes += len(raw_line)
+                if total_bytes > MAX_TRACE_BYTES:
+                    raise ValueError(
+                        f"Trace exceeds the {MAX_TRACE_BYTES}-byte limit."
+                    )
+                if line_number > MAX_TRACE_EVENTS + 1:
+                    raise ValueError(
+                        f"Trace exceeds the {MAX_TRACE_EVENTS}-event limit."
+                    )
+                if len(raw_line) > MAX_TRACE_LINE_BYTES:
+                    raise ValueError(
+                        f"Trace line {line_number} exceeds the "
+                        f"{MAX_TRACE_LINE_BYTES}-byte limit."
+                    )
+                if not raw_line.endswith(b"\n"):
+                    raise ValueError(
+                        "Trace is truncated: final newline is missing."
+                    )
+                encoded = raw_line[:-1]
+                if encoded.endswith(b"\r"):
+                    encoded = encoded[:-1]
+                try:
+                    line = encoded.decode("utf-8")
+                except UnicodeDecodeError as error:
+                    raise ValueError(
+                        f"Invalid trace UTF-8 on line {line_number}: {error}"
+                    ) from error
+                try:
+                    _validate_json_nesting(line)
+                    record = json.loads(line)
+                except (json.JSONDecodeError, RecursionError, ValueError) as error:
+                    raise ValueError(
+                        f"Invalid trace JSON on line {line_number}: {error}"
+                    ) from error
+                if not isinstance(record, dict):
+                    raise ValueError(
+                        f"Trace line {line_number} must be an object."
+                    )
+                _validate_bounds(record)
+                if line_number == 1:
+                    header_record = record
+                else:
+                    if header is None:
+                        assert header_record is not None
+                        try:
+                            header = _parse_header(header_record)
+                        except (TypeError, OverflowError, RecursionError) as error:
+                            raise ValueError(
+                                f"Invalid trace record on line 1: {error}"
+                            ) from error
+                    try:
+                        events.append(_parse_event(record))
+                    except (TypeError, OverflowError, RecursionError) as error:
+                        raise ValueError(
+                            f"Invalid trace record on line {line_number}: {error}"
+                        ) from error
+    except OSError as error:
+        raise ValueError(f"Unable to read trace: {error}") from error
+
+    if line_number < 2:
         raise ValueError("Trace must contain a header and events.")
-    records = []
-    for line_number, line in enumerate(lines, start=1):
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise ValueError(
-                f"Invalid trace JSON on line {line_number}: {error}"
-            ) from error
-        if not isinstance(record, dict):
-            raise ValueError(f"Trace line {line_number} must be an object.")
-        records.append(record)
-    header = _parse_header(records[0])
-    events = [_parse_event(record) for record in records[1:]]
+    assert header is not None
     return ExecutionTrace(header=header, events=events)
 
 
@@ -1258,22 +1361,56 @@ def _validate_sha256(value: object, label: str) -> None:
 
 
 def _validate_bounds(value: object, key: Optional[str] = None) -> None:
-    if isinstance(value, str):
-        limit = MAX_DIFF_CHARS if key == "unified_diff" else MAX_STRING_CHARS
-        if len(value) > limit:
-            raise ValueError(f"Trace string field {key or '<value>'} is too long.")
-        return
-    if isinstance(value, list):
-        if len(value) > MAX_CHANGED_FILES:
-            raise ValueError(f"Trace list field {key or '<value>'} is too long.")
-        for item in value:
-            _validate_bounds(item, key)
-        return
-    if isinstance(value, dict):
-        for child_key, item in value.items():
-            if not isinstance(child_key, str):
-                raise ValueError("Trace object keys must be strings.")
-            _validate_bounds(item, child_key)
+    # Diagnostics here must stay fixed/bounded text only. `current_key` and
+    # dict keys below come straight from untrusted trace content, so no
+    # branch may interpolate them into a raised message -- that would let a
+    # malformed trace echo an attacker-chosen string (e.g. a credential
+    # canary) back through `trace show`/`verify`/`replayability`/`replay`.
+    pending: list[tuple[object, Optional[str], int]] = [(value, key, 0)]
+    nodes = 0
+    while pending:
+        current, current_key, depth = pending.pop()
+        nodes += 1
+        if nodes > MAX_TRACE_NODES:
+            raise ValueError(
+                f"Trace value exceeds the {MAX_TRACE_NODES}-node limit."
+            )
+        if depth > MAX_TRACE_NESTING:
+            raise ValueError(
+                f"Trace value exceeds the {MAX_TRACE_NESTING}-level nesting limit."
+            )
+        if isinstance(current, str):
+            limit = (
+                MAX_DIFF_CHARS
+                if current_key == "unified_diff"
+                else MAX_STRING_CHARS
+            )
+            if len(current) > limit:
+                raise ValueError(
+                    f"Trace string field at nesting depth {depth} exceeds "
+                    f"the {limit}-character limit."
+                )
+        elif isinstance(current, list):
+            if len(current) > MAX_CHANGED_FILES:
+                raise ValueError(
+                    f"Trace list field at nesting depth {depth} exceeds "
+                    f"the {MAX_CHANGED_FILES}-item limit."
+                )
+            pending.extend(
+                (item, current_key, depth + 1) for item in reversed(current)
+            )
+        elif isinstance(current, dict):
+            children = []
+            for child_key, item in current.items():
+                if not isinstance(child_key, str):
+                    raise ValueError("Trace object keys must be strings.")
+                if len(child_key) > MAX_STRING_CHARS:
+                    raise ValueError(
+                        f"Trace object key at nesting depth {depth} exceeds "
+                        f"the {MAX_STRING_CHARS}-character limit."
+                    )
+                children.append((item, child_key, depth + 1))
+            pending.extend(reversed(children))
 
 
 def _validate_output_identity(value: object, label: str) -> None:
@@ -1862,7 +1999,7 @@ def verify_execution_trace(
     try:
         trace = load_execution_trace(path)
         _verify_integrity(trace)
-    except ValueError as error:
+    except (TypeError, ValueError, OverflowError, RecursionError) as error:
         return TraceVerificationResult(
             integrity_valid=False,
             messages=[str(error)],
