@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import agentguard.reports.site as site_module
 from agentguard.cli.main import app
 from agentguard.history.store import HistoryRecord, record_history
 from agentguard.reports.site import (
@@ -278,7 +279,7 @@ def test_includes_traces_and_diagnostics_when_requested(
     monkeypatch.chdir(tmp_path)
     trace = tmp_path / ".agentguard/runs/run-1/trace.jsonl"
     trace.parent.mkdir(parents=True)
-    trace.write_text('{"trace_id":"run-1"}\n{"event":"complete"}\n', encoding="utf-8")
+    _write_trace(trace, event_count=1)
     _write_json(
         tmp_path / ".agentguard/diagnostics/matrix-stress/study/matrix-stress.json",
         {"schema": "agentguard.matrix-stress", "integrity_passed": True},
@@ -297,6 +298,255 @@ def test_includes_traces_and_diagnostics_when_requested(
     assert result.diagnostics == 1
     assert (tmp_path / "site/traces.html").exists()
     assert "matrix-stress" in (tmp_path / "site/diagnostics.html").read_text()
+    assert "trace summary complete" in _all_html(tmp_path / "site")
+
+
+def test_trace_summary_handles_empty_trace(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_trace_bytes(tmp_path, "empty", b"")
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", include_traces=True, force=True)
+    )
+
+    html = _all_html(tmp_path / "site")
+    assert "incomplete" in html
+    assert "trace is empty" in html
+
+
+def test_trace_summary_handles_invalid_utf8(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_trace_bytes(tmp_path, "bad-utf8", b"\xff\xfe\n")
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", include_traces=True, force=True)
+    )
+
+    html = _all_html(tmp_path / "site")
+    assert "unavailable" in html
+    assert "trace contains invalid UTF-8" in html
+
+
+def test_trace_summary_handles_malformed_json(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_trace_bytes(tmp_path, "bad-json", b'{"trace_id":"bad-json"}\n{not json}\n')
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", include_traces=True, force=True)
+    )
+
+    html = _all_html(tmp_path / "site")
+    assert "unavailable" in html
+    assert "trace contains malformed JSON" in html
+
+
+def test_trace_summary_handles_missing_final_newline(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_trace_bytes(
+        tmp_path,
+        "truncated",
+        _trace_bytes("truncated", event_count=1).rstrip(b"\n"),
+    )
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", include_traces=True, force=True)
+    )
+
+    html = _all_html(tmp_path / "site")
+    assert "incomplete" in html
+    assert "final newline is missing" in html
+
+
+def test_trace_summary_handles_oversized_first_line(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(site_module, "MAX_TRACE_LINE_BYTES", 32)
+    _write_trace_bytes(tmp_path, "oversized-first", b'{"' + b"x" * 80 + b'":1}\n')
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", include_traces=True, force=True)
+    )
+
+    html = _all_html(tmp_path / "site")
+    assert "trace line exceeds the summary line limit" in html
+
+
+def test_trace_summary_handles_oversized_later_line(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(site_module, "MAX_TRACE_LINE_BYTES", 96)
+    _write_trace_bytes(
+        tmp_path,
+        "oversized-later",
+        _trace_header_line("oversized-later", event_count=2)
+        + b'{"event_type":"agent_command","payload":"'
+        + b"x" * 200
+        + b'"}\n',
+    )
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", include_traces=True, force=True)
+    )
+
+    html = _all_html(tmp_path / "site")
+    assert "incomplete" in html
+    assert "trace line exceeds the summary line limit" in html
+
+
+def test_trace_summary_handles_total_size_bound(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(site_module, "MAX_TRACE_BYTES", 180)
+    _write_trace(tmp_path / ".agentguard/runs/too-large/trace.jsonl", event_count=4)
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", include_traces=True, force=True)
+    )
+
+    html = _all_html(tmp_path / "site")
+    assert "trace exceeds the summary byte limit" in html
+
+
+def test_trace_summary_handles_excessive_event_count(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(site_module, "MAX_TRACE_EVENTS", 1)
+    _write_trace(tmp_path / ".agentguard/runs/too-many/trace.jsonl", event_count=2)
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", include_traces=True, force=True)
+    )
+
+    html = _all_html(tmp_path / "site")
+    assert "trace exceeds the summary event limit" in html
+
+
+def test_trace_summary_handles_disappearing_trace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / ".agentguard/runs/gone/trace.jsonl"
+    _write_trace(target, event_count=1)
+    original_open = Path.open
+
+    def disappearing_open(path: Path, *args: object, **kwargs: object):
+        if path == target:
+            raise FileNotFoundError("gone")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", disappearing_open)
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", include_traces=True, force=True)
+    )
+
+    html = _all_html(tmp_path / "site")
+    assert "unavailable" in html
+    assert "trace file is unavailable" in html
+
+
+def test_trace_summary_continues_when_one_trace_is_malformed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_trace(tmp_path / ".agentguard/runs/good/trace.jsonl", event_count=1)
+    _write_trace_bytes(tmp_path, "bad", b"{not json}\n")
+
+    result = generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", include_traces=True, force=True)
+    )
+
+    html = _all_html(tmp_path / "site")
+    assert result.traces == 2
+    assert result.unavailable == 1
+    assert "trace summary complete" in html
+    assert "trace contains malformed JSON" in html
+
+
+def test_trace_summary_output_is_deterministic(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_trace(tmp_path / ".agentguard/runs/b/trace.jsonl", event_count=1)
+    _write_trace(tmp_path / ".agentguard/runs/a/trace.jsonl", event_count=1)
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site-1", include_traces=True, force=True)
+    )
+    first = _all_html(tmp_path / "site-1")
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site-2", include_traces=True, force=True)
+    )
+    second = _all_html(tmp_path / "site-2")
+
+    assert first == second
+
+
+def test_trace_summary_sanitizes_diagnostics(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    canary = "AGENTGUARD_SECRET_CANARY_TRACE"
+    private_path = tmp_path / "private" / "trace.jsonl"
+    _write_trace_bytes(
+        tmp_path,
+        "hostile",
+        json.dumps({canary: str(private_path), "event_count": 1}).encode("utf-8")
+        + b"\n"
+        + json.dumps({"event_type": "execution_completed", "payload": canary}).encode(
+            "utf-8"
+        )
+        + b"\n",
+    )
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", include_traces=True, force=True)
+    )
+
+    html = _all_html(tmp_path / "site")
+    assert canary not in html
+    assert str(tmp_path) not in html
+    assert "[REDACTED]" in html
+
+
+def test_trace_summary_rejects_oversized_line_before_decoding_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(site_module, "MAX_TRACE_LINE_BYTES", 48)
+    hostile = "AGENTGUARD_SECRET_CANARY_UNREAD"
+    _write_trace_bytes(tmp_path, "hostile", (hostile * 20).encode("utf-8") + b"\n")
+    loads_calls = []
+    original_loads = json.loads
+
+    def tracking_loads(value: str) -> object:
+        loads_calls.append(value)
+        return original_loads(value)
+
+    monkeypatch.setattr(site_module.json, "loads", tracking_loads)
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", include_traces=True, force=True)
+    )
+
+    assert loads_calls == []
+    assert hostile not in _all_html(tmp_path / "site")
 
 
 def test_secret_canary_is_redacted(tmp_path: Path, monkeypatch) -> None:
@@ -534,6 +784,49 @@ def _record(
         ),
         db_path,
     )
+
+
+def _trace_header_line(run_id: str, *, event_count: int) -> bytes:
+    return (
+        json.dumps(
+            {
+                "trace_id": run_id,
+                "event_count": event_count,
+                "schema": "agentguard.execution-trace",
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+        + b"\n"
+    )
+
+
+def _trace_bytes(run_id: str, *, event_count: int) -> bytes:
+    events = []
+    for index in range(event_count):
+        event_type = (
+            "execution_completed"
+            if index == event_count - 1
+            else "agent_command"
+        )
+        events.append(
+            json.dumps(
+                {"event_type": event_type, "sequence": index + 1},
+                sort_keys=True,
+            ).encode("utf-8")
+            + b"\n"
+        )
+    return _trace_header_line(run_id, event_count=event_count) + b"".join(events)
+
+
+def _write_trace(path: Path, *, event_count: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(_trace_bytes(path.parent.name, event_count=event_count))
+
+
+def _write_trace_bytes(tmp_path: Path, run_id: str, content: bytes) -> None:
+    path = tmp_path / ".agentguard/runs" / run_id / "trace.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
 
 
 def _write_json(path: Path, data: dict[str, object]) -> None:
