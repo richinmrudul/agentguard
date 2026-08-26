@@ -91,7 +91,6 @@ See the evidence artifacts:
 [`docs/results/release-v0.3.0.md`](docs/results/release-v0.3.0.md),
 [`docs/results/showcase-metrics.md`](docs/results/showcase-metrics.md),
 [`docs/results/adversarial-metrics.md`](docs/results/adversarial-metrics.md),
-[`docs/results/release-candidate-v0.2.0.md`](docs/results/release-candidate-v0.2.0.md),
 and [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Quickstart
@@ -209,6 +208,10 @@ tag was cut and remain useful for release validation history:
 [`docs/results/release-readiness-v0.2.md`](docs/results/release-readiness-v0.2.md)
 and
 [`docs/results/release-candidate-v0.2.0.md`](docs/results/release-candidate-v0.2.0.md).
+Published PyPI metadata is immutable, including the existing
+`agentguard-evals==0.3.0` long description. Corrections to release-state prose
+protect future package builds and documentation; they do not rewrite, delete,
+yank, or republish historical PyPI files.
 
 Docs:
 
