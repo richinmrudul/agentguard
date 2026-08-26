@@ -78,6 +78,20 @@ does not include raw command stdout/stderr, full diffs, full trace payloads, or
 raw command logs. Trace pages are opt-in and show bounded metadata summaries.
 Diagnostics and committed result docs are also opt-in.
 
+When `--include-traces` is enabled, `runs/*/trace.jsonl` summaries are read
+incrementally instead of loading whole files. The summary reader uses the
+shared trace limits: 16 MiB per trace, 1 MiB per physical line, 10,000 events
+plus the header line, 64 JSON nesting levels, and 100,000 JSON values per
+record. It stops as soon as the summary is complete or one of those bounds is
+exceeded. Complete summaries include sanitized header metadata, the observed
+event count, and the applied bounds. Empty traces, truncated traces, missing
+completion events, event-count mismatches, oversized lines, oversized files,
+and excessive event counts are shown as `incomplete`. Unreadable or
+disappearing traces, invalid UTF-8, malformed JSON, non-object records, and
+records that exceed structural bounds are shown as `unavailable`. The site
+uses fixed diagnostics for these states and does not echo raw trace content or
+absolute private paths.
+
 Corrupt or unreadable individual reports and incident artifacts are listed as
 unavailable instead of failing the whole export. Incident JSON reads are size
 bounded, symlinks are skipped, unsupported future schemas degrade safely, and

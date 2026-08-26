@@ -13,6 +13,13 @@ from typing import Any, Optional
 from agentguard.history.store import HistoryRecord, list_history
 from agentguard.io import atomic_write_text
 from agentguard.reports.exports import SECRET_PATTERNS
+from agentguard.traces.execution import (
+    MAX_TRACE_BYTES,
+    MAX_TRACE_EVENTS,
+    MAX_TRACE_LINE_BYTES,
+    _validate_bounds,
+    _validate_json_nesting,
+)
 
 
 DEFAULT_HISTORY_DB_PATH = Path(".agentguard/history.db")
@@ -250,6 +257,9 @@ def _load_context(options: StaticSiteOptions) -> SiteContext:
     traces: list[SiteRecord] = []
     if options.include_traces:
         traces = _discover_traces(options.reports_root, base)
+    unavailable_traces = sum(
+        record.unavailable_reason is not None for record in traces
+    )
     result_docs: list[ResultDoc] = []
     if options.include_results_docs:
         result_docs = _discover_results_docs(base)
@@ -265,6 +275,7 @@ def _load_context(options: StaticSiteOptions) -> SiteContext:
         + unavailable_reports
         + unavailable_matrices
         + unavailable_diagnostics
+        + unavailable_traces
         + sum(
             incident.unavailable_reason is not None for incident in incidents
         ),
@@ -595,17 +606,23 @@ def _discover_traces(root: Path, base: Path) -> list[SiteRecord]:
     for path in sorted(report_root.glob("runs/*/trace.jsonl")):
         if path.is_symlink():
             continue
+        summary = _trace_summary(path)
         traces.append(
             SiteRecord(
                 id=sanitize_text(path.parent.name),
                 kind="trace",
                 name=sanitize_text(path.parent.name),
-                result="available",
+                result=sanitize_text(summary.get("status", "unavailable")),
                 score=None,
                 created_at="",
                 path=_relative_or_name(path, base),
-                data=_trace_summary(path),
+                data=summary,
                 source="trace",
+                unavailable_reason=(
+                    sanitize_text(summary.get("reason", "trace unavailable"))
+                    if summary.get("status") == "unavailable"
+                    else None
+                ),
             )
         )
     return traces
@@ -1743,19 +1760,116 @@ def _failed_checks_from_data(data: dict[str, Any]) -> list[str]:
 
 
 def _trace_summary(path: Path) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "status": "incomplete",
+        "events": 0,
+        "header": {},
+        "bounds": {
+            "max_bytes": MAX_TRACE_BYTES,
+            "max_line_bytes": MAX_TRACE_LINE_BYTES,
+            "max_events": MAX_TRACE_EVENTS,
+        },
+    }
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        trace_file = path.open("rb")
     except OSError:
-        return {"status": "unavailable"}
-    header: dict[str, Any] = {}
-    if lines:
-        try:
-            loaded = json.loads(lines[0])
-            if isinstance(loaded, dict):
-                header = sanitize_data(loaded)
-        except json.JSONDecodeError:
-            header = {"status": "invalid header"}
-    return {"events": max(len(lines) - 1, 0), "header": header}
+        return {
+            **summary,
+            "status": "unavailable",
+            "reason": "trace file is unavailable",
+        }
+
+    total_bytes = 0
+    line_number = 0
+    declared_events: Optional[int] = None
+    completed_seen = False
+    try:
+        with trace_file:
+            while True:
+                raw_line = trace_file.readline(MAX_TRACE_LINE_BYTES + 1)
+                if not raw_line:
+                    break
+                line_number += 1
+                total_bytes += len(raw_line)
+                summary["bytes_read"] = total_bytes
+                summary["lines_read"] = line_number
+                if total_bytes > MAX_TRACE_BYTES:
+                    return {
+                        **summary,
+                        "reason": "trace exceeds the summary byte limit",
+                    }
+                if line_number > MAX_TRACE_EVENTS + 1:
+                    return {
+                        **summary,
+                        "reason": "trace exceeds the summary event limit",
+                    }
+                if len(raw_line) > MAX_TRACE_LINE_BYTES:
+                    return {
+                        **summary,
+                        "reason": "trace line exceeds the summary line limit",
+                    }
+                if not raw_line.endswith(b"\n"):
+                    return {
+                        **summary,
+                        "reason": "trace is truncated: final newline is missing",
+                    }
+                encoded = raw_line[:-1]
+                if encoded.endswith(b"\r"):
+                    encoded = encoded[:-1]
+                try:
+                    line = encoded.decode("utf-8")
+                except UnicodeDecodeError:
+                    return {
+                        **summary,
+                        "status": "unavailable",
+                        "reason": "trace contains invalid UTF-8",
+                    }
+                try:
+                    _validate_json_nesting(line)
+                    record = json.loads(line)
+                except (json.JSONDecodeError, RecursionError, ValueError):
+                    return {
+                        **summary,
+                        "status": "unavailable",
+                        "reason": "trace contains malformed JSON",
+                    }
+                if not isinstance(record, dict):
+                    return {
+                        **summary,
+                        "status": "unavailable",
+                        "reason": "trace record is not a JSON object",
+                    }
+                try:
+                    _validate_bounds(record)
+                except (TypeError, OverflowError, RecursionError, ValueError):
+                    return {
+                        **summary,
+                        "status": "unavailable",
+                        "reason": "trace record exceeds structural bounds",
+                    }
+                if line_number == 1:
+                    summary["header"] = sanitize_data(record)
+                    declared_events = _nonnegative_int(record.get("event_count"))
+                else:
+                    summary["events"] = int(summary["events"]) + 1
+                    if record.get("event_type") == "execution_completed":
+                        completed_seen = True
+    except OSError:
+        return {
+            **summary,
+            "status": "unavailable",
+            "reason": "trace file became unavailable while reading",
+        }
+
+    if line_number == 0:
+        return {**summary, "reason": "trace is empty"}
+    if int(summary["events"]) == 0:
+        return {**summary, "reason": "trace has no events"}
+    if declared_events is not None and declared_events != summary["events"]:
+        return {**summary, "reason": "trace event count does not match header"}
+    if not completed_seen:
+        return {**summary, "reason": "trace has no completion event"}
+    return {**summary, "status": "complete", "reason": "trace summary complete"}
 
 
 def _load_json_if_available(path: Path, *, kind: Optional[str] = None) -> Any:
