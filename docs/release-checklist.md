@@ -91,6 +91,9 @@ not publish anything.
 - [ ] If tag, distribution name, or package version differ, do not approve.
 - [ ] PyPI files and released filenames cannot be overwritten or reused after
   deletion; corrections require a new version.
+- [ ] Published PyPI metadata and long descriptions are immutable too; source
+  documentation fixes protect future releases and must not rewrite, delete,
+  yank, or republish an existing package version.
 
 ## Security And Scope Review
 

@@ -59,6 +59,52 @@ FORBIDDEN_RELEASE_MARKERS = (
     "javascript:",
     "file:",
 )
+CURRENT_STATE_HEADINGS = (
+    "current",
+    "quickstart",
+    "installation",
+    "proof",
+    "release status",
+)
+HISTORICAL_HEADINGS = (
+    "changelog",
+    "history",
+    "historical",
+    "previous",
+    "completed",
+)
+CURRENT_RELEASE_CLAIMS = (
+    "current release",
+    "current published",
+    "current production",
+    "latest release",
+    "production pypi continues to serve",
+)
+UNPUBLISHED_CLAIMS = (
+    "not published",
+    "has not been published",
+    "have not been published",
+    "not yet published",
+    "unpublished",
+    "pypi publication remains deferred",
+    "pypi publishing remains deferred",
+    "production pypi continues to serve",
+)
+RELEASE_CANDIDATE_CLAIMS = (
+    "release candidate",
+    "source candidate",
+    "pre-release candidate",
+)
+SHIPPED_FEATURE_TERMS = (
+    "baseline-aware",
+    "ci policy",
+    "go module",
+    "json schema",
+    "node.js",
+    "policy preset",
+    "project initialization",
+)
+VERSION_RE = re.compile(r"\bv?(\d+\.\d+\.\d+)\b")
 
 
 def project_version(root: Path) -> str:
@@ -223,7 +269,130 @@ def _assert_metadata(label: str, metadata: email.message.Message) -> str:
         raise AssertionError(
             f"{label} is missing License-File metadata: {license_files!r}"
         )
+    _assert_long_description_release_state(label, version, metadata.get_payload())
     return version
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def _section_heading(line: str) -> tuple[int, str] | None:
+    match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+    if match is None:
+        return None
+    return len(match.group(1)), match.group(2).strip().lower()
+
+
+def _iter_release_state_sections(text: str) -> list[tuple[str, str, bool, bool]]:
+    sections = []
+    heading = ""
+    lines: list[str] = []
+    historical = False
+    current = False
+    heading_stack: list[tuple[int, bool, bool]] = []
+    for line in text.splitlines():
+        next_heading = _section_heading(line)
+        if next_heading is not None:
+            if lines:
+                sections.append((heading, "\n".join(lines), historical, current))
+            level, heading = next_heading
+            lines = []
+            heading_stack = [
+                entry for entry in heading_stack if entry[0] < level
+            ]
+            heading_historical = any(
+                marker in heading for marker in HISTORICAL_HEADINGS
+            )
+            heading_current = any(marker in heading for marker in CURRENT_STATE_HEADINGS)
+            heading_stack.append((level, heading_historical, heading_current))
+            historical = any(entry[1] for entry in heading_stack)
+            current = any(entry[2] for entry in heading_stack)
+            continue
+        lines.append(line)
+    if lines:
+        sections.append((heading, "\n".join(lines), historical, current))
+    return sections
+
+
+def _iter_sentences(text: str) -> list[str]:
+    return [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", text)
+        if sentence.strip()
+    ]
+
+
+def _normalize_claim_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text).lower()
+
+
+def _assert_long_description_release_state(
+    label: str,
+    version: str,
+    description: object,
+) -> None:
+    if not isinstance(description, str):
+        raise AssertionError(f"{label} is missing long description metadata")
+
+    current_key = _version_key(version)
+    for _, section, is_historical, is_current in _iter_release_state_sections(
+        description
+    ):
+        if is_historical:
+            continue
+        section_claim = _normalize_claim_text(section)
+        current_context = is_current or any(
+            marker in section_claim for marker in CURRENT_RELEASE_CLAIMS
+        )
+        for sentence in _iter_sentences(section):
+            claim = _normalize_claim_text(sentence)
+            versions = VERSION_RE.findall(sentence)
+            older_versions = [
+                candidate
+                for candidate in versions
+                if _version_key(candidate) < current_key
+            ]
+
+            if current_context and older_versions and re.search(
+                r"docs/results/(?:release-candidate|release-readiness|release)-v"
+                r"\d+\.\d+(?:\.\d+)?\.(?:md|json)",
+                sentence,
+            ):
+                raise AssertionError(
+                    f"{label} long description directs current release evidence "
+                    f"to stale version {older_versions[0]}"
+                )
+
+            if version in versions and any(
+                marker in claim for marker in UNPUBLISHED_CLAIMS
+            ):
+                raise AssertionError(
+                    f"{label} long description calls {version} unpublished"
+                )
+
+            if version in versions and any(
+                marker in claim for marker in RELEASE_CANDIDATE_CLAIMS
+            ):
+                raise AssertionError(
+                    f"{label} long description calls {version} a release candidate"
+                )
+
+            if any(marker in claim for marker in RELEASE_CANDIDATE_CLAIMS) and any(
+                feature in claim for feature in SHIPPED_FEATURE_TERMS
+            ):
+                raise AssertionError(
+                    f"{label} long description describes a shipped feature "
+                    "as a release candidate"
+                )
+
+            if older_versions and any(
+                marker in claim for marker in CURRENT_RELEASE_CLAIMS
+            ):
+                raise AssertionError(
+                    f"{label} long description calls older release "
+                    f"{older_versions[0]} current while publishing {version}"
+                )
 
 
 def validate_artifacts(wheel_path: Path, sdist_path: Path) -> None:

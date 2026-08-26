@@ -330,6 +330,12 @@ Also inspect the PyPI JSON API for filenames, `Requires-Python`, hashes, and
 upload timestamps. PyPI releases are immutable: never treat deletion as a way
 to reuse a filename or overwrite a version.
 
+Published PyPI metadata is immutable too. If a packaged README or long
+description contains stale release-state prose, do not rewrite, replace,
+delete, yank, or republish that version. Correct the source documentation and
+release validation so the next package version rejects stale claims before
+publication.
+
 ## Recovery
 
 - **Environment approval rejected or not granted:** no upload occurs. Inspect

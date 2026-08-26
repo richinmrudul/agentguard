@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -6,6 +8,7 @@ import subprocess
 import sys
 import tarfile
 import zipfile
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -19,6 +22,7 @@ from scripts.release_readiness import (
     build_release_candidate_summary,
 )
 from scripts.validate_release_artifacts import (
+    validate_artifacts,
     validate_ordinary_package_context,
     validate_strict_release_context,
     validate_strict_release_tag,
@@ -34,6 +38,7 @@ CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 LICENSE = ROOT / "LICENSE"
 CHANGELOG = ROOT / "CHANGELOG.md"
 README = ROOT / "README.md"
+SHOWCASE_DOC = ROOT / "docs/showcase.md"
 RELEASE_DOC = ROOT / "docs/release.md"
 RELEASE_CHECKLIST = ROOT / "docs/release-checklist.md"
 PORTFOLIO = ROOT / "docs/portfolio.md"
@@ -56,6 +61,83 @@ def _load_pyproject() -> dict:
     import tomli
 
     return tomli.loads(PYPROJECT.read_text(encoding="utf-8"))
+
+
+def _metadata(description: str, version: str = "0.3.0") -> str:
+    return (
+        "Metadata-Version: 2.4\n"
+        "Name: agentguard-evals\n"
+        f"Version: {version}\n"
+        "Requires-Python: >=3.9\n"
+        "License-File: LICENSE\n"
+        "\n"
+        f"{description}\n"
+    )
+
+
+def _add_tar_text(archive: tarfile.TarFile, name: str, text: str) -> None:
+    data = text.encode("utf-8")
+    info = tarfile.TarInfo(name)
+    info.size = len(data)
+    archive.addfile(info, BytesIO(data))
+
+
+def _write_release_artifacts(
+    tmp_path: Path,
+    wheel_description: str,
+    sdist_description: str | None = None,
+) -> tuple[Path, Path]:
+    if sdist_description is None:
+        sdist_description = wheel_description
+    wheel = tmp_path / "agentguard_evals-0.3.0-py3-none-any.whl"
+    sdist = tmp_path / "agentguard_evals-0.3.0.tar.gz"
+    required_package_files = (
+        "agentguard/__init__.py",
+        "agentguard/cli/main.py",
+        "agentguard/benchmarks/registry.py",
+        "agentguard/core/orchestrator.py",
+    )
+
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for member in required_package_files:
+            archive.writestr(member, "")
+        archive.writestr(
+            "agentguard_evals-0.3.0.dist-info/METADATA",
+            _metadata(wheel_description),
+        )
+        archive.writestr(
+            "agentguard_evals-0.3.0.dist-info/licenses/LICENSE",
+            "MIT License\n",
+        )
+
+    with tarfile.open(sdist, "w:gz") as archive:
+        for member in required_package_files:
+            _add_tar_text(archive, f"agentguard_evals-0.3.0/{member}", "")
+        _add_tar_text(
+            archive,
+            "agentguard_evals-0.3.0/PKG-INFO",
+            _metadata(sdist_description),
+        )
+        _add_tar_text(archive, "agentguard_evals-0.3.0/LICENSE", "MIT License\n")
+
+    return wheel, sdist
+
+
+def _valid_long_description() -> str:
+    return """# AgentGuard
+
+Current release: v0.3.0, available from production PyPI.
+
+## Current Proof
+
+See docs/results/release-v0.3.0.md for current validation evidence.
+
+## Historical Notes
+
+v0.2.2 was an earlier production release.
+The v0.2 readiness and release-candidate artifacts remain historical evidence:
+docs/results/release-candidate-v0.2.0.md.
+"""
 
 
 @pytest.fixture(scope="module")
@@ -107,6 +189,109 @@ def test_package_version_sources_agree() -> None:
     assert project["scripts"] == {"agentguard": "agentguard.cli.main:app"}
     assert result.exit_code == 0
     assert result.output.strip() == project_version
+
+
+def test_current_version_metadata_release_state_is_accepted(tmp_path: Path) -> None:
+    wheel, sdist = _write_release_artifacts(tmp_path, _valid_long_description())
+
+    validate_artifacts(wheel, sdist)
+
+
+def test_packaged_metadata_rejects_older_version_as_current(
+    tmp_path: Path,
+) -> None:
+    wheel, sdist = _write_release_artifacts(
+        tmp_path,
+        "# AgentGuard\n\nCurrent release: v0.2.2, available from production PyPI.\n",
+    )
+
+    with pytest.raises(AssertionError, match="older release 0.2.2 current"):
+        validate_artifacts(wheel, sdist)
+
+
+def test_packaged_metadata_rejects_current_version_as_unpublished(
+    tmp_path: Path,
+) -> None:
+    wheel, sdist = _write_release_artifacts(
+        tmp_path,
+        "# AgentGuard\n\nAgentGuard v0.3.0 has not been published to PyPI.\n",
+    )
+
+    with pytest.raises(AssertionError, match="0.3.0 unpublished"):
+        validate_artifacts(wheel, sdist)
+
+
+def test_packaged_metadata_rejects_shipped_feature_as_release_candidate(
+    tmp_path: Path,
+) -> None:
+    wheel, sdist = _write_release_artifacts(
+        tmp_path,
+        "# AgentGuard\n\nProject initialization remains a release candidate.\n",
+    )
+
+    with pytest.raises(AssertionError, match="shipped feature"):
+        validate_artifacts(wheel, sdist)
+
+
+def test_packaged_metadata_rejects_stale_current_release_evidence(
+    tmp_path: Path,
+) -> None:
+    wheel, sdist = _write_release_artifacts(
+        tmp_path,
+        """# AgentGuard
+
+Current release: v0.3.0.
+
+## Current Proof
+
+See docs/results/release-candidate-v0.2.0.md for current release evidence.
+""",
+    )
+
+    with pytest.raises(AssertionError, match="stale version 0.2.0"):
+        validate_artifacts(wheel, sdist)
+
+
+def test_packaged_metadata_checks_wheel_and_sdist_descriptions(
+    tmp_path: Path,
+) -> None:
+    wheel, sdist = _write_release_artifacts(
+        tmp_path,
+        _valid_long_description(),
+        "# AgentGuard\n\nAgentGuard v0.3.0 is a source candidate.\n",
+    )
+
+    with pytest.raises(AssertionError, match="sdist long description"):
+        validate_artifacts(wheel, sdist)
+
+
+def test_packaged_metadata_ignores_changelog_history_and_historical_sections(
+    tmp_path: Path,
+) -> None:
+    wheel, sdist = _write_release_artifacts(
+        tmp_path,
+        """# AgentGuard
+
+Current release: v0.3.0.
+
+## Changelog
+
+### v0.2.0
+
+Status: release candidate.
+Production PyPI continues to serve v0.2.2.
+
+## Historical Release Evidence
+
+docs/results/release-candidate-v0.2.0.md remains useful historical evidence.
+""",
+    )
+
+    validate_artifacts(wheel, sdist)
+
+
+def test_ordinary_development_documentation_remains_usable() -> None:
+    validate_ordinary_package_context(ROOT)
 
 
 def _init_release_repository(tmp_path: Path) -> Path:
@@ -362,13 +547,17 @@ def test_v0_2_2_public_release_documentation_is_consistent() -> None:
 
 def test_v0_3_0_public_release_documentation_is_consistent() -> None:
     readme = README.read_text(encoding="utf-8")
+    showcase = SHOWCASE_DOC.read_text(encoding="utf-8")
     release_doc = RELEASE_DOC.read_text(encoding="utf-8")
     portfolio = PORTFOLIO.read_text(encoding="utf-8")
     evidence = RELEASE_EVIDENCE_V030.read_text(encoding="utf-8")
-    current_docs = "\n".join((readme, release_doc, portfolio, evidence))
+    current_docs = "\n".join((readme, showcase, release_doc, portfolio, evidence))
 
     assert "agentguard-evals==0.3.0" in current_docs
     assert "import agentguard" in current_docs
+    assert "Install the current released v0.3.0 command" in showcase
+    assert "results/release-v0.3.0.md" in showcase
+    assert "Install the released v0.2.2 command" not in showcase
     assert "1,401" in evidence
     assert "15" in evidence
     assert "89.03%" in evidence
@@ -380,6 +569,8 @@ def test_v0_3_0_public_release_documentation_is_consistent() -> None:
         in current_docs
     )
     assert "https://pypi.org/project/agentguard-evals/0.3.0/" in current_docs
+    assert "Published PyPI metadata is immutable" in readme
+    assert "Published PyPI metadata is immutable" in release_doc
     assert (
         "446ba25ef9f3eebb2d056606e6493b45ab8d0f4a6431e4d3ecabbfff859e8e26"
         in evidence
