@@ -22,6 +22,9 @@ SETUP_PYTHON = (
 UPLOAD_ARTIFACT = (
     "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f"
 )
+DOWNLOAD_ARTIFACT = (
+    "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131"
+)
 
 
 def _workflow_path(name: str) -> Path:
@@ -50,6 +53,20 @@ def _steps(workflow: dict[str, Any]) -> list[dict[str, Any]]:
         assert isinstance(job_steps, list)
         steps.extend(step for step in job_steps if isinstance(step, dict))
     return steps
+
+
+def _job(workflow: dict[str, Any], name: str) -> dict[str, Any]:
+    jobs = workflow["jobs"]
+    assert isinstance(jobs, dict)
+    job = jobs[name]
+    assert isinstance(job, dict)
+    return job
+
+
+def _job_steps(workflow: dict[str, Any], name: str) -> list[dict[str, Any]]:
+    steps = _job(workflow, name)["steps"]
+    assert isinstance(steps, list)
+    return [step for step in steps if isinstance(step, dict)]
 
 
 def _run_commands(workflow: dict[str, Any]) -> list[str]:
@@ -96,10 +113,9 @@ def test_github_actions_examples_have_minimal_permissions() -> None:
         assert permissions["contents"] == "read"
         assert "pull-requests" not in permissions
         assert "checks" not in permissions
-        if name == "agentguard-sarif-junit.yml":
-            assert permissions["security-events"] == "write"
-        else:
-            assert set(permissions) == {"contents"}
+        assert "security-events" not in permissions
+        assert "id-token" not in permissions
+        assert set(permissions) == {"contents"}
 
 
 def test_github_actions_examples_upload_expected_artifacts() -> None:
@@ -184,6 +200,102 @@ def test_sarif_junit_example_exports_existing_reports() -> None:
     assert "agentguard reports export-junit .agentguard/ci" in text
     assert "github/codeql-action/upload-sarif@v3" in _uses(workflow)
     assert _artifact_steps(workflow)
+
+
+def test_sarif_junit_example_isolates_code_scanning_permissions() -> None:
+    workflow = _workflow("agentguard-sarif-junit.yml")
+    evaluate = _job(workflow, "evaluate")
+    upload = _job(workflow, "upload-sarif")
+
+    assert evaluate["permissions"] == {"contents": "read"}
+    assert upload["permissions"] == {"security-events": "write"}
+    assert "contents" not in upload["permissions"]
+    assert "id-token" not in upload["permissions"]
+    assert "id-token" not in evaluate["permissions"]
+    assert upload["needs"] == "evaluate"
+
+    checkout = next(
+        step
+        for step in _job_steps(workflow, "evaluate")
+        if step.get("uses") == CHECKOUT
+    )
+    assert checkout["with"]["persist-credentials"] is False
+    assert checkout["with"]["fetch-depth"] == 0
+    assert CHECKOUT not in [
+        step.get("uses") for step in _job_steps(workflow, "upload-sarif")
+    ]
+
+
+def test_sarif_junit_privileged_job_only_downloads_and_uploads_sarif() -> None:
+    workflow = _workflow("agentguard-sarif-junit.yml")
+    upload_steps = _job_steps(workflow, "upload-sarif")
+
+    assert not any("run" in step for step in upload_steps)
+    assert [step.get("uses") for step in upload_steps] == [
+        DOWNLOAD_ARTIFACT,
+        "github/codeql-action/upload-sarif@v3",
+    ]
+    serialized = yaml.safe_dump(upload_steps)
+    forbidden = [
+        "actions/checkout",
+        "pip install",
+        "python -m pip",
+        "pipx",
+        "npm ",
+        "pnpm ",
+        "yarn ",
+        "agentguard ci",
+        "agentguard reports",
+        "scripts/",
+        "-e .",
+    ]
+    assert not any(term in serialized for term in forbidden)
+
+
+def test_sarif_junit_artifact_handoff_and_conditions_are_explicit() -> None:
+    workflow = _workflow("agentguard-sarif-junit.yml")
+    evaluate_steps = _job_steps(workflow, "evaluate")
+    upload_steps = _job_steps(workflow, "upload-sarif")
+
+    upload_artifacts = [
+        step for step in evaluate_steps if step.get("uses") == UPLOAD_ARTIFACT
+    ]
+    sarif_artifact = next(
+        step for step in upload_artifacts if step["with"]["path"] == "agentguard.sarif"
+    )
+    junit_artifact = next(
+        step
+        for step in upload_artifacts
+        if step["with"]["path"] == "agentguard-junit.xml"
+    )
+    download_artifact = next(
+        step for step in upload_steps if step.get("uses") == DOWNLOAD_ARTIFACT
+    )
+    assert sarif_artifact["with"]["name"] == download_artifact["with"]["name"]
+    assert sarif_artifact["with"]["name"].startswith("agentguard-sarif-")
+    assert junit_artifact["with"]["name"].startswith("agentguard-junit-")
+    assert sarif_artifact["with"]["name"] != junit_artifact["with"]["name"]
+    for artifact in (sarif_artifact, junit_artifact):
+        assert artifact["with"]["if-no-files-found"] == "error"
+        assert artifact["with"]["retention-days"] == 7
+        assert artifact["with"]["include-hidden-files"] is False
+
+    condition = _job(workflow, "upload-sarif")["if"]
+    assert "github.event_name == 'push'" in condition
+    assert "github.event_name == 'pull_request'" in condition
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in condition
+    assert "pull_request_target" not in yaml.safe_dump(workflow)
+
+
+def test_sarif_junit_docs_describe_failure_and_trust_boundary() -> None:
+    docs = Path("docs/ci-exports.md").read_text(encoding="utf-8")
+
+    assert "two-job boundary" in docs
+    assert "does not check out the repository" in docs
+    assert "does not make SARIF parsing itself risk-free" in docs
+    assert "no Code Scanning upload occurred" in docs
+    assert "fork pull requests" in docs
+    assert "security-events: write" in docs
 
 
 def test_workflow_commands_reference_existing_local_assets_or_placeholders() -> None:
