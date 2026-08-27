@@ -172,8 +172,17 @@ def test_project_metadata_declares_tested_python_range() -> None:
     assert "Programming Language :: Python :: 3.13" not in classifiers
     assert project["scripts"]["agentguard"] == "agentguard.cli.main:app"
     assert pyproject["build-system"] == {
-        "requires": ["setuptools>=77"],
+        "requires": ["setuptools==80.9.0"],
         "build-backend": "setuptools.build_meta",
+    }
+    assert set(project["optional-dependencies"]["dev"]) >= {
+        "build==1.3.0",
+        "importlib-metadata==8.7.1; python_full_version < '3.10.2'",
+        "packaging==25.0",
+        "pyproject-hooks==1.2.0",
+        "setuptools==80.9.0",
+        "tomli==2.4.1; python_version < '3.11'",
+        "zipp==3.23.1; python_full_version < '3.10.2'",
     }
     assert project["optional-dependencies"]["dev"].count("ruff==0.15.14") == 1
 
@@ -737,6 +746,8 @@ def test_build_release_script_is_executable_and_never_publishes() -> None:
     assert "--no-isolation" in script
     assert "--wheel" in script
     assert "--sdist" in script
+    assert "validate_release_toolchain.py" in script
+    assert "release-build-toolchain.json" in script
     assert 'rm -rf "$ROOT_DIR/build"' in script
     assert "validate_release_artifacts.py" in script
     assert "--ordinary-ci" in script
@@ -765,6 +776,11 @@ def test_ci_workflow_separates_compatibility_docker_and_package_jobs() -> None:
         "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f"
         in str(jobs["package"])
     )
+    assert "requirements/release-build-toolchain.txt" in str(jobs["package"])
+    assert "--require-hashes" in str(jobs["package"])
+    assert "--only-binary=:all:" in str(jobs["package"])
+    assert "dist/release-build-toolchain.json" in str(jobs["package"])
+    assert 'python -m pip install -e ".[dev]"' not in str(jobs["package"])
     assert "scripts/build_release.sh --ordinary-ci" in str(jobs["package"])
     assert "--strict-release-tag" not in str(jobs["package"])
     package_checkout = jobs["package"]["steps"][0]

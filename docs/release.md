@@ -122,6 +122,32 @@ The workflow keeps default permissions at `contents: read`. Only its protected
 `publish` job receives `id-token: write`. The OIDC identity is bound to the
 repository, workflow filename, and environment configured on PyPI.
 
+## Release Build Toolchain Lock
+
+The authoritative release build installs Python build tooling only from the
+reviewed lock at `requirements/release-build-toolchain.txt`. That lock pins the
+build frontend, backend, and relevant transitive build dependencies to exact
+versions and includes SHA-256 hashes. The publishing workflow and local package
+smoke use `--require-hashes` and `--only-binary=:all:` so the build cannot
+silently resolve newer tools, accept an unhashed package, or fall back to an
+unbounded install immediately before producing distributions.
+
+`scripts/validate_release_toolchain.py` validates the reviewed lock before
+installation and verifies the active installed toolchain before building. The
+release build emits `dist/release-build-toolchain.json`, an inspectable
+artifact containing the lock digest, Python identity, pip identity, every
+locked requirement, and the active locked package versions in the build
+environment. This evidence covers the authoritative Linux release environment;
+it is not a claim of byte-for-byte cross-platform reproducibility.
+
+For a controlled toolchain-lock update, make a reviewed PR that changes only
+intentional tool versions and their hashes, regenerates
+`requirements/release-build-toolchain.txt` from a clean environment, runs
+`scripts/validate_release_toolchain.py`, and records why each toolchain version
+changed. Do not broaden exact pins into ranges, remove hashes, add alternate
+indexes, or combine an unreviewed lock update with tag, release, or publishing
+operations.
+
 ## Local Validation
 
 Run from the repository root with the development environment installed:

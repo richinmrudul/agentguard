@@ -80,6 +80,11 @@ def test_publish_workflow_builds_once_and_reuses_validated_artifact() -> None:
     assert "validated-distributions" in upload["with"]["name"]
     assert download["with"]["path"] == "validated-dist"
     assert publish["steps"][-1]["with"]["packages-dir"] == "validated-dist/"
+    assert "dist/release-build-toolchain.json" in upload["with"]["path"]
+    verify_download = publish["steps"][-2]["run"]
+    assert "test -f validated-dist/release-build-toolchain.json" in verify_download
+    assert "rm SHA256SUMS release-build-toolchain.json" in verify_download
+    assert 'test "$(find validated-dist -maxdepth 1 -type f | wc -l | tr -d \' \')" = "2"' in verify_download
 
 
 def test_publish_workflow_enforces_release_version_and_protected_oidc() -> None:
@@ -122,6 +127,7 @@ def test_publish_workflow_enforces_release_version_and_protected_oidc() -> None:
         'test "$RELEASE_TAG" = "v0.3.0"',
         "agentguard_evals-0.3.0-py3-none-any.whl",
         "agentguard_evals-0.3.0.tar.gz",
+        "release-build-toolchain.json",
     ):
         assert required_check in source
 
@@ -179,6 +185,9 @@ def test_release_docs_record_active_publisher_and_recovery() -> None:
         "selected-tag deployment rule",
         "allows only `v0.3.0`",
         "byte-identical",
+        "release-build-toolchain.txt",
+        "release-build-toolchain.json",
+        "controlled toolchain-lock update",
     ):
         assert required in combined
 

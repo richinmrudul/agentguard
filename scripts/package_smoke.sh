@@ -7,6 +7,8 @@ VENV_DIR="$TMP_ROOT/venv"
 DIST_DIR="$TMP_ROOT/dist"
 WORK_DIR="$TMP_ROOT/work"
 PREBUILT_DIST_DIR=${1:-}
+BASE_PYTHON=${PYTHON:-python3}
+TOOLCHAIN_LOCK="$ROOT_DIR/requirements/release-build-toolchain.txt"
 
 cleanup() {
   rm -rf "$TMP_ROOT"
@@ -19,7 +21,7 @@ section() {
 }
 
 section "Create isolated virtual environment"
-python3 -m venv "$VENV_DIR"
+"$BASE_PYTHON" -m venv "$VENV_DIR"
 PYTHON="$VENV_DIR/bin/python"
 AGENTGUARD="$VENV_DIR/bin/agentguard"
 mkdir -p "$DIST_DIR" "$WORK_DIR"
@@ -31,8 +33,15 @@ if [[ -n "$PREBUILT_DIST_DIR" ]]; then
     \( -name 'agentguard_evals-*.whl' -o -name 'agentguard_evals-*.tar.gz' \) \
     -exec cp {} "$DIST_DIR/" \;
 else
-  section "Install build frontend"
-  "$PYTHON" -m pip install build "setuptools>=77"
+  section "Install locked build toolchain"
+  "$PYTHON" "$ROOT_DIR/scripts/validate_release_toolchain.py"
+  "$PYTHON" -m pip install --disable-pip-version-check \
+    --require-hashes \
+    --only-binary=:all: \
+    -r "$TOOLCHAIN_LOCK"
+  "$PYTHON" "$ROOT_DIR/scripts/validate_release_toolchain.py" \
+    --check-installed \
+    --emit-evidence "$DIST_DIR/release-build-toolchain.json"
 
   section "Build wheel and source distribution"
   "$PYTHON" -m build \

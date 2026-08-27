@@ -13,6 +13,10 @@ not publish anything.
 - [ ] Ruff and the coverage quality gate pass.
 - [ ] Full Python 3.11 integration passes with Docker available.
 - [ ] Wheel and source distribution build exactly once in the publish workflow.
+- [ ] The publish workflow installs the reviewed release build toolchain lock
+  with `--require-hashes` and `--only-binary=:all:`.
+- [ ] `release-build-toolchain.json` records the lock digest, Python identity,
+  pip identity, and active locked package versions.
 - [ ] Artifact metadata and members validate before publication.
 - [ ] The exact built wheel installs in a clean environment outside the source
   checkout.
@@ -35,6 +39,7 @@ not publish anything.
 - [ ] `LICENSE` is present in wheel and source-distribution metadata.
 - [ ] Tag `v0.3.0` points to the reviewed release commit.
 - [ ] Workflow artifact checksums match the downloaded files.
+- [ ] Toolchain evidence matches `requirements/release-build-toolchain.txt`.
 
 ## Established Publishing Configuration
 
@@ -102,6 +107,8 @@ not publish anything.
 - [ ] Confirm no generated distribution, virtual environment, cache, coverage
   output, build directory, or `.agentguard` state is committed.
 - [ ] Confirm all third-party Actions use immutable full commit SHAs.
+- [ ] Confirm any controlled toolchain-lock update was reviewed separately from
+  publication and changed only intentional exact versions and hashes.
 - [ ] Confirm publication is impossible on pull requests, forks, ordinary
   pushes, workflow dispatch, other tags, arbitrary commits, and prereleases.
 - [ ] Retain the reviewed commit, workflow logs, artifact SHA-256 hashes, and

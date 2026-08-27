@@ -10,6 +10,7 @@ else
   PYTHON_BIN=python3
 fi
 OUTPUT_DIR="$ROOT_DIR/dist"
+TOOLCHAIN_LOCK="$ROOT_DIR/requirements/release-build-toolchain.txt"
 VALIDATION_MODE=ordinary-ci
 
 for argument in "$@"; do
@@ -44,6 +45,9 @@ section() {
 }
 
 section "Prepare release output"
+"$PYTHON_BIN" "$ROOT_DIR/scripts/validate_release_toolchain.py" \
+  --check-installed \
+  --emit-evidence "$OUTPUT_DIR/release-build-toolchain.json"
 if [[ "$VALIDATION_MODE" == strict-release ]]; then
   "$PYTHON_BIN" "$ROOT_DIR/scripts/validate_release_artifacts.py" \
     --strict-release-tag
@@ -78,4 +82,11 @@ section "Validate release artifacts"
 section "Release artifacts"
 printf 'Wheel: %s\n' "$WHEEL_PATH"
 printf 'Source distribution: %s\n' "$SDIST_PATH"
+printf 'Release build toolchain lock: %s\n' "${TOOLCHAIN_LOCK#"$ROOT_DIR"/}"
+if [[ "$OUTPUT_DIR" == "$ROOT_DIR"/* ]]; then
+  EVIDENCE_DISPLAY="${OUTPUT_DIR#"$ROOT_DIR"/}/release-build-toolchain.json"
+else
+  EVIDENCE_DISPLAY="$(basename "$OUTPUT_DIR")/release-build-toolchain.json"
+fi
+printf 'Release build toolchain evidence: %s\n' "$EVIDENCE_DISPLAY"
 printf 'Artifacts were built and validated locally; nothing was published.\n'
