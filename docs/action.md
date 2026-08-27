@@ -7,6 +7,15 @@ base/head git diff.
 This action is intentionally small: it does not install AgentGuard. Install
 AgentGuard in the workflow before invoking the action.
 
+Copyable workflows pin remote Actions to reviewed 40-character commit SHAs.
+The AgentGuard action example below uses source revision
+`5e93b179f8add85bd4e8d5fa330f97ae1212c109`, the reviewed repository commit
+used for the v0.3.0 documentation line; that commit contains `action/action.yml`.
+When updating an Action pin, verify the upstream release or source revision,
+review the diff, update the adjacent comment, and merge through the normal PR
+review path. Do not enable automated Action updates that merge without human
+review.
+
 ## Inputs
 
 | Input | Default | Description |
@@ -66,7 +75,7 @@ jobs:
       - name: Install AgentGuard
         run: python -m pip install -e ".[dev]"
 
-      - uses: richinmrudul/agentguard/action@main
+      - uses: richinmrudul/agentguard/action@5e93b179f8add85bd4e8d5fa330f97ae1212c109 # reviewed source revision for v0.3.0 docs
         with:
           config: agentguard.yaml
           base: origin/main

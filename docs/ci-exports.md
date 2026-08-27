@@ -149,7 +149,7 @@ jobs:
         with:
           name: agentguard-sarif-${{ github.run_id }}-${{ github.run_attempt }}
           path: agentguard-exports
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@6f5948dfacef28e207b48d0905cf90c03365536d # v3
         with:
           sarif_file: agentguard-exports/agentguard.sarif
 ```
