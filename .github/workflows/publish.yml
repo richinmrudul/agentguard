@@ -60,8 +60,11 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          python scripts/validate_release_toolchain.py
           python -m pip install --disable-pip-version-check \
-            "build>=1.2.0,<2.0.0" "setuptools>=77"
+            --require-hashes \
+            --only-binary=:all: \
+            -r requirements/release-build-toolchain.txt
 
       - name: Build wheel and source distribution once
         run: bash scripts/build_release.sh --strict-release-tag
@@ -161,6 +164,7 @@ jobs:
             dist/agentguard_evals-*.whl
             dist/agentguard_evals-*.tar.gz
             dist/SHA256SUMS
+            dist/release-build-toolchain.json
           if-no-files-found: error
           retention-days: 30
 
@@ -200,11 +204,12 @@ jobs:
           test -f validated-dist/agentguard_evals-0.3.0-py3-none-any.whl
           test -f validated-dist/agentguard_evals-0.3.0.tar.gz
           test -f validated-dist/SHA256SUMS
-          test "$(find validated-dist -maxdepth 1 -type f | wc -l | tr -d ' ')" = "3"
+          test -f validated-dist/release-build-toolchain.json
+          test "$(find validated-dist -maxdepth 1 -type f | wc -l | tr -d ' ')" = "4"
           (
             cd validated-dist
             sha256sum --check SHA256SUMS
-            rm SHA256SUMS
+            rm SHA256SUMS release-build-toolchain.json
           )
           test "$(find validated-dist -maxdepth 1 -type f | wc -l | tr -d ' ')" = "2"
 
