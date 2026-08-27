@@ -35,7 +35,10 @@ agentguard ci --config "$config"
 ## Example Workflow
 
 Use `fetch-depth: 0` for base/head diff mode. AgentGuard needs the base ref and
-enough git history to compute the diff.
+enough git history to compute the diff. The workflow declares read-only
+`GITHUB_TOKEN` permissions because checkout and AgentGuard only need repository
+contents; token permissions do not sandbox commands run from your repository, so
+review repository-controlled workflow steps with the same care as any CI code.
 
 ```yaml
 name: AgentGuard
@@ -44,6 +47,9 @@ on:
   pull_request:
   push:
 
+permissions:
+  contents: read
+
 jobs:
   agentguard:
     runs-on: ubuntu-latest
@@ -51,6 +57,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:

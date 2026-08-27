@@ -74,6 +74,36 @@ def _workflow(path: Path) -> dict[str, Any]:
     return workflow
 
 
+def _action_documentation_workflow_source() -> str:
+    source = (ROOT / "docs/action.md").read_text(encoding="utf-8")
+    match = re.search(
+        r"```yaml\n(?P<workflow>name: AgentGuard\n.*?)\n```",
+        source,
+        re.S,
+    )
+    assert match is not None
+    return match.group("workflow")
+
+
+def _action_documentation_workflow() -> dict[str, Any]:
+    workflow = yaml.safe_load(_action_documentation_workflow_source())
+    assert isinstance(workflow, dict)
+    return workflow
+
+
+def _assert_least_privilege_action_documentation_workflow(
+    workflow: dict[str, Any],
+) -> None:
+    permissions = workflow.get("permissions")
+    assert isinstance(permissions, dict), "docs/action.md must declare permissions"
+    assert permissions == {"contents": "read"}
+
+    forbidden_write_scopes = {"contents", "id-token", "security-events"}
+    for scope, access in permissions.items():
+        assert access == "read", f"{scope} grants {access}"
+        assert scope not in forbidden_write_scopes or access != "write"
+
+
 def _uses(workflow: dict[str, Any]) -> list[str]:
     return [
         step["uses"]
@@ -126,6 +156,71 @@ def test_active_workflow_triggers_and_validation_modes_are_unchanged() -> None:
     assert "--strict-release-tag" not in str(ci["jobs"]["package"])
     assert "--strict-release-tag" in str(publish["jobs"]["build"])
     assert "--ordinary-ci" not in str(publish)
+
+
+def test_action_documentation_workflow_parses_with_read_only_permissions() -> None:
+    workflow = _action_documentation_workflow()
+
+    triggers = workflow.get("on", workflow.get(True))
+    assert triggers == {"pull_request": None, "push": None}
+    _assert_least_privilege_action_documentation_workflow(workflow)
+
+
+def test_action_documentation_workflow_rejects_omitted_broad_or_write_permissions() -> None:
+    workflow = _action_documentation_workflow()
+
+    omitted = dict(workflow)
+    omitted.pop("permissions")
+    try:
+        _assert_least_privilege_action_documentation_workflow(omitted)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("omitted permissions should be rejected")
+
+    for permissions in (
+        "read-all",
+        "write-all",
+        {"contents": "read", "actions": "read"},
+        {"contents": "write"},
+        {"contents": "read", "id-token": "write"},
+        {"contents": "read", "security-events": "write"},
+        {"contents": "read", "actions": "write"},
+    ):
+        mutated = dict(workflow)
+        mutated["permissions"] = permissions
+        try:
+            _assert_least_privilege_action_documentation_workflow(mutated)
+        except AssertionError:
+            continue
+        raise AssertionError(
+            f"broad or write-capable permissions accepted: {permissions}"
+        )
+
+
+def test_action_documentation_workflow_preserves_checkout_and_command_sequence() -> None:
+    workflow = _action_documentation_workflow()
+    steps = workflow["jobs"]["agentguard"]["steps"]
+
+    checkout, setup_python, install, agentguard = steps
+    assert checkout["uses"] == (
+        "actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd"
+    )
+    assert checkout["with"]["fetch-depth"] == 0
+    assert checkout["with"]["persist-credentials"] is False
+    assert setup_python["uses"] == (
+        "actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405"
+    )
+    assert setup_python["with"]["python-version"] == "3.11"
+    assert install["name"] == "Install AgentGuard"
+    assert install["run"] == 'python -m pip install -e ".[dev]"'
+    assert agentguard["uses"] == "richinmrudul/agentguard/action@main"
+    assert agentguard["with"] == {
+        "config": "agentguard.yaml",
+        "base": "origin/main",
+        "head": "HEAD",
+        "github-summary": "true",
+    }
 
 
 def test_publication_permissions_and_artifact_handoff_are_unchanged() -> None:
