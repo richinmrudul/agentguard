@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -330,6 +329,7 @@ def test_action_documentation_workflow_preserves_checkout_and_command_sequence()
 
 
 def test_action_documentation_uses_reviewed_agentguard_source_revision() -> None:
+    docs = (ROOT / "docs/action.md").read_text(encoding="utf-8")
     action_ref = _action_documentation_workflow()["jobs"]["agentguard"]["steps"][3][
         "uses"
     ]
@@ -339,20 +339,13 @@ def test_action_documentation_uses_reviewed_agentguard_source_revision() -> None
     assert ref == "5e93b179f8add85bd4e8d5fa330f97ae1212c109"
     assert FULL_SHA.fullmatch(ref)
     assert (
-        ROOT / "docs/action.md"
-    ).read_text(encoding="utf-8").count("automated Action updates") == 1
-    assert _git_commit_contains_path(ref, "action/action.yml")
-
-
-def _git_commit_contains_path(commit: str, path: str) -> bool:
-    result = subprocess.run(
-        ["git", "cat-file", "-e", f"{commit}:{path}"],
-        cwd=ROOT,
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    return result.returncode == 0
+        f"richinmrudul/agentguard/action@{ref} "
+        "# reviewed source revision for v0.3.0 docs"
+    ) in docs
+    assert "reviewed repository commit" in docs
+    assert "that commit contains `action/action.yml`" in docs
+    assert docs.count("automated Action updates") == 1
+    assert (ROOT / "action/action.yml").is_file()
 
 
 def test_publication_permissions_and_artifact_handoff_are_unchanged() -> None:
