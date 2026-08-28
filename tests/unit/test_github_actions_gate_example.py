@@ -25,6 +25,10 @@ UPLOAD_ARTIFACT = (
 DOWNLOAD_ARTIFACT = (
     "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131"
 )
+UPLOAD_SARIF = (
+    "github/codeql-action/upload-sarif@"
+    "6f5948dfacef28e207b48d0905cf90c03365536d"
+)
 
 
 def _workflow_path(name: str) -> Path:
@@ -198,7 +202,7 @@ def test_sarif_junit_example_exports_existing_reports() -> None:
 
     assert "agentguard reports export-sarif .agentguard/ci" in text
     assert "agentguard reports export-junit .agentguard/ci" in text
-    assert "github/codeql-action/upload-sarif@v3" in _uses(workflow)
+    assert UPLOAD_SARIF in _uses(workflow)
     assert _artifact_steps(workflow)
 
 
@@ -233,7 +237,7 @@ def test_sarif_junit_privileged_job_only_downloads_and_uploads_sarif() -> None:
     assert not any("run" in step for step in upload_steps)
     assert [step.get("uses") for step in upload_steps] == [
         DOWNLOAD_ARTIFACT,
-        "github/codeql-action/upload-sarif@v3",
+        UPLOAD_SARIF,
     ]
     serialized = yaml.safe_dump(upload_steps)
     forbidden = [

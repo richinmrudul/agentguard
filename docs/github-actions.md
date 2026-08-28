@@ -65,6 +65,16 @@ In GitHub Actions, use `actions/checkout` with `fetch-depth: 0` for ref mode.
 AgentGuard needs access to the base ref and enough git history to compute the
 base/head diff.
 
+## Updating Action Pins
+
+Maintained copyable workflows pin third-party and remote Actions to immutable
+40-character commit SHAs, with an adjacent comment naming the trusted release or
+source revision. To update a pin, resolve the intended upstream release to its
+commit, verify the commit belongs to that upstream project, review the upstream
+diff and release notes, update the SHA and comment together, and merge the
+change through normal human review. Do not configure automated Action updates
+that merge without review.
+
 ## Exit Codes
 
 - `PASS` exits `0`.
