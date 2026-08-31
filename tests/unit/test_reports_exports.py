@@ -140,6 +140,349 @@ def test_sarif_path_normalization_no_absolute_paths_and_no_location(
     assert "No file location" in no_path_result["message"]["text"]
 
 
+def test_sarif_accepts_only_contained_repo_paths_from_relative_and_absolute_sources(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    report = _write_run_report(
+        repo,
+        failed=True,
+        changed_path=str(repo / "src/app/login.py"),
+        evidence=["modified tests/unit/test_auth.py"],
+    )
+    output = repo / "contained.sarif"
+
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(report), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0
+    text = output.read_text(encoding="utf-8")
+    assert str(repo) not in text
+    assert _location_uris(output) == [
+        "tests/unit/test_auth.py",
+        "src/app/login.py",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("changed_path", "canary"),
+    [
+        ("/tmp/AG202_POSIX_ABSOLUTE_CANARY/src/escape.py", "AG202_POSIX_ABSOLUTE_CANARY"),
+        ("C:/AG202_WINDOWS_DRIVE_CANARY/src/escape.py", "AG202_WINDOWS_DRIVE_CANARY"),
+        ("//AG202_UNC_CANARY/share/src/escape.py", "AG202_UNC_CANARY"),
+        ("file:///tmp/AG202_FILE_URI_CANARY/src/escape.py", "AG202_FILE_URI_CANARY"),
+        ("https://AG202_SCHEME_CANARY.example/src/escape.py", "AG202_SCHEME_CANARY"),
+        ("../AG202_TRAVERSAL_CANARY/src/escape.py", "AG202_TRAVERSAL_CANARY"),
+    ],
+)
+def test_sarif_rejects_escaping_or_schemed_location_candidates(
+    tmp_path: Path,
+    monkeypatch,
+    changed_path: str,
+    canary: str,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    report = _write_run_report(
+        repo,
+        failed=True,
+        changed_path=changed_path,
+        evidence=["policy failed without path evidence"],
+    )
+    output = repo / f"{canary}.sarif"
+
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(report), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0
+    text = output.read_text(encoding="utf-8")
+    assert canary not in text
+    sarif_result = _sarif_results(output)[0]
+    assert "locations" not in sarif_result
+    assert "No file location" in sarif_result["message"]["text"]
+
+
+def test_sarif_rejects_prefix_collision_sibling_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = tmp_path / "repo"
+    sibling = tmp_path / "repo-sibling"
+    repo.mkdir()
+    sibling.mkdir()
+    monkeypatch.chdir(repo)
+    report = _write_run_report(
+        repo,
+        failed=True,
+        changed_path=str(sibling / "AG202_PREFIX_COLLISION_CANARY.py"),
+        evidence=["policy failed without path evidence"],
+    )
+    output = repo / "prefix.sarif"
+
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(report), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0
+    text = output.read_text(encoding="utf-8")
+    assert "AG202_PREFIX_COLLISION_CANARY" not in text
+    assert str(sibling) not in text
+    assert "locations" not in _sarif_results(output)[0]
+
+
+def test_sarif_rejects_symlink_escape_location_candidates(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    repo.mkdir()
+    link = repo / "linked"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"Symlinks are unavailable: {error}")
+    monkeypatch.chdir(repo)
+    report = _write_run_report(
+        repo,
+        failed=True,
+        changed_path="linked/AG202_SYMLINK_ESCAPE_CANARY.py",
+        evidence=["policy failed without path evidence"],
+    )
+    output = repo / "symlink-location.sarif"
+
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(report), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0
+    text = output.read_text(encoding="utf-8")
+    assert "AG202_SYMLINK_ESCAPE_CANARY" not in text
+    assert str(outside) not in text
+    assert "locations" not in _sarif_results(output)[0]
+
+
+def test_sarif_encodes_uri_sensitive_repo_relative_locations(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    report = _write_run_report(
+        repo,
+        failed=True,
+        changed_path="src/space name/\u03a9#query?.py",
+        evidence=["policy failed without path evidence"],
+    )
+    output = repo / "encoded.sarif"
+
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(report), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0
+    uri = _location_uris(output)[0]
+    assert uri == "src/space%20name/%CE%A9%23query%3F.py"
+    assert "#" not in uri
+    assert "?" not in uri
+    location = _sarif_results(output)[0]["locations"][0]
+    assert location["physicalLocation"]["region"] == {"startLine": 1}
+
+
+def test_sarif_evidence_extraction_rejects_partial_fragments_and_schemes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    report = _write_run_report(
+        repo,
+        failed=True,
+        changed_path="src/ok#q?.py",
+        evidence=[
+            (
+                "see src\\win path.py and "
+                "https://AG202-INDEPENDENT.example/p.py plus "
+                "file:///tmp/AG202-FILE-EVIDENCE.py plus "
+                "/tmp/AG202-ABS-EVIDENCE.py plus "
+                "C:/AG202-WIN-EVIDENCE/p.py plus "
+                "//AG202-UNC-EVIDENCE/share/p.py plus "
+                "../AG202-TRAVERSAL-EVIDENCE/p.py"
+            )
+        ],
+    )
+    _update_report(
+        report,
+        {
+            "diff_summary": {
+                "modified_files": [
+                    "src/ok#q?.py",
+                    str(repo / "src/absolute-ok.py"),
+                    "/tmp/AG202-ABS-CANARY.py",
+                ],
+                "added_files": [],
+                "deleted_files": [],
+            },
+        },
+    )
+    output = repo / "probe.sarif"
+
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(report), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0
+    text = output.read_text(encoding="utf-8")
+    for canary in [
+        "AG202-INDEPENDENT",
+        "AG202-FILE-EVIDENCE",
+        "AG202-ABS-EVIDENCE",
+        "AG202-WIN-EVIDENCE",
+        "AG202-UNC-EVIDENCE",
+        "AG202-TRAVERSAL-EVIDENCE",
+        "AG202-ABS-CANARY",
+    ]:
+        assert canary not in text
+    assert "path.py" not in _location_uris(output)
+    assert _location_uris(output) == [
+        "src/ok%23q%3F.py",
+        "src/absolute-ok.py",
+    ]
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "saw /tmp/AG202-POSIX-EVIDENCE/src/escape.py",
+        "saw C:/AG202-DRIVE-EVIDENCE/src/escape.py",
+        "saw \\\\AG202-UNC-BACKSLASH\\share\\escape.py",
+        "saw //AG202-UNC-SLASH/share/escape.py",
+        "saw file:///tmp/AG202-FILE-URI-EVIDENCE/escape.py",
+        "saw https://AG202-SCHEME-EVIDENCE.example/escape.py",
+        "saw ../AG202-DOTDOT-EVIDENCE/escape.py",
+        "saw src\\AG202-SPLIT-EVIDENCE path.py",
+    ],
+)
+def test_sarif_rejected_evidence_paths_do_not_emit_locations_or_canaries(
+    tmp_path: Path,
+    monkeypatch,
+    evidence: str,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    report = _write_run_report(
+        repo,
+        failed=True,
+        changed_path=None,
+        evidence=[evidence],
+    )
+    output = repo / "rejected-evidence.sarif"
+
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(report), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0
+    text = output.read_text(encoding="utf-8")
+    assert "AG202-" not in text
+    sarif_result = _sarif_results(output)[0]
+    assert "locations" not in sarif_result
+    assert "No file location" in sarif_result["message"]["text"]
+
+
+def test_sarif_rejects_absolute_locations_when_repository_root_is_unknown(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    finding = report_exports.ExportFinding(
+        rule_id="scope-adherence",
+        rule_name="Scope adherence",
+        passed=False,
+        severity="error",
+        message="failed",
+        evidence=[],
+        paths=report_exports._finding_paths(  # noqa: SLF001
+            [],
+            [str(tmp_path / "AG202_UNKNOWN_ROOT_CANARY.py")],
+            repo_root=None,
+        ),
+    )
+    output = tmp_path / "unknown-root.sarif"
+
+    report_exports._write_output_json(  # noqa: SLF001
+        output,
+        report_exports.render_sarif(
+            [finding],
+            tool_name="AgentGuard",
+            base_uri=None,
+            input_path=tmp_path / "report.json",
+        ),
+        force=False,
+    )
+
+    text = output.read_text(encoding="utf-8")
+    assert "AG202_UNKNOWN_ROOT_CANARY" not in text
+    assert str(tmp_path) not in text
+    assert "locations" not in _sarif_results(output)[0]
+
+
+def test_sarif_repo_relative_locations_are_stable_across_temp_roots(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    first_root = tmp_path / "first" / "repo"
+    second_root = tmp_path / "second" / "repo"
+    first_report = _write_run_report(
+        first_root,
+        failed=True,
+        changed_path=str(first_root / "src/stable.py"),
+        evidence=["policy failed without path evidence"],
+    )
+    second_report = _write_run_report(
+        second_root,
+        failed=True,
+        changed_path=str(second_root / "src/stable.py"),
+        evidence=["policy failed without path evidence"],
+    )
+    first_output = tmp_path / "first.sarif"
+    second_output = tmp_path / "second.sarif"
+
+    monkeypatch.chdir(first_root)
+    first = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(first_report), "--output", str(first_output)],
+    )
+    monkeypatch.chdir(second_root)
+    second = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(second_report), "--output", str(second_output)],
+    )
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert _location_uris(first_output) == ["src/stable.py"]
+    assert _location_uris(second_output) == ["src/stable.py"]
+    assert _stable_hashes(first_output) == _stable_hashes(second_output)
+
+
 def test_sarif_evidence_sanitization_and_secret_bounding(
     tmp_path: Path,
     monkeypatch,
@@ -1173,6 +1516,16 @@ def _stable_hashes(path: Path) -> list[str]:
 def _sarif_results(path: Path) -> list[dict[str, object]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     return data["runs"][0]["results"]
+
+
+def _location_uris(path: Path) -> list[str]:
+    uris = []
+    for result in _sarif_results(path):
+        for location in result.get("locations", []):
+            uris.append(
+                location["physicalLocation"]["artifactLocation"]["uri"]
+            )
+    return uris
 
 
 def _result_for_uri_suffix(
