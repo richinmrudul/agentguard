@@ -186,7 +186,7 @@ def render_sarif(
     input_path: Path,
 ) -> dict[str, Any]:
     rules = [_sarif_rule(rule_id, grouped) for rule_id, grouped in _group_rules(findings)]
-    results = [_sarif_result(finding) for finding in findings]
+    results = [_sarif_result(finding) for finding in sorted(findings, key=_finding_sort_key)]
     run: dict[str, Any] = {
         "tool": {
             "driver": {
@@ -421,7 +421,7 @@ def _normalize_run(
                     task_id=task_id,
                     agent=agent,
                     source_type=source_type,
-                    fingerprint_seed="|".join([run_id or "", task_id or "", name]),
+                    fingerprint_seed=name,
                 )
             )
         cases.append(
@@ -650,7 +650,7 @@ def _row_findings(
                 rule_name=check,
                 passed=False,
                 severity=severity,
-                message=f"{check} failed in {source_type} row {index + 1}.",
+                message=f"{check} failed in {source_type} row.",
                 evidence=evidence,
                 paths=[],
                 report_path=_safe_path(
@@ -661,7 +661,7 @@ def _row_findings(
                 task_id=_string_or_none(row.get("task_id")),
                 agent=_string_or_none(row.get("agent")),
                 source_type=source_type,
-                fingerprint_seed=f"{source_type}|{index}|{check}",
+                fingerprint_seed=f"{source_type}|{check}",
             )
         )
     return findings
@@ -760,17 +760,7 @@ def _sarif_result(finding: ExportFinding) -> dict[str, Any]:
         "level": _sarif_level(finding.severity, finding.passed),
         "message": {"text": _result_message(finding)},
         "partialFingerprints": {
-            "agentguardStableHash": _stable_hash(
-                "|".join(
-                    [
-                        finding.rule_id,
-                        finding.task_id or "",
-                        finding.agent or "",
-                        ",".join(finding.paths),
-                        finding.fingerprint_seed,
-                    ]
-                )
-            )
+            "agentguardStableHash": _stable_hash(_fingerprint_material(finding))
         },
         "properties": {
             "agentguard": {
@@ -801,6 +791,37 @@ def _sarif_result(finding: ExportFinding) -> dict[str, Any]:
     if finding.passed:
         result["kind"] = "pass"
     return result
+
+
+def _finding_sort_key(finding: ExportFinding) -> tuple[object, ...]:
+    return (
+        finding.rule_id,
+        finding.task_id or "",
+        finding.agent or "",
+        tuple(sorted(finding.paths)),
+        _fingerprint_material(finding),
+    )
+
+
+def _fingerprint_material(finding: ExportFinding) -> str:
+    material = {
+        "version": 1,
+        "rule_id": finding.rule_id,
+        "task_id": finding.task_id or "",
+        "agent": finding.agent or "",
+        "locations": sorted(finding.paths),
+        "evidence": _semantic_evidence(finding.evidence),
+    }
+    return json.dumps(material, sort_keys=True, separators=(",", ":"))
+
+
+def _semantic_evidence(evidence: list[str]) -> list[str]:
+    stable = []
+    for item in evidence[:MAX_EVIDENCE_ITEMS]:
+        normalized = _sanitize(item)
+        normalized = " ".join(normalized.split())
+        stable.append(_bounded(normalized))
+    return sorted(stable)
 
 
 def _group_rules(findings: list[ExportFinding]) -> list[tuple[str, list[ExportFinding]]]:
