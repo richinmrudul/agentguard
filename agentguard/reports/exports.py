@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional
+from urllib.parse import quote
 from xml.dom import minidom
 from xml.etree import ElementTree
 
@@ -37,8 +38,14 @@ SECRET_PATTERNS = [
     re.compile(r"AGENTGUARD_SECRET_CANARY[_A-Z0-9-]*", re.IGNORECASE),
 ]
 ABSOLUTE_PATH_PATTERN = re.compile(
-    r"(?<![\w.-])(?:/[^\s,;:'\")\]}]+|[A-Za-z]:\\[^\s,;:'\")\]}]+)"
+    r"(?<![\w.-])(?:/[^\s,;:'\")\]}]+|[A-Za-z]:[\\/][^\s,;:'\")\]}]+)"
 )
+URI_PATH_PATTERN = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s,;:'\")\]}]+")
+UNC_PATH_PATTERN = re.compile(r"(?<![\w.-])\\\\[^\s,;:'\")\]}]+")
+TRAVERSAL_PATH_PATTERN = re.compile(r"(?<![\w.-])\.\.[\\/][^\s,;:'\")\]}]+")
+BACKSLASH_PATH_PATTERN = re.compile(r"(?<![\w.-])[\w.-]+\\[^\s,;:'\")\]}]+")
+WINDOWS_DRIVE_PATH_PATTERN = re.compile(r"^[A-Za-z]:[\\/]")
+URI_SCHEME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 @dataclass(frozen=True)
@@ -401,7 +408,8 @@ def _normalize_run(
     raw_checks = data.get("check_results")
     if not isinstance(raw_checks, list):
         raise UnsupportedExportInput("Run report is missing check_results.")
-    changed_paths = _changed_paths(data.get("diff_summary"))
+    repo_root = _repo_root_for_report(path)
+    changed_paths = _changed_paths(data.get("diff_summary"), repo_root)
     report_path = _report_path(data, path)
     run_id = _run_id(data, path)
     task_id = _string_or_none(data.get("task_id"))
@@ -416,7 +424,7 @@ def _normalize_run(
         severity = str(raw_check.get("severity") or "error")
         message = str(raw_check.get("message") or name)
         evidence = _string_list(raw_check.get("evidence"))
-        check_paths = _finding_paths(evidence, changed_paths)
+        check_paths = _finding_paths(evidence, changed_paths, repo_root)
         if not passed or include_passed:
             findings.append(
                 ExportFinding(
@@ -795,7 +803,7 @@ def _sarif_result(finding: ExportFinding) -> dict[str, Any]:
     locations = [
         {
             "physicalLocation": {
-                "artifactLocation": {"uri": path},
+                "artifactLocation": {"uri": _sarif_artifact_uri(path)},
                 "region": {"startLine": 1},
             }
         }
@@ -920,54 +928,94 @@ def _rule_id(name: str) -> str:
     return normalized or "agentguard-check"
 
 
-def _changed_paths(value: Any) -> list[str]:
+def _changed_paths(value: Any, repo_root: Optional[Path]) -> list[str]:
     if not isinstance(value, dict):
         return []
     paths: list[str] = []
     for key in ("modified_files", "added_files", "deleted_files"):
         paths.extend(_string_list(value.get(key)))
-    return [_normalize_repo_path(path) for path in paths if _normalize_repo_path(path)]
+    return [
+        normalized
+        for path in paths
+        if (normalized := _normalize_repo_path(path, repo_root)) is not None
+    ]
 
 
-def _finding_paths(evidence: list[str], changed_paths: list[str]) -> list[str]:
+def _finding_paths(
+    evidence: list[str],
+    changed_paths: list[str],
+    repo_root: Optional[Path],
+) -> list[str]:
     paths = []
     for item in evidence:
         paths.extend(_extract_paths(item))
     paths.extend(changed_paths)
     unique = []
     for path in paths:
-        normalized = _normalize_repo_path(path)
+        normalized = _normalize_repo_path(path, repo_root)
         if normalized and normalized not in unique:
             unique.append(normalized)
     return unique[:5]
 
 
 def _extract_paths(text: str) -> list[str]:
-    candidates = re.findall(r"[\w./\\-]+\.[A-Za-z0-9]{1,8}", text)
+    candidates = []
+    for match in re.finditer(r"(?<![^\s,;:'\")\]}])([^\s,;:'\")\]}]+)", text):
+        candidate = match.group(1).strip("`'\"")
+        if "/" not in candidate and "\\" not in candidate:
+            continue
+        if not re.search(r"\.[A-Za-z0-9]{1,8}$", candidate):
+            continue
+        candidates.append(candidate)
     return candidates
 
 
-def _normalize_repo_path(path: str) -> Optional[str]:
+def _normalize_repo_path(path: str, repo_root: Optional[Path] = None) -> Optional[str]:
     if not path:
         return None
     cleaned = path.replace("\\", "/").strip().strip("`'\"")
-    if not cleaned or cleaned.startswith("file:"):
+    if (
+        not cleaned
+        or WINDOWS_DRIVE_PATH_PATTERN.match(cleaned)
+        or cleaned.startswith("//")
+        or URI_SCHEME_PATTERN.match(cleaned)
+    ):
         return None
     pure = PurePosixPath(cleaned)
-    parts = [part for part in pure.parts if part not in {"", "."}]
-    while parts and parts[0] in {"/", "private", "tmp", "var", "Users"}:
-        parts.pop(0)
+    parts = [part for part in pure.parts if part not in {"", ".", "/"}]
     if ".." in parts or not parts:
         return None
-    if pure.is_absolute() and len(parts) > 2:
-        marker_indexes = [
-            index
-            for index, part in enumerate(parts)
-            if part in {"agentguard", "src", "tests", "docs", "examples"}
-        ]
-        if marker_indexes:
-            parts = parts[marker_indexes[0] :]
-    return PurePosixPath(*parts).as_posix()
+    if repo_root is None:
+        if pure.is_absolute():
+            return None
+        return PurePosixPath(*parts).as_posix()
+    try:
+        root = repo_root.expanduser().resolve()
+        candidate_path = Path(cleaned).expanduser()
+        if not candidate_path.is_absolute():
+            candidate_path = root.joinpath(*parts)
+        candidate = candidate_path.resolve(strict=False)
+        relative = candidate.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if ".." in relative.parts or not relative.parts:
+        return None
+    return PurePosixPath(*relative.parts).as_posix()
+
+
+def _repo_root_for_report(path: Path) -> Optional[Path]:
+    try:
+        resolved = path.expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+    for ancestor in resolved.parents:
+        if ancestor.name == ".agentguard":
+            return ancestor.parent
+    return None
+
+
+def _sarif_artifact_uri(path: str) -> str:
+    return quote(path, safe="/")
 
 
 def _sanitize(value: object) -> str:
@@ -975,6 +1023,10 @@ def _sanitize(value: object) -> str:
     text = SECRET_PATTERNS[0].sub(_redact_keyed_secret, text)
     for pattern in SECRET_PATTERNS[1:]:
         text = pattern.sub("<redacted>", text)
+    text = URI_PATH_PATTERN.sub("<path>", text)
+    text = UNC_PATH_PATTERN.sub("<path>", text)
+    text = TRAVERSAL_PATH_PATTERN.sub("<path>", text)
+    text = BACKSLASH_PATH_PATTERN.sub("<path>", text)
     text = ABSOLUTE_PATH_PATTERN.sub("<path>", text)
     return text.replace("\x00", "")
 
