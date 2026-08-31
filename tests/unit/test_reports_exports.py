@@ -491,12 +491,14 @@ def test_directory_sarif_deduplicates_parent_and_child_findings(
     child = _write_run_report(tmp_path, run_id="child", failed=True)
     matrix = _write_matrix_report(tmp_path, child)
     direct_output = tmp_path / "direct.sarif"
+    api_output = tmp_path / "api.sarif"
     directory_output = tmp_path / "directory.sarif"
 
     direct = runner.invoke(
         app,
         ["reports", "export-sarif", str(matrix), "--output", str(direct_output)],
     )
+    api_result = report_exports.export_sarif(tmp_path, api_output)
     directory = runner.invoke(
         app,
         ["reports", "export-sarif", str(tmp_path), "--output", str(directory_output)],
@@ -504,6 +506,8 @@ def test_directory_sarif_deduplicates_parent_and_child_findings(
 
     assert direct.exit_code == 0
     assert directory.exit_code == 0
+    assert api_result.reports == 2
+    assert "Reports: 2;" in directory.output
     direct_results = _sarif_results(direct_output)
     directory_results = _sarif_results(directory_output)
     assert len(direct_results) == 1
@@ -537,14 +541,18 @@ def test_directory_sarif_deduplicates_shared_child_references_with_bounds(
         tmp_path,
         [_row(shared), _row(distinct), _row(shared)],
     )
+    api_output = tmp_path / "api.sarif"
     output = tmp_path / "directory.sarif"
 
+    api_result = report_exports.export_sarif(tmp_path, api_output)
     result = runner.invoke(
         app,
         ["reports", "export-sarif", str(tmp_path), "--output", str(output)],
     )
 
     assert result.exit_code == 0
+    assert api_result.reports == 3
+    assert "Reports: 3;" in result.output
     results = _sarif_results(output)
     assert len(results) == 2
     assert len(set(_stable_hashes(output))) == 2
