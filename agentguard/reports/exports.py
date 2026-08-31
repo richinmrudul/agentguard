@@ -302,6 +302,8 @@ def _load_directory(
         findings.extend(summary.findings)
         cases.extend(summary.test_cases)
         unsupported.extend(summary.unsupported_files)
+    if export_kind == "sarif":
+        findings = _deduplicate_directory_sarif_findings(findings)
     if reports == 0:
         raise UnsupportedExportInput(
             "No supported AgentGuard report JSON files found. Raw trace files are "
@@ -800,6 +802,44 @@ def _finding_sort_key(finding: ExportFinding) -> tuple[object, ...]:
         finding.agent or "",
         tuple(sorted(finding.paths)),
         _fingerprint_material(finding),
+    )
+
+
+def _deduplicate_directory_sarif_findings(
+    findings: list[ExportFinding],
+) -> list[ExportFinding]:
+    unique: dict[tuple[str, bool, str], ExportFinding] = {}
+    for finding in findings:
+        identity = _directory_sarif_finding_identity(finding)
+        previous = unique.get(identity)
+        if previous is None or _dedupe_preference_key(finding) < _dedupe_preference_key(
+            previous
+        ):
+            unique[identity] = finding
+    return sorted(unique.values(), key=_dedupe_preference_key)
+
+
+def _directory_sarif_finding_identity(
+    finding: ExportFinding,
+) -> tuple[str, bool, str]:
+    return (
+        _fingerprint_material(finding),
+        finding.passed,
+        finding.severity.lower(),
+    )
+
+
+def _dedupe_preference_key(finding: ExportFinding) -> tuple[object, ...]:
+    source_rank = {"suite": 0, "matrix": 1, "run": 2, "ci": 3}.get(
+        finding.source_type,
+        4,
+    )
+    return (
+        _finding_sort_key(finding),
+        source_rank,
+        finding.source_type,
+        finding.report_path or "",
+        finding.run_id or "",
     )
 
 
