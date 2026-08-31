@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 from xml.etree import ElementTree
@@ -7,6 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from agentguard.cli.main import app
+from agentguard.reports import exports as report_exports
 
 
 runner = CliRunner()
@@ -163,6 +166,235 @@ def test_sarif_evidence_sanitization_and_secret_bounding(
     assert CANARY not in text
     assert str(tmp_path) not in text
     assert "[truncated]" in text
+
+
+def test_sarif_stable_hash_ignores_run_metadata_and_temporary_roots(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    first_root = tmp_path / "first-workspace"
+    second_root = tmp_path / "second-workspace"
+    first_report = _write_run_report(
+        first_root,
+        run_id="run-volatile-a",
+        failed=True,
+        changed_path=str(first_root / "src/login.py"),
+        evidence=[f"modified {first_root}/src/login.py"],
+    )
+    second_report = _write_run_report(
+        second_root,
+        run_id="run-volatile-b",
+        failed=True,
+        changed_path=str(second_root / "src/login.py"),
+        evidence=[f"modified {second_root}/src/login.py"],
+    )
+    _update_report(
+        first_report,
+        {
+            "execution_id": "execution-a",
+            "run_id": "runtime-a",
+            "started_at": "2026-08-31T10:00:00Z",
+            "completed_at": "2026-08-31T10:00:02Z",
+        },
+    )
+    _update_report(
+        second_report,
+        {
+            "execution_id": "execution-b",
+            "run_id": "runtime-b",
+            "started_at": "2026-08-31T11:00:00Z",
+            "completed_at": "2026-08-31T11:00:02Z",
+        },
+    )
+    first_output = tmp_path / "first.sarif"
+    second_output = tmp_path / "second.sarif"
+
+    first = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(first_report), "--output", str(first_output)],
+    )
+    second = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(second_report), "--output", str(second_output)],
+    )
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    first_text = first_output.read_text(encoding="utf-8")
+    second_text = second_output.read_text(encoding="utf-8")
+    assert str(first_root) not in first_text
+    assert str(second_root) not in second_text
+    material = report_exports._fingerprint_material(  # noqa: SLF001
+        report_exports.ExportFinding(
+            rule_id="scope-adherence",
+            rule_name="Scope adherence",
+            passed=False,
+            severity="error",
+            message="Scope changed outside the allowed boundary.",
+            evidence=[f"modified {first_root}/src/login.py"],
+            paths=["src/login.py"],
+            run_id="execution-a",
+            task_id="fix_auth_bug",
+            agent="mock-safe",
+        )
+    )
+    assert str(first_root) not in material
+    assert _stable_hashes(first_output) == _stable_hashes(second_output)
+
+
+def test_sarif_stable_hash_distinguishes_rule_location_and_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    checks = [
+        _check(
+            "Scope adherence",
+            evidence=["Outside allowed paths: src/login.py"],
+        ),
+        _check(
+            "Forbidden paths",
+            evidence=["Forbidden path src/login.py"],
+        ),
+        _check(
+            "Scope adherence",
+            evidence=["Outside allowed paths: src/admin.py"],
+        ),
+        _check(
+            "Scope adherence",
+            message="Scope changed outside the allowed boundary in a different way.",
+            evidence=["Outside allowed paths: src/login.py after deleting admin role"],
+        ),
+    ]
+    report = _write_run_report(
+        tmp_path,
+        failed=True,
+        changed_path=None,
+        checks=checks,
+    )
+    output = tmp_path / "distinctive.sarif"
+
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(report), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0
+    hashes = _stable_hashes(output)
+    assert len(hashes) == 4
+    assert len(set(hashes)) == 4
+
+
+def test_sarif_aggregate_row_order_does_not_change_fingerprints_or_serialization(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    matrix = _write_matrix_report_with_rows(
+        tmp_path,
+        [
+            _aggregate_row(
+                task_id="fix_auth_bug",
+                agent="mock-safe",
+                failed_checks=["Scope adherence"],
+                error="Outside allowed paths: src/login.py",
+            ),
+            _aggregate_row(
+                task_id="fix_auth_bug",
+                agent="mock-safe",
+                failed_checks=["Forbidden paths"],
+                error="Forbidden path secrets/key.txt",
+            ),
+        ],
+    )
+    output = tmp_path / "matrix.sarif"
+    reordered_output = tmp_path / "matrix-reordered.sarif"
+
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(matrix), "--output", str(output)],
+    )
+    matrix = _write_matrix_report_with_rows(
+        tmp_path,
+        [
+            _aggregate_row(
+                task_id="fix_auth_bug",
+                agent="mock-safe",
+                failed_checks=["Forbidden paths"],
+                error="Forbidden path secrets/key.txt",
+            ),
+            _aggregate_row(
+                task_id="fix_auth_bug",
+                agent="mock-safe",
+                failed_checks=["Scope adherence"],
+                error="Outside allowed paths: src/login.py",
+            ),
+        ],
+    )
+    reordered_result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(matrix), "--output", str(reordered_output)],
+    )
+
+    assert result.exit_code == 0
+    assert reordered_result.exit_code == 0
+    assert _stable_hashes(output) == _stable_hashes(reordered_output)
+    assert json.loads(output.read_text(encoding="utf-8")) == json.loads(
+        reordered_output.read_text(encoding="utf-8")
+    )
+
+
+def test_sarif_serialization_is_deterministic_for_equivalent_exports(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    report = _write_run_report(tmp_path, failed=True)
+    first_output = tmp_path / "first.sarif"
+    second_output = tmp_path / "second.sarif"
+
+    first = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(report), "--output", str(first_output)],
+    )
+    second = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(report), "--output", str(second_output)],
+    )
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert first_output.read_text(encoding="utf-8") == second_output.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_sarif_stable_hash_is_deterministic_across_python_processes() -> None:
+    script = (
+        "from agentguard.reports.exports import ExportFinding, _fingerprint_material, "
+        "_stable_hash; "
+        "finding = ExportFinding("
+        "rule_id='scope-adherence', rule_name='Scope adherence', passed=False, "
+        "severity='error', message='failed', evidence=['modified src/login.py'], "
+        "paths=['src/login.py'], task_id='fix_auth_bug', agent='mock-safe'); "
+        "print(_stable_hash(_fingerprint_material(finding)))"
+    )
+
+    first = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    second = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert first.stdout == second.stdout
 
 
 def test_junit_single_run_and_xml_escaping(tmp_path: Path, monkeypatch) -> None:
@@ -393,17 +625,19 @@ def _write_run_report(
     changed_path: Optional[str] = "src/login.py",
     evidence: Optional[list[str]] = None,
     message: str = "Scope changed outside the allowed boundary.",
+    checks: Optional[list[dict[str, object]]] = None,
 ) -> Path:
     path = tmp_path / ".agentguard/runs" / run_id / "reports/report.json"
-    checks = [
-        {
-            "name": "Scope adherence",
-            "passed": not failed,
-            "severity": "error",
-            "message": message,
-            "evidence": evidence or ["modified src/login.py"],
-        }
-    ]
+    if checks is None:
+        checks = [
+            {
+                "name": "Scope adherence",
+                "passed": not failed,
+                "severity": "error",
+                "message": message,
+                "evidence": evidence or ["modified src/login.py"],
+            }
+        ]
     if include_pass:
         checks.append(
             {
@@ -432,6 +666,23 @@ def _write_run_report(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data), encoding="utf-8")
     return path
+
+
+def _check(
+    name: str,
+    *,
+    passed: bool = False,
+    severity: str = "error",
+    message: Optional[str] = None,
+    evidence: Optional[list[str]] = None,
+) -> dict[str, object]:
+    return {
+        "name": name,
+        "passed": passed,
+        "severity": severity,
+        "message": message or f"{name} failed.",
+        "evidence": evidence or [],
+    }
 
 
 def _write_suite_report(tmp_path: Path, child: Path) -> Path:
@@ -471,6 +722,55 @@ def _write_matrix_report(tmp_path: Path, child: Path) -> Path:
     return path
 
 
+def _write_matrix_report_with_rows(
+    tmp_path: Path,
+    rows: list[dict[str, object]],
+    *,
+    matrix_id: str = "core-matrix",
+) -> Path:
+    path = tmp_path / f".agentguard/matrices/{matrix_id}/matrix.json"
+    data = {
+        "matrix_id": matrix_id,
+        "suite_id": "core",
+        "total_runs": len(rows),
+        "passed": 0,
+        "failed": len(rows),
+        "pass_rate": 0.0,
+        "average_score": 60,
+        "runs": rows,
+        "json_report_path": str(path),
+        "markdown_report_path": str(path.with_suffix(".md")),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _aggregate_row(
+    *,
+    task_id: str,
+    agent: str,
+    failed_checks: list[str],
+    error: str,
+) -> dict[str, object]:
+    return {
+        "task_id": task_id,
+        "config_path": f"examples/configs/{task_id}.yaml",
+        "agent": agent,
+        "result": "FAIL",
+        "score": 60,
+        "failed_checks": failed_checks,
+        "warning_checks": [],
+        "json_report_path": "",
+        "markdown_report_path": "",
+        "run_dir": "",
+        "execution_id": "volatile-execution",
+        "trial_index": 1,
+        "trial_count": 1,
+        "error": error,
+    }
+
+
 def _row(child: Path) -> dict[str, object]:
     return {
         "task_id": "fix_auth_bug",
@@ -493,3 +793,17 @@ def _set_child_path(report: Path, child_path: str) -> None:
     data = json.loads(report.read_text(encoding="utf-8"))
     data["runs"][0]["json_report_path"] = child_path
     report.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _update_report(report: Path, updates: dict[str, object]) -> None:
+    data = json.loads(report.read_text(encoding="utf-8"))
+    data.update(updates)
+    report.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _stable_hashes(path: Path) -> list[str]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return [
+        result["partialFingerprints"]["agentguardStableHash"]
+        for result in data["runs"][0]["results"]
+    ]
