@@ -76,6 +76,7 @@ class ExportInputSummary:
     findings: list[ExportFinding]
     test_cases: list[ExportTestCase]
     unsupported_files: list[Path] = field(default_factory=list)
+    report_sources: list[Path] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -283,6 +284,7 @@ def _load_directory(
     findings: list[ExportFinding] = []
     cases: list[ExportTestCase] = []
     unsupported: list[Path] = []
+    report_sources: list[Path] = []
     reports = 0
     for report_path in sorted(path.rglob("*.json")):
         try:
@@ -302,6 +304,10 @@ def _load_directory(
         findings.extend(summary.findings)
         cases.extend(summary.test_cases)
         unsupported.extend(summary.unsupported_files)
+        report_sources.extend(summary.report_sources)
+    if export_kind == "sarif":
+        findings = _deduplicate_directory_sarif_findings(findings)
+        reports = len(_unique_report_sources(report_sources))
     if reports == 0:
         raise UnsupportedExportInput(
             "No supported AgentGuard report JSON files found. Raw trace files are "
@@ -314,6 +320,7 @@ def _load_directory(
         findings=findings,
         test_cases=cases,
         unsupported_files=unsupported,
+        report_sources=report_sources,
     )
 
 
@@ -451,6 +458,7 @@ def _normalize_run(
         reports=1,
         findings=findings,
         test_cases=cases,
+        report_sources=[path],
     )
 
 
@@ -467,6 +475,7 @@ def _normalize_suite_or_matrix(
         raise UnsupportedExportInput(f"{report_type} report is missing runs.")
     findings: list[ExportFinding] = []
     cases: list[ExportTestCase] = []
+    report_sources = [path]
     reports = 1
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
@@ -484,6 +493,7 @@ def _normalize_suite_or_matrix(
                 child = None
             if child is not None:
                 reports += child.reports
+                report_sources.extend(child.report_sources)
                 findings.extend(
                     _with_source_type(finding, report_type)
                     for finding in child.findings
@@ -502,6 +512,7 @@ def _normalize_suite_or_matrix(
         reports=reports,
         findings=findings,
         test_cases=cases,
+        report_sources=report_sources,
     )
 
 
@@ -800,6 +811,54 @@ def _finding_sort_key(finding: ExportFinding) -> tuple[object, ...]:
         finding.agent or "",
         tuple(sorted(finding.paths)),
         _fingerprint_material(finding),
+    )
+
+
+def _deduplicate_directory_sarif_findings(
+    findings: list[ExportFinding],
+) -> list[ExportFinding]:
+    unique: dict[tuple[str, bool, str], ExportFinding] = {}
+    for finding in findings:
+        identity = _directory_sarif_finding_identity(finding)
+        previous = unique.get(identity)
+        if previous is None or _dedupe_preference_key(finding) < _dedupe_preference_key(
+            previous
+        ):
+            unique[identity] = finding
+    return sorted(unique.values(), key=_dedupe_preference_key)
+
+
+def _unique_report_sources(sources: list[Path]) -> set[str]:
+    unique = set()
+    for source in sources:
+        try:
+            unique.add(source.expanduser().resolve().as_posix())
+        except (OSError, RuntimeError):
+            unique.add(source.expanduser().as_posix())
+    return unique
+
+
+def _directory_sarif_finding_identity(
+    finding: ExportFinding,
+) -> tuple[str, bool, str]:
+    return (
+        _fingerprint_material(finding),
+        finding.passed,
+        finding.severity.lower(),
+    )
+
+
+def _dedupe_preference_key(finding: ExportFinding) -> tuple[object, ...]:
+    source_rank = {"suite": 0, "matrix": 1, "run": 2, "ci": 3}.get(
+        finding.source_type,
+        4,
+    )
+    return (
+        _finding_sort_key(finding),
+        source_rank,
+        finding.source_type,
+        finding.report_path or "",
+        finding.run_id or "",
     )
 
 

@@ -483,6 +483,217 @@ def test_directory_discovery_mixed_files_and_parse_outputs(
     ElementTree.parse(junit)
 
 
+def test_directory_sarif_deduplicates_parent_and_child_findings(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    child = _write_run_report(tmp_path, run_id="child", failed=True)
+    matrix = _write_matrix_report(tmp_path, child)
+    direct_output = tmp_path / "direct.sarif"
+    api_output = tmp_path / "api.sarif"
+    directory_output = tmp_path / "directory.sarif"
+
+    direct = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(matrix), "--output", str(direct_output)],
+    )
+    api_result = report_exports.export_sarif(tmp_path, api_output)
+    directory = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(tmp_path), "--output", str(directory_output)],
+    )
+
+    assert direct.exit_code == 0
+    assert directory.exit_code == 0
+    assert api_result.reports == 2
+    assert "Reports: 2;" in directory.output
+    direct_results = _sarif_results(direct_output)
+    directory_results = _sarif_results(directory_output)
+    assert len(direct_results) == 1
+    assert len(directory_results) == 1
+    assert _stable_hashes(directory_output) == _stable_hashes(direct_output)
+
+
+def test_directory_sarif_deduplicates_shared_child_references_with_bounds(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    noisy_evidence = [
+        f"modified src/login.py with detail {index}"
+        for index in range(report_exports.MAX_EVIDENCE_ITEMS + 3)
+    ]
+    shared = _write_run_report(
+        tmp_path,
+        run_id="shared",
+        failed=True,
+        evidence=noisy_evidence,
+    )
+    distinct = _write_run_report(
+        tmp_path,
+        run_id="distinct",
+        failed=True,
+        changed_path="src/admin.py",
+        evidence=["modified src/admin.py"],
+    )
+    _write_matrix_report_with_rows(
+        tmp_path,
+        [_row(shared), _row(distinct), _row(shared)],
+    )
+    api_output = tmp_path / "api.sarif"
+    output = tmp_path / "directory.sarif"
+
+    api_result = report_exports.export_sarif(tmp_path, api_output)
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(tmp_path), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0
+    assert api_result.reports == 3
+    assert "Reports: 3;" in result.output
+    results = _sarif_results(output)
+    assert len(results) == 2
+    assert len(set(_stable_hashes(output))) == 2
+    shared_result = _result_for_uri_suffix(results, "src/login.py")
+    evidence = shared_result["properties"]["agentguard"]["evidence"]
+    assert len(evidence) == report_exports.MAX_EVIDENCE_ITEMS
+
+
+def test_directory_sarif_keeps_distinct_semantic_findings(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    same_rule_login = _write_run_report(
+        tmp_path,
+        run_id="login",
+        failed=True,
+        changed_path="src/login.py",
+        evidence=["modified src/login.py"],
+    )
+    same_rule_admin = _write_run_report(
+        tmp_path,
+        run_id="admin",
+        failed=True,
+        changed_path="src/admin.py",
+        evidence=["modified src/admin.py"],
+    )
+    different_rules = _write_run_report(
+        tmp_path,
+        run_id="rules",
+        failed=True,
+        changed_path="src/login.py",
+        checks=[
+            _check("Scope adherence", evidence=["modified src/login.py"]),
+            _check("Forbidden paths", evidence=["modified src/login.py"]),
+        ],
+    )
+    _write_matrix_report_with_rows(
+        tmp_path,
+        [_row(same_rule_login), _row(same_rule_admin), _row(different_rules)],
+    )
+    output = tmp_path / "directory.sarif"
+
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(tmp_path), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0
+    results = _sarif_results(output)
+    assert len(results) == 3
+    assert sorted(result["ruleId"] for result in results) == [
+        "forbidden-paths",
+        "scope-adherence",
+        "scope-adherence",
+    ]
+    assert len(set(_stable_hashes(output))) == 3
+
+
+def test_directory_sarif_deduplication_is_input_order_deterministic(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    child = _write_run_report(tmp_path, run_id="child", failed=True)
+    matrix = _write_matrix_report(tmp_path, child)
+    child_summary = report_exports.load_export_input(
+        child,
+        "sarif",
+    )
+    matrix_summary = report_exports.load_export_input(
+        matrix,
+        "sarif",
+    )
+    first = [*matrix_summary.findings, *child_summary.findings]
+    second = [*child_summary.findings, *matrix_summary.findings]
+    first_output = tmp_path / "first.sarif"
+    second_output = tmp_path / "second.sarif"
+
+    report_exports._write_output_json(  # noqa: SLF001
+        first_output,
+        report_exports.render_sarif(
+            report_exports._deduplicate_directory_sarif_findings(first),  # noqa: SLF001
+            tool_name="AgentGuard",
+            base_uri=None,
+            input_path=tmp_path,
+        ),
+        force=False,
+    )
+    report_exports._write_output_json(  # noqa: SLF001
+        second_output,
+        report_exports.render_sarif(
+            report_exports._deduplicate_directory_sarif_findings(second),  # noqa: SLF001
+            tool_name="AgentGuard",
+            base_uri=None,
+            input_path=tmp_path,
+        ),
+        force=False,
+    )
+
+    assert _sarif_results(first_output) == _sarif_results(second_output)
+    assert first_output.read_text(encoding="utf-8") == second_output.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_directory_sarif_reports_malformed_child_in_controlled_way(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    malformed = tmp_path / ".agentguard/runs/bad/reports/report.json"
+    malformed.parent.mkdir(parents=True, exist_ok=True)
+    malformed.write_text(
+        json.dumps(
+            {
+                "task_id": "fix_auth_bug",
+                "agent": "mock-safe",
+                "diff_summary": {"modified_files": ["src/login.py"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_matrix_report(tmp_path, malformed)
+    output = tmp_path / "directory.sarif"
+
+    result = runner.invoke(
+        app,
+        ["reports", "export-sarif", str(tmp_path), "--output", str(output)],
+    )
+
+    assert result.exit_code == 0
+    results = _sarif_results(output)
+    assert len(results) == 1
+    assert results[0]["ruleId"] == "scope-adherence"
+    assert "sourceType" in output.read_text(encoding="utf-8")
+    assert report_exports.load_export_input(tmp_path, "sarif").unsupported_files == [
+        malformed
+    ]
+
+
 def test_unsupported_input_and_overwrite_force(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     unsupported = tmp_path / "trace.json"
@@ -807,3 +1018,31 @@ def _stable_hashes(path: Path) -> list[str]:
         result["partialFingerprints"]["agentguardStableHash"]
         for result in data["runs"][0]["results"]
     ]
+
+
+def _sarif_results(path: Path) -> list[dict[str, object]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data["runs"][0]["results"]
+
+
+def _result_for_uri_suffix(
+    results: list[dict[str, object]],
+    suffix: str,
+) -> dict[str, object]:
+    for result in results:
+        locations = result.get("locations")
+        if not isinstance(locations, list):
+            continue
+        for location in locations:
+            if not isinstance(location, dict):
+                continue
+            physical = location.get("physicalLocation")
+            if not isinstance(physical, dict):
+                continue
+            artifact = physical.get("artifactLocation")
+            if not isinstance(artifact, dict):
+                continue
+            uri = artifact.get("uri")
+            if isinstance(uri, str) and uri.endswith(suffix):
+                return result
+    raise AssertionError(f"No SARIF result location ends with {suffix!r}.")
