@@ -2,7 +2,6 @@ import hashlib
 import json
 import os
 import platform
-import re
 import shlex
 import subprocess
 import warnings
@@ -23,23 +22,18 @@ from agentguard.instrumentation.processes import (
     terminate_process_tree,
 )
 from agentguard.policy.command_policy import evaluate_command_policy
+from agentguard.redaction import (
+    SECRET_KEY_PATTERN,
+    SECRET_OPTION_NAMES,
+    redact_credential_arguments,
+    redact_credentials,
+)
 from agentguard.sandbox.docker_runner import DockerCommandRunner
 from agentguard.terminal import sanitize_terminal_text
 
 
 MANIFEST_SCHEMA = "agentguard.execution-manifest"
 MANIFEST_SCHEMA_VERSION = 1
-SECRET_KEY_PATTERN = re.compile(
-    r"(TOKEN|SECRET|PASSWORD|KEY|CREDENTIAL|AUTH|COOKIE)",
-    re.IGNORECASE,
-)
-URL_CREDENTIALS_PATTERN = re.compile(
-    r"(?P<scheme>[a-z][a-z0-9+.-]*://)[^/@\s:]+:[^/@\s]+@",
-    re.IGNORECASE,
-)
-AUTHORIZATION_PATTERN = re.compile(
-    r"(?i)(authorization\s*:\s*)(basic|bearer)\s+\S+"
-)
 VERSION_OUTPUT_LIMIT = 4096
 VERSION_TIMEOUT_SECONDS = 10
 
@@ -280,37 +274,21 @@ def sensitive_values_for_config(
         for pattern in config.secret_content_patterns
         if pattern.contains
     )
-    secret_options = {
-        "--token",
-        "--api-key",
-        "--apikey",
-        "--password",
-        "--passwd",
-        "--client-secret",
-        "--access-token",
-        "--auth-token",
-    }
     for command in (config.agent_command, config.agent_version_command):
         argv = _argv(command)
         for index, argument in enumerate(argv):
             lowered = argument.lower()
-            if lowered in secret_options and index + 1 < len(argv):
+            if lowered in SECRET_OPTION_NAMES and index + 1 < len(argv):
                 values.append(argv[index + 1])
                 continue
-            if any(
-                lowered.startswith(f"{option}=") for option in secret_options
-            ):
+            if any(lowered.startswith(f"{option}=") for option in SECRET_OPTION_NAMES):
                 values.append(argument.split("=", 1)[1])
     values.extend(value for value in additional_values or [] if value)
     return sorted(set(values), key=len, reverse=True)
 
 
 def sanitize_text(value: str, sensitive_values: Optional[list[str]] = None) -> str:
-    sanitized = URL_CREDENTIALS_PATTERN.sub(r"\g<scheme>[REDACTED]@", value)
-    sanitized = AUTHORIZATION_PATTERN.sub(r"\1[REDACTED]", sanitized)
-    for secret in sensitive_values or []:
-        sanitized = sanitized.replace(secret, "[REDACTED]")
-    return sanitized
+    return redact_credentials(value, sensitive_values)
 
 
 def sanitize_arguments(
@@ -318,45 +296,7 @@ def sanitize_arguments(
     sensitive_values: Optional[list[str]] = None,
 ) -> list[str]:
     argv = _argv(command)
-    sanitized: list[str] = []
-    redact_next = False
-    header_next = False
-    for argument in argv:
-        lowered = argument.lower()
-        if redact_next:
-            sanitized.append("[REDACTED]")
-            redact_next = False
-            continue
-        if header_next:
-            sanitized.append(sanitize_text(argument, sensitive_values))
-            header_next = False
-            continue
-        secret_options = {
-            "--token",
-            "--api-key",
-            "--apikey",
-            "--password",
-            "--passwd",
-            "--client-secret",
-            "--access-token",
-            "--auth-token",
-        }
-        if lowered in secret_options:
-            sanitized.append(argument)
-            redact_next = True
-            continue
-        if any(
-            lowered.startswith(f"{option}=")
-            for option in secret_options
-        ):
-            sanitized.append(f"{argument.split('=', 1)[0]}=[REDACTED]")
-            continue
-        if lowered in {"-h", "--header"}:
-            sanitized.append(argument)
-            header_next = True
-            continue
-        sanitized.append(sanitize_text(argument, sensitive_values))
-    return sanitized
+    return redact_credential_arguments(argv, sensitive_values)
 
 
 def sanitize_metadata(
