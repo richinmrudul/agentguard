@@ -444,6 +444,53 @@ def test_sarif_rejects_absolute_locations_when_repository_root_is_unknown(
     assert "locations" not in _sarif_results(output)[0]
 
 
+def test_sarif_redacts_recognized_credential_forms_in_serialized_fields() -> None:
+    canaries = {
+        "keyed": "AG200-keyed-canary",
+        "option": "AG200-option-canary",
+        "option_equals": "AG200-option-equals-canary",
+        "auth": "AG200-auth-canary",
+        "url_userinfo": "AG200-user:AG200-pass",
+        "shape": "ghp_AG200shapeCanary",
+        "property": "AG200-property-canary",
+    }
+    sarif = report_exports.render_sarif(
+        [
+            report_exports.ExportFinding(
+                rule_id=f"credential-password={canaries['property']}",
+                rule_name=f"Credential rule --token {canaries['option']}",
+                passed=False,
+                severity=f"error password={canaries['keyed']}",
+                message=(
+                    f"password={canaries['keyed']} "
+                    f"--api-key={canaries['option_equals']} "
+                    f"Authorization: Bearer {canaries['auth']} "
+                    f"https://{canaries['url_userinfo']}@example.test/path"
+                ),
+                evidence=[
+                    f"ran tool --token {canaries['option']}",
+                    f"raw token shape {canaries['shape']}",
+                ],
+                report_path=f"https://{canaries['url_userinfo']}@example.test/report.json",
+                run_id=f"run --password {canaries['option']}",
+                task_id=f"Authorization: Bearer {canaries['auth']}",
+                agent=f"--api-key={canaries['option_equals']}",
+                source_type=f"run password={canaries['keyed']}",
+            )
+        ],
+        tool_name="AgentGuard",
+        base_uri=None,
+        input_path=Path("report.json"),
+    )
+    text = json.dumps(sarif, sort_keys=True)
+
+    assert sarif["version"] == "2.1.0"
+    assert sarif["runs"][0]["results"]
+    assert "<redacted>" in text
+    for canary in canaries.values():
+        assert canary not in text
+
+
 def test_sarif_repo_relative_locations_are_stable_across_temp_roots(
     tmp_path: Path,
     monkeypatch,
@@ -763,6 +810,50 @@ def test_junit_single_run_and_xml_escaping(tmp_path: Path, monkeypatch) -> None:
     failure = suite.find("testcase/failure")
     assert failure is not None
     assert "unsafe <path> & command" in (failure.text or "")
+
+
+def test_junit_redacts_recognized_credential_forms_and_remains_parseable() -> None:
+    canaries = {
+        "keyed": "AG200-junit-keyed-canary",
+        "option": "AG200-junit-option-canary",
+        "option_equals": "AG200-junit-option-equals-canary",
+        "auth": "AG200-junit-auth-canary",
+        "url_userinfo": "AG200-junit-user:AG200-junit-pass",
+        "shape": "sk_AG200junitShapeCanary",
+    }
+    xml = report_exports.render_junit(
+        [
+            report_exports.ExportTestCase(
+                classname=f"agent --token {canaries['option']}",
+                name=f"case --api-key={canaries['option_equals']}",
+                passed=False,
+                failure_message=(
+                    f"password={canaries['keyed']} "
+                    f"Authorization: Bearer {canaries['auth']} "
+                    f"https://{canaries['url_userinfo']}@example.test/path <xml>"
+                ),
+                system_out=(
+                    f"stdout --token {canaries['option']}\n"
+                    f"shape {canaries['shape']}\n"
+                    f"url https://{canaries['url_userinfo']}@example.test/path"
+                ),
+            )
+        ],
+        tool_name=f"Tool password={canaries['keyed']}",
+        suite_name=f"Suite Authorization: Bearer {canaries['auth']}",
+    )
+    root = ElementTree.fromstring(xml)
+    case = root.find("testsuite/testcase")
+    failure = root.find("testsuite/testcase/failure")
+    system_out = root.find("testsuite/testcase/system-out")
+
+    assert case is not None
+    assert failure is not None
+    assert system_out is not None
+    assert "<redacted>" in (failure.text or "")
+    assert len(system_out.text or "") <= report_exports.MAX_SYSTEM_OUT_CHARS
+    for canary in canaries.values():
+        assert canary not in xml
 
 
 def test_junit_render_replaces_every_xml_illegal_c0_control() -> None:

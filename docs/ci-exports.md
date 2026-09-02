@@ -160,4 +160,8 @@ jobs:
 - Aggregate SARIF is richest when child run report JSON files are present.
 - Exports are intentionally bounded and sanitized; they do not include full
   command stdout/stderr or full diffs.
+- Credential redaction covers recognized forms such as keyed values, common
+  secret-bearing options, authorization headers, token-shaped values, and URL
+  userinfo. It cannot guarantee detection of arbitrary unknown or encoded
+  secrets.
 - The example workflow is documentation only and is not active project CI.
