@@ -22,6 +22,7 @@ SETUP_PYTHON = (
 UPLOAD_ARTIFACT = (
     "actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f"
 )
+UPLOAD_ARTIFACT_VERSION_COMMENT = "# v6.0.0"
 DOWNLOAD_ARTIFACT = (
     "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131"
 )
@@ -29,6 +30,77 @@ UPLOAD_SARIF = (
     "github/codeql-action/upload-sarif@"
     "6f5948dfacef28e207b48d0905cf90c03365536d"
 )
+HIDDEN_AGENTGUARD_UPLOAD_PATHS = {
+    "agentguard-ci.yml": {
+        ".agentguard/ci/*/report.json",
+        ".agentguard/ci/*/report.md",
+        ".agentguard/ci/*/pr-report.json",
+        ".agentguard/ci/*/command_log.json",
+        ".agentguard/ci/*/manifest.json",
+    },
+    "agentguard-gate.yml": {
+        ".agentguard/suites/*/suite.json",
+        ".agentguard/suites/*/suite.md",
+        ".agentguard/suites/*/manifest.json",
+    },
+    "agentguard-pr-summary.yml": {
+        ".agentguard/ci/*/report.json",
+        ".agentguard/ci/*/report.md",
+        ".agentguard/ci/*/command_log.json",
+        ".agentguard/ci/*/manifest.json",
+        ".agentguard/pr-report.json",
+    },
+    "agentguard-showcase.yml": {
+        ".agentguard/showcase/showcase-summary.json",
+        ".agentguard/showcase/showcase-summary.md",
+        ".agentguard/showcase/showcase-overhead.json",
+        ".agentguard/showcase/showcase-overhead.md",
+        ".agentguard/showcase/suites/*/suite.json",
+        ".agentguard/showcase/suites/*/suite.md",
+        ".agentguard/showcase/suites/*/manifest.json",
+    },
+}
+REQUIRED_HIDDEN_AGENTGUARD_EVIDENCE = {
+    "agentguard-ci.yml": {
+        ".agentguard/ci/*/report.json",
+        ".agentguard/ci/*/report.md",
+        ".agentguard/ci/*/command_log.json",
+        ".agentguard/ci/*/pr-report.json",
+    },
+    "agentguard-gate.yml": {
+        ".agentguard/suites/*/suite.json",
+        ".agentguard/suites/*/suite.md",
+        ".agentguard/suites/*/manifest.json",
+    },
+    "agentguard-pr-summary.yml": {
+        ".agentguard/ci/*/report.json",
+        ".agentguard/ci/*/report.md",
+        ".agentguard/ci/*/command_log.json",
+        ".agentguard/pr-report.json",
+    },
+    "agentguard-showcase.yml": {
+        ".agentguard/showcase/showcase-summary.json",
+        ".agentguard/showcase/showcase-summary.md",
+        ".agentguard/showcase/showcase-overhead.json",
+        ".agentguard/showcase/showcase-overhead.md",
+        ".agentguard/showcase/suites/*/suite.json",
+        ".agentguard/showcase/suites/*/suite.md",
+        ".agentguard/showcase/suites/*/manifest.json",
+    },
+}
+KNOWN_AGENTGUARD_ARTIFACT_FILENAMES = {
+    "command_log.json",
+    "manifest.json",
+    "pr-report.json",
+    "report.json",
+    "report.md",
+    "showcase-overhead.json",
+    "showcase-overhead.md",
+    "showcase-summary.json",
+    "showcase-summary.md",
+    "suite.json",
+    "suite.md",
+}
 
 
 def _workflow_path(name: str) -> Path:
@@ -99,6 +171,14 @@ def _artifact_steps(workflow: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _artifact_paths(step: dict[str, Any]) -> list[str]:
+    with_config = step.get("with")
+    assert isinstance(with_config, dict)
+    paths = with_config.get("path")
+    assert isinstance(paths, str)
+    return [line.strip() for line in paths.splitlines() if line.strip()]
+
+
 def test_github_actions_examples_parse_and_use_supported_actions() -> None:
     for name in WORKFLOW_PATHS:
         workflow = _workflow(name)
@@ -137,6 +217,77 @@ def test_github_actions_examples_upload_expected_artifacts() -> None:
             assert ".agentguard/suites" in serialized
         else:
             assert ".agentguard/ci" in serialized
+
+
+def test_agentguard_hidden_artifact_uploads_are_explicit_and_narrow() -> None:
+    for name, expected_paths in HIDDEN_AGENTGUARD_UPLOAD_PATHS.items():
+        workflow = _workflow(name)
+        matching_steps = [
+            step
+            for step in _artifact_steps(workflow)
+            if any(path.startswith(".agentguard/") for path in _artifact_paths(step))
+        ]
+        assert len(matching_steps) == 1, f"{name} should have one hidden upload"
+        step = matching_steps[0]
+        with_config = step["with"]
+        paths = set(_artifact_paths(step))
+        hidden_paths = {path for path in paths if path.startswith(".agentguard/")}
+
+        assert hidden_paths == expected_paths
+        assert with_config["include-hidden-files"] is True
+        assert with_config["if-no-files-found"] == "error"
+        assert step["if"] == "always()"
+        for path in hidden_paths:
+            assert "**" not in path
+            assert "*" not in Path(path).name
+            assert Path(path).name in KNOWN_AGENTGUARD_ARTIFACT_FILENAMES
+
+
+def test_agentguard_required_hidden_evidence_absence_fails_clearly() -> None:
+    for name, required_paths in REQUIRED_HIDDEN_AGENTGUARD_EVIDENCE.items():
+        workflow = _workflow(name)
+        steps = _steps(workflow)
+        hidden_upload_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("uses") == UPLOAD_ARTIFACT
+            and any(path.startswith(".agentguard/") for path in _artifact_paths(step))
+        )
+        validation_index = next(
+            index
+            for index, step in enumerate(steps)
+            if "Missing required AgentGuard artifact" in str(step.get("run", ""))
+        )
+        validation = steps[validation_index]
+        validation_script = validation["run"]
+
+        assert hidden_upload_index < validation_index
+        assert validation["if"] == "always()"
+        assert "exit \"$missing\"" in validation_script
+        assert (
+            "Missing required AgentGuard artifact: ${label}" in validation_script
+            or "Missing required AgentGuard artifact: ${path}" in validation_script
+        )
+        for path in required_paths:
+            assert path in validation_script
+
+
+def test_upload_artifact_v6_configuration_is_preserved_for_every_example() -> None:
+    for name in WORKFLOW_PATHS:
+        text = _text(name)
+        workflow = _workflow(name)
+        artifacts = _artifact_steps(workflow)
+
+        assert artifacts, f"{name} should use upload-artifact"
+        assert f"uses: {UPLOAD_ARTIFACT} {UPLOAD_ARTIFACT_VERSION_COMMENT}" in text
+        for step in artifacts:
+            paths = _artifact_paths(step)
+            with_config = step["with"]
+            assert with_config["if-no-files-found"] == "error"
+            if any(path.startswith(".agentguard/") for path in paths):
+                assert with_config["include-hidden-files"] is True
+            else:
+                assert with_config["include-hidden-files"] is False
 
 
 def test_basic_ci_gate_example_fails_pr_and_writes_summary() -> None:

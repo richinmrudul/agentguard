@@ -158,10 +158,15 @@ are skipped.
 Workflow-command properties and messages are escaped. Existing findings are
 not re-annotated.
 
-The example workflows upload JSON, Markdown, command-log, and manifest artifacts
-with `actions/upload-artifact@v6.0.0`. Generated artifacts remain under
-`.agentguard/...` or `docs/results/...`; do not commit `.agentguard/` runtime
-directories.
+The example workflows upload retained evidence with
+`actions/upload-artifact@v6.0.0`. Workflows that upload hidden `.agentguard`
+runtime paths set `include-hidden-files: true`, keep path globs limited to
+known AgentGuard filenames under `.agentguard/ci/*`, `.agentguard/suites/*`,
+`.agentguard/showcase/*`, or `.agentguard/showcase/suites/*`, and use
+`if-no-files-found: error` so a missing evidence set fails clearly. The
+SARIF/JUnit example uploads non-hidden export files and keeps hidden-file upload
+disabled for that handoff. Generated artifacts remain under `.agentguard/...`
+or `docs/results/...`; do not commit `.agentguard/` runtime directories.
 
 ## Example Config
 
@@ -307,8 +312,15 @@ metrics flow:
       docs/results/showcase-summary.md
       docs/results/showcase-metrics.json
       docs/results/showcase-metrics.md
-      .agentguard/showcase/**/*.json
-      .agentguard/showcase/**/*.md
+      .agentguard/showcase/showcase-summary.json
+      .agentguard/showcase/showcase-summary.md
+      .agentguard/showcase/showcase-overhead.json
+      .agentguard/showcase/showcase-overhead.md
+      .agentguard/showcase/suites/*/suite.json
+      .agentguard/showcase/suites/*/suite.md
+      .agentguard/showcase/suites/*/manifest.json
+    if-no-files-found: error
+    include-hidden-files: true
 ```
 
 The full workflow is
@@ -338,5 +350,6 @@ annotations, or other write operations outside AgentGuard.
   adapt `allowed_paths`, `forbidden_paths`, and `test_command`.
 - If expected unsafe demo scenarios fail the job, use suite baselines or
   `--allow-fail-result` only for demo/evidence jobs, not merge-blocking gates.
-- If artifacts are missing, keep upload steps guarded with `if: always()` so
-  reports are preserved after a failed gate.
+- If artifacts are missing, keep failure-evidence upload steps guarded with
+  `if: always()`, set `include-hidden-files: true` for `.agentguard` paths, and
+  keep `if-no-files-found: error` so missing evidence is visible.
