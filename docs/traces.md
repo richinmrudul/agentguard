@@ -190,3 +190,48 @@ agentguard trace replay trace.jsonl
 
 Replay reproduces policy evaluation from captured evidence, not agent behavior.
 See [replay.md](replay.md).
+
+## Optional External-Verifier Projection
+
+The experimental projection adapter converts an integrity-valid execution
+trace into deterministic input for the checked-in
+`bonfyre.agent_trace.v1` contract. It also emits a separate deterministic
+conversion report. The adapter does not import, download, or invoke an
+external verifier, and it does not change AgentGuard checks, scores, or default
+runtime behavior.
+
+Projection requires an explicit canonical policy using
+`agentguard.verifier-projection-policy` schema version 1. The policy supplies
+the actor, grants, allowed effects, semantic event rules, costs, and outcome
+predicates. These values are not inferred from AgentGuard PASS/FAIL. Policy
+files must use sorted-key, minified JSON with one final newline; the conversion
+report records the SHA-256 digest of those exact policy bytes.
+
+```python
+from pathlib import Path
+
+from agentguard.traces import write_verifier_projection
+
+write_verifier_projection(
+    Path("trace.jsonl"),
+    Path("projection-policy.json"),
+    Path("agentguard-verifier-input.json"),
+    Path("agentguard-verifier-conversion.json"),
+)
+```
+
+The schemas are checked in as
+`agentguard/schemas/verifier-projection-policy-v1.schema.json`,
+`agentguard/schemas/verifier-projection-v1.schema.json`, and
+`agentguard/schemas/verifier-projection-report-v1.schema.json`. Seeded safe and
+unsafe controls with byte-stable expected outputs live under
+`tests/fixtures/verifier_projection/`.
+
+Projected actions are bounded semantic identifiers from policy rules; raw
+command text, stdout, stderr, diffs, and arbitrary evidence messages are never
+copied. Event IDs include the complete source event hash, while the conversion
+report binds the input bytes, trace root/final hashes, canonical policy bytes,
+and projected bytes. Missing mappings and conflicting source facts make the
+report incomplete and suppress projected outcomes instead of selecting a
+favorable interpretation. Receipt generation remains the external verifier's
+responsibility.
