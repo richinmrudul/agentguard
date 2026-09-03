@@ -31,10 +31,34 @@ jobs:
         with:
           name: agentguard-suite-gate
           path: |
-            .agentguard/suites/**/*.json
-            .agentguard/suites/**/*.md
-            .agentguard/suites/**/manifest.json
-          if-no-files-found: warn
+            .agentguard/suites/*/suite.json
+            .agentguard/suites/*/suite.md
+            .agentguard/suites/*/manifest.json
+          if-no-files-found: error
+          include-hidden-files: true
+
+      - name: Verify retained gate reports
+        if: always()
+        shell: bash
+        run: |
+          missing=0
+          require_any() {
+            local label="$1"
+            shift
+            local matches=("$@")
+            if (( ${#matches[@]} == 0 )); then
+              echo "Missing required AgentGuard artifact: ${label}" >&2
+              missing=1
+            fi
+          }
+          shopt -s nullglob
+          suite_json=(.agentguard/suites/*/suite.json)
+          suite_markdown=(.agentguard/suites/*/suite.md)
+          suite_manifests=(.agentguard/suites/*/manifest.json)
+          require_any ".agentguard/suites/*/suite.json" "${suite_json[@]}"
+          require_any ".agentguard/suites/*/suite.md" "${suite_markdown[@]}"
+          require_any ".agentguard/suites/*/manifest.json" "${suite_manifests[@]}"
+          exit "$missing"
 
       # This example writes the baseline to /tmp so it is copyable and
       # self-contained. In a real repository, store an approved baseline in a

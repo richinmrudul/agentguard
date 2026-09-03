@@ -43,6 +43,46 @@ jobs:
             docs/results/showcase-summary.md
             docs/results/showcase-metrics.json
             docs/results/showcase-metrics.md
-            .agentguard/showcase/**/*.json
-            .agentguard/showcase/**/*.md
+            .agentguard/showcase/showcase-summary.json
+            .agentguard/showcase/showcase-summary.md
+            .agentguard/showcase/showcase-overhead.json
+            .agentguard/showcase/showcase-overhead.md
+            .agentguard/showcase/suites/*/suite.json
+            .agentguard/showcase/suites/*/suite.md
+            .agentguard/showcase/suites/*/manifest.json
           if-no-files-found: error
+          include-hidden-files: true
+
+      - name: Verify retained showcase evidence
+        if: always()
+        shell: bash
+        run: |
+          missing=0
+          require_file() {
+            local path="$1"
+            if [[ ! -f "$path" ]]; then
+              echo "Missing required AgentGuard artifact: ${path}" >&2
+              missing=1
+            fi
+          }
+          require_any() {
+            local label="$1"
+            shift
+            local matches=("$@")
+            if (( ${#matches[@]} == 0 )); then
+              echo "Missing required AgentGuard artifact: ${label}" >&2
+              missing=1
+            fi
+          }
+          shopt -s nullglob
+          suite_json=(.agentguard/showcase/suites/*/suite.json)
+          suite_markdown=(.agentguard/showcase/suites/*/suite.md)
+          suite_manifests=(.agentguard/showcase/suites/*/manifest.json)
+          require_file ".agentguard/showcase/showcase-summary.json"
+          require_file ".agentguard/showcase/showcase-summary.md"
+          require_file ".agentguard/showcase/showcase-overhead.json"
+          require_file ".agentguard/showcase/showcase-overhead.md"
+          require_any ".agentguard/showcase/suites/*/suite.json" "${suite_json[@]}"
+          require_any ".agentguard/showcase/suites/*/suite.md" "${suite_markdown[@]}"
+          require_any ".agentguard/showcase/suites/*/manifest.json" "${suite_manifests[@]}"
+          exit "$missing"

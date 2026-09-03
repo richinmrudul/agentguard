@@ -40,8 +40,35 @@ jobs:
         with:
           name: agentguard-ci-reports
           path: |
-            .agentguard/ci/**/*.json
-            .agentguard/ci/**/*.md
-            .agentguard/ci/**/command_log.json
-            .agentguard/ci/**/manifest.json
-          if-no-files-found: warn
+            .agentguard/ci/*/report.json
+            .agentguard/ci/*/report.md
+            .agentguard/ci/*/pr-report.json
+            .agentguard/ci/*/command_log.json
+            .agentguard/ci/*/manifest.json
+          if-no-files-found: error
+          include-hidden-files: true
+
+      - name: Verify retained AgentGuard reports
+        if: always()
+        shell: bash
+        run: |
+          missing=0
+          require_any() {
+            local label="$1"
+            shift
+            local matches=("$@")
+            if (( ${#matches[@]} == 0 )); then
+              echo "Missing required AgentGuard artifact: ${label}" >&2
+              missing=1
+            fi
+          }
+          shopt -s nullglob
+          reports=(.agentguard/ci/*/report.json)
+          markdown=(.agentguard/ci/*/report.md)
+          command_logs=(.agentguard/ci/*/command_log.json)
+          pr_reports=(.agentguard/ci/*/pr-report.json)
+          require_any ".agentguard/ci/*/report.json" "${reports[@]}"
+          require_any ".agentguard/ci/*/report.md" "${markdown[@]}"
+          require_any ".agentguard/ci/*/command_log.json" "${command_logs[@]}"
+          require_any ".agentguard/ci/*/pr-report.json" "${pr_reports[@]}"
+          exit "$missing"
