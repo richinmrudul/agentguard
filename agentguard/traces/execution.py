@@ -22,7 +22,12 @@ from agentguard.provenance.manifest import (
     sanitize_text,
     sha256_file,
 )
-from agentguard.provenance.portable_paths import portable_text
+from agentguard.provenance.portable_paths import (
+    PortablePathError,
+    portable_text,
+    resolve_portable,
+    resolve_portable_text,
+)
 from agentguard.scoring.scorer import DEDUCTIONS
 from agentguard.traces.models import ReplayPolicySnapshot
 
@@ -2296,11 +2301,36 @@ def _command_guard_summary_from_dict(data: object):
     )
 
 
-def _optional_report_path(data: object, key: str) -> Optional[Path]:
+def _optional_report_path(
+    data: object,
+    key: str,
+    roots: dict[str, Path],
+) -> Optional[Path]:
     if not isinstance(data, dict):
         return None
     value = data.get(key)
-    return Path(str(value)) if value else None
+    if not value:
+        return None
+    return Path(resolve_portable(str(value), roots))
+
+
+def _resolve_report_path_value(value: object, roots: dict[str, Path]) -> Path:
+    if not value:
+        raise ValueError("Required report path evidence is unavailable.")
+    try:
+        return Path(resolve_portable(str(value), roots))
+    except PortablePathError as error:
+        raise ValueError("Report contains an invalid portable path reference.") from error
+
+
+def _resolve_report_text_value(value: object, roots: dict[str, Path]) -> str:
+    text = str(value)
+    if "${" not in text:
+        return text
+    try:
+        return resolve_portable_text(text, roots)
+    except PortablePathError as error:
+        raise ValueError("Report contains an invalid portable path reference.") from error
 
 
 def _nonnegative_int(value: object) -> int:
@@ -2336,7 +2366,22 @@ def _result_from_report(
             "Required report evidence is unavailable: " + ", ".join(missing)
         )
     run_dir = report_path.parent.parent
-    repo_dir = Path(str(report["repo_dir"]))
+    roots = {
+        "RUN_ROOT": run_dir,
+        "AGENTGUARD_ROOT": Path.cwd(),
+        "REPOSITORY_ROOT": run_dir / "repo",
+    }
+    config_path = _resolve_report_path_value(report["config_path"], roots)
+    reported_run_dir = _resolve_report_path_value(report["run_dir"], roots)
+    repo_dir = _resolve_report_path_value(report["repo_dir"], roots)
+    test_data = report["test_result"]
+    test_docker_image = (
+        parse_docker_image_identity(test_data["docker_image"])
+        if test_data.get("docker_image") is not None
+        else None
+    )
+    if reported_run_dir != run_dir:
+        run_dir = reported_run_dir
     if not repo_dir.is_dir():
         candidate = run_dir / "repo"
         if candidate.is_dir():
@@ -2353,11 +2398,10 @@ def _result_from_report(
             raise ValueError("Command log evidence is inconsistent with report.")
     benchmark_data = report.get("benchmark") or {}
     sandbox_data = report.get("sandbox")
-    test_data = report["test_result"]
     diff_data = report["diff_summary"]
     checks = [CheckResult(**item) for item in report["check_results"]]
     test_result = CommandResult(
-        command=str(test_data["command"]),
+        command=_resolve_report_text_value(test_data["command"], roots),
         exit_code=int(test_data["exit_code"]),
         stdout=str(test_data.get("stdout") or ""),
         stderr=str(test_data.get("stderr") or ""),
@@ -2374,18 +2418,14 @@ def _result_from_report(
             else True
         ),
         process_cleanup_message=test_data.get("process_cleanup_message"),
-        docker_image=(
-            parse_docker_image_identity(test_data["docker_image"])
-            if test_data.get("docker_image") is not None
-            else None
-        ),
+        docker_image=test_docker_image,
     )
     result = BenchmarkResult(
         task_id=str(report["task_id"]),
         agent=str(report["agent"]),
         result=str(report["result"]),
         score=int(report["score"]),
-        config_path=Path(str(report["config_path"])),
+        config_path=config_path,
         run_dir=run_dir,
         repo_dir=repo_dir,
         test_result=test_result,
@@ -2400,16 +2440,32 @@ def _result_from_report(
             guard_incident_json=_optional_report_path(
                 report.get("report_paths"),
                 "guard_incident_json",
+                roots,
             ),
             guard_incident_markdown=_optional_report_path(
                 report.get("report_paths"),
                 "guard_incident_markdown",
+                roots,
             ),
         ),
         sandbox=SandboxMetadata(**sandbox_data) if sandbox_data else None,
         benchmark=BenchmarkMetadata(**benchmark_data),
         command_events=[
-            _command_event_from_dict(item) for item in command_events
+            _command_event_from_dict(
+                {
+                    **item,
+                    "command": [
+                        _resolve_report_text_value(argument, roots)
+                        for argument in item.get("command", [])
+                    ],
+                    "command_text": _resolve_report_text_value(
+                        item.get("command_text", ""),
+                        roots,
+                    ),
+                    "cwd": _resolve_report_text_value(item.get("cwd", ""), roots),
+                }
+            )
+            for item in command_events
         ],
         execution_id=report.get("execution_id") or run_dir.name,
         provenance_summary=report.get("provenance") or {},
@@ -2475,8 +2531,7 @@ def export_execution_trace(
 
     if not result.config_path.is_file():
         raise ValueError(
-            "Required policy configuration is unavailable for trace export: "
-            f"{result.config_path}"
+            "Required policy configuration is unavailable for trace export."
         )
     config = load_config(result.config_path)
     manifest = _load_json(manifest_path) if manifest_path is not None else {}

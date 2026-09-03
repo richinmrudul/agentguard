@@ -119,8 +119,9 @@ def test_ci_passes_for_allowed_existing_diff(tmp_path: Path) -> None:
 
     report = json.loads(result.report_paths.json.read_text(encoding="utf-8"))
     assert report["task_id"] == "ci_task"
-    assert report["repo_dir"] == str(repo_dir)
-    assert report["command_log_path"] == str(result.report_paths.command_log)
+    assert report["repo_dir"] == "${REPOSITORY_ROOT}"
+    assert report["command_log_path"] == "${RUN_ROOT}/command_log.json"
+    assert str(tmp_path) not in result.report_paths.json.read_text(encoding="utf-8")
     timeline_types = {event["event_type"] for event in report["timeline"]}
     assert {
         "ci_started",

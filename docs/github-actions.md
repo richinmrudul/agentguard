@@ -97,8 +97,12 @@ Each CI run writes reports under:
 .agentguard/ci/<run-id>/pr-report.json
 ```
 
-The JSON and Markdown reports include the task, result, score, config path, repository
-directory, test result, diff summary, check results, command log path, and timeline.
+The JSON and Markdown reports include the task, result, score, portable config
+and repository references, test result, diff summary, check results, portable
+command log path, and timeline. Known local roots are written with symbolic
+roles such as `${RUN_ROOT}`, `${REPOSITORY_ROOT}`, `${CONFIG_ROOT}`, and
+`${AGENTGUARD_ROOT}` so uploaded artifacts do not preserve runner-specific
+absolute roots.
 
 Every CI run also writes a versioned `agentguard.pr-report` JSON artifact. Pass
 `--baseline-report PATH` to compare against either an earlier CI `report.json`

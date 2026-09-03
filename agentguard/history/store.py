@@ -10,6 +10,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Optional
 
+from agentguard.provenance.artifact_paths import artifact_roots, portable_artifact_value
 from agentguard.terminal import sanitize_terminal_text
 
 
@@ -419,6 +420,7 @@ def history_trends(
 
 
 def history_records_to_dicts(records: list[HistoryRecord]) -> list[dict[str, object]]:
+    roots = artifact_roots(repository_root=Path.cwd())
     return [
         {
             "id": record.id,
@@ -427,11 +429,25 @@ def history_records_to_dicts(records: list[HistoryRecord]) -> list[dict[str, obj
             "result": record.result,
             "score": record.score,
             "created_at": record.created_at,
-            "json_report_path": str(record.json_report_path),
-            "markdown_report_path": _optional_path(record.markdown_report_path),
-            "command_log_path": _optional_path(record.command_log_path),
-            "manifest_path": _optional_path(record.manifest_path),
-            "trace_path": _optional_path(record.trace_path),
+            "json_report_path": str(
+                portable_artifact_value(record.json_report_path, roots)
+            ),
+            "markdown_report_path": portable_artifact_value(
+                _optional_path(record.markdown_report_path),
+                roots,
+            ),
+            "command_log_path": portable_artifact_value(
+                _optional_path(record.command_log_path),
+                roots,
+            ),
+            "manifest_path": portable_artifact_value(
+                _optional_path(record.manifest_path),
+                roots,
+            ),
+            "trace_path": portable_artifact_value(
+                _optional_path(record.trace_path),
+                roots,
+            ),
             "category": record.category,
             "difficulty": record.difficulty,
             "benchmark_id": record.benchmark_id,
@@ -440,7 +456,10 @@ def history_records_to_dicts(records: list[HistoryRecord]) -> list[dict[str, obj
             "failed_checks": record.failed_checks,
             "guard_blocked": record.guard_blocked,
             "guard_violations_total": record.guard_violations_total,
-            "guard_incident_path": _optional_path(record.guard_incident_path),
+            "guard_incident_path": portable_artifact_value(
+                _optional_path(record.guard_incident_path),
+                roots,
+            ),
             "time_to_first_violation_ms": record.time_to_first_violation_ms,
         }
         for record in records

@@ -25,6 +25,7 @@ from agentguard.history.store import (
     utc_now_iso,
 )
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.provenance.artifact_paths import artifact_roots, portable_artifact_value
 from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.provenance.manifest import (
     ChildExecution,
@@ -35,7 +36,6 @@ from agentguard.provenance.manifest import (
     configuration_identity,
     host_identity,
     policy_identity,
-    portable_path,
     source_identity,
     utc_now_iso as manifest_utc_now_iso,
     write_manifest,
@@ -335,7 +335,12 @@ def _single_value(values: list[Optional[object]]) -> Optional[object]:
 
 def _write_json_report(result: SuiteResult) -> Path:
     report_path = result.json_report_path
-    data = asdict(result)
+    roots = artifact_roots(
+        repository_root=Path.cwd(),
+        run_root=report_path.parent,
+        config_path=result.suite_path,
+    )
+    data = portable_artifact_value(result, roots)
     if result.baseline_comparison is None:
         data.pop("baseline_comparison", None)
     if not result.filters.has_filters():
@@ -346,6 +351,11 @@ def _write_json_report(result: SuiteResult) -> Path:
 
 def _write_markdown_report(result: SuiteResult) -> Path:
     report_path = result.markdown_report_path
+    roots = artifact_roots(
+        repository_root=Path.cwd(),
+        run_root=report_path.parent,
+        config_path=result.suite_path,
+    )
     lines = [
         "# AgentGuard Suite Summary",
         "",
@@ -353,7 +363,7 @@ def _write_markdown_report(result: SuiteResult) -> Path:
         "",
         f"Suite: {markdown_text(result.suite_id)}",
         f"Description: {markdown_text(result.description)}",
-        f"Suite config: {markdown_text(result.suite_path)}",
+        f"Suite config: {markdown_text(portable_artifact_value(result.suite_path, roots))}",
         f"Runs: {result.total_runs}",
         f"Passed: {result.passed}",
         f"Failed: {result.failed}",
@@ -451,10 +461,19 @@ def _write_markdown_report(result: SuiteResult) -> Path:
         lines.append(
             f"- {markdown_text(run.task_id)} / {markdown_text(run.agent)}:"
         )
-        lines.append(f"  - Run directory: {markdown_text(run.run_dir)}")
-        lines.append(f"  - JSON: {markdown_text(run.json_report_path)}")
-        lines.append(f"  - Markdown: {markdown_text(run.markdown_report_path)}")
-        lines.append(f"  - Manifest: {markdown_text(run.manifest_path or '-')}")
+        lines.append(
+            f"  - Run directory: {markdown_text(portable_artifact_value(run.run_dir, roots))}"
+        )
+        lines.append(
+            f"  - JSON: {markdown_text(portable_artifact_value(run.json_report_path, roots))}"
+        )
+        lines.append(
+            f"  - Markdown: {markdown_text(portable_artifact_value(run.markdown_report_path, roots))}"
+        )
+        lines.append(
+            "  - Manifest: "
+            f"{markdown_text(portable_artifact_value(run.manifest_path, roots) or '-')}"
+        )
 
     lines.extend(
         [
@@ -463,7 +482,8 @@ def _write_markdown_report(result: SuiteResult) -> Path:
             "",
             "- Execution ID: "
             f"{markdown_text(result.json_report_path.parent.name)}",
-            f"- Manifest: {markdown_text(result.manifest_path or '-')}",
+            "- Manifest: "
+            f"{markdown_text(portable_artifact_value(result.manifest_path, roots) or '-')}",
             f"- Child executions: {len(result.runs)}",
         ]
     )
@@ -587,6 +607,11 @@ def run_suite(
         run.config_path.expanduser().resolve(): load_config(run.config_path)
         for run in suite_runs
     }
+    portable_roots = artifact_roots(
+        repository_root=Path.cwd(),
+        run_root=result.json_report_path.parent,
+        config_path=config.suite_path,
+    )
     manifest = ExecutionManifest(
         execution_id=execution_id,
         execution_type="suite",
@@ -600,7 +625,7 @@ def run_suite(
                 for loaded in loaded_configs.values()
             )
         ),
-        source=source_identity(Path.cwd()),
+        source=source_identity(Path.cwd(), roots=portable_roots),
         configuration=configuration_identity(
             config.suite_path,
             {
@@ -610,10 +635,12 @@ def run_suite(
                 "guard_mode": guard_mode.value,
                 "guard_poll_interval_seconds": guard_poll_interval_seconds,
             },
+            roots=portable_roots,
         ),
         agent=None,
         benchmarks=[
-            benchmark_identity(loaded) for loaded in loaded_configs.values()
+            benchmark_identity(loaded, roots=portable_roots)
+            for loaded in loaded_configs.values()
         ],
         policies=[
             policy_identity(loaded) for loaded in loaded_configs.values()
@@ -621,13 +648,14 @@ def run_suite(
         artifacts=artifact_identity(
             result.json_report_path,
             result.markdown_report_path,
+            roots=portable_roots,
         ),
         child_executions=[
             ChildExecution(
                 execution_id=run.execution_id or run.run_dir.name,
                 execution_type="run",
                 manifest_path=(
-                    portable_path(run.manifest_path)
+                    portable_artifact_value(run.manifest_path, portable_roots)
                     if run.manifest_path is not None
                     else None
                 ),

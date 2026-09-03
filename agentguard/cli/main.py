@@ -109,6 +109,7 @@ from agentguard.evaluation.report import (
 )
 from agentguard.provenance.manifest import (
     load_manifest,
+    manifest_trusted_roots,
     provenance_summary,
     verify_manifest,
 )
@@ -923,9 +924,31 @@ def diagnostics_matrix_stress_command(
 @manifest_app.command("verify")
 def manifest_verify(
     path: Path = typer.Argument(..., help="Path to an execution manifest."),
+    repository_root: Optional[Path] = typer.Option(
+        None,
+        "--repository-root",
+        help="Trusted repository root for portable manifest references.",
+    ),
+    run_root: Optional[Path] = typer.Option(
+        None,
+        "--run-root",
+        help="Trusted run or bundle root for portable manifest references.",
+    ),
+    config_root: Optional[Path] = typer.Option(
+        None,
+        "--config-root",
+        help="Trusted configuration root for portable manifest references.",
+    ),
 ) -> None:
     """Validate a manifest and verify referenced configuration hashes."""
-    result = verify_manifest(path)
+    result = verify_manifest(
+        path,
+        trusted_roots=manifest_trusted_roots(
+            repository_root=repository_root,
+            run_root=run_root,
+            config_root=config_root,
+        ),
+    )
     for message in result.messages:
         safe_echo(message)
     if result.exit_code:
@@ -935,11 +958,33 @@ def manifest_verify(
 @manifest_app.command("show")
 def manifest_show(
     path: Path = typer.Argument(..., help="Path to an execution manifest."),
+    repository_root: Optional[Path] = typer.Option(
+        None,
+        "--repository-root",
+        help="Trusted repository root for portable manifest references.",
+    ),
+    run_root: Optional[Path] = typer.Option(
+        None,
+        "--run-root",
+        help="Trusted run or bundle root for portable manifest references.",
+    ),
+    config_root: Optional[Path] = typer.Option(
+        None,
+        "--config-root",
+        help="Trusted configuration root for portable manifest references.",
+    ),
 ) -> None:
     """Print a concise execution provenance summary."""
     try:
         data = load_manifest(path)
-        result = verify_manifest(path)
+        result = verify_manifest(
+            path,
+            trusted_roots=manifest_trusted_roots(
+                repository_root=repository_root,
+                run_root=run_root,
+                config_root=config_root,
+            ),
+        )
         if result.exit_code == 2:
             raise ValueError(result.messages[0])
     except (OSError, ValueError, yaml.YAMLError) as error:

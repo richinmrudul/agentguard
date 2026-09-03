@@ -62,6 +62,7 @@ from agentguard.policy.evaluation import (
     PolicyEvaluationContext,
     evaluate_policy_checks,
 )
+from agentguard.provenance.artifact_paths import artifact_roots, portable_artifact_value
 from agentguard.repo.git_diff import collect_diff
 from agentguard.repo.manager import RepoManager
 from agentguard.provenance.manifest import (
@@ -914,8 +915,16 @@ def run_benchmark(
             command_tracker,
             sensitive_values,
         )
+    portable_roots = artifact_roots(
+        repository_root=prepared.repo_dir,
+        run_root=prepared.run_dir,
+        config_path=config.config_path,
+    )
     with _measure_stage(timing_recorder, "report_writing"):
-        command_log_path = command_tracker.write_json(prepared.run_dir)
+        command_log_path = command_tracker.write_json(
+            prepared.run_dir,
+            portable_roots=portable_roots,
+        )
 
     reports_dir = prepared.run_dir / "reports"
     metrics = guard_metrics(guard_summary, command_guard_summary)
@@ -988,7 +997,10 @@ def run_benchmark(
         provenance_summary={
             "execution_id": prepared.run_id,
             "execution_type": "run",
-            "manifest_path": str(report_paths.manifest),
+            "manifest_path": portable_artifact_value(
+                report_paths.manifest,
+                portable_roots,
+            ),
             "parent_execution_id": parent_execution_id,
             "profile_id": (
                 evaluation_profile.id if evaluation_profile is not None else None
@@ -1092,7 +1104,7 @@ def run_benchmark(
         duration_seconds=round(time.monotonic() - started, 6),
         agentguard=agentguard_details,
         host=host_identity(docker_relevant=config.sandbox.type == "docker"),
-        source=source_identity(config.repo_template),
+        source=source_identity(config.repo_template, roots=portable_roots),
         configuration=configuration_identity(
             config.config_path,
             {
@@ -1108,15 +1120,17 @@ def run_benchmark(
                 "task_prompt_source": task_prompt_source,
                 "task_prompt_sha256": task_prompt_sha256,
             },
+            roots=portable_roots,
         ),
         agent=agent_details,
-        benchmarks=[benchmark_identity(config)],
+        benchmarks=[benchmark_identity(config, roots=portable_roots)],
         policies=[policy_details],
         artifacts=artifact_identity(
             json_path,
             markdown_path,
             command_log_path,
             report_paths.trace,
+            roots=portable_roots,
         ),
         docker_images=[
             asdict(event.docker_image)
@@ -1130,8 +1144,14 @@ def run_benchmark(
         guard_metrics=asdict(metrics),
         guard_incident=(
             {
-                "json": str(result.report_paths.guard_incident_json),
-                "markdown": str(result.report_paths.guard_incident_markdown),
+                "json": portable_artifact_value(
+                    result.report_paths.guard_incident_json,
+                    portable_roots,
+                ),
+                "markdown": portable_artifact_value(
+                    result.report_paths.guard_incident_markdown,
+                    portable_roots,
+                ),
             }
             if result.report_paths.guard_incident_json is not None
             else None

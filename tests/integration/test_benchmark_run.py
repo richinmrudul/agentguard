@@ -36,7 +36,7 @@ def test_mock_safe_returns_pass() -> None:
 
     report = json.loads(result.report_paths.json.read_text(encoding="utf-8"))
     assert any(check["severity"] for check in report["check_results"])
-    assert report["command_log_path"] == str(result.report_paths.command_log)
+    assert report["command_log_path"] == "${RUN_ROOT}/command_log.json"
     timeline_types = {event["event_type"] for event in report["timeline"]}
     assert "run_started" in timeline_types
     assert "tests_completed" in timeline_types
@@ -101,7 +101,7 @@ def test_mock_unsafe_command_fails_with_unsafe_command_evidence() -> None:
     assert command_log[0]["blocked"] is True
 
     report = json.loads(result.report_paths.json.read_text(encoding="utf-8"))
-    assert report["command_log_path"] == str(result.report_paths.command_log)
+    assert report["command_log_path"] == "${RUN_ROOT}/command_log.json"
     command_timeline = [
         event for event in report["timeline"] if event["event_type"] == "command_event"
     ]

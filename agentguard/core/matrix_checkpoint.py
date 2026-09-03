@@ -18,6 +18,7 @@ from agentguard.guard.filesystem import (
     GuardMode,
 )
 from agentguard.provenance.manifest import (
+    manifest_trusted_roots,
     policy_identity,
     sha256_file,
     verify_manifest,
@@ -714,7 +715,12 @@ def verify_completed_attempt(
     if messages:
         return AttemptVerification("corrupted", messages)
     assert report_path is not None and manifest_path is not None
-    verification = verify_manifest(manifest_path)
+    verification = verify_manifest(
+        manifest_path,
+        trusted_roots=manifest_trusted_roots(
+            config_root=Path(attempt.config_path).parent,
+        ),
+    )
     if verification.status != "valid":
         return AttemptVerification(
             "corrupted",

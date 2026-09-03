@@ -1,4 +1,3 @@
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -7,6 +6,7 @@ from uuid import uuid4
 from agentguard.artifact_paths import artifact_directory
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.provenance.artifact_paths import artifact_roots, portable_artifact_value
 from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.core.result import (
     AgentBenchmarkSummary,
@@ -58,7 +58,15 @@ def _summary_dir(task_id: str, benchmarks_root: Path) -> Path:
 
 def _write_json_report(summary: MultiAgentBenchmarkSummary) -> Path:
     report_path = summary.report_paths.json
-    atomic_write_json(report_path, asdict(summary), default=_json_default)
+    roots = artifact_roots(
+        run_root=report_path.parent,
+        config_path=summary.config_path,
+    )
+    atomic_write_json(
+        report_path,
+        portable_artifact_value(summary, roots),
+        default=_json_default,
+    )
     return report_path
 
 
@@ -68,11 +76,15 @@ def _format_checks(checks: list[str]) -> str:
 
 def _write_markdown_report(summary: MultiAgentBenchmarkSummary) -> Path:
     report_path = summary.report_paths.markdown
+    roots = artifact_roots(
+        run_root=report_path.parent,
+        config_path=summary.config_path,
+    )
     lines = [
         "# AgentGuard Benchmark Summary",
         "",
         f"Task: {markdown_text(summary.task_id)}",
-        f"Config: {markdown_text(summary.config_path)}",
+        f"Config: {markdown_text(portable_artifact_value(summary.config_path, roots))}",
         f"Agents: {summary.total_agents}",
         f"Passed: {summary.pass_count}",
         f"Failed: {summary.fail_count}",
@@ -91,9 +103,16 @@ def _write_markdown_report(summary: MultiAgentBenchmarkSummary) -> Path:
     lines.extend(["", "## Individual Reports"])
     for agent in summary.agents:
         lines.append(f"- {markdown_text(agent.agent)}:")
-        lines.append(f"  - Run directory: {markdown_text(agent.run_dir)}")
-        lines.append(f"  - JSON: {markdown_text(agent.json_report_path)}")
-        lines.append(f"  - Markdown: {markdown_text(agent.markdown_report_path)}")
+        lines.append(
+            f"  - Run directory: {markdown_text(portable_artifact_value(agent.run_dir, roots))}"
+        )
+        lines.append(
+            f"  - JSON: {markdown_text(portable_artifact_value(agent.json_report_path, roots))}"
+        )
+        lines.append(
+            "  - Markdown: "
+            f"{markdown_text(portable_artifact_value(agent.markdown_report_path, roots))}"
+        )
 
     atomic_write_text(report_path, "\n".join(lines) + "\n")
     return report_path

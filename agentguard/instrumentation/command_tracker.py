@@ -5,6 +5,7 @@ from typing import Optional, Union
 from agentguard.sandbox.docker_identity import DockerImageIdentity
 
 from agentguard.io import atomic_write_json
+from agentguard.provenance.artifact_paths import portable_artifact_value
 
 
 MAX_EXTENDED_COMMAND_EVENTS = 201
@@ -156,7 +157,15 @@ class CommandTracker:
         self._events.append(event)
         return event
 
-    def write_json(self, run_dir: Path) -> Path:
+    def write_json(
+        self,
+        run_dir: Path,
+        *,
+        portable_roots: Optional[dict[str, Path]] = None,
+    ) -> Path:
         path = run_dir / "command_log.json"
-        atomic_write_json(path, [asdict(event) for event in self._events])
+        events = [asdict(event) for event in self._events]
+        if portable_roots:
+            events = portable_artifact_value(events, portable_roots)
+        atomic_write_json(path, events)
         return path

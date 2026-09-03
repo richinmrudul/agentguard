@@ -1,9 +1,12 @@
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from agentguard.core.result import BenchmarkResult
 from agentguard.io import atomic_write_json
+from agentguard.provenance.artifact_paths import (
+    artifact_roots,
+    portable_artifact_value,
+)
 
 
 def _json_default(value: Any) -> str:
@@ -15,7 +18,12 @@ def _json_default(value: Any) -> str:
 def write_json_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / "report.json"
-    data = asdict(result)
+    roots = artifact_roots(
+        repository_root=result.repo_dir,
+        run_root=result.run_dir,
+        config_path=result.config_path,
+    )
+    data = portable_artifact_value(result, roots)
     if isinstance(data.get("benchmark"), dict):
         data["benchmark"] = {
             key: value
@@ -32,12 +40,18 @@ def write_json_report(result: BenchmarkResult, reports_dir: Path) -> Path:
         data["sandbox"] = {
             key: value for key, value in data["sandbox"].items() if value is not None
         }
-    data["command_log_path"] = result.report_paths.command_log
-    data["manifest_path"] = result.report_paths.manifest
-    data["trace_path"] = result.report_paths.trace
-    data["guard_incident_path"] = result.report_paths.guard_incident_json
+    data["command_log_path"] = portable_artifact_value(
+        result.report_paths.command_log,
+        roots,
+    )
+    data["manifest_path"] = portable_artifact_value(result.report_paths.manifest, roots)
+    data["trace_path"] = portable_artifact_value(result.report_paths.trace, roots)
+    data["guard_incident_path"] = portable_artifact_value(
+        result.report_paths.guard_incident_json,
+        roots,
+    )
     data["guard_incident_markdown_path"] = (
-        result.report_paths.guard_incident_markdown
+        portable_artifact_value(result.report_paths.guard_incident_markdown, roots)
     )
     data["provenance"] = result.provenance_summary
     data["evidence"] = [
