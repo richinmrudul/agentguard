@@ -30,6 +30,12 @@ from agentguard.redaction import (
 )
 from agentguard.sandbox.docker_runner import DockerCommandRunner
 from agentguard.terminal import sanitize_terminal_text
+from agentguard.provenance.artifact_paths import artifact_roots
+from agentguard.provenance.portable_paths import (
+    PortablePathError,
+    portable_reference,
+    resolve_portable_reference,
+)
 
 
 MANIFEST_SCHEMA = "agentguard.execution-manifest"
@@ -191,6 +197,19 @@ def portable_path(path: Optional[Path], root: Optional[Path] = None) -> Optional
         return resolved.relative_to(base).as_posix()
     except ValueError:
         return resolved.as_posix()
+
+
+def _portable_manifest_path(
+    path: Optional[Path],
+    roots: Optional[dict[str, Path]],
+    *,
+    fallback_root: Optional[Path] = None,
+) -> Optional[str]:
+    if path is None:
+        return None
+    if roots:
+        return portable_reference(path, roots)
+    return portable_path(path, fallback_root)
 
 
 def git_identity(path: Path) -> GitIdentity:
@@ -532,12 +551,16 @@ def agent_identity(
     )
 
 
-def source_identity(path: Optional[Path]) -> SourceIdentity:
+def source_identity(
+    path: Optional[Path],
+    *,
+    roots: Optional[dict[str, Path]] = None,
+) -> SourceIdentity:
     if path is None:
         return SourceIdentity(repository="unavailable")
     identity = git_identity(path)
     return SourceIdentity(
-        repository=portable_path(path) or "unavailable",
+        repository=_portable_manifest_path(path, roots) or "unavailable",
         git_commit=identity.git_commit,
         dirty_worktree=identity.dirty_worktree,
     )
@@ -546,19 +569,26 @@ def source_identity(path: Optional[Path]) -> SourceIdentity:
 def configuration_identity(
     path: Path,
     resolved_options: dict[str, object],
+    *,
+    roots: Optional[dict[str, Path]] = None,
 ) -> ConfigurationIdentity:
     return ConfigurationIdentity(
-        path=portable_path(path) or path.as_posix(),
+        path=_portable_manifest_path(path, roots) or path.as_posix(),
         sha256=sha256_file(path),
         resolved_options=resolved_options,
     )
 
 
-def benchmark_identity(config: AgentGuardConfig) -> BenchmarkIdentity:
+def benchmark_identity(
+    config: AgentGuardConfig,
+    *,
+    roots: Optional[dict[str, Path]] = None,
+) -> BenchmarkIdentity:
     return BenchmarkIdentity(
         benchmark_id=config.benchmark.id,
         benchmark_version=config.benchmark.version,
-        config_path=portable_path(config.config_path) or config.config_path.as_posix(),
+        config_path=_portable_manifest_path(config.config_path, roots)
+        or config.config_path.as_posix(),
         config_sha256=sha256_file(config.config_path),
     )
 
@@ -583,12 +613,14 @@ def artifact_identity(
     markdown_report: Optional[Path],
     command_log: Optional[Path] = None,
     trace: Optional[Path] = None,
+    *,
+    roots: Optional[dict[str, Path]] = None,
 ) -> ArtifactIdentity:
     return ArtifactIdentity(
-        json_report=portable_path(json_report),
-        markdown_report=portable_path(markdown_report),
-        command_log=portable_path(command_log),
-        trace=portable_path(trace),
+        json_report=_portable_manifest_path(json_report, roots),
+        markdown_report=_portable_manifest_path(markdown_report, roots),
+        command_log=_portable_manifest_path(command_log, roots),
+        trace=_portable_manifest_path(trace, roots),
         json_report_sha256=(
             sha256_file(json_report)
             if json_report is not None and json_report.is_file()
@@ -638,7 +670,11 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return data
 
 
-def verify_manifest(path: Path) -> VerificationResult:
+def verify_manifest(
+    path: Path,
+    *,
+    trusted_roots: Optional[dict[str, Path]] = None,
+) -> VerificationResult:
     try:
         data = load_manifest(path)
         _validate_manifest_structure(data)
@@ -668,22 +704,26 @@ def verify_manifest(path: Path) -> VerificationResult:
         if key in seen:
             continue
         seen.add(key)
-        input_path = _resolve_reference(path, reference)
+        input_path, diagnostic = _resolve_reference(
+            path,
+            reference,
+            trusted_roots=trusted_roots,
+        )
         if input_path is None:
             changed = True
-            messages.append(f"MISSING {label}: {reference}")
+            messages.append(f"MISSING {label}: {diagnostic}")
             continue
         try:
             actual_hash = sha256_file(input_path)
         except OSError:
             changed = True
-            messages.append(f"MISSING {label}: {reference}")
+            messages.append(f"MISSING {label}: {diagnostic}")
             continue
         if actual_hash != expected_hash:
             changed = True
-            messages.append(f"CHANGED {label}: {reference}")
+            messages.append(f"CHANGED {label}: {diagnostic}")
         else:
-            messages.append(f"MATCH {label}: {reference}")
+            messages.append(f"MATCH {label}: {diagnostic}")
     return VerificationResult("changed" if changed else "valid", messages)
 
 
@@ -785,12 +825,45 @@ def _require_mapping_fields(
         raise ValueError(f"Invalid manifest {key} identity.")
 
 
-def _resolve_reference(manifest_path: Path, reference: str) -> Optional[Path]:
+def _resolve_reference(
+    manifest_path: Path,
+    reference: str,
+    *,
+    trusted_roots: Optional[dict[str, Path]] = None,
+) -> tuple[Optional[Path], str]:
+    if "${" in reference:
+        try:
+            resolved = resolve_portable_reference(
+                reference,
+                trusted_roots or {},
+            )
+        except PortablePathError:
+            return None, "portable reference could not be resolved"
+        candidate = Path(resolved)
+        try:
+            return candidate.resolve(strict=True), reference
+        except OSError:
+            return None, reference
     candidate = Path(reference).expanduser()
     candidates = [candidate] if candidate.is_absolute() else [Path.cwd() / candidate]
     if not candidate.is_absolute():
         candidates.extend(parent / candidate for parent in manifest_path.resolve().parents)
     for path in candidates:
         if path.is_file():
-            return path.resolve()
-    return None
+            return path.resolve(), reference
+    return None, reference
+
+
+def manifest_trusted_roots(
+    *,
+    repository_root: Optional[Path] = None,
+    run_root: Optional[Path] = None,
+    config_root: Optional[Path] = None,
+    agentguard_root: Optional[Path] = None,
+) -> dict[str, Path]:
+    return artifact_roots(
+        repository_root=repository_root,
+        run_root=run_root,
+        config_path=config_root,
+        agentguard_root=agentguard_root,
+    )

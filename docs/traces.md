@@ -63,6 +63,13 @@ Traces reuse AgentGuard's manifest sanitization for known environment values,
 secret-like metadata, common token/password/API-key options, authorization
 headers, and URL credentials. Environment names may appear; values do not.
 Known repository, run, and configuration roots are replaced by symbolic roles.
+Run, manifest, report, command-log, and guard-incident artifacts use the same
+portable reference format for known local roots, such as `${RUN_ROOT}`,
+`${REPOSITORY_ROOT}`, `${CONFIG_ROOT}`, and `${AGENTGUARD_ROOT}`. Readers only
+resolve those references from trusted roots supplied by the caller or from the
+physical run bundle path; they do not infer trust from persisted artifact
+content. Detached or incomplete bundles therefore fail with controlled
+path-free errors instead of reconstructing paths from untrusted input.
 Configured secret-content detector literals are treated as redaction inputs and
 are not stored in trace policy snapshots or payloads. Content-based `Secret
 scan` evidence records only safe detector IDs, normalized relative locations,
@@ -127,6 +134,16 @@ Export refuses incomplete required evidence and refuses overwrite without
 `--force`. It does not fabricate missing events. Detached exports use stable
 source roles; source files may be unavailable after relocation while trace
 integrity remains verifiable.
+
+Execution manifests can be checked after relocation by supplying the roots that
+the operator trusts for that bundle:
+
+```bash
+agentguard manifest verify .agentguard/runs/<run-id>/manifest.json \
+  --config-root /path/to/configs \
+  --run-root .agentguard/runs/<run-id> \
+  --repository-root .agentguard/runs/<run-id>/repo
+```
 
 Run metamorphic replay robustness checks:
 

@@ -21,6 +21,7 @@ from agentguard.provenance.manifest import (
     detect_agent_version,
     git_identity,
     load_manifest,
+    manifest_trusted_roots,
     sanitize_arguments,
     sha256_file,
     verify_manifest,
@@ -393,6 +394,59 @@ agent_metadata:
     )
 
 
+def test_run_artifacts_use_portable_references_for_known_local_roots(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_config(tmp_path)
+
+    result = run_benchmark(config_path, "mock-safe")
+
+    artifact_paths = [
+        result.report_paths.json,
+        result.report_paths.markdown,
+        result.report_paths.command_log,
+        result.report_paths.manifest,
+        result.report_paths.trace,
+    ]
+    serialized = "\n".join(
+        Path(path).read_text(encoding="utf-8")
+        for path in artifact_paths
+        if path is not None
+    )
+
+    assert str(tmp_path) not in serialized
+    assert "${CONFIG_ROOT}/agentguard.yaml" in serialized
+    assert "${RUN_ROOT}/reports/report.json" in serialized
+    assert "${REPOSITORY_ROOT}" in serialized
+    assert verify_manifest(
+        Path(result.report_paths.manifest),
+        trusted_roots=manifest_trusted_roots(config_root=config_path.parent),
+    ).exit_code == 0
+
+
+def test_manifest_verification_fails_closed_for_malformed_portable_reference(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_config(tmp_path)
+    result = run_benchmark(config_path, "mock-safe")
+    manifest_path = Path(result.report_paths.manifest)
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    data["configuration"]["path"] = "${CONFIG_ROOT}/../agentguard.yaml"
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+
+    verification = verify_manifest(
+        manifest_path,
+        trusted_roots=manifest_trusted_roots(config_root=config_path.parent),
+    )
+
+    assert verification.exit_code == 1
+    assert (
+        "MISSING configuration: portable reference could not be resolved"
+        in verification.messages
+    )
+    assert str(tmp_path) not in "\n".join(verification.messages)
+
+
 def test_suite_and_parallel_matrix_parent_child_provenance(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path)
     suite_path = _write_suite(tmp_path, config_path)
@@ -400,6 +454,16 @@ def test_suite_and_parallel_matrix_parent_child_provenance(tmp_path: Path) -> No
     suite = run_suite(suite_path, suites_root=tmp_path / "suites")
     suite_manifest = json.loads(suite.manifest_path.read_text(encoding="utf-8"))
     assert len(suite_manifest["child_executions"]) == 1
+    suite_artifacts = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            suite.json_report_path,
+            suite.markdown_report_path,
+            suite.manifest_path,
+        )
+    )
+    assert str(tmp_path) not in suite_artifacts
+    assert "${CONFIG_ROOT}/suite.yaml" in suite_artifacts
     suite_child = json.loads(
         Path(suite.runs[0].manifest_path).read_text(encoding="utf-8")
     )
@@ -416,6 +480,16 @@ def test_suite_and_parallel_matrix_parent_child_provenance(tmp_path: Path) -> No
     assert matrix_manifest["matrix"]["trials"] == 3
     assert matrix_manifest["matrix"]["requested_workers"] == 2
     assert len(matrix_manifest["child_executions"]) == 3
+    matrix_artifacts = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            matrix.json_report_path,
+            matrix.markdown_report_path,
+            matrix.manifest_path,
+        )
+    )
+    assert str(tmp_path) not in matrix_artifacts
+    assert "${CONFIG_ROOT}/suite.yaml" in matrix_artifacts
     assert len({child["execution_id"] for child in matrix_manifest["child_executions"]}) == 3
     for row in matrix.runs:
         child = json.loads(Path(row.manifest_path).read_text(encoding="utf-8"))
@@ -430,14 +504,32 @@ def test_manifest_verify_exit_codes_for_matching_changed_missing_and_invalid(
     result = run_benchmark(config_path, "mock-safe")
     manifest_path = Path(result.report_paths.manifest)
 
-    assert verify_manifest(manifest_path).exit_code == 0
-    assert runner.invoke(app, ["manifest", "verify", str(manifest_path)]).exit_code == 0
+    detached = verify_manifest(manifest_path)
+    assert detached.exit_code == 1
+    assert detached.messages == [
+        "MISSING configuration: portable reference could not be resolved"
+    ]
+    roots = {"CONFIG_ROOT": config_path.parent}
+    assert verify_manifest(manifest_path, trusted_roots=roots).exit_code == 0
+    assert (
+        runner.invoke(
+            app,
+            [
+                "manifest",
+                "verify",
+                str(manifest_path),
+                "--config-root",
+                str(config_path.parent),
+            ],
+        ).exit_code
+        == 0
+    )
 
     original = config_path.read_text(encoding="utf-8")
     config_path.write_text(original + "\n# changed\n", encoding="utf-8")
-    assert verify_manifest(manifest_path).exit_code == 1
+    assert verify_manifest(manifest_path, trusted_roots=roots).exit_code == 1
     config_path.unlink()
-    assert verify_manifest(manifest_path).exit_code == 1
+    assert verify_manifest(manifest_path, trusted_roots=roots).exit_code == 1
 
     invalid = tmp_path / "invalid.json"
     invalid.write_text("{invalid", encoding="utf-8")
@@ -477,14 +569,20 @@ def test_manifest_verification_reports_changed_and_missing_references(
         config_path.read_text(encoding="utf-8") + "\n# changed\n",
         encoding="utf-8",
     )
-    changed = verify_manifest(manifest_path)
+    changed = verify_manifest(
+        manifest_path,
+        trusted_roots={"CONFIG_ROOT": config_path.parent},
+    )
     assert changed.status == "changed"
     assert any(
         message.startswith("CHANGED configuration:") for message in changed.messages
     )
 
     config_path.unlink()
-    missing = verify_manifest(manifest_path)
+    missing = verify_manifest(
+        manifest_path,
+        trusted_roots={"CONFIG_ROOT": config_path.parent},
+    )
     assert missing.status == "changed"
     assert any(
         message.startswith("MISSING configuration:") for message in missing.messages

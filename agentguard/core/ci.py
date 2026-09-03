@@ -1,6 +1,6 @@
 import subprocess
 import warnings
-from dataclasses import asdict, replace
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -21,6 +21,7 @@ from agentguard.history.store import (
 from agentguard.io import atomic_write_json, atomic_write_text
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner
+from agentguard.provenance.artifact_paths import artifact_roots, portable_artifact_value
 from agentguard.repo.git_diff import collect_diff, collect_diff_between_refs
 from agentguard.provenance.manifest import sanitize_text
 from agentguard.reports.markdown import markdown_text
@@ -61,8 +62,16 @@ def _run_dir(task_id: str, repo_dir: Path, ci_root: Path) -> Path:
 
 def _write_json_report(result: CiResult) -> Path:
     report_path = result.report_paths.json
-    data = asdict(result)
-    data["command_log_path"] = result.report_paths.command_log
+    roots = artifact_roots(
+        repository_root=result.repo_dir,
+        run_root=result.run_dir,
+        config_path=result.config_path,
+    )
+    data = portable_artifact_value(result, roots)
+    data["command_log_path"] = portable_artifact_value(
+        result.report_paths.command_log,
+        roots,
+    )
     data["evidence"] = [
         evidence for check in result.check_results for evidence in check.evidence
     ]
@@ -87,14 +96,19 @@ def _event_flags(event) -> str:
 
 def _write_markdown_report(result: CiResult) -> Path:
     report_path = result.report_paths.markdown
+    roots = artifact_roots(
+        repository_root=result.repo_dir,
+        run_root=result.run_dir,
+        config_path=result.config_path,
+    )
     lines = [
         "# AgentGuard CI Report",
         "",
         f"Task: {markdown_text(result.task_id)}",
         f"Result: {markdown_text(result.result)}",
         f"Score: {result.score}/100",
-        f"Config: {markdown_text(result.config_path)}",
-        f"Repository: {markdown_text(result.repo_dir)}",
+        f"Config: {markdown_text(portable_artifact_value(result.config_path, roots))}",
+        f"Repository: {markdown_text(portable_artifact_value(result.repo_dir, roots))}",
         "",
         "## Test Result",
         f"- Command: {markdown_text(result.test_result.command)}",
@@ -322,7 +336,15 @@ def run_ci(
         },
     )
 
-    command_log_path = command_tracker.write_json(run_dir)
+    portable_roots = artifact_roots(
+        repository_root=detected_repo_dir,
+        run_root=run_dir,
+        config_path=config.config_path,
+    )
+    command_log_path = command_tracker.write_json(
+        run_dir,
+        portable_roots=portable_roots,
+    )
     report_paths = ReportPaths(
         json=run_dir / "report.json",
         markdown=run_dir / "report.md",

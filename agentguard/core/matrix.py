@@ -64,6 +64,7 @@ from agentguard.guard.aggregation import (
     aggregate_matrix_guard,
 )
 from agentguard.io import atomic_write_json, atomic_write_text
+from agentguard.provenance.artifact_paths import artifact_roots, portable_artifact_value
 from agentguard.reports.markdown import markdown_table_cell, markdown_text
 from agentguard.provenance.manifest import (
     ChildExecution,
@@ -74,7 +75,6 @@ from agentguard.provenance.manifest import (
     configuration_identity,
     host_identity,
     policy_identity,
-    portable_path,
     sha256_file,
     source_identity,
     utc_now_iso as manifest_utc_now_iso,
@@ -703,11 +703,12 @@ def _summaries_by(
 
 
 def _combination_key(row: MatrixRowSummary) -> str:
-    config_path = row.config_path.expanduser().resolve()
-    try:
-        portable_path = config_path.relative_to(Path.cwd().resolve()).as_posix()
-    except ValueError:
-        portable_path = config_path.as_posix()
+    portable_path = str(
+        portable_artifact_value(
+            row.config_path,
+            artifact_roots(repository_root=Path.cwd(), config_path=row.config_path),
+        )
+    )
     return reliability_combination_key(
         portable_path,
         row.benchmark_id,
@@ -803,7 +804,12 @@ def _format_checks(checks: list[str]) -> str:
 
 
 def _write_json_report(result: MatrixResult) -> Path:
-    data = asdict(result)
+    roots = artifact_roots(
+        repository_root=Path.cwd(),
+        run_root=result.json_report_path.parent,
+        config_path=result.suite_path,
+    )
+    data = portable_artifact_value(result, roots)
     if result.baseline_comparison is None:
         data.pop("baseline_comparison", None)
     if result.reliability_baseline_path is None:
@@ -966,12 +972,17 @@ def _guard_incident_lines(summary: GuardAggregateSummary) -> list[str]:
 
 
 def _write_markdown_report(result: MatrixResult) -> Path:
+    roots = artifact_roots(
+        repository_root=Path.cwd(),
+        run_root=result.markdown_report_path.parent,
+        config_path=result.suite_path,
+    )
     lines = [
         "# AgentGuard Matrix Summary",
         "",
         f"Matrix: {markdown_text(result.matrix_id)}",
         f"Suite: {markdown_text(result.suite_id)}",
-        f"Suite config: {markdown_text(result.suite_path)}",
+        f"Suite config: {markdown_text(portable_artifact_value(result.suite_path, roots))}",
         f"Agents: {markdown_text(', '.join(result.agents))}",
         f"Trials per combination: {result.trials}",
         f"Requested workers: {result.requested_workers}",
@@ -1003,10 +1014,11 @@ def _write_markdown_report(result: MatrixResult) -> Path:
                 "",
                 "## Checkpoint and Resume",
                 "",
-                f"Checkpoint: {markdown_text(result.checkpoint_path)}",
+                f"Checkpoint: {markdown_text(portable_artifact_value(result.checkpoint_path, roots))}",
                 f"Checkpoint ID: {markdown_text(result.checkpoint_id)}",
                 f"Status: {markdown_text(result.checkpoint_status)}",
-                f"Resumed from: {markdown_text(result.resumed_from or '-')}",
+                "Resumed from: "
+                f"{markdown_text(portable_artifact_value(result.resumed_from, roots) or '-')}",
                 f"Attempts reused: {result.attempts_reused}",
                 f"Attempts skipped: {result.attempts_skipped}",
                 (
@@ -1233,12 +1245,21 @@ def _write_markdown_report(result: MatrixResult) -> Path:
             f"- {markdown_text(row.task_id)} / {markdown_text(row.agent)} / "
             f"trial {row.trial_index}/{row.trial_count}:"
         )
-        lines.append(f"  - Run directory: {markdown_text(row.run_dir or '-')}")
-        lines.append(f"  - JSON: {markdown_text(row.json_report_path or '-')}")
         lines.append(
-            f"  - Markdown: {markdown_text(row.markdown_report_path or '-')}"
+            "  - Run directory: "
+            f"{markdown_text(portable_artifact_value(row.run_dir, roots) or '-')}"
         )
-        lines.append(f"  - Manifest: {markdown_text(row.manifest_path or '-')}")
+        lines.append(
+            f"  - JSON: {markdown_text(portable_artifact_value(row.json_report_path, roots) or '-')}"
+        )
+        lines.append(
+            "  - Markdown: "
+            f"{markdown_text(portable_artifact_value(row.markdown_report_path, roots) or '-')}"
+        )
+        lines.append(
+            "  - Manifest: "
+            f"{markdown_text(portable_artifact_value(row.manifest_path, roots) or '-')}"
+        )
 
     lines.extend(
         [
@@ -1246,7 +1267,8 @@ def _write_markdown_report(result: MatrixResult) -> Path:
             "## Provenance",
             "",
             f"- Execution ID: {markdown_text(result.matrix_id)}",
-            f"- Manifest: {markdown_text(result.manifest_path or '-')}",
+            "- Manifest: "
+            f"{markdown_text(portable_artifact_value(result.manifest_path, roots) or '-')}",
             f"- Child executions: {len([row for row in result.runs if row.execution_id])}",
         ]
     )
@@ -1766,6 +1788,11 @@ def run_matrix(
         run.config_path.expanduser().resolve(): load_config(run.config_path)
         for run in matrix_runs
     }
+    portable_roots = artifact_roots(
+        repository_root=Path.cwd(),
+        run_root=result.json_report_path.parent,
+        config_path=config.suite_path,
+    )
     manifest = ExecutionManifest(
         execution_id=matrix_id,
         execution_type="matrix",
@@ -1779,7 +1806,7 @@ def run_matrix(
                 for loaded in unique_configs.values()
             )
         ),
-        source=source_identity(Path.cwd()),
+        source=source_identity(Path.cwd(), roots=portable_roots),
         configuration=configuration_identity(
             config.suite_path,
             {
@@ -1789,22 +1816,25 @@ def run_matrix(
                 "guard_mode": guard_mode.value,
                 "guard_poll_interval_seconds": guard_poll_interval_seconds,
             },
+            roots=portable_roots,
         ),
         agent=None,
         benchmarks=[
-            benchmark_identity(loaded) for loaded in unique_configs.values()
+            benchmark_identity(loaded, roots=portable_roots)
+            for loaded in unique_configs.values()
         ],
         policies=[policy_identity(loaded) for loaded in unique_configs.values()],
         artifacts=artifact_identity(
             result.json_report_path,
             result.markdown_report_path,
+            roots=portable_roots,
         ),
         child_executions=[
             ChildExecution(
                 execution_id=row.execution_id,
                 execution_type="run",
                 manifest_path=(
-                    portable_path(row.manifest_path)
+                    portable_artifact_value(row.manifest_path, portable_roots)
                     if row.manifest_path is not None
                     else None
                 ),
@@ -1832,9 +1862,15 @@ def run_matrix(
             "profile_id": result.profile_id,
             "profile_name": result.profile_name,
             "profile_model": result.profile_model,
-            "checkpoint_path": portable_path(result.checkpoint_path),
+            "checkpoint_path": portable_artifact_value(
+                result.checkpoint_path,
+                portable_roots,
+            ),
             "checkpoint_id": result.checkpoint_id,
-            "resumed_from": portable_path(result.resumed_from),
+            "resumed_from": portable_artifact_value(
+                result.resumed_from,
+                portable_roots,
+            ),
             "checkpoint_status": result.checkpoint_status,
             "attempts_reused": result.attempts_reused,
             "attempts_skipped": result.attempts_skipped,
