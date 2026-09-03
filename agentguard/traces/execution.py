@@ -22,6 +22,7 @@ from agentguard.provenance.manifest import (
     sanitize_text,
     sha256_file,
 )
+from agentguard.provenance.portable_paths import portable_text
 from agentguard.scoring.scorer import DEDUCTIONS
 from agentguard.traces.models import ReplayPolicySnapshot
 
@@ -307,22 +308,15 @@ def _working_directory_role(cwd: str, result: BenchmarkResult) -> str:
 
 
 def _portable_text(value: str, result: BenchmarkResult) -> str:
-    replacements = [
-        (result.repo_dir, "${REPOSITORY_ROOT}"),
-        (result.run_dir, "${RUN_ROOT}"),
-        (result.config_path.parent, "${CONFIG_ROOT}"),
-        (Path.cwd(), "${AGENTGUARD_ROOT}"),
-    ]
-    portable = value
-    for path, role in replacements:
-        try:
-            variants = {str(path), str(path.expanduser().resolve())}
-        except OSError:
-            variants = {str(path)}
-        for variant in sorted(variants, key=len, reverse=True):
-            if variant:
-                portable = portable.replace(variant, role)
-    return portable
+    return portable_text(
+        value,
+        {
+            "REPOSITORY_ROOT": result.repo_dir,
+            "RUN_ROOT": result.run_dir,
+            "CONFIG_ROOT": result.config_path.parent,
+            "AGENTGUARD_ROOT": Path.cwd(),
+        },
+    )
 
 
 def _output_identity(
