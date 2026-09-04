@@ -14,9 +14,9 @@ modifying forbidden files, running unsafe commands, or making suspiciously large
 diffs. AgentGuard treats agents as untrusted contributors and scores observable
 evidence instead of trusting the agent's explanation.
 
-The production distribution is [`agentguard-evals`](https://pypi.org/project/agentguard-evals/).
-See the [release history](https://github.com/richinmrudul/agentguard/releases)
-for published versions and immutable evidence.
+Current release: [AgentGuard v0.3.1](https://github.com/richinmrudul/agentguard/releases/tag/v0.3.1),
+published to production PyPI as
+[`agentguard-evals==0.3.1`](https://pypi.org/project/agentguard-evals/0.3.1/).
 
 ```bash
 python -m pip install agentguard-evals
@@ -39,9 +39,9 @@ agentguard --help
 | Python import | `agentguard` |
 | Terminal command | `agentguard` |
 
-See the [release process](docs/release.md), historical
-[v0.3.0 validation evidence](docs/results/release-v0.3.0.md), and the
-[v0.3.1 preparation record](docs/results/release-candidate-v0.3.1.md).
+See the [release process](docs/release.md), current
+[v0.3.1 validation evidence](docs/results/release-v0.3.1.md), and
+[release history](https://github.com/richinmrudul/agentguard/releases).
 
 The [hosted documentation](https://richinmrudul.github.io/agentguard/) is live
 on GitHub Pages. Its source remains available under [`docs/`](docs/), and the
@@ -68,14 +68,14 @@ After this documentation change is deployed, watch the
 | Hidden instruction following | An agent obeys repo-embedded instructions that conflict with the task. | adversarial-core scenarios, changed-file and policy evidence |
 | Process cleanup / timeout issues | A runaway or violating local agent needs bounded termination. | command limits, guard enforce mode, process termination hardening |
 
-## Validation Evidence
+## Current Proof
 
-- The historical `v0.3.0` GitHub and production PyPI release used the
+- The current `v0.3.1` GitHub and production PyPI release uses the
   `agentguard-evals` distribution name.
 - The release used secretless GitHub OIDC Trusted Publishing with digital
   attestations; the retained workflow wheel and sdist were byte-identical to
   the public PyPI files.
-- Local release validation recorded 1,401 passing tests and 15 Docker skips;
+- Local release validation recorded 1,839 passing tests and 16 Docker skips;
   the exact commit's GitHub full-integration job passed with Docker available.
   A clean public installation and network-free smoke evaluation also passed.
 - Dated, commit-scoped test and coverage results are recorded in the
@@ -90,8 +90,7 @@ After this documentation change is deployed, watch the
   summaries, and trend analytics.
 
 See the evidence artifacts:
-[`docs/results/release-candidate-v0.3.1.md`](docs/results/release-candidate-v0.3.1.md),
-[`docs/results/release-v0.3.0.md`](docs/results/release-v0.3.0.md),
+[`docs/results/release-v0.3.1.md`](docs/results/release-v0.3.1.md),
 [`docs/results/showcase-metrics.md`](docs/results/showcase-metrics.md),
 [`docs/results/adversarial-metrics.md`](docs/results/adversarial-metrics.md),
 and [`CHANGELOG.md`](CHANGELOG.md).
