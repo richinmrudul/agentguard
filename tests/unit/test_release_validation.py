@@ -44,6 +44,7 @@ RELEASE_CHECKLIST = ROOT / "docs/release-checklist.md"
 PORTFOLIO = ROOT / "docs/portfolio.md"
 RELEASE_EVIDENCE = ROOT / "docs/results/release-v0.2.2.md"
 RELEASE_EVIDENCE_V030 = ROOT / "docs/results/release-v0.3.0.md"
+RELEASE_EVIDENCE_V031 = ROOT / "docs/results/release-v0.3.1.md"
 EVALUATION_DOC = ROOT / "docs/evaluation.md"
 READINESS_JSON = ROOT / "docs/results/release-readiness-v0.2.json"
 READINESS_MD = ROOT / "docs/results/release-readiness-v0.2.md"
@@ -504,7 +505,7 @@ def test_release_readiness_documents_and_license_agree() -> None:
     for document in (readme, release_doc):
         assert "v0.2.0" in document
     for document in (readme, release_doc, portfolio):
-        assert "v0.3.0" in document
+        assert "v0.3.1" in document
     for document in (readme, portfolio):
         assert "published" in document
     for stale_instruction in (
@@ -554,38 +555,38 @@ def test_v0_2_2_public_release_documentation_is_consistent() -> None:
     assert "PyPI publication remains deferred" not in current_docs
 
 
-def test_v0_3_0_public_release_documentation_is_consistent() -> None:
+def test_v0_3_1_public_release_documentation_is_consistent() -> None:
     readme = README.read_text(encoding="utf-8")
     showcase = SHOWCASE_DOC.read_text(encoding="utf-8")
     release_doc = RELEASE_DOC.read_text(encoding="utf-8")
     portfolio = PORTFOLIO.read_text(encoding="utf-8")
-    evidence = RELEASE_EVIDENCE_V030.read_text(encoding="utf-8")
+    evidence = RELEASE_EVIDENCE_V031.read_text(encoding="utf-8")
     current_docs = "\n".join((readme, showcase, release_doc, portfolio, evidence))
 
-    assert "agentguard-evals==0.3.0" in current_docs
+    assert "agentguard-evals==0.3.1" in current_docs
     assert "import agentguard" in current_docs
-    assert "Install the current released v0.3.0 command" in showcase
-    assert "results/release-v0.3.0.md" in showcase
+    assert "Install the current released v0.3.1 command" in showcase
+    assert "results/release-v0.3.1.md" in showcase
     assert "Install the released v0.2.2 command" not in showcase
-    assert "1,401" in evidence
-    assert "15" in evidence
-    assert "89.03%" in evidence
+    assert "1,839" in evidence
+    assert "16" in evidence
+    assert "88.76%" in evidence
     assert "OIDC Trusted Publishing" in evidence
     assert "byte-identical" in evidence
-    assert "release-candidate-v0.3.0.md" in evidence
+    assert "release-candidate-v0.3.1.md" in evidence
     assert (
-        "https://github.com/richinmrudul/agentguard/releases/tag/v0.3.0"
+        "https://github.com/richinmrudul/agentguard/releases/tag/v0.3.1"
         in current_docs
     )
-    assert "https://pypi.org/project/agentguard-evals/0.3.0/" in current_docs
+    assert "https://pypi.org/project/agentguard-evals/0.3.1/" in current_docs
     assert "Published PyPI metadata is immutable" in readme
     assert "Published PyPI metadata is immutable" in release_doc
     assert (
-        "446ba25ef9f3eebb2d056606e6493b45ab8d0f4a6431e4d3ecabbfff859e8e26"
+        "d50a4812c35ebd500072653640391109ee0b5ded119b774407365a8b112b250c"
         in evidence
     )
     assert (
-        "2c156ff2817b38158dd7fbbf04122ade551b8bda9d4f1cc4a4d59a6ea6182fdf"
+        "d9a7807b22e67e471220f39bc98ca2df0d2e5f94489247fc186194655664469b"
         in evidence
     )
 

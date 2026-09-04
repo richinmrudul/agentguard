@@ -3,7 +3,7 @@
 The showcase is a local, recruiter-friendly demo for the question: "What does
 AgentGuard catch?"
 
-Install the current released v0.3.0 command from production PyPI:
+Install the current released v0.3.1 command from production PyPI:
 
 ```bash
 python -m pip install agentguard-evals
@@ -84,10 +84,10 @@ safe scenario allowed, 0 false positives, 0 false negatives, and trace/report
 availability for all six scenarios. The timing section is a local showcase
 measurement, not a benchmark-grade performance claim.
 
-The production v0.3.0 release separately recorded 1,401 passing tests and 15
+The production v0.3.1 release separately recorded 1,839 passing tests and 16
 documented Docker skips, plus a clean public installation and byte-identical
 workflow/PyPI artifacts. See the
-[release verification record](results/release-v0.3.0.md).
+[release verification record](results/release-v0.3.1.md).
 
 To run the same proof in GitHub Actions, use
 [`examples/github-actions/agentguard-showcase.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-showcase.yml).

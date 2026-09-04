@@ -1,9 +1,11 @@
 # Release Checklist
 
 This checklist is the reusable review gate for production releases. AgentGuard
-v0.3.0 completed this process on 2026-08-11; its immutable release evidence is
-recorded in [`results/release-v0.3.0.md`](results/release-v0.3.0.md). Historical
-v0.2.2 evidence remains in
+v0.3.1 completed this process on 2026-09-04; its immutable release evidence is
+recorded in [`results/release-v0.3.1.md`](results/release-v0.3.1.md). Historical
+v0.3.0 evidence remains in
+[`results/release-v0.3.0.md`](results/release-v0.3.0.md), and historical v0.2.2
+evidence remains in
 [`results/release-v0.2.2.md`](results/release-v0.2.2.md). Checking an item does
 not publish anything.
 
@@ -30,14 +32,14 @@ not publish anything.
 - [ ] Distribution metadata name is exactly `agentguard-evals`.
 - [ ] Python imports remain `agentguard`.
 - [ ] Console entry point remains `agentguard`.
-- [ ] Wheel is `agentguard_evals-0.3.0-py3-none-any.whl`.
-- [ ] Source distribution is `agentguard_evals-0.3.0.tar.gz`.
+- [ ] Wheel is `agentguard_evals-0.3.1-py3-none-any.whl`.
+- [ ] Source distribution is `agentguard_evals-0.3.1.tar.gz`.
 - [ ] `pyproject.toml`, `agentguard.__version__`, installed
-  `agentguard --version`, wheel metadata, and sdist metadata all equal `0.3.0`.
+  `agentguard --version`, wheel metadata, and sdist metadata all equal `0.3.1`.
 - [ ] No `.agentguard`, coverage, cache, build, local database, secret, test,
   documentation, example, workflow, or script payload is packaged.
 - [ ] `LICENSE` is present in wheel and source-distribution metadata.
-- [ ] Tag `v0.3.0` points to the reviewed release commit.
+- [ ] Tag `v0.3.1` points to the reviewed release commit.
 - [ ] Workflow artifact checksums match the downloaded files.
 - [ ] Toolchain evidence matches `requirements/release-build-toolchain.txt`.
 
@@ -48,7 +50,7 @@ not publish anything.
   environment `pypi`.
 - [ ] GitHub environment `pypi` exists and requires manual approval.
 - [ ] The environment allows only the exact proposed release tag. Version
-  0.3.0 uses the selected tag rule `v0.3.0`.
+  0.3.1 uses the selected tag rule `v0.3.1`.
 - [ ] Before a future release, replace the prior tag rule with only the new
   reviewed version tag.
 - [ ] No PyPI token, password, or long-lived publication secret exists.
@@ -68,7 +70,7 @@ not publish anything.
 ## Release And Publication
 
 - [ ] Select the reviewed merge commit and rerun all validation on it.
-- [ ] Create and push annotated tag `v0.3.0`; do not create tags automatically.
+- [ ] Create and push annotated tag `v0.3.1`; do not create tags automatically.
 - [ ] Run `bash scripts/build_release.sh --strict-release-tag` on the exact
   tagged commit before publication; ordinary CI intentionally permits valid
   post-release commits after an immutable tag.
