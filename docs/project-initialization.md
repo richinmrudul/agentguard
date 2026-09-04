@@ -2,10 +2,10 @@
 
 `agentguard init [PATH]` prepares an existing repository for AgentGuard without
 running repository code, installing dependencies, or changing Git state. It is
-included in the production `agentguard-evals==0.3.0` package:
+included in the `agentguard-evals==0.3.1` package:
 
 ```bash
-python -m pip install "agentguard-evals==0.3.0"
+python -m pip install "agentguard-evals==0.3.1"
 agentguard --version
 ```
 
@@ -264,7 +264,7 @@ The optional workflow:
 
 - runs for `pull_request`, not `pull_request_target`;
 - grants only `contents: read`;
-- installs `agentguard-evals==0.3.0` for a reproducible gate;
+- installs `agentguard-evals==0.3.1` for a reproducible gate;
 - for a safely auto-detected pytest root, installs allowlisted requirements,
   installs an identified project editably when applicable, and explicitly
   installs pytest;
@@ -281,7 +281,7 @@ The optional workflow:
   its failing exit status.
 
 Review the workflow, commit it on your branch, and open a pull request to run
-the first CI evaluation. The exact `agentguard-evals==0.3.0` pin is available
+the first CI evaluation. The exact `agentguard-evals==0.3.1` pin is available
 from production PyPI.
 
 The generated workflow does not install Node.js dependencies. Dependency-free

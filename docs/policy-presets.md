@@ -6,7 +6,7 @@ coding agent, do not sandbox the configured test command, and do not make
 hostile code safe to execute on the host.
 
 The preset commands are included in the production
-`agentguard-evals==0.3.0` package.
+`agentguard-evals==0.3.1` package.
 
 ## Compare Presets
 

@@ -7,6 +7,41 @@ and uses semantic versioning.
 
 ## Unreleased
 
+## v0.3.1 - 2026-09-04
+
+### Fixed
+
+- Hardened benchmark repository preparation and evidence collection around Git
+  metadata, fixed baselines, ignored files, reserved paths, symlinks, hardlinks,
+  and filesystem-equivalent archive members.
+- Made subprocess, online-guard, Docker, history, initialization, report, and
+  trace failure paths bounded, fail-closed, sanitized, and explicit about
+  incomplete cleanup or scanning.
+- Stabilized and deduplicated SARIF output, contained artifact URIs, neutralized
+  XML-illegal JUnit text, and redacted recognized credentials across standards
+  exports.
+- Added bounded trace and static-site parsing, portable persisted evidence
+  paths, immutable Docker image identity evidence, and stricter suite,
+  reliability-baseline, and detector-limit validation.
+- Corrected generated Python workflow dependency preparation and preserved
+  hidden AgentGuard workflow evidence.
+
+### Security
+
+- Enforced distinct trusted pack signers, safer transactional pack import and
+  export, execution-boundary Docker inspection, and sanitized controlled
+  evidence for hostile or malformed inputs.
+- Isolated Code Scanning write authority, pinned supported copyable Actions,
+  declared least-privilege permissions, and locked the authoritative release
+  build toolchain with reviewed hashes and deterministic identity evidence.
+
+### Compatibility
+
+- The distribution remains `agentguard-evals`, the import and CLI remain
+  `agentguard`, and supported Python versions remain 3.9 through 3.12.
+- This patch release intentionally adds no new product feature and does not
+  claim that Docker or local subprocess execution is an absolute sandbox.
+
 ## v0.3.0 - 2026-08-10
 
 ### Added

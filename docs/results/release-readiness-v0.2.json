@@ -112,7 +112,7 @@
       "version_advanced_after_release": true
     },
     "console_script": "agentguard.cli.main:app",
-    "current_version": "0.3.0",
+    "current_version": "0.3.1",
     "description": "Local-first safety and reliability evaluation framework for AI coding agents.",
     "license": "MIT",
     "name": "agentguard",
