@@ -26,7 +26,7 @@ unrelated to AgentGuard.
 ## Initialize an existing project
 
 `agentguard init` is included in the production
-`agentguard-evals==0.3.0` package. Preview project onboarding before writing
+`agentguard-evals==0.3.1` package. Preview project onboarding before writing
 files:
 
 ```bash

@@ -90,12 +90,12 @@ def test_readme_portfolio_first_screen_references_existing_proof() -> None:
     required_text = [
         "local-first safety and evaluation harness",
         "What AgentGuard Catches",
-        "Current Proof",
+        "Validation Evidence",
         "docs/results/validation-summary.md",
         "Architecture At A Glance",
         "Screenshots And Demo Assets",
-        "Current release:",
-        "v0.3.0",
+        "release history",
+        "v0.3.1 preparation record",
         "pip install agentguard-evals",
         "docs/results/release-v0.3.0.md",
     ]

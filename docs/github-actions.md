@@ -2,7 +2,7 @@
 
 ## Preset Execution Boundary
 
-The v0.3.0 `minimal`, `recommended`, and `strict` initialization presets
+The v0.3.1 `minimal`, `recommended`, and `strict` initialization presets
 configure settings that `agentguard ci` consumes: test-command time/output
 bounds, diff and expected-file thresholds, policy severities, path checks, and
 optional built-in secret-content detectors. They perform post-execution
@@ -35,10 +35,10 @@ Copyable workflow examples live under
 - [`agentguard-gate.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-gate.yml):
   compares a suite against an approved baseline.
 
-The production v0.3.0 `agentguard init --ci github` command can
+The v0.3.1 `agentguard init --ci github` command can
 generate a maintained starter workflow at `.github/workflows/agentguard.yml`.
 The production PyPI package contains the initializer, and the generated
-`agentguard-evals==0.3.0` pin resolves publicly. See
+`agentguard-evals==0.3.1` pin resolves publicly after release. See
 [safe project initialization](project-initialization.md) for its dry-run,
 overwrite, detection, and workflow security model.
 

@@ -812,7 +812,7 @@ def test_github_workflow_is_valid_least_privilege_and_pinned(
     assert uses
     assert all(FULL_SHA.fullmatch(item.rsplit("@", 1)[1]) for item in uses)
     source = (root / GITHUB_WORKFLOW_PATH).read_text(encoding="utf-8")
-    assert "agentguard-evals==0.3.0" in source
+    assert "agentguard-evals==0.3.1" in source
     assert "agentguard ci --config agentguard.yaml" in source
     assert "--base \"$AGENTGUARD_BASE_SHA\" --head HEAD --github-summary" in source
     assert "secrets." not in source
@@ -1020,7 +1020,7 @@ def test_force_replaces_only_owned_targets(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert load_config(root / CONFIG_PATH).test_command == "pytest"
-    assert "agentguard-evals==0.3.0" in workflow.read_text(encoding="utf-8")
+    assert "agentguard-evals==0.3.1" in workflow.read_text(encoding="utf-8")
     assert unrelated.read_text(encoding="utf-8") == "name: keep me\n"
     assert readme.read_text(encoding="utf-8") == "keep me\n"
 

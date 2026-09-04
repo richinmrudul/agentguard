@@ -194,7 +194,7 @@ def test_package_version_sources_agree() -> None:
 
     assert project["name"] == "agentguard-evals"
     assert project_version == __version__
-    assert project_version == "0.3.0"
+    assert project_version == "0.3.1"
     assert project["scripts"] == {"agentguard": "agentguard.cli.main:app"}
     assert result.exit_code == 0
     assert result.output.strip() == project_version
@@ -892,7 +892,7 @@ def test_installed_wheel_runs_outside_repository(
                 "distribution; "
                 "d = distribution('agentguard-evals'); "
                 "assert d.metadata['Name'] == 'agentguard-evals'; "
-                "assert d.version == '0.3.0'; "
+                "assert d.version == '0.3.1'; "
                 "\ntry: distribution('agentguard')\n"
                 "except PackageNotFoundError: pass\n"
                 "else: raise AssertionError('legacy distribution is installed')"
