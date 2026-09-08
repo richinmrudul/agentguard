@@ -15,6 +15,7 @@ VALID_CONTAINED_EXECUTION_PLATFORMS = {
 }
 VALID_CONTAINED_EXECUTION_NETWORKS = {"none"}
 VALID_CONTAINED_EXECUTION_IMAGE_PROVENANCE = {"digest-required"}
+MAX_CONTAINED_EXECUTION_UID_GID = 2147483647
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,8 @@ class ContainedExecutionConfig:
     platform: str
     network: str = "none"
     image_provenance: str = "digest-required"
+    required_uid: int = 1000
+    required_gid: int = 1000
     require_evidence_outside_agent_repo: bool = True
     allow_privileged: bool = False
     allow_host_network: bool = False

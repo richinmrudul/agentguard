@@ -8,7 +8,11 @@ from enum import Enum
 from typing import Callable, Optional
 
 from agentguard.config.docker_image import validate_docker_image_reference
-from agentguard.config.schema import AgentGuardConfig, ContainedExecutionConfig
+from agentguard.config.schema import (
+    MAX_CONTAINED_EXECUTION_UID_GID,
+    AgentGuardConfig,
+    ContainedExecutionConfig,
+)
 from agentguard.instrumentation.output_limits import BoundedProcessOutput, limit_output
 from agentguard.instrumentation.processes import cleanup_process_after_exception
 from agentguard.sandbox.docker_identity import (
@@ -23,6 +27,8 @@ PREFLIGHT_TIMEOUT_SECONDS = 5
 PREFLIGHT_MAX_OUTPUT_BYTES = 65536
 DIAGNOSTIC_MAX_BYTES = 512
 MIN_DOCKER_API_FOR_READ_ONLY_TMPFS = (1, 25)
+PROBE_WRITABLE_PATH = "/agentguard-preflight"
+PROBE_WRITABLE_FILE = f"{PROBE_WRITABLE_PATH}/write-check"
 SECRET_VALUE_PATTERN = re.compile(
     r"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|KEY|CREDENTIAL)[A-Z0-9_]*)"
     r"\s*=\s*[^\s,;]+"
@@ -193,8 +199,16 @@ def run_docker_preflight(
             image_metadata,
             checks,
         )
-        _validate_non_root_image_user(
+        _record_image_user_declaration(
             image_metadata,
+            checks,
+        )
+        _probe_uid_gid_writable_path(
+            config.contained_execution,
+            image,
+            runner,
+            timeout_seconds,
+            max_output_bytes,
             checks,
         )
     except FileNotFoundError:
@@ -351,6 +365,79 @@ def _docker_json(
     return value
 
 
+def _probe_json(
+    runner: CommandRunner,
+    argv: list[str],
+    check_name: str,
+    timeout_seconds: int,
+    max_output_bytes: int,
+) -> dict[str, object]:
+    started = time.monotonic()
+    completed = runner(argv, timeout_seconds, max_output_bytes)
+    duration = round(time.monotonic() - started, 6)
+    if completed.timed_out:
+        raise DockerPreflightError(
+            DockerPreflightStatus.UNSAFE,
+            _check(
+                check_name,
+                False,
+                DockerPreflightStatus.UNSAFE,
+                "Docker UID/GID writable-path probe timed out.",
+                {"duration_seconds": duration},
+            ),
+        )
+    if completed.stdout_truncated or completed.stderr_truncated:
+        raise DockerPreflightError(
+            DockerPreflightStatus.UNSAFE,
+            _check(
+                check_name,
+                False,
+                DockerPreflightStatus.UNSAFE,
+                "Docker UID/GID writable-path probe exceeded the output bound.",
+                {"duration_seconds": duration},
+            ),
+        )
+    if completed.returncode != 0:
+        raise DockerPreflightError(
+            DockerPreflightStatus.UNSAFE,
+            _check(
+                check_name,
+                False,
+                DockerPreflightStatus.UNSAFE,
+                "Docker UID/GID writable-path probe failed.",
+                {
+                    "returncode": completed.returncode,
+                    "stderr": _sanitize_diagnostic(completed.stderr),
+                    "duration_seconds": duration,
+                },
+            ),
+        )
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        raise DockerPreflightError(
+            DockerPreflightStatus.UNSAFE,
+            _check(
+                check_name,
+                False,
+                DockerPreflightStatus.UNSAFE,
+                "Docker UID/GID writable-path probe returned malformed JSON.",
+                {"duration_seconds": duration},
+            ),
+        ) from None
+    if not isinstance(value, dict):
+        raise DockerPreflightError(
+            DockerPreflightStatus.UNSAFE,
+            _check(
+                check_name,
+                False,
+                DockerPreflightStatus.UNSAFE,
+                "Docker UID/GID writable-path probe returned an unsupported shape.",
+            ),
+        )
+    return value
+
+
 def _validate_contract(
     contained: ContainedExecutionConfig,
     checks: list[DockerPreflightCheck],
@@ -364,6 +451,20 @@ def _validate_contract(
         unsafe.append("unsupported network")
     if contained.image_provenance != "digest-required":
         unsafe.append("unsupported image provenance")
+    if (
+        isinstance(contained.required_uid, bool)
+        or not isinstance(contained.required_uid, int)
+        or contained.required_uid <= 0
+        or contained.required_uid > MAX_CONTAINED_EXECUTION_UID_GID
+    ):
+        unsafe.append("unsupported required UID")
+    if (
+        isinstance(contained.required_gid, bool)
+        or not isinstance(contained.required_gid, int)
+        or contained.required_gid <= 0
+        or contained.required_gid > MAX_CONTAINED_EXECUTION_UID_GID
+    ):
+        unsafe.append("unsupported required GID")
     flags = {
         "allow_privileged": contained.allow_privileged,
         "allow_host_network": contained.allow_host_network,
@@ -734,30 +835,126 @@ def _validate_image_identity(
     return identity
 
 
-def _validate_non_root_image_user(
+def _record_image_user_declaration(
     raw: dict[str, object],
     checks: list[DockerPreflightCheck],
 ) -> None:
     config = raw.get("Config")
     user = config.get("User") if isinstance(config, dict) else None
-    if not isinstance(user, str) or not user.strip() or user in {"0", "root"}:
+    checks.append(
+        _check(
+            "image_user_declaration",
+            True,
+            DockerPreflightStatus.SUPPORTED,
+            "Docker image user declaration recorded; UID/GID behavior is verified by the controlled probe.",
+            {"user_declared": isinstance(user, str) and bool(user.strip())},
+        )
+    )
+
+
+def _probe_uid_gid_writable_path(
+    contained: ContainedExecutionConfig,
+    image: str,
+    runner: CommandRunner,
+    timeout_seconds: int,
+    max_output_bytes: int,
+    checks: list[DockerPreflightCheck],
+) -> None:
+    if contained.required_uid == 0 or contained.required_gid == 0:
         raise DockerPreflightError(
             DockerPreflightStatus.UNSAFE,
             _check(
-                "non_root_user",
+                "uid_gid_writable_path_probe",
                 False,
                 DockerPreflightStatus.UNSAFE,
-                "Docker image user is root or ambiguous.",
+                "Docker UID/GID probe requires non-root UID and GID.",
+            ),
+        )
+    script = _uid_gid_probe_script(contained.required_uid, contained.required_gid)
+    argv = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--security-opt",
+        "no-new-privileges",
+        "--cap-drop",
+        "ALL",
+        "--pids-limit",
+        "64",
+        "--memory",
+        "64m",
+        "--cpus",
+        "1",
+        "--read-only",
+        "--tmpfs",
+        f"{PROBE_WRITABLE_PATH}:rw,noexec,nosuid,nodev,size=64k,uid={contained.required_uid},gid={contained.required_gid},mode=700",
+        "--user",
+        f"{contained.required_uid}:{contained.required_gid}",
+        "--entrypoint",
+        "/bin/sh",
+        "--",
+        image,
+        "-c",
+        script,
+    ]
+    result = _probe_json(
+        runner,
+        argv,
+        "uid_gid_writable_path_probe",
+        timeout_seconds,
+        max_output_bytes,
+    )
+    uid = result.get("uid")
+    gid = result.get("gid")
+    writable_path = result.get("writable_path")
+    root_write_blocked = result.get("root_write_blocked")
+    if (
+        uid != contained.required_uid
+        or gid != contained.required_gid
+        or writable_path != PROBE_WRITABLE_PATH
+        or root_write_blocked is not True
+    ):
+        raise DockerPreflightError(
+            DockerPreflightStatus.UNSAFE,
+            _check(
+                "uid_gid_writable_path_probe",
+                False,
+                DockerPreflightStatus.UNSAFE,
+                "Docker UID/GID writable-path probe returned contradictory evidence.",
             ),
         )
     checks.append(
         _check(
-            "non_root_user",
+            "uid_gid_writable_path_probe",
             True,
             DockerPreflightStatus.SUPPORTED,
-            "Docker image declares a non-root user.",
-            {"user_declared": True},
+            "Docker can run the image as the required non-root UID/GID with a controlled writable tmpfs path.",
+            {
+                "uid": uid,
+                "gid": gid,
+                "writable_path": writable_path,
+                "root_write_blocked": root_write_blocked,
+            },
         )
+    )
+
+
+def _uid_gid_probe_script(uid: int, gid: int) -> str:
+    return (
+        "set -eu\n"
+        'actual_uid="$(id -u)"\n'
+        'actual_gid="$(id -g)"\n'
+        f'test "$actual_uid" = "{uid}"\n'
+        f'test "$actual_gid" = "{gid}"\n'
+        f'printf agentguard > "{PROBE_WRITABLE_FILE}"\n'
+        f'test "$(cat "{PROBE_WRITABLE_FILE}")" = "agentguard"\n'
+        'root_write_blocked=true\n'
+        '(printf denied > /agentguard-preflight-denied) 2>/dev/null && root_write_blocked=false || true\n'
+        'test "$root_write_blocked" = "true"\n'
+        'printf \'{"uid":%s,"gid":%s,"writable_path":"%s","root_write_blocked":true}\\n\' '
+        f'"$actual_uid" "$actual_gid" "{PROBE_WRITABLE_PATH}"\n'
     )
 
 

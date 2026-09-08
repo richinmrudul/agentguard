@@ -25,9 +25,10 @@ not a runtime mode. It validates the future contained-execution boundary
 documented in [Contained Execution Contract](contained-execution.md), including
 Linux Docker Engine as the authoritative platform, Docker Desktop as
 experimental/reduced-claim, default network `none`, digest-required image
-provenance, evidence outside the agent-mounted repository, and rejection of
-privileged containers, host networking, Docker socket mounts, device exposure,
-and host namespace sharing. Omitting the block preserves existing behavior.
+provenance, required non-root UID/GID planning defaults for Docker preflight,
+evidence outside the agent-mounted repository, and rejection of privileged
+containers, host networking, Docker socket mounts, device exposure, and host
+namespace sharing. Omitting the block preserves existing behavior.
 
 The checked-in JSON file is the canonical editor schema. CI runs
 `python scripts/validate_config_schema.py`, which:

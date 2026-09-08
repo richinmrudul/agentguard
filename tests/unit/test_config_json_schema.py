@@ -329,6 +329,8 @@ def test_packaged_schema_enforces_combined_detector_limit_like_source_schema() -
                 "platform": "linux-docker-engine",
                 "network": "none",
                 "image_provenance": "digest-required",
+                "required_uid": 1000,
+                "required_gid": 1000,
                 "require_evidence_outside_agent_repo": True,
                 "allow_privileged": False,
                 "allow_host_network": False,
@@ -410,6 +412,34 @@ def test_representative_valid_documents_have_loader_schema_parity(
                 "version": 1,
                 "platform": "linux-docker-engine",
                 "image_provenance": "tag-allowed",
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "required_uid": 0,
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "required_gid": 0,
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "required_uid": 2147483648,
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "required_gid": 2147483648,
             }
         ),
         _ci_config(

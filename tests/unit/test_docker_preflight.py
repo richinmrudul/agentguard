@@ -10,6 +10,7 @@ from agentguard.sandbox import docker_preflight
 from agentguard.sandbox.docker_preflight import (
     DockerPreflightCommandResult,
     DockerPreflightStatus,
+    PROBE_WRITABLE_PATH,
     run_docker_preflight,
 )
 
@@ -83,12 +84,23 @@ class FakeDocker:
         info=None,
         image=None,
         network=None,
+        probe=None,
         fail=None,
     ) -> None:
         self.version = _version() if version is None else version
         self.info = _info() if info is None else info
         self.image = _image() if image is None else image
         self.network = {"Name": "none"} if network is None else network
+        self.probe = (
+            {
+                "uid": 1000,
+                "gid": 1000,
+                "writable_path": PROBE_WRITABLE_PATH,
+                "root_write_blocked": True,
+            }
+            if probe is None
+            else probe
+        )
         self.fail = fail or {}
         self.commands = []
 
@@ -123,6 +135,7 @@ class FakeDocker:
             "info": self.info,
             "network": self.network,
             "image": self.image,
+            "probe": self.probe,
         }[key]
         return DockerPreflightCommandResult(
             argv,
@@ -140,6 +153,8 @@ class FakeDocker:
             return "network"
         if argv[:3] == ["docker", "image", "inspect"]:
             return "image"
+        if argv[:2] == ["docker", "run"]:
+            return "probe"
         raise AssertionError(f"unexpected docker command: {argv!r}")
 
 
@@ -153,12 +168,46 @@ def test_authoritative_linux_preflight_success() -> None:
     assert result.claim_level == "linux-docker-engine"
     assert result.docker_image is not None
     assert result.docker_image.registry_digest == IMAGE_DIGEST
+    probe = result.checks[-1]
+    assert probe.name == "uid_gid_writable_path_probe"
+    assert probe.evidence["uid"] == 1000
+    assert probe.evidence["gid"] == 1000
     assert [command[:2] for command in fake.commands] == [
         ["docker", "version"],
         ["docker", "info"],
         ["docker", "network"],
         ["docker", "image"],
+        ["docker", "run"],
     ]
+    run_command = fake.commands[-1]
+    assert "--user" in run_command
+    assert "1000:1000" in run_command
+    assert "--security-opt" in run_command
+    assert "no-new-privileges" in run_command
+    assert "--cap-drop" in run_command
+    assert "ALL" in run_command
+    assert "--pids-limit" in run_command
+    assert "64" in run_command
+    assert "--memory" in run_command
+    assert "64m" in run_command
+    assert "--cpus" in run_command
+    assert "1" in run_command
+    assert "--tmpfs" in run_command
+    assert "--entrypoint" in run_command
+    assert "/bin/sh" in run_command
+    assert IMAGE_DIGEST in run_command
+    forbidden_parts = {
+        "--privileged",
+        "--device",
+        "--pid",
+        "--ipc",
+        "--userns",
+        "--uts",
+        "--cgroupns",
+        "/var/run/docker.sock",
+    }
+    assert not forbidden_parts.intersection(run_command)
+    assert "host" not in run_command
 
 
 def test_docker_desktop_is_reduced_claim_when_configured() -> None:
@@ -235,14 +284,22 @@ def test_linux_claim_rejects_docker_desktop_contradiction() -> None:
     assert result.checks[-1].name == "platform_claim"
 
 
-def test_root_user_ambiguity_is_unsafe() -> None:
+def test_root_uid_gid_probe_result_is_unsafe() -> None:
     result = run_docker_preflight(
         _config(),
-        command_runner=FakeDocker(image=_image(user="")),
+        command_runner=FakeDocker(
+            image=_image(user=""),
+            probe={
+                "uid": 0,
+                "gid": 0,
+                "writable_path": PROBE_WRITABLE_PATH,
+                "root_write_blocked": True,
+            },
+        ),
     )
 
     assert result.status == DockerPreflightStatus.UNSAFE
-    assert result.checks[-1].name == "non_root_user"
+    assert result.checks[-1].name == "uid_gid_writable_path_probe"
 
 
 def test_unsupported_image_platform_is_unsafe() -> None:
@@ -279,6 +336,31 @@ def test_unsafe_config_options_are_rejected_before_docker_calls() -> None:
     assert fake.commands == []
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"required_uid": 0},
+        {"required_gid": 0},
+        {"required_uid": 2147483648},
+        {"required_gid": 2147483648},
+    ],
+)
+def test_unsafe_uid_gid_contract_values_are_rejected_before_docker_calls(
+    change: dict[str, int],
+) -> None:
+    contained = replace(_config().contained_execution, **change)
+    fake = FakeDocker()
+
+    result = run_docker_preflight(
+        _config(contained_execution=contained),
+        command_runner=fake,
+    )
+
+    assert result.status == DockerPreflightStatus.UNSAFE
+    assert result.checks[-1].name == "contained_execution_contract"
+    assert fake.commands == []
+
+
 def test_unsafe_sandbox_boundary_is_rejected_before_docker_calls() -> None:
     fake = FakeDocker()
 
@@ -300,6 +382,24 @@ def test_no_agent_execution_on_failure() -> None:
     assert result.status == DockerPreflightStatus.UNAVAILABLE
     assert all(command[0] == "docker" for command in fake.commands)
     assert not any("agent command must not run" in part for command in fake.commands for part in command)
+
+
+@pytest.mark.parametrize("failure", ["timeout", "malformed", "oversized", "daemon"])
+def test_uid_gid_writable_path_probe_failures_are_unsafe(failure: str) -> None:
+    fake = FakeDocker(fail={"probe": failure})
+
+    result = run_docker_preflight(_config(), command_runner=fake)
+
+    assert result.status == DockerPreflightStatus.UNSAFE
+    assert result.checks[-1].name == "uid_gid_writable_path_probe"
+    run_command = fake.commands[-1]
+    assert run_command[:2] == ["docker", "run"]
+    assert "--user" in run_command
+    assert "1000:1000" in run_command
+    assert not any("agent command must not run" in part for part in run_command)
+    if failure == "daemon":
+        assert "super-secret" not in result.checks[-1].evidence["stderr"]
+        assert "/Users/alice" not in result.checks[-1].evidence["stderr"]
 
 
 def test_python_39_compatible_syntax() -> None:

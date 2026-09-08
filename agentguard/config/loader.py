@@ -9,6 +9,7 @@ from agentguard.config.docker_image import validate_docker_image_reference
 from agentguard.config.guard_ignores import load_guard_ignore_patterns
 from agentguard.config.schema import (
     VALID_BENCHMARK_DIFFICULTIES,
+    MAX_CONTAINED_EXECUTION_UID_GID,
     VALID_CONTAINED_EXECUTION_IMAGE_PROVENANCE,
     VALID_CONTAINED_EXECUTION_NETWORKS,
     VALID_CONTAINED_EXECUTION_PLATFORMS,
@@ -121,6 +122,8 @@ CONTAINED_EXECUTION_KEYS = {
     "image_provenance",
     "network",
     "platform",
+    "required_gid",
+    "required_uid",
     "require_evidence_outside_agent_repo",
     "version",
 }
@@ -656,6 +659,25 @@ def _contained_bool(
     return expected
 
 
+def _contained_positive_int(
+    mapping: dict[str, Any],
+    key: str,
+    default: int,
+) -> int:
+    value = mapping.get(key, default)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value <= 0
+        or value > MAX_CONTAINED_EXECUTION_UID_GID
+    ):
+        raise ValueError(
+            f"Config field 'contained_execution.{key}' must be an integer "
+            f"from 1 to {MAX_CONTAINED_EXECUTION_UID_GID}."
+        )
+    return value
+
+
 def _load_contained_execution(
     data: dict[str, Any],
 ) -> Optional[ContainedExecutionConfig]:
@@ -703,6 +725,8 @@ def _load_contained_execution(
         platform=platform,
         network=network,
         image_provenance=image_provenance,
+        required_uid=_contained_positive_int(contained, "required_uid", 1000),
+        required_gid=_contained_positive_int(contained, "required_gid", 1000),
         require_evidence_outside_agent_repo=_contained_bool(
             contained,
             "require_evidence_outside_agent_repo",

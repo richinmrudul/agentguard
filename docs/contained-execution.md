@@ -113,9 +113,10 @@ The preflight checks Docker CLI availability, daemon availability, bounded
 client and server JSON responses, Linux engine identity, Docker Desktop
 classification, the `none` network, requested resource-limit signals,
 read-only-root and tmpfs API support, digest-pinned local image identity, a
-non-root image user declaration, and rejection of prohibited contained-execution
-options. Malformed, missing, contradictory, oversized, timed-out, or unsupported
-responses fail closed.
+controlled run as the required non-root UID/GID with a bounded writable tmpfs
+path, and rejection of prohibited contained-execution options. Malformed,
+missing, contradictory, oversized, timed-out, or unsupported responses fail
+closed.
 
 Results are structured as one of:
 
@@ -147,6 +148,8 @@ contained_execution:
   platform: linux-docker-engine
   network: none
   image_provenance: digest-required
+  required_uid: 1000
+  required_gid: 1000
   require_evidence_outside_agent_repo: true
   allow_privileged: false
   allow_host_network: false
