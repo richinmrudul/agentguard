@@ -220,6 +220,13 @@ def test_workspace_mount_containment_allows_paths_renderer_later_rejects(
         validate_docker_exec_spec(_spec(tmp_path, workspace_host_path=workspace))
 
 
+def test_relative_workspace_host_path_is_rejected_before_normalization(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="host path must be absolute"):
+        validate_docker_exec_spec(_spec(tmp_path, workspace_host_path=Path("repo")))
+
+
 @pytest.mark.parametrize(
     ("field", "path"),
     [

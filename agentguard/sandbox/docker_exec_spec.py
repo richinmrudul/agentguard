@@ -176,9 +176,10 @@ def validate_docker_exec_spec(spec: DockerExecSpec) -> DockerExecSpec:
                 "Docker workspace tmpfs size is outside the contained-execution bounds."
             )
     else:
-        workspace = spec.workspace_host_path.expanduser().resolve()
-        if not workspace.is_absolute():
+        expanded_workspace = spec.workspace_host_path.expanduser()
+        if not expanded_workspace.is_absolute():
             raise ValueError("Docker workspace host path must be absolute.")
+        workspace = expanded_workspace.resolve()
         _validate_mount_field_path(workspace)
         workspace_tmpfs_size = None
     _validate_container_path(spec.workspace_container_path, "workspace_container_path")
