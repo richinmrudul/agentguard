@@ -9,10 +9,14 @@ from agentguard.config.docker_image import validate_docker_image_reference
 from agentguard.config.guard_ignores import load_guard_ignore_patterns
 from agentguard.config.schema import (
     VALID_BENCHMARK_DIFFICULTIES,
+    VALID_CONTAINED_EXECUTION_IMAGE_PROVENANCE,
+    VALID_CONTAINED_EXECUTION_NETWORKS,
+    VALID_CONTAINED_EXECUTION_PLATFORMS,
     VALID_SEVERITIES,
     AgentGuardConfig,
     BenchmarkMetadata,
     CommandPolicyConfig,
+    ContainedExecutionConfig,
     DiffLimits,
     ExpectedModifiedFiles,
     FilesystemWatcherConfig,
@@ -55,6 +59,7 @@ TOP_LEVEL_CONFIG_KEYS = {
     "benchmark",
     "command_policy",
     "command_timeout_seconds",
+    "contained_execution",
     "description",
     "diff_limits",
     "expected_modified_files",
@@ -107,6 +112,18 @@ POLICY_SETTING_KEYS = {"severity"}
 DIFF_LIMIT_KEYS = {"max_files_changed", "max_lines_added", "max_lines_deleted"}
 COMMAND_POLICY_KEYS = {"mode"}
 FILESYSTEM_WATCHER_KEYS = {"mode"}
+CONTAINED_EXECUTION_KEYS = {
+    "allow_device_exposure",
+    "allow_docker_socket_mount",
+    "allow_host_namespace_sharing",
+    "allow_host_network",
+    "allow_privileged",
+    "image_provenance",
+    "network",
+    "platform",
+    "require_evidence_outside_agent_repo",
+    "version",
+}
 SANDBOX_KEYS = {
     "docker",
     "image",
@@ -625,6 +642,92 @@ def _load_sandbox(data: dict[str, Any]) -> SandboxConfig:
     )
 
 
+def _contained_bool(
+    mapping: dict[str, Any],
+    key: str,
+    expected: bool,
+) -> bool:
+    value = mapping.get(key, expected)
+    if value is not expected:
+        expected_text = "true" if expected else "false"
+        raise ValueError(
+            f"Config field 'contained_execution.{key}' must be {expected_text}."
+        )
+    return expected
+
+
+def _load_contained_execution(
+    data: dict[str, Any],
+) -> Optional[ContainedExecutionConfig]:
+    contained = data.get("contained_execution")
+    if contained is None:
+        return None
+    if not isinstance(contained, dict):
+        raise ValueError("Config field 'contained_execution' must be a mapping.")
+    reject_unknown_keys(
+        contained,
+        CONTAINED_EXECUTION_KEYS,
+        "contained_execution",
+    )
+
+    version = contained.get("version")
+    if isinstance(version, bool) or version != 1:
+        raise ValueError("Config field 'contained_execution.version' must be 1.")
+
+    platform = contained.get("platform")
+    if platform not in VALID_CONTAINED_EXECUTION_PLATFORMS:
+        valid = ", ".join(sorted(VALID_CONTAINED_EXECUTION_PLATFORMS))
+        raise ValueError(
+            "Config field 'contained_execution.platform' must be one of: "
+            f"{valid}."
+        )
+
+    network = contained.get("network", "none")
+    if network not in VALID_CONTAINED_EXECUTION_NETWORKS:
+        valid = ", ".join(sorted(VALID_CONTAINED_EXECUTION_NETWORKS))
+        raise ValueError(
+            "Config field 'contained_execution.network' must be one of: "
+            f"{valid}."
+        )
+
+    image_provenance = contained.get("image_provenance", "digest-required")
+    if image_provenance not in VALID_CONTAINED_EXECUTION_IMAGE_PROVENANCE:
+        valid = ", ".join(sorted(VALID_CONTAINED_EXECUTION_IMAGE_PROVENANCE))
+        raise ValueError(
+            "Config field 'contained_execution.image_provenance' must be one of: "
+            f"{valid}."
+        )
+
+    return ContainedExecutionConfig(
+        version=version,
+        platform=platform,
+        network=network,
+        image_provenance=image_provenance,
+        require_evidence_outside_agent_repo=_contained_bool(
+            contained,
+            "require_evidence_outside_agent_repo",
+            True,
+        ),
+        allow_privileged=_contained_bool(contained, "allow_privileged", False),
+        allow_host_network=_contained_bool(contained, "allow_host_network", False),
+        allow_docker_socket_mount=_contained_bool(
+            contained,
+            "allow_docker_socket_mount",
+            False,
+        ),
+        allow_device_exposure=_contained_bool(
+            contained,
+            "allow_device_exposure",
+            False,
+        ),
+        allow_host_namespace_sharing=_contained_bool(
+            contained,
+            "allow_host_namespace_sharing",
+            False,
+        ),
+    )
+
+
 def load_config(config_path: Path) -> AgentGuardConfig:
     path = config_path.expanduser()
     with path.open("r", encoding="utf-8") as file:
@@ -749,6 +852,7 @@ def load_config(config_path: Path) -> AgentGuardConfig:
         secret_content_patterns=secret_content_patterns,
         secret_content_builtin_detectors=secret_content_builtin_detectors,
         sandbox=_load_sandbox(data),
+        contained_execution=_load_contained_execution(data),
         benchmark=_load_benchmark_metadata(data),
         task=_load_task(data, path),
         config_path=path.resolve(),

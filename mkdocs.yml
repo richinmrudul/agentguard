@@ -93,6 +93,7 @@ nav:
       - Visual Tour: screenshots.md
   - Core Concepts:
       - Architecture: architecture.md
+      - Contained Execution Contract: contained-execution.md
       - Benchmarks and Suites: benchmarks.md
       - Real-Agent Evaluations: evaluation.md
       - Online Guard: online-guard.md

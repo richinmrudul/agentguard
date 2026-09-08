@@ -16,6 +16,7 @@ from agentguard.config.json_schema import (
 from agentguard.config.loader import (
     BENCHMARK_KEYS,
     COMMAND_POLICY_KEYS,
+    CONTAINED_EXECUTION_KEYS,
     DIFF_LIMIT_KEYS,
     EXPECTED_MODIFIED_FILES_KEYS,
     EXPECTED_MODIFIED_FILES_REQUIRED_KEYS,
@@ -45,6 +46,9 @@ from agentguard.config.loader import (
 )
 from agentguard.config.schema import (
     VALID_BENCHMARK_DIFFICULTIES,
+    VALID_CONTAINED_EXECUTION_IMAGE_PROVENANCE,
+    VALID_CONTAINED_EXECUTION_NETWORKS,
+    VALID_CONTAINED_EXECUTION_PLATFORMS,
     VALID_SEVERITIES,
 )
 
@@ -115,6 +119,15 @@ def test_schema_enums_match_production_constants(schema: dict) -> None:
         VALID_SANDBOX_TYPES
     )
     assert set(
+        definitions["containedExecution"]["properties"]["platform"]["enum"]
+    ) == VALID_CONTAINED_EXECUTION_PLATFORMS
+    assert {
+        definitions["containedExecution"]["properties"]["network"]["const"]
+    } == VALID_CONTAINED_EXECUTION_NETWORKS
+    assert {
+        definitions["containedExecution"]["properties"]["image_provenance"]["const"]
+    } == VALID_CONTAINED_EXECUTION_IMAGE_PROVENANCE
+    assert set(
         properties["benchmark"]["properties"]["difficulty"]["enum"]
     ) == VALID_BENCHMARK_DIFFICULTIES | {None}
     assert set(
@@ -163,6 +176,7 @@ def test_schema_bounds_and_nested_keys_match_loader_constants(schema: dict) -> N
         (definitions["policySetting"], POLICY_SETTING_KEYS),
         (properties["diff_limits"], DIFF_LIMIT_KEYS),
         (properties["command_policy"], COMMAND_POLICY_KEYS),
+        (definitions["containedExecution"], CONTAINED_EXECUTION_KEYS),
         (definitions["sandbox"], SANDBOX_KEYS),
         (definitions["sandbox"]["properties"]["docker"], SANDBOX_DOCKER_KEYS),
     ]
@@ -309,6 +323,26 @@ def test_packaged_schema_enforces_combined_detector_limit_like_source_schema() -
                 {"id": "project-token", "contains": "PROJECT_TOKEN_"}
             ]
         ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "network": "none",
+                "image_provenance": "digest-required",
+                "require_evidence_outside_agent_repo": True,
+                "allow_privileged": False,
+                "allow_host_network": False,
+                "allow_docker_socket_mount": False,
+                "allow_device_exposure": False,
+                "allow_host_namespace_sharing": False,
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "docker-desktop-experimental",
+            }
+        ),
     ],
 )
 def test_representative_valid_documents_have_loader_schema_parity(
@@ -351,6 +385,75 @@ def test_representative_valid_documents_have_loader_schema_parity(
         _ci_config(sandbox={"docker": {"cpus": "-1"}}),
         _ci_config(sandbox={"docker": {"cpus": "nan"}}),
         _ci_config(sandbox={"docker": {"cpus": "1e100"}}),
+        _ci_config(
+            contained_execution={
+                "version": 2,
+                "platform": "linux-docker-engine",
+            }
+        ),
+        _ci_config(contained_execution={"version": 1}),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "kubernetes",
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "network": "bridge",
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "image_provenance": "tag-allowed",
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "require_evidence_outside_agent_repo": False,
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "allow_privileged": True,
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "allow_host_network": True,
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "allow_docker_socket_mount": True,
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "allow_device_exposure": True,
+            }
+        ),
+        _ci_config(
+            contained_execution={
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "allow_host_namespace_sharing": True,
+            }
+        ),
         _ci_config(
             secret_content_patterns=[
                 {"id": "A", "contains": "PROJECT_TOKEN_"}

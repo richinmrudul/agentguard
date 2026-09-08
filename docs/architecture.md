@@ -10,6 +10,10 @@ trustworthy" from the agent's own explanation. It evaluates observable evidence:
 tests, git diffs, changed files, command logs, policy checks, sandbox metadata,
 timelines, and reports.
 
+For the future contained-agent application-level boundary, see the authoritative
+[contained execution contract](contained-execution.md). Existing execution modes
+remain unchanged and do not inherit that contract.
+
 For a portfolio-oriented summary of the system, see
 [docs/portfolio.md](portfolio.md). The short version: AgentGuard turns
 agent behavior into auditable local evidence that can be reviewed by engineers,

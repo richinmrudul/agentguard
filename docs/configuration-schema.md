@@ -20,6 +20,15 @@ limits. YAML can also represent non-finite floats such as `.nan` and `.inf`,
 which are outside JSON Schema's standard JSON data model; the production loader
 explicitly rejects them in metadata and numeric configuration fields.
 
+The additive `contained_execution` block is a version-aware planning contract,
+not a runtime mode. It validates the future contained-execution boundary
+documented in [Contained Execution Contract](contained-execution.md), including
+Linux Docker Engine as the authoritative platform, Docker Desktop as
+experimental/reduced-claim, default network `none`, digest-required image
+provenance, evidence outside the agent-mounted repository, and rejection of
+privileged containers, host networking, Docker socket mounts, device exposure,
+and host namespace sharing. Omitting the block preserves existing behavior.
+
 The checked-in JSON file is the canonical editor schema. CI runs
 `python scripts/validate_config_schema.py`, which:
 
