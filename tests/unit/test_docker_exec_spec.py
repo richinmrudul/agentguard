@@ -193,6 +193,59 @@ def test_option_injection_and_dangerous_paths_are_rejected(
         validate_docker_exec_spec(_spec(tmp_path, **{field: value}))
 
 
+@pytest.mark.parametrize("segment", ["repo,target=/proc", "repo,readonly", "repo\nbad", "repo\x1fbad"])
+def test_workspace_mount_field_injection_paths_are_rejected_before_rendering(
+    tmp_path: Path,
+    segment: str,
+) -> None:
+    workspace = tmp_path / segment
+    workspace.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="mount-field"):
+        build_contained_docker_run_argv(
+            _spec(tmp_path, workspace_host_path=workspace)
+        )
+
+
+def test_workspace_mount_containment_allows_paths_renderer_later_rejects(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    workspace = root / "repo,readonly"
+    workspace.mkdir()
+
+    assert validate_workspace_mount_containment(workspace, root) == workspace.resolve()
+    with pytest.raises(ValueError, match="mount-field"):
+        validate_docker_exec_spec(_spec(tmp_path, workspace_host_path=workspace))
+
+
+@pytest.mark.parametrize(
+    ("field", "path"),
+    [
+        ("workspace_container_path", "/proc/workspace"),
+        ("workspace_container_path", "/sys/foo"),
+        ("workspace_container_path", "/dev/shm"),
+        ("workspace_container_path", "/var/run/docker.sock"),
+        ("tmpfs_path", "/proc/workspace"),
+        ("tmpfs_path", "/sys/foo"),
+        ("tmpfs_path", "/dev/shm"),
+        ("tmpfs_path", "/var/run/docker.sock"),
+        ("entrypoint", "/proc/self/exe"),
+        ("entrypoint", "/sys/kernel/foo"),
+        ("entrypoint", "/dev/fd/0"),
+        ("entrypoint", "/var/run/docker.sock"),
+    ],
+)
+def test_reserved_container_path_prefixes_are_rejected(
+    tmp_path: Path,
+    field: str,
+    path: str,
+) -> None:
+    with pytest.raises(ValueError, match=field):
+        validate_docker_exec_spec(_spec(tmp_path, **{field: path}))
+
+
 @pytest.mark.parametrize(("uid", "gid"), [(0, 1000), (1000, 0), (-1, 1000)])
 def test_non_root_execution_is_enforced(tmp_path: Path, uid: int, gid: int) -> None:
     with pytest.raises(ValueError, match="non-root"):

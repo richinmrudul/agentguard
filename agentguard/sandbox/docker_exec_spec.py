@@ -19,6 +19,8 @@ MAX_CONTAINED_TMPFS_BYTES = 4 * 1024 * 1024 * 1024
 CONTAINED_CONTAINER_PATH = re.compile(r"^/[A-Za-z0-9._/-]+$")
 SAFE_CONTAINER_NAME = re.compile(r"^agentguard-[a-z0-9][a-z0-9_.-]{0,62}$")
 _MEMORY_LIMIT = re.compile(r"^([1-9][0-9]*)([kKmMgG]?)$")
+_DOCKER_MOUNT_FIELD_UNSAFE = re.compile(r"[,=\x00-\x1f\x7f]")
+_RESERVED_CONTAINER_PATH_PREFIXES = ("/proc", "/sys", "/dev", "/var/run")
 
 
 @dataclass(frozen=True)
@@ -177,6 +179,7 @@ def validate_docker_exec_spec(spec: DockerExecSpec) -> DockerExecSpec:
         workspace = spec.workspace_host_path.expanduser().resolve()
         if not workspace.is_absolute():
             raise ValueError("Docker workspace host path must be absolute.")
+        _validate_mount_field_path(workspace)
         workspace_tmpfs_size = None
     _validate_container_path(spec.workspace_container_path, "workspace_container_path")
     _validate_container_path(spec.tmpfs_path, "tmpfs_path")
@@ -310,10 +313,21 @@ def _validate_container_path(value: object, name: str) -> None:
         raise ValueError(f"Docker {name} must be an absolute container path.")
     if "//" in value or "/../" in value or value.endswith("/..") or "/./" in value:
         raise ValueError(f"Docker {name} must be normalized.")
-    if value in {"/", "/proc", "/sys", "/dev", "/var/run"}:
+    if value == "/" or any(
+        value == prefix or value.startswith(f"{prefix}/")
+        for prefix in _RESERVED_CONTAINER_PATH_PREFIXES
+    ):
         raise ValueError(f"Docker {name} is not allowed.")
     if CONTAINED_CONTAINER_PATH.fullmatch(value) is None:
         raise ValueError(f"Docker {name} contains unsupported characters.")
+
+
+def _validate_mount_field_path(path: Path) -> None:
+    text = str(path)
+    if _DOCKER_MOUNT_FIELD_UNSAFE.search(text) is not None:
+        raise ValueError(
+            "Docker workspace host path contains unsafe mount-field characters."
+        )
 
 
 def _validate_environment(environment: Mapping[str, str]) -> None:
