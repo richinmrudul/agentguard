@@ -9,6 +9,12 @@ ScalarMetadata = Union[str, int, float, bool]
 
 VALID_SEVERITIES = {"info", "warning", "error", "critical"}
 VALID_BENCHMARK_DIFFICULTIES = {"easy", "medium", "hard", "advanced"}
+VALID_CONTAINED_EXECUTION_PLATFORMS = {
+    "docker-desktop-experimental",
+    "linux-docker-engine",
+}
+VALID_CONTAINED_EXECUTION_NETWORKS = {"none"}
+VALID_CONTAINED_EXECUTION_IMAGE_PROVENANCE = {"digest-required"}
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,20 @@ class SandboxConfig:
 
 
 @dataclass(frozen=True)
+class ContainedExecutionConfig:
+    version: int
+    platform: str
+    network: str = "none"
+    image_provenance: str = "digest-required"
+    require_evidence_outside_agent_repo: bool = True
+    allow_privileged: bool = False
+    allow_host_network: bool = False
+    allow_docker_socket_mount: bool = False
+    allow_device_exposure: bool = False
+    allow_host_namespace_sharing: bool = False
+
+
+@dataclass(frozen=True)
 class CommandPolicyConfig:
     mode: str = "audit"
 
@@ -116,6 +136,7 @@ class AgentGuardConfig:
         default_factory=FilesystemWatcherConfig
     )
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
+    contained_execution: Optional[ContainedExecutionConfig] = None
     benchmark: BenchmarkMetadata = field(default_factory=BenchmarkMetadata)
     task: Optional[TaskConfig] = None
     mode: str = "benchmark"

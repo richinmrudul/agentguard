@@ -188,6 +188,10 @@
       "$ref": "#/$defs/sandbox",
       "description": "Execution selection and Docker options. Local execution is not hostile-code containment."
     },
+    "contained_execution": {
+      "$ref": "#/$defs/containedExecution",
+      "description": "Additive v1 planning contract for future contained-agent execution. It is validated but does not change current runtime behavior."
+    },
     "benchmark": {
       "type": ["object", "null"],
       "additionalProperties": false,
@@ -379,6 +383,23 @@
           }
         }
       ]
+    },
+    "containedExecution": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["version", "platform"],
+      "properties": {
+        "version": {"type": "integer", "const": 1, "description": "Contained-execution contract version. Version 1 is a planning contract and is not a runtime mode."},
+        "platform": {"type": "string", "enum": ["linux-docker-engine", "docker-desktop-experimental"], "description": "Claim boundary for future contained execution. Linux Docker Engine is authoritative; Docker Desktop is experimental with reduced claims."},
+        "network": {"type": "string", "const": "none", "default": "none", "description": "Default and only accepted network mode for this contract. A validated bridge opt-in is future work."},
+        "image_provenance": {"type": "string", "const": "digest-required", "default": "digest-required", "description": "Future contained execution must use validated image provenance with immutable digest identity."},
+        "require_evidence_outside_agent_repo": {"type": "boolean", "const": true, "default": true, "description": "Evidence must live outside the repository mounted for the untrusted agent."},
+        "allow_privileged": {"type": "boolean", "const": false, "default": false, "description": "Privileged containers are forbidden by the contained-execution contract."},
+        "allow_host_network": {"type": "boolean", "const": false, "default": false, "description": "Host networking is forbidden by the contained-execution contract."},
+        "allow_docker_socket_mount": {"type": "boolean", "const": false, "default": false, "description": "Docker socket mounts are forbidden by the contained-execution contract."},
+        "allow_device_exposure": {"type": "boolean", "const": false, "default": false, "description": "Host device exposure is forbidden by the contained-execution contract."},
+        "allow_host_namespace_sharing": {"type": "boolean", "const": false, "default": false, "description": "Host PID, IPC, user, UTS, cgroup, or other host namespace sharing is forbidden by the contained-execution contract."}
+      }
     }
   }
 }
