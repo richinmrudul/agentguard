@@ -102,6 +102,37 @@ write access, network access, or a chance to run repository code. A later
 cleanup failure may be reported as evidence, but cleanup success is not proof
 that no hostile code affected the host.
 
+## Docker Capability Preflight
+
+AgentGuard includes a deterministic Docker containment preflight capability for
+the v1 planning contract. The preflight only executes bounded Docker CLI
+inspection commands; it does not run the configured agent, the repository test
+command, image entrypoints, or repository-controlled commands.
+
+The preflight checks Docker CLI availability, daemon availability, bounded
+client and server JSON responses, Linux engine identity, Docker Desktop
+classification, the `none` network, requested resource-limit signals,
+read-only-root and tmpfs API support, digest-pinned local image identity, a
+controlled run as the required non-root UID/GID with a bounded writable tmpfs
+path, and rejection of prohibited contained-execution options. Malformed,
+missing, contradictory, oversized, timed-out, or unsupported responses fail
+closed.
+
+Results are structured as one of:
+
+- `supported`: Linux Docker Engine evidence satisfies the checked v1 boundary
+  preconditions.
+- `experimental`: Docker Desktop matched an explicit
+  `docker-desktop-experimental` plan and carries reduced claims.
+- `unavailable`: Docker or required daemon evidence could not be obtained.
+- `unsafe`: the configuration or Docker evidence conflicts with the approved
+  boundary.
+
+Diagnostics are sanitized and bounded before they are exposed as evidence. They
+must not include private paths, credentials, environment values, Docker daemon
+endpoints, or unbounded Docker output. This preflight evidence is suitable for
+future reports and traces, but broad evidence integration is future work.
+
 ## Configuration Contract
 
 The additive `contained_execution` config block is version-aware planning
@@ -117,6 +148,8 @@ contained_execution:
   platform: linux-docker-engine
   network: none
   image_provenance: digest-required
+  required_uid: 1000
+  required_gid: 1000
   require_evidence_outside_agent_repo: true
   allow_privileged: false
   allow_host_network: false
