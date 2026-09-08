@@ -78,12 +78,11 @@ def build_contained_docker_run_argv(spec: DockerExecSpec) -> list[str]:
     if validated.workspace_host_path is None:
         argv.extend(
             [
-                "--mount",
+                "--tmpfs",
                 (
-                    "type=tmpfs,"
-                    f"destination={validated.workspace_container_path},"
-                    f"tmpfs-size={validated.workspace_tmpfs_size},"
-                    "tmpfs-mode=700"
+                    f"{validated.workspace_container_path}:rw,noexec,nosuid,nodev,"
+                    f"size={validated.workspace_tmpfs_size},uid={validated.uid},"
+                    f"gid={validated.gid},mode=700"
                 ),
             ]
         )

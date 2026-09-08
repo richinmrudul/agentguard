@@ -104,9 +104,13 @@ def test_bounded_tmpfs_workspace_probe_has_no_host_mount(tmp_path: Path) -> None
         )
     )
 
-    mount = argv[argv.index("--mount") + 1]
-    assert mount == "type=tmpfs,destination=/workspace,tmpfs-size=64k,tmpfs-mode=700"
-    assert "source=" not in mount
+    tmpfs_values = [
+        argv[index + 1]
+        for index, value in enumerate(argv)
+        if value == "--tmpfs"
+    ]
+    assert "/workspace:rw,noexec,nosuid,nodev,size=64k,uid=1000,gid=1000,mode=700" in tmpfs_values
+    assert "--mount" not in argv
 
 
 @pytest.mark.parametrize("value", [0.1, 8.0])
