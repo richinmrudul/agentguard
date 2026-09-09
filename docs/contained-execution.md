@@ -82,9 +82,10 @@ The future contained runner must forbid:
 - evidence directories mounted inside the repository visible to the untrusted
   agent.
 
-The default network mode is `none`. A bridge network is future work and may only
-be introduced as a validated opt-in with an explicit contract update. Until
-that exists, bridge networking is outside the contained-execution contract.
+The default network mode is `none`. Bridge networking is accepted only as an
+explicit v1 opt-in and carries the same prohibition on host namespace sharing,
+Docker socket mounts, device exposure, privileged mode, arbitrary Docker flags,
+and mutable image identity. Host networking is never allowed.
 
 Images must have validated provenance with immutable digest identity. A mutable
 tag alone is not enough for a contained-execution claim.
@@ -109,9 +110,24 @@ the v1 planning contract. The preflight only executes bounded Docker CLI
 inspection commands; it does not run the configured agent, the repository test
 command, image entrypoints, or repository-controlled commands.
 
+AgentGuard also includes a small least-privilege Docker execution spec renderer
+for future contained agents. The renderer takes validated typed fields and emits
+a deterministic Docker argv list directly; it does not accept raw Docker flag
+strings and does not use shell interpolation. It separates validated
+configuration from rendered Docker arguments.
+
+Rendered v1 Docker argv enforces non-root UID/GID execution,
+`no-new-privileges`, dropped Linux capabilities, a PID limit, bounded CPU and
+memory, a read-only root filesystem, one explicit writable workspace mount or a
+bounded tmpfs workspace, bounded tmpfs temporary storage, deterministic
+environment ordering, safe AgentGuard-owned container names, and digest-pinned
+image references. The renderer has no fields for privileged mode, Docker socket
+mounts, device exposure, host PID/IPC/user/network namespace sharing, or
+arbitrary user-controlled Docker flags.
+
 The preflight checks Docker CLI availability, daemon availability, bounded
 client and server JSON responses, Linux engine identity, Docker Desktop
-classification, the `none` network, requested resource-limit signals,
+classification, the selected allowed network, requested resource-limit signals,
 read-only-root and tmpfs API support, digest-pinned local image identity, a
 controlled run as the required non-root UID/GID with a bounded writable tmpfs
 path, and rejection of prohibited contained-execution options. Malformed,
@@ -150,6 +166,10 @@ contained_execution:
   image_provenance: digest-required
   required_uid: 1000
   required_gid: 1000
+  cpu_limit: 1.0
+  memory_limit: 512m
+  pids_limit: 256
+  tmpfs_size: 256m
   require_evidence_outside_agent_repo: true
   allow_privileged: false
   allow_host_network: false
@@ -158,12 +178,13 @@ contained_execution:
   allow_host_namespace_sharing: false
 ```
 
-`platform: docker-desktop-experimental` is accepted only as a reduced-claim
-planning value. Omitted optional fields take the secure v1 defaults shown
-above. Attempts to opt into bridge networking, host networking, privileged
+`network: bridge` is accepted only when explicitly configured; omission defaults
+to `none`. `platform: docker-desktop-experimental` is accepted only as a
+reduced-claim planning value. Omitted optional fields take the secure v1
+defaults shown above. Attempts to opt into host networking, privileged
 containers, Docker socket mounts, host devices, host namespaces, mutable
-tag-only provenance, or in-repository evidence are rejected by configuration
-validation.
+tag-only provenance, in-repository evidence, malformed limits, or unbounded
+limits are rejected by configuration validation.
 
 ## Compatibility
 

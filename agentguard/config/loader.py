@@ -119,12 +119,16 @@ CONTAINED_EXECUTION_KEYS = {
     "allow_host_namespace_sharing",
     "allow_host_network",
     "allow_privileged",
+    "cpu_limit",
     "image_provenance",
+    "memory_limit",
     "network",
+    "pids_limit",
     "platform",
     "required_gid",
     "required_uid",
     "require_evidence_outside_agent_repo",
+    "tmpfs_size",
     "version",
 }
 SANDBOX_KEYS = {
@@ -678,6 +682,59 @@ def _contained_positive_int(
     return value
 
 
+def _contained_cpu_limit(mapping: dict[str, Any]) -> float:
+    value = mapping.get("cpu_limit", 1.0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Config field 'contained_execution.cpu_limit' must be a number.")
+    number = float(value)
+    if not math.isfinite(number) or number < 0.1 or number > 8.0:
+        raise ValueError(
+            "Config field 'contained_execution.cpu_limit' must be between 0.1 and 8."
+        )
+    return number
+
+
+def _contained_limit_string(
+    mapping: dict[str, Any],
+    key: str,
+    default: str,
+) -> str:
+    value = mapping.get(key, default)
+    if not isinstance(value, str) or not value:
+        raise ValueError(
+            f"Config field 'contained_execution.{key}' must be a Docker size string."
+        )
+    if re.fullmatch(r"[1-9][0-9]*[kKmMgG]?", value) is None:
+        raise ValueError(
+            f"Config field 'contained_execution.{key}' must be a Docker size string."
+        )
+    amount = int(value[:-1] if value[-1].lower() in {"k", "m", "g"} else value)
+    suffix = value[-1].lower() if value[-1].lower() in {"k", "m", "g"} else ""
+    bytes_value = amount * {"": 1, "k": 1024, "m": 1024 * 1024, "g": 1024 * 1024 * 1024}[suffix]
+    if key == "memory_limit":
+        minimum = 64 * 1024 * 1024
+        maximum = 16 * 1024 * 1024 * 1024
+    else:
+        minimum = 64 * 1024
+        maximum = 4 * 1024 * 1024 * 1024
+    if bytes_value < minimum or bytes_value > maximum:
+        raise ValueError(
+            f"Config field 'contained_execution.{key}' is outside the supported bounds."
+        )
+    return value
+
+
+def _contained_pids_limit(mapping: dict[str, Any]) -> int:
+    value = mapping.get("pids_limit", 256)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("Config field 'contained_execution.pids_limit' must be an integer.")
+    if value < 16 or value > 4096:
+        raise ValueError(
+            "Config field 'contained_execution.pids_limit' must be between 16 and 4096."
+        )
+    return value
+
+
 def _load_contained_execution(
     data: dict[str, Any],
 ) -> Optional[ContainedExecutionConfig]:
@@ -727,6 +784,10 @@ def _load_contained_execution(
         image_provenance=image_provenance,
         required_uid=_contained_positive_int(contained, "required_uid", 1000),
         required_gid=_contained_positive_int(contained, "required_gid", 1000),
+        cpu_limit=_contained_cpu_limit(contained),
+        memory_limit=_contained_limit_string(contained, "memory_limit", "512m"),
+        pids_limit=_contained_pids_limit(contained),
+        tmpfs_size=_contained_limit_string(contained, "tmpfs_size", "256m"),
         require_evidence_outside_agent_repo=_contained_bool(
             contained,
             "require_evidence_outside_agent_repo",

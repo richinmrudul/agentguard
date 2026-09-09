@@ -21,6 +21,10 @@ from agentguard.sandbox.docker_identity import (
     parse_docker_image_identity,
     select_registry_digest,
 )
+from agentguard.sandbox.docker_exec_spec import (
+    DockerExecSpec,
+    build_contained_docker_run_argv,
+)
 
 
 PREFLIGHT_TIMEOUT_SECONDS = 5
@@ -447,7 +451,7 @@ def _validate_contract(
         unsafe.append("unsupported contract version")
     if contained.platform not in {"linux-docker-engine", "docker-desktop-experimental"}:
         unsafe.append("unsupported platform")
-    if contained.network != "none":
+    if contained.network not in {"none", "bridge"}:
         unsafe.append("unsupported network")
     if contained.image_provenance != "digest-required":
         unsafe.append("unsupported image provenance")
@@ -503,7 +507,7 @@ def _validate_sandbox_boundary_inputs(
     rejected = []
     if config.sandbox.type != "docker":
         rejected.append("sandbox.type")
-    if config.sandbox.network != "none":
+    if config.sandbox.network != config.contained_execution.network:
         rejected.append("sandbox.network")
     if rejected:
         raise DockerPreflightError(
@@ -521,7 +525,7 @@ def _validate_sandbox_boundary_inputs(
             "sandbox_boundary_inputs",
             True,
             DockerPreflightStatus.SUPPORTED,
-            "Sandbox config selects Docker with network mode 'none'.",
+            "Sandbox config matches the contained Docker network mode.",
         )
     )
 
@@ -662,7 +666,13 @@ def _validate_required_capabilities(
     max_output_bytes: int,
     checks: list[DockerPreflightCheck],
 ) -> None:
-    _require_network_none(runner, timeout_seconds, max_output_bytes, checks)
+    _require_network(
+        config.contained_execution.network,
+        runner,
+        timeout_seconds,
+        max_output_bytes,
+        checks,
+    )
     if config.sandbox.memory is not None and info.get("MemoryLimit") is not True:
         raise DockerPreflightError(
             DockerPreflightStatus.UNSAFE,
@@ -718,27 +728,38 @@ def _validate_required_capabilities(
     )
 
 
-def _require_network_none(
+def _require_network(
+    network_name: str,
     runner: CommandRunner,
     timeout_seconds: int,
     max_output_bytes: int,
     checks: list[DockerPreflightCheck],
 ) -> None:
-    network = _docker_json(
-        runner,
-        ["docker", "network", "inspect", "none", "--format", "{{json .}}"],
-        "network_mode",
-        timeout_seconds,
-        max_output_bytes,
-    )
-    if network.get("Name") != "none":
+    if network_name == "host":
         raise DockerPreflightError(
             DockerPreflightStatus.UNSAFE,
             _check(
                 "network_mode",
                 False,
                 DockerPreflightStatus.UNSAFE,
-                "Docker network mode 'none' is unavailable or ambiguous.",
+                "Docker host networking is not allowed.",
+            ),
+        )
+    network = _docker_json(
+        runner,
+        ["docker", "network", "inspect", network_name, "--format", "{{json .}}"],
+        "network_mode",
+        timeout_seconds,
+        max_output_bytes,
+    )
+    if network.get("Name") != network_name:
+        raise DockerPreflightError(
+            DockerPreflightStatus.UNSAFE,
+            _check(
+                "network_mode",
+                False,
+                DockerPreflightStatus.UNSAFE,
+                "Docker network mode is unavailable or ambiguous.",
             ),
         )
     checks.append(
@@ -746,7 +767,8 @@ def _require_network_none(
             "network_mode",
             True,
             DockerPreflightStatus.SUPPORTED,
-            "Docker network mode 'none' is available.",
+            "Docker network mode is available.",
+            {"network": network_name},
         )
     )
 
@@ -871,34 +893,24 @@ def _probe_uid_gid_writable_path(
             ),
         )
     script = _uid_gid_probe_script(contained.required_uid, contained.required_gid)
-    argv = [
-        "docker",
-        "run",
-        "--rm",
-        "--network",
-        "none",
-        "--security-opt",
-        "no-new-privileges",
-        "--cap-drop",
-        "ALL",
-        "--pids-limit",
-        "64",
-        "--memory",
-        "64m",
-        "--cpus",
-        "1",
-        "--read-only",
-        "--tmpfs",
-        f"{PROBE_WRITABLE_PATH}:rw,noexec,nosuid,nodev,size=64k,uid={contained.required_uid},gid={contained.required_gid},mode=700",
-        "--user",
-        f"{contained.required_uid}:{contained.required_gid}",
-        "--entrypoint",
-        "/bin/sh",
-        "--",
-        image,
-        "-c",
-        script,
-    ]
+    argv = build_contained_docker_run_argv(
+        DockerExecSpec(
+            image=image,
+            workspace_host_path=None,
+            workspace_container_path="/agentguard-workspace",
+            command=["-c", script],
+            uid=contained.required_uid,
+            gid=contained.required_gid,
+            network=contained.network,
+            cpu_limit=1.0,
+            memory_limit="64m",
+            pids_limit=64,
+            tmpfs_path=PROBE_WRITABLE_PATH,
+            tmpfs_size="64k",
+            workspace_tmpfs_size="64k",
+            entrypoint="/bin/sh",
+        )
+    )
     result = _probe_json(
         runner,
         argv,

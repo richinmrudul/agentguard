@@ -497,6 +497,87 @@ def test_load_docker_command_agent_config() -> None:
     assert config.sandbox.read_only is False
 
 
+def test_contained_execution_accepts_bridge_opt_in_and_resource_bounds(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        """
+task_id: task
+description: Task.
+repo_template: examples/repos/auth_bug
+test_command: pytest
+expected_modified_files:
+  min: 1
+  max: 2
+contained_execution:
+  version: 1
+  platform: linux-docker-engine
+  network: bridge
+  cpu_limit: 0.1
+  memory_limit: 64m
+  pids_limit: 16
+  tmpfs_size: 64k
+""",
+        encoding="utf-8",
+    )
+
+    contained = load_config(config_path).contained_execution
+
+    assert contained is not None
+    assert contained.network == "bridge"
+    assert contained.cpu_limit == 0.1
+    assert contained.memory_limit == "64m"
+    assert contained.pids_limit == 16
+    assert contained.tmpfs_size == "64k"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("network", "host"),
+        ("cpu_limit", 0),
+        ("cpu_limit", -1),
+        ("cpu_limit", 8.1),
+        ("cpu_limit", "1"),
+        ("cpu_limit", float("nan")),
+        ("cpu_limit", float("inf")),
+        ("memory_limit", "0"),
+        ("memory_limit", "63m"),
+        ("memory_limit", "17g"),
+        ("memory_limit", "bad"),
+        ("pids_limit", 0),
+        ("pids_limit", 15),
+        ("pids_limit", 4097),
+        ("tmpfs_size", "0"),
+        ("tmpfs_size", "63k"),
+        ("tmpfs_size", "5g"),
+    ],
+)
+def test_config_rejects_invalid_contained_execution_limits(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    document = {
+        "task_id": "task",
+        "description": "Task.",
+        "repo_template": "examples/repos/auth_bug",
+        "test_command": "pytest",
+        "expected_modified_files": {"min": 1, "max": 2},
+        "contained_execution": {
+            "version": 1,
+            "platform": "linux-docker-engine",
+            field: value,
+        },
+    }
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=f"contained_execution.{field}"):
+        load_config(config_path)
+
+
 def test_load_agent_command_config_fields() -> None:
     config = load_config(Path("examples/configs/fix_auth_bug_agent_command_safe.yaml"))
 

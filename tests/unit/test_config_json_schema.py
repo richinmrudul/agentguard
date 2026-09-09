@@ -121,9 +121,9 @@ def test_schema_enums_match_production_constants(schema: dict) -> None:
     assert set(
         definitions["containedExecution"]["properties"]["platform"]["enum"]
     ) == VALID_CONTAINED_EXECUTION_PLATFORMS
-    assert {
-        definitions["containedExecution"]["properties"]["network"]["const"]
-    } == VALID_CONTAINED_EXECUTION_NETWORKS
+    assert set(
+        definitions["containedExecution"]["properties"]["network"]["enum"]
+    ) == VALID_CONTAINED_EXECUTION_NETWORKS
     assert {
         definitions["containedExecution"]["properties"]["image_provenance"]["const"]
     } == VALID_CONTAINED_EXECUTION_IMAGE_PROVENANCE
@@ -331,6 +331,10 @@ def test_packaged_schema_enforces_combined_detector_limit_like_source_schema() -
                 "image_provenance": "digest-required",
                 "required_uid": 1000,
                 "required_gid": 1000,
+                "cpu_limit": 1.0,
+                "memory_limit": "512m",
+                "pids_limit": 256,
+                "tmpfs_size": "256m",
                 "require_evidence_outside_agent_repo": True,
                 "allow_privileged": False,
                 "allow_host_network": False,
@@ -404,7 +408,7 @@ def test_representative_valid_documents_have_loader_schema_parity(
             contained_execution={
                 "version": 1,
                 "platform": "linux-docker-engine",
-                "network": "bridge",
+                "network": "host",
             }
         ),
         _ci_config(
