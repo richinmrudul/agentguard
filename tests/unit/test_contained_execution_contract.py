@@ -29,6 +29,17 @@ def test_contained_execution_contract_documents_required_boundaries() -> None:
         "existing execution modes remain unchanged",
         "future contained-agent application-level boundary",
         "`untrusted-agent` preset remains unavailable",
+        "contained workspace lifecycle foundation",
+        "the original repository is never mounted as the writable agent workspace",
+        "without inheriting `.git` control metadata",
+        "fixed baseline snapshot",
+        "writable paths must be unique and non-overlapping",
+        "`.` is accepted only as the sole writable path",
+        "agent-created `.git` control metadata inside the prepared workspace",
+        "causes capture to fail closed",
+        "regular-file copy uses a copy-time identity check",
+        "user-visible errors do not expose private absolute host paths or credentials",
+        "does not launch an agent",
     ]
 
     for phrase in required_phrases:

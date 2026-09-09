@@ -149,6 +149,57 @@ must not include private paths, credentials, environment values, Docker daemon
 endpoints, or unbounded Docker output. This preflight evidence is suitable for
 future reports and traces, but broad evidence integration is future work.
 
+## Contained Workspace Lifecycle
+
+AgentGuard includes an additive contained workspace lifecycle foundation for a
+future contained runner. It prepares a lifecycle-owned host directory with a
+`workspace/` tree for the untrusted agent and an external `evidence/` tree for
+AgentGuard metadata. The original repository is never mounted as the writable
+agent workspace.
+
+Preparation copies the intended repository state into the isolated workspace
+without inheriting `.git` control metadata. Before copying, AgentGuard records a
+fixed baseline snapshot with deterministic path, type, mode, size, and SHA-256
+metadata plus Git HEAD and porcelain status evidence when the source is a Git
+worktree. That baseline is retained outside the agent-visible repository, so
+later commits, branch changes, or HEAD movement cannot replace the pre-agent
+comparison point.
+
+Ownership metadata is explicit and deterministic: the prepared workspace records
+the agent workspace mount, the external evidence mount, normalized agent-visible
+writable paths, the AgentGuard evidence target, cleanup targets, reserved paths,
+and lifecycle bounds. Writable paths must be unique and non-overlapping;
+`.` is accepted only as the sole writable path. Reserved AgentGuard paths,
+nested reserved paths, prefix collisions, escaping paths, duplicate ownership,
+and ambiguous ancestor/descendant ownership are rejected.
+
+Preparation and mutation capture both validate path and link boundaries. Safe
+relative symlinks may be represented as symlinks only when they resolve inside
+the prepared tree. Dangling links, absolute or escaping links, symlinks to Git
+control metadata, special files, and hardlinks are rejected. Regular-file copy
+uses a copy-time identity check so a source path replaced during preparation
+fails closed instead of copying swapped content.
+
+Mutation capture compares the current prepared workspace to the stored baseline
+without consulting live Git metadata in the prepared workspace. It classifies
+modified, added, deleted, and deterministic unique hash-based renames while
+excluding AgentGuard evidence that lives outside the workspace. Agent-created
+`.git` control metadata inside the prepared workspace is treated as reserved
+path spoofing and causes capture to fail closed.
+
+Preparation, scanning, hashing, and mutation capture are bounded by entry count,
+per-file bytes, total bytes, and symlink-target bytes. Preparation is
+transactional: partially prepared staging directories are rolled back on
+failure. Cleanup removes only lifecycle-owned paths recorded for the prepared
+workspace. Preparation, capture, cleanup, and recovery diagnostics are
+controlled and sanitized so user-visible errors do not expose private absolute
+host paths or credentials.
+
+This lifecycle foundation is not a public contained runner, does not launch an
+agent, does not execute repository code, does not change Docker preflight
+semantics, and does not change existing benchmark, local-command,
+agent-command, suite, matrix, or CI behavior.
+
 ## Configuration Contract
 
 The additive `contained_execution` config block is version-aware planning
