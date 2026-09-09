@@ -5,7 +5,10 @@ from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
 from agentguard.config.docker_image import validate_docker_image_reference
-from agentguard.config.schema import ContainedExecutionConfig
+from agentguard.config.schema import (
+    ContainedExecutionConfig,
+    MAX_CONTAINED_EXECUTION_UID_GID,
+)
 
 
 MIN_CONTAINED_CPUS = 0.1
@@ -183,7 +186,9 @@ def validate_docker_exec_spec(spec: DockerExecSpec) -> DockerExecSpec:
         workspace_tmpfs_size = None
     _validate_container_path(spec.workspace_container_path, "workspace_container_path")
     _validate_container_path(spec.tmpfs_path, "tmpfs_path")
-    if spec.tmpfs_path == spec.workspace_container_path:
+    workspace_container_path = spec.workspace_container_path.rstrip("/") or "/"
+    tmpfs_path = spec.tmpfs_path.rstrip("/") or "/"
+    if tmpfs_path == workspace_container_path:
         raise ValueError("Docker tmpfs path must not replace the workspace.")
     if spec.container_name is not None and SAFE_CONTAINER_NAME.fullmatch(spec.container_name) is None:
         raise ValueError("Docker container name must be an AgentGuard safe name.")
@@ -195,7 +200,7 @@ def validate_docker_exec_spec(spec: DockerExecSpec) -> DockerExecSpec:
     return DockerExecSpec(
         image=spec.image,
         workspace_host_path=workspace,
-        workspace_container_path=spec.workspace_container_path.rstrip("/") or "/",
+        workspace_container_path=workspace_container_path,
         command=list(spec.command),
         uid=spec.uid,
         gid=spec.gid,
@@ -203,7 +208,7 @@ def validate_docker_exec_spec(spec: DockerExecSpec) -> DockerExecSpec:
         cpu_limit=spec.cpu_limit,
         memory_limit=spec.memory_limit,
         pids_limit=spec.pids_limit,
-        tmpfs_path=spec.tmpfs_path.rstrip("/") or "/",
+        tmpfs_path=tmpfs_path,
         tmpfs_size=spec.tmpfs_size,
         workspace_tmpfs_size=workspace_tmpfs_size,
         container_name=spec.container_name,
@@ -270,6 +275,11 @@ def apply_contained_execution_config(
 def _validate_non_root_id(value: object, name: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"Docker execution {name} must be a positive non-root integer.")
+    if value > MAX_CONTAINED_EXECUTION_UID_GID:
+        raise ValueError(
+            f"Docker execution {name} must not exceed "
+            f"{MAX_CONTAINED_EXECUTION_UID_GID}."
+        )
 
 
 def _validate_cpu_limit(value: object) -> None:

@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from agentguard.config.schema import ContainedExecutionConfig
+from agentguard.config.schema import (
+    ContainedExecutionConfig,
+    MAX_CONTAINED_EXECUTION_UID_GID,
+)
 from agentguard.sandbox.docker_exec_spec import (
     DockerExecSpec,
     apply_contained_execution_config,
@@ -160,6 +163,17 @@ def test_invalid_tmpfs_limits_are_rejected(tmp_path: Path, value: str) -> None:
         validate_docker_exec_spec(_spec(tmp_path, tmpfs_size=value))
 
 
+def test_tmpfs_path_must_not_replace_normalized_workspace(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="replace the workspace"):
+        validate_docker_exec_spec(
+            _spec(
+                tmp_path,
+                workspace_container_path="/workspace/",
+                tmpfs_path="/workspace",
+            )
+        )
+
+
 def test_bridge_network_requires_explicit_valid_spec(tmp_path: Path) -> None:
     argv = build_contained_docker_run_argv(_spec(tmp_path, network="bridge"))
 
@@ -261,6 +275,42 @@ def test_reserved_container_path_prefixes_are_rejected(
 def test_non_root_execution_is_enforced(tmp_path: Path, uid: int, gid: int) -> None:
     with pytest.raises(ValueError, match="non-root"):
         validate_docker_exec_spec(_spec(tmp_path, uid=uid, gid=gid))
+
+
+def test_direct_uid_at_configured_maximum_is_accepted(tmp_path: Path) -> None:
+    argv = build_contained_docker_run_argv(
+        _spec(tmp_path, uid=MAX_CONTAINED_EXECUTION_UID_GID)
+    )
+
+    assert argv[argv.index("--user") + 1] == f"{MAX_CONTAINED_EXECUTION_UID_GID}:1000"
+    assert f"uid={MAX_CONTAINED_EXECUTION_UID_GID}" in argv[argv.index("--tmpfs") + 1]
+
+
+def test_direct_gid_at_configured_maximum_is_accepted(tmp_path: Path) -> None:
+    argv = build_contained_docker_run_argv(
+        _spec(tmp_path, gid=MAX_CONTAINED_EXECUTION_UID_GID)
+    )
+
+    assert argv[argv.index("--user") + 1] == f"1000:{MAX_CONTAINED_EXECUTION_UID_GID}"
+    assert f"gid={MAX_CONTAINED_EXECUTION_UID_GID}" in argv[argv.index("--tmpfs") + 1]
+
+
+def test_direct_uid_above_configured_maximum_is_rejected_before_rendering(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="uid"):
+        build_contained_docker_run_argv(
+            _spec(tmp_path, uid=MAX_CONTAINED_EXECUTION_UID_GID + 1)
+        )
+
+
+def test_direct_gid_above_configured_maximum_is_rejected_before_rendering(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="gid"):
+        build_contained_docker_run_argv(
+            _spec(tmp_path, gid=MAX_CONTAINED_EXECUTION_UID_GID + 1)
+        )
 
 
 def test_deterministic_ordering_is_stable(tmp_path: Path) -> None:
