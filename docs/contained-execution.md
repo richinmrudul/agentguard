@@ -149,6 +149,55 @@ must not include private paths, credentials, environment values, Docker daemon
 endpoints, or unbounded Docker output. This preflight evidence is suitable for
 future reports and traces, but broad evidence integration is future work.
 
+## Contained Run Entrypoint
+
+AgentGuard includes an additive public contained-run entrypoint:
+
+```bash
+agentguard contained-run agentguard.yaml -- python -m pytest
+```
+
+The literal `--` boundary is required. Tokens before that boundary are
+AgentGuard CLI arguments; only tokens after it become the contained agent argv.
+Invocations such as `agentguard contained-run agentguard.yaml python -m pytest`
+fail with a controlled usage/configuration error. The argv is passed as a
+structured list into the Docker execution spec; AgentGuard does not concatenate
+it into a shell string and does not perform shell interpolation.
+
+`contained-run` is opt-in and does not change `run`, `ci`, `benchmark`,
+`suite`, `matrix`, local-command, agent-command, or the existing Docker test
+runner behavior. It requires a loaded `contained_execution` v1 block plus
+`sandbox.type: docker` and a digest-pinned `sandbox.image`. Configuration and
+Docker capability preflight run before the contained workspace is prepared or
+the agent argv is launched.
+
+At launch time AgentGuard prepares a lifecycle-owned copy of the selected
+repository, mounts that prepared workspace as the only writable repository tree,
+and keeps AgentGuard evidence outside that mounted repository. The original
+repository is not mounted writable. The generated Docker argv comes only from
+the validated contained-execution config and typed Docker execution spec. It
+uses the configured non-root UID/GID, default `network: none` unless an explicit
+validated `bridge` opt-in is present, read-only root filesystem, tmpfs `/tmp`,
+capability drop, `no-new-privileges`, PID, memory, and CPU bounds. It does not
+provide Docker socket mounts, host devices, host namespaces, privileged mode,
+host networking, arbitrary host-path mounts, or arbitrary Docker flag strings.
+
+The contained process receives no AgentGuard environment allowlist and no
+arbitrary environment passthrough; broader environment allowlisting is future
+work. The host subprocess that invokes Docker keeps only the minimal host
+`PATH` needed to find the Docker CLI. A nonzero contained agent exit remains an
+agent-command failure unless AgentGuard has specific Docker operational
+evidence, such as Docker's launch failure status or a Docker subprocess error.
+
+The command captures bounded stdout, stderr, exit status, timeout state,
+workspace mutations, cleanup status, Docker preflight evidence, and a compact
+contained-run JSON artifact with sanitized diagnostics. Existing post-execution
+policy checks are evaluated against the captured workspace mutation summary
+where feasible. This is not the broad report, trace, manifest, or incident
+integration planned separately. `contained-run` does not provide a liveness
+guarantee beyond bounded command timeout and best-effort owned container and
+workspace cleanup reporting.
+
 ## Contained Workspace Lifecycle
 
 AgentGuard includes an additive contained workspace lifecycle foundation for a

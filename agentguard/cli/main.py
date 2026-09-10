@@ -212,6 +212,21 @@ presets_app = typer.Typer(help="List and inspect post-execution CI policy preset
 app.add_typer(presets_app, name="presets")
 
 
+class ContainedRunCommand(typer.core.TyperCommand):
+    def parse_args(self, ctx: typer.Context, args: list[str]) -> list[str]:
+        if "--help" in args or "-h" in args:
+            return super().parse_args(ctx, args)
+        try:
+            boundary_index = args.index("--")
+        except ValueError:
+            ctx.meta["contained_run_has_boundary"] = False
+            ctx.meta["contained_run_argv"] = []
+        else:
+            ctx.meta["contained_run_has_boundary"] = True
+            ctx.meta["contained_run_argv"] = list(args[boundary_index + 1 :])
+        return super().parse_args(ctx, args)
+
+
 def _echo_matrix_guard_summary(result: MatrixResult) -> None:
     summary = result.guard_summary
     safe_echo("Guard incidents:")
@@ -3222,6 +3237,7 @@ def ci_command(
 
 @app.command(
     "contained-run",
+    cls=ContainedRunCommand,
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
 def contained_run_command(
@@ -3242,10 +3258,12 @@ def contained_run_command(
     ),
 ) -> None:
     """Run one explicit argv in an application-level contained Docker workflow."""
-    command = list(ctx.args)
-    if command and command[0] == "--":
-        command = command[1:]
-    if not command:
+    command = list(ctx.meta.get("contained_run_argv", []))
+    if (
+        not ctx.meta.get("contained_run_has_boundary", False)
+        or not command
+        or command != list(ctx.args)
+    ):
         safe_echo("Error: contained-run requires an argv after '--'.", err=True)
         raise typer.Exit(EXIT_CONFIG)
     try:

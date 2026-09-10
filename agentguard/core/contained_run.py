@@ -228,7 +228,7 @@ def run_contained_agent_command(
                     EXIT_TIMEOUT,
                     "contained agent command timed out.",
                 )
-            elif command_result.exit_code in {125, 126, 127}:
+            elif command_result.exit_code == 125:
                 failure = ContainedRunFailure(
                     ContainedRunStage.DOCKER,
                     EXIT_DOCKER,

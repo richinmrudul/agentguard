@@ -177,6 +177,14 @@ def test_contained_run_requires_command_after_boundary() -> None:
     assert "Traceback" not in result.output
 
 
+def test_contained_run_rejects_command_without_boundary() -> None:
+    result = runner.invoke(app, ["contained-run", "agentguard.yaml", "true"])
+
+    assert result.exit_code == 2
+    assert "requires an argv after '--'" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_contained_run_preserves_argv_after_boundary(monkeypatch, tmp_path: Path) -> None:
     captured = {}
 

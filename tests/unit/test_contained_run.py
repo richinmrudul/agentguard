@@ -236,6 +236,36 @@ def test_contained_run_maps_docker_and_timeout_failures(
     assert result.failure.exit_code == expected
 
 
+@pytest.mark.parametrize("exit_code", [126, 127])
+def test_contained_agent_126_127_are_not_docker_failures(
+    tmp_path: Path,
+    monkeypatch,
+    exit_code: int,
+) -> None:
+    config_path = _config(tmp_path)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    result = _run(
+        config_path,
+        ["sh", "-c", f"exit {exit_code}"],
+        tmp_path,
+        docker_executor=lambda argv, cwd, timeout_seconds, max_output_bytes: CommandResult(
+            "contained-run",
+            exit_code,
+            "",
+            "agent command failed",
+            0.01,
+        ),
+    )
+
+    assert result.failure is None
+    assert result.command_result.exit_code == exit_code
+    assert result.exit_code == 1
+
+
 def test_contained_run_blocks_policy_before_docker_execution(
     tmp_path: Path,
     monkeypatch,
