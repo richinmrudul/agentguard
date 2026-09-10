@@ -8,6 +8,12 @@ import agentguard.cli.main as cli_main
 from agentguard import __version__
 from agentguard.cli.main import app
 from agentguard.core.baseline import BaselineComparison
+from agentguard.core.contained_run import (
+    ContainedRunFailure,
+    ContainedRunResult,
+    EXIT_PREFLIGHT,
+)
+from agentguard.core.result import CommandResult, DiffSummary
 from agentguard.core.suite import (
     SuiteResult,
     SuiteRunHeadline,
@@ -161,6 +167,103 @@ def test_run_local_command_without_agent_command_fails_clearly() -> None:
     assert (
         "Agent 'local-command' requires config field 'agent_command'" in result.output
     )
+
+
+def test_contained_run_requires_command_after_boundary() -> None:
+    result = runner.invoke(app, ["contained-run", "agentguard.yaml"])
+
+    assert result.exit_code == 2
+    assert "requires an argv after '--'" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_contained_run_preserves_argv_after_boundary(monkeypatch, tmp_path: Path) -> None:
+    captured = {}
+
+    def fake_contained_run(config_path, command, *, source_dir=None):
+        captured["config_path"] = config_path
+        captured["command"] = command
+        captured["source_dir"] = source_dir
+        return ContainedRunResult(
+            task_id="task",
+            config_path=Path(config_path),
+            source_dir=source_dir or Path("."),
+            run_dir=tmp_path,
+            command=list(command),
+            docker_argv=["docker", "run"],
+            preflight=None,
+            command_result=CommandResult("contained-run", 0, "", "", 0.01),
+            diff_summary=DiffSummary([], ["space name.txt"], [], 0, 0, ""),
+            check_results=[],
+            result="PASS",
+            score=100,
+            mutations={},
+            cleanup_complete=True,
+            report_path=tmp_path / "contained-run.json",
+        )
+
+    monkeypatch.setattr(cli_main, "run_contained_agent_command", fake_contained_run)
+
+    result = runner.invoke(
+        app,
+        [
+            "contained-run",
+            "agentguard.yaml",
+            "--repo",
+            str(tmp_path),
+            "--",
+            "python",
+            "-c",
+            "print('Δ shell; $HOME \"quoted\"')",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["command"] == [
+        "python",
+        "-c",
+        "print('Δ shell; $HOME \"quoted\"')",
+    ]
+    assert captured["source_dir"] == tmp_path
+    assert "AgentGuard Contained Run" in result.output
+    assert "space name.txt" in result.output
+
+
+def test_contained_run_operational_failure_uses_controlled_exit(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    def fake_contained_run(config_path, command, *, source_dir=None):
+        return ContainedRunResult(
+            task_id="task",
+            config_path=Path(config_path),
+            source_dir=Path("."),
+            run_dir=tmp_path,
+            command=list(command),
+            docker_argv=[],
+            preflight=None,
+            command_result=None,
+            diff_summary=DiffSummary([], [], [], 0, 0, ""),
+            check_results=[],
+            result="FAIL",
+            score=0,
+            mutations={},
+            cleanup_complete=True,
+            failure=ContainedRunFailure(
+                "preflight",
+                EXIT_PREFLIGHT,
+                "Docker unavailable.",
+            ),
+            report_path=tmp_path / "contained-run.json",
+        )
+
+    monkeypatch.setattr(cli_main, "run_contained_agent_command", fake_contained_run)
+
+    result = runner.invoke(app, ["contained-run", "agentguard.yaml", "--", "true"])
+
+    assert result.exit_code == EXIT_PREFLIGHT
+    assert "Failure: preflight: Docker unavailable." in result.output
+    assert "Traceback" not in result.output
 
 
 def test_benchmark_mock_safe_exits_zero() -> None:

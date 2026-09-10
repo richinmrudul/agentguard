@@ -49,6 +49,10 @@ from agentguard.benchmarks.signing import (
 from agentguard.core.baseline import write_suite_baseline
 from agentguard.core.benchmark import parse_agent_list, run_multi_agent_benchmark
 from agentguard.core.ci import run_ci
+from agentguard.core.contained_run import (
+    EXIT_CONFIG,
+    run_contained_agent_command,
+)
 from agentguard.core.matrix import MatrixResult, run_matrix
 from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.suite import (
@@ -3214,6 +3218,74 @@ def ci_command(
         raise typer.Exit(2)
     if result.result == "FAIL" and not allow_fail_result:
         raise typer.Exit(1)
+
+
+@app.command(
+    "contained-run",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def contained_run_command(
+    ctx: typer.Context,
+    config_path: Path = typer.Argument(
+        ...,
+        help="Path to the AgentGuard config file.",
+    ),
+    source: Optional[Path] = typer.Option(
+        None,
+        "--repo",
+        help="Repository to copy into the contained workspace.",
+    ),
+    allow_fail_result: bool = typer.Option(
+        False,
+        "--allow-fail-result",
+        help="Exit 0 even when the contained command or checks fail.",
+    ),
+) -> None:
+    """Run one explicit argv in an application-level contained Docker workflow."""
+    command = list(ctx.args)
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        safe_echo("Error: contained-run requires an argv after '--'.", err=True)
+        raise typer.Exit(EXIT_CONFIG)
+    try:
+        result = run_contained_agent_command(
+            config_path,
+            command,
+            source_dir=source,
+        )
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(EXIT_CONFIG) from error
+
+    safe_echo("AgentGuard Contained Run")
+    safe_echo(f"Task: {result.task_id}")
+    safe_echo(f"Result: {result.result}")
+    safe_echo(f"Score: {result.score}/100")
+    if result.preflight is not None:
+        safe_echo(
+            "Docker preflight: "
+            f"{result.preflight.status.value}; claim: {result.preflight.claim_level}"
+        )
+    if result.command_result is not None:
+        safe_echo(f"Command exit code: {result.command_result.exit_code}")
+        if result.command_result.timed_out:
+            safe_echo("Command timed out: yes")
+    safe_echo("Changed files:")
+    if result.diff_summary.changed_files:
+        for path in result.diff_summary.changed_files:
+            safe_echo(f"- {path}")
+    else:
+        safe_echo("- None")
+    if result.failure is not None:
+        safe_echo(
+            f"Failure: {result.failure.stage}: {result.failure.message}",
+            err=True,
+        )
+    safe_echo(f"Cleanup complete: {result.cleanup_complete}")
+    safe_echo(f"Contained run report path: {result.report_path}")
+    if result.exit_code != 0 and not allow_fail_result:
+        raise typer.Exit(result.exit_code)
 
 
 @app.command("benchmark")
