@@ -174,9 +174,12 @@ the agent argv is launched.
 At launch time AgentGuard prepares a lifecycle-owned copy of the selected
 repository, mounts that prepared workspace as the only writable repository tree,
 and keeps AgentGuard evidence outside that mounted repository. The original
-repository is not mounted writable. The generated Docker argv comes only from
-the validated contained-execution config and typed Docker execution spec. It
-uses the configured non-root UID/GID, default `network: none` unless an explicit
+repository is not mounted writable. Before launch, AgentGuard adjusts only the
+lifecycle-owned prepared workspace copy so the configured non-root container
+UID/GID can write task files even when the host checkout is owned by a different
+developer or CI runner UID. The generated Docker argv comes only from the
+validated contained-execution config and typed Docker execution spec. It uses
+the configured non-root UID/GID, default `network: none` unless an explicit
 validated `bridge` opt-in is present, read-only root filesystem, tmpfs `/tmp`,
 capability drop, `no-new-privileges`, PID, memory, and CPU bounds. It does not
 provide Docker socket mounts, host devices, host namespaces, privileged mode,

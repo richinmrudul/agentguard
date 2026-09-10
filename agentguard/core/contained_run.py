@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import stat
 import subprocess
 import time
 from dataclasses import asdict, dataclass
@@ -182,6 +183,7 @@ def run_contained_agent_command(
             run_dir / "workspace-lifecycle",
             workspace_id="agent-workspace",
         )
+        _make_prepared_workspace_writable(prepared.workspace_dir)
         workspace = validate_workspace_mount_containment(
             prepared.workspace_dir,
             run_dir,
@@ -373,7 +375,7 @@ def _execute_docker_argv(
     except FileNotFoundError as error:
         return CommandResult(
             command=CONTAINED_RUNNER_NAME,
-            exit_code=127,
+            exit_code=125,
             stdout="",
             stderr=f"Docker executable not found: {redact_credentials(error.filename)}",
             duration_seconds=round(time.monotonic() - started, 6),
@@ -394,6 +396,15 @@ def _execute_docker_argv(
                 stdout=LimitedOutput(text="", truncated=False),
                 stderr=LimitedOutput(text="", truncated=False),
             )
+    except (OSError, subprocess.SubprocessError) as error:
+        cleanup_process_after_exception(process, capture)
+        return CommandResult(
+            command=CONTAINED_RUNNER_NAME,
+            exit_code=125,
+            stdout="",
+            stderr=f"Docker launch failed: {redact_credentials(error.__class__.__name__)}",
+            duration_seconds=round(time.monotonic() - started, 6),
+        )
     except BaseException:
         cleanup_process_after_exception(process, capture)
         raise
@@ -421,6 +432,45 @@ def _execute_docker_argv(
         process_cleanup_complete=cleanup.complete,
         process_cleanup_message=cleanup.message,
     )
+
+
+def _make_prepared_workspace_writable(workspace_dir: Path) -> None:
+    root = workspace_dir.resolve()
+    if not root.is_dir():
+        raise ContainedWorkspaceError("contained workspace is unavailable")
+    for current, directory_names, file_names in os.walk(root, followlinks=False):
+        current_path = Path(current)
+        _chmod_for_configured_container_user(
+            current_path,
+            stat.S_IRWXU | stat.S_IRWXO,
+        )
+        for name in directory_names:
+            path = current_path / name
+            if not path.is_symlink():
+                _chmod_for_configured_container_user(
+                    path,
+                    stat.S_IRWXU | stat.S_IRWXO,
+                )
+        for name in file_names:
+            path = current_path / name
+            if not path.is_symlink():
+                _chmod_for_configured_container_user(
+                    path,
+                    stat.S_IRUSR
+                    | stat.S_IWUSR
+                    | stat.S_IROTH
+                    | stat.S_IWOTH,
+                )
+
+
+def _chmod_for_configured_container_user(path: Path, minimum_bits: int) -> None:
+    try:
+        current_mode = stat.S_IMODE(path.stat().st_mode)
+        path.chmod(current_mode | minimum_bits)
+    except OSError as error:
+        raise ContainedWorkspaceError(
+            "contained workspace permissions could not be prepared"
+        ) from error
 
 
 def _remove_container(container_name: Optional[str]) -> Optional[str]:

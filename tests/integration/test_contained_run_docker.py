@@ -71,6 +71,37 @@ def _platform_claim() -> str:
     return "linux-docker-engine"
 
 
+def _contained_failure_diagnostic(result) -> str:
+    return json.dumps(
+        {
+            "exit_code": result.exit_code,
+            "failure": (
+                None
+                if result.failure is None
+                else {
+                    "stage": result.failure.stage,
+                    "message": result.failure.message,
+                    "exit_code": result.failure.exit_code,
+                }
+            ),
+            "command_result": (
+                None
+                if result.command_result is None
+                else {
+                    "exit_code": result.command_result.exit_code,
+                    "stdout": result.command_result.stdout,
+                    "stderr": result.command_result.stderr,
+                    "timed_out": result.command_result.timed_out,
+                }
+            ),
+            "docker_argv": result.docker_argv,
+            "report_path": str(result.report_path),
+        },
+        indent=2,
+        sort_keys=True,
+    )
+
+
 @pytest.mark.docker
 @pytest.mark.skipif(not docker_available(), reason="Docker is not available")
 def test_contained_run_with_hosted_docker_preserves_boundary(
@@ -101,6 +132,8 @@ def test_contained_run_with_hosted_docker_preserves_boundary(
                     "platform": _platform_claim(),
                     "network": "none",
                     "image_provenance": "digest-required",
+                    "required_uid": os.getuid(),
+                    "required_gid": os.getgid(),
                     "memory_limit": "128m",
                     "pids_limit": 64,
                     "tmpfs_size": "64k",
@@ -125,7 +158,7 @@ def test_contained_run_with_hosted_docker_preserves_boundary(
         runs_root=tmp_path / "runs",
     )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, _contained_failure_diagnostic(result)
     assert result.preflight.supported is True
     assert result.diff_summary.added_files == ["inside.txt"]
     assert not (source / "inside.txt").exists()

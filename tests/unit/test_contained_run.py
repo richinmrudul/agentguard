@@ -1,4 +1,5 @@
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -93,6 +94,7 @@ def test_contained_run_preserves_structured_argv_and_uses_docker_spec(
     def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
         captured["argv"] = argv
         captured["cwd"] = cwd
+        captured["workspace_mode"] = stat.S_IMODE(cwd.stat().st_mode)
         (cwd / "new file.txt").write_text("created\n", encoding="utf-8")
         return CommandResult(
             command="contained-run",
@@ -126,8 +128,13 @@ def test_contained_run_preserves_structured_argv_and_uses_docker_spec(
     assert "ALL" in captured["argv"]
     assert "--security-opt" in captured["argv"]
     assert "no-new-privileges" in captured["argv"]
+    assert captured["workspace_mode"] & stat.S_IWOTH
     assert "new file.txt" in result.diff_summary.added_files
     assert not (load_config(config_path).repo_template / "new file.txt").exists()
+    source_mode = stat.S_IMODE(
+        (load_config(config_path).repo_template / "hello.txt").stat().st_mode
+    )
+    assert not source_mode & stat.S_IWOTH
     report = json.loads(result.report_path.read_text(encoding="utf-8"))
     assert report["command"] == command
     assert "source repo" not in " ".join(report["docker_argv"])
