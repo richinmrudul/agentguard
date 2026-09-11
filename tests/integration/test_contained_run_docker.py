@@ -109,7 +109,8 @@ def test_contained_run_with_hosted_docker_preserves_boundary(
     monkeypatch,
 ) -> None:
     image = _ci_safe_digest_pinned_image()
-    source = tmp_path / "source"
+    path_canary = "AGENTGUARD_SECRET_CANARY_PATH_157"
+    source = tmp_path / f"source-{path_canary}"
     source.mkdir()
     (source / "input.txt").write_text("original\n", encoding="utf-8")
     config_path = tmp_path / "agentguard.yaml"
@@ -192,8 +193,14 @@ def test_contained_run_with_hosted_docker_preserves_boundary(
     assert "rw" not in mount_fields
     source_fields = [field for field in mount_fields if field.startswith("source=")]
     assert len(source_fields) == 1
-    mounted_workspace = Path(source_fields[0].removeprefix("source="))
-    assert mounted_workspace.is_absolute()
-    assert mounted_workspace.name == "workspace"
-    assert mounted_workspace.parent.name == "agent-workspace"
-    assert mounted_workspace != source.resolve()
+    diagnostic_source = source_fields[0].removeprefix("source=")
+    assert "[REDACTED]" in diagnostic_source
+    assert diagnostic_source.endswith("/workspace-lifecycle/agent-workspace/workspace")
+    assert str(tmp_path) not in mount
+    assert str(source.resolve()) not in mount
+    assert "/home/" not in diagnostic_source
+    assert "/Users/" not in diagnostic_source
+    assert "/private/" not in diagnostic_source
+    assert not diagnostic_source.startswith("/")
+    assert path_canary not in mount
+    assert "must-not-enter" not in mount
