@@ -143,6 +143,8 @@ def test_contained_run_with_hosted_docker_preserves_boundary(
         encoding="utf-8",
     )
     monkeypatch.setenv("AGENTGUARD_SECRET_CANARY_HOST_ENV", "must-not-enter")
+    uid = os.getuid()
+    gid = os.getgid()
 
     result = run_contained_agent_command(
         config_path,
@@ -150,8 +152,18 @@ def test_contained_run_with_hosted_docker_preserves_boundary(
             "sh",
             "-c",
             (
+                "set -eu\n"
                 "test \"${AGENTGUARD_SECRET_CANARY_HOST_ENV:-}\" = \"\" && "
+                f"test \"$(id -u)\" = \"{uid}\" && "
+                f"test \"$(id -g)\" = \"{gid}\" && "
                 "printf changed > inside.txt && "
+                "test \"$(cat inside.txt)\" = \"changed\" && "
+                "printf tmp > /tmp/write-check && "
+                "test \"$(cat /tmp/write-check)\" = \"tmp\" && "
+                "root_write_blocked=true && "
+                "(printf denied > /agentguard-root-denied) 2>/dev/null "
+                "&& root_write_blocked=false || true\n"
+                "test \"$root_write_blocked\" = \"true\" && "
                 "test ! -e .git"
             ),
         ],
@@ -165,3 +177,23 @@ def test_contained_run_with_hosted_docker_preserves_boundary(
     assert "--env" not in result.docker_argv
     assert "--network" in result.docker_argv
     assert result.docker_argv[result.docker_argv.index("--network") + 1] == "none"
+    assert "--read-only" in result.docker_argv
+    assert result.docker_argv[result.docker_argv.index("--user") + 1] == f"{uid}:{gid}"
+    tmpfs_values = [
+        result.docker_argv[index + 1]
+        for index, value in enumerate(result.docker_argv)
+        if value == "--tmpfs"
+    ]
+    assert tmpfs_values == [f"/tmp:rw,noexec,nosuid,nodev,size=64k,uid={uid},gid={gid},mode=700"]
+    mount = result.docker_argv[result.docker_argv.index("--mount") + 1]
+    mount_fields = mount.split(",")
+    assert "type=bind" in mount_fields
+    assert "target=/agentguard-workspace" in mount_fields
+    assert "rw" not in mount_fields
+    source_fields = [field for field in mount_fields if field.startswith("source=")]
+    assert len(source_fields) == 1
+    mounted_workspace = Path(source_fields[0].removeprefix("source="))
+    assert mounted_workspace.is_absolute()
+    assert mounted_workspace.name == "workspace"
+    assert mounted_workspace.parent.name == "agent-workspace"
+    assert mounted_workspace != source.resolve()

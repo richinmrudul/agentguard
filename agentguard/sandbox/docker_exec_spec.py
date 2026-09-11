@@ -96,8 +96,7 @@ def build_contained_docker_run_argv(spec: DockerExecSpec) -> list[str]:
                 (
                     "type=bind,"
                     f"source={str(validated.workspace_host_path)},"
-                    f"target={validated.workspace_container_path},"
-                    "rw"
+                    f"target={validated.workspace_container_path}"
                 ),
             ]
         )
