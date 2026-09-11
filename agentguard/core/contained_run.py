@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import shlex
-import stat
 import subprocess
 import time
 from dataclasses import asdict, dataclass
@@ -137,6 +136,7 @@ def run_contained_agent_command(
     source = (source_dir or config.repo_template or Path.cwd()).expanduser().resolve()
     if not source.is_dir():
         raise ValueError("contained-run source repository must be a directory.")
+    _validate_host_bind_identity(config)
 
     run_id = _run_id(config.task_id)
     run_dir = artifact_directory(runs_root, run_id)
@@ -183,7 +183,6 @@ def run_contained_agent_command(
             run_dir / "workspace-lifecycle",
             workspace_id="agent-workspace",
         )
-        _make_prepared_workspace_writable(prepared.workspace_dir)
         workspace = validate_workspace_mount_containment(
             prepared.workspace_dir,
             run_dir,
@@ -349,6 +348,19 @@ def _validate_contained_config(config: AgentGuardConfig) -> None:
         )
 
 
+def _validate_host_bind_identity(config: AgentGuardConfig) -> None:
+    if config.contained_execution is None:
+        return
+    if (
+        config.contained_execution.required_uid != os.geteuid()
+        or config.contained_execution.required_gid != os.getegid()
+    ):
+        raise ValueError(
+            "contained-run host bind mounts require contained_execution.required_uid "
+            "and required_gid to match the current host user."
+        )
+
+
 def _execute_docker_argv(
     argv: list[str],
     cwd: Path,
@@ -432,45 +444,6 @@ def _execute_docker_argv(
         process_cleanup_complete=cleanup.complete,
         process_cleanup_message=cleanup.message,
     )
-
-
-def _make_prepared_workspace_writable(workspace_dir: Path) -> None:
-    root = workspace_dir.resolve()
-    if not root.is_dir():
-        raise ContainedWorkspaceError("contained workspace is unavailable")
-    for current, directory_names, file_names in os.walk(root, followlinks=False):
-        current_path = Path(current)
-        _chmod_for_configured_container_user(
-            current_path,
-            stat.S_IRWXU | stat.S_IRWXO,
-        )
-        for name in directory_names:
-            path = current_path / name
-            if not path.is_symlink():
-                _chmod_for_configured_container_user(
-                    path,
-                    stat.S_IRWXU | stat.S_IRWXO,
-                )
-        for name in file_names:
-            path = current_path / name
-            if not path.is_symlink():
-                _chmod_for_configured_container_user(
-                    path,
-                    stat.S_IRUSR
-                    | stat.S_IWUSR
-                    | stat.S_IROTH
-                    | stat.S_IWOTH,
-                )
-
-
-def _chmod_for_configured_container_user(path: Path, minimum_bits: int) -> None:
-    try:
-        current_mode = stat.S_IMODE(path.stat().st_mode)
-        path.chmod(current_mode | minimum_bits)
-    except OSError as error:
-        raise ContainedWorkspaceError(
-            "contained workspace permissions could not be prepared"
-        ) from error
 
 
 def _remove_container(container_name: Optional[str]) -> Optional[str]:

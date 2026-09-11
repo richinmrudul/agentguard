@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 from pathlib import Path
 
@@ -48,6 +49,8 @@ def _config(tmp_path: Path, **updates) -> Path:
             "platform": "linux-docker-engine",
             "network": "none",
             "image_provenance": "digest-required",
+            "required_uid": os.geteuid(),
+            "required_gid": os.getegid(),
         },
     }
     data.update(updates)
@@ -128,7 +131,7 @@ def test_contained_run_preserves_structured_argv_and_uses_docker_spec(
     assert "ALL" in captured["argv"]
     assert "--security-opt" in captured["argv"]
     assert "no-new-privileges" in captured["argv"]
-    assert captured["workspace_mode"] & stat.S_IWOTH
+    assert not captured["workspace_mode"] & stat.S_IWOTH
     assert "new file.txt" in result.diff_summary.added_files
     assert not (load_config(config_path).repo_template / "new file.txt").exists()
     source_mode = stat.S_IMODE(
@@ -168,6 +171,42 @@ def test_contained_run_fails_before_workspace_when_preflight_unavailable(
     assert result.report_path.is_file()
 
 
+def test_contained_run_rejects_incompatible_bind_uid_gid_before_preflight(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    mismatched_uid = os.geteuid() + 1
+    config_path = _config(
+        tmp_path,
+        contained_execution={
+            "version": 1,
+            "platform": "linux-docker-engine",
+            "network": "none",
+            "image_provenance": "digest-required",
+            "required_uid": mismatched_uid,
+            "required_gid": os.getegid(),
+        },
+    )
+
+    def forbidden_preflight(*args, **kwargs):
+        raise AssertionError("preflight must not run with incompatible bind UID/GID")
+
+    def forbidden_prepare(*args, **kwargs):
+        raise AssertionError("workspace must not be prepared with incompatible bind UID/GID")
+
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        forbidden_preflight,
+    )
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.prepare_contained_workspace",
+        forbidden_prepare,
+    )
+
+    with pytest.raises(ValueError, match="host bind mounts require"):
+        _run(config_path, ["true"], tmp_path)
+
+
 def test_contained_run_records_docker_desktop_experimental_preflight(
     tmp_path: Path,
     monkeypatch,
@@ -179,6 +218,8 @@ def test_contained_run_records_docker_desktop_experimental_preflight(
             "platform": "docker-desktop-experimental",
             "network": "none",
             "image_provenance": "digest-required",
+            "required_uid": os.geteuid(),
+            "required_gid": os.getegid(),
         },
     )
     monkeypatch.setattr(
