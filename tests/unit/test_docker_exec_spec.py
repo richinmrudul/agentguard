@@ -80,7 +80,7 @@ def test_exact_safe_docker_argv_construction(tmp_path: Path) -> None:
         "--tmpfs",
         "/tmp:rw,noexec,nosuid,nodev,size=128m,uid=1000,gid=1000,mode=700",
         "--mount",
-        f"type=bind,source={workspace.resolve()},target=/workspace,rw",
+        f"type=bind,source={workspace.resolve()},target=/workspace",
         "--workdir",
         "/workspace",
         "--user",
@@ -95,6 +95,11 @@ def test_exact_safe_docker_argv_construction(tmp_path: Path) -> None:
         "-m",
         "pytest",
     ]
+    mount = argv[argv.index("--mount") + 1]
+    assert "type=bind" in mount.split(",")
+    assert f"source={workspace.resolve()}" in mount.split(",")
+    assert "target=/workspace" in mount.split(",")
+    assert "rw" not in mount.split(",")
 
 
 def test_bounded_tmpfs_workspace_probe_has_no_host_mount(tmp_path: Path) -> None:
