@@ -24,6 +24,12 @@ SAFE_CONTAINER_NAME = re.compile(r"^agentguard-[a-z0-9][a-z0-9_.-]{0,62}$")
 _MEMORY_LIMIT = re.compile(r"^([1-9][0-9]*)([kKmMgG]?)$")
 _DOCKER_MOUNT_FIELD_UNSAFE = re.compile(r"[,=\x00-\x1f\x7f]")
 _RESERVED_CONTAINER_PATH_PREFIXES = ("/proc", "/sys", "/dev", "/var/run")
+_CONTAINED_ENVIRONMENT_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+_CONTAINED_ENVIRONMENT_UNSAFE_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+MAX_CONTAINED_ENVIRONMENT_ENTRIES = 36
+MAX_CONTAINED_ENVIRONMENT_NAME_LENGTH = 64
+MAX_CONTAINED_ENVIRONMENT_VALUE_LENGTH = 4096
+MAX_CONTAINED_ENVIRONMENT_TOTAL_BYTES = 16384
 
 
 @dataclass(frozen=True)
@@ -340,11 +346,37 @@ def _validate_mount_field_path(path: Path) -> None:
 
 
 def _validate_environment(environment: Mapping[str, str]) -> None:
+    if len(environment) > MAX_CONTAINED_ENVIRONMENT_ENTRIES:
+        raise ValueError("Docker environment exceeds the contained-execution entry limit.")
+    seen: set[str] = set()
+    total_bytes = 0
     for name, value in environment.items():
-        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
-            raise ValueError("Docker environment names must be valid identifiers.")
-        if not isinstance(value, str) or "\0" in value:
-            raise ValueError("Docker environment values must be strings without NUL.")
+        if (
+            not isinstance(name, str)
+            or len(name) > MAX_CONTAINED_ENVIRONMENT_NAME_LENGTH
+            or _CONTAINED_ENVIRONMENT_NAME.fullmatch(name) is None
+        ):
+            raise ValueError(
+                "Docker environment names must be uppercase identifiers within bounds."
+            )
+        normalized = name.casefold()
+        if normalized in seen:
+            raise ValueError("Docker environment names must be unique.")
+        seen.add(normalized)
+        if (
+            not isinstance(value, str)
+            or len(value) > MAX_CONTAINED_ENVIRONMENT_VALUE_LENGTH
+            or _CONTAINED_ENVIRONMENT_UNSAFE_CONTROL.search(value) is not None
+        ):
+            raise ValueError(
+                "Docker environment values must be bounded strings without NUL "
+                "or unsafe control characters."
+            )
+        total_bytes += len(name.encode("utf-8")) + 1 + len(value.encode("utf-8"))
+        if total_bytes > MAX_CONTAINED_ENVIRONMENT_TOTAL_BYTES:
+            raise ValueError(
+                "Docker environment exceeds the contained-execution total byte limit."
+            )
 
 
 def _format_cpu_limit(value: float) -> str:

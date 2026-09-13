@@ -123,7 +123,14 @@ def test_contained_run_preserves_structured_argv_and_uses_docker_spec(
     assert result.result == "PASS"
     assert captured["argv"][-len(command) :] == command
     assert "--" in captured["argv"]
-    assert "--env" not in captured["argv"]
+    assert "--env" in captured["argv"]
+    assert "HOME=/tmp/agentguard-home" in captured["argv"]
+    assert "LANG=C.UTF-8" in captured["argv"]
+    assert "LC_ALL=C.UTF-8" in captured["argv"]
+    assert (
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        in captured["argv"]
+    )
     assert "--network" in captured["argv"]
     assert captured["argv"][captured["argv"].index("--network") + 1] == "none"
     assert "--read-only" in captured["argv"]
@@ -428,6 +435,191 @@ def test_contained_run_bounds_output_and_sanitizes_canaries(
     assert str(source) not in result.command_result.stdout
     assert "super-secret-value" not in result.command_result.stdout
     assert "super-secret-value" not in result.command_result.stderr
+
+
+def test_contained_run_allows_explicit_secret_but_redacts_diagnostics(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    secret = "contained-secret-value"
+    config_path = _config(
+        tmp_path,
+        contained_execution={
+            "version": 1,
+            "platform": "linux-docker-engine",
+            "network": "none",
+            "image_provenance": "digest-required",
+            "required_uid": os.geteuid(),
+            "required_gid": os.getegid(),
+            "environment": [
+                {
+                    "name": "API_TOKEN",
+                    "value": secret,
+                    "allow_sensitive": True,
+                },
+                {"name": "VISIBLE_VALUE", "value": "display-ok"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+    captured = {}
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        captured["argv"] = argv
+        assert f"API_TOKEN={secret}" in argv
+        return CommandResult(
+            "contained-run",
+            0,
+            f"token={secret}",
+            f"Authorization: Bearer {secret}",
+            0.01,
+        )
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+    serialized = json.dumps(report, sort_keys=True)
+
+    assert result.exit_code == 0
+    assert "API_TOKEN=[REDACTED]" in result.docker_argv
+    assert "VISIBLE_VALUE=[REDACTED]" in result.docker_argv
+    assert secret not in json.dumps(result.docker_argv)
+    assert secret not in result.command_result.stdout
+    assert secret not in result.command_result.stderr
+    assert secret not in serialized
+    assert report["environment"]["supplied"] == ["API_TOKEN", "VISIBLE_VALUE"]
+    assert report["environment"]["sensitive"] == ["API_TOKEN"]
+
+
+def test_contained_run_required_missing_env_fails_before_preflight(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = _config(
+        tmp_path,
+        contained_execution={
+            "version": 1,
+            "platform": "linux-docker-engine",
+            "network": "none",
+            "image_provenance": "digest-required",
+            "required_uid": os.geteuid(),
+            "required_gid": os.getegid(),
+            "environment": [
+                {"name": "MISSING_VALUE", "source": "host", "required": True}
+            ],
+        },
+    )
+
+    def forbidden_preflight(*args, **kwargs):
+        raise AssertionError("missing env must fail before preflight")
+
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        forbidden_preflight,
+    )
+
+    result = _run(config_path, ["true"], tmp_path)
+
+    assert result.failure is not None
+    assert result.failure.exit_code == contained_run.EXIT_CONFIG
+    assert "MISSING_VALUE" in result.failure.message
+    assert result.report_path.is_file()
+
+
+def test_contained_run_host_env_value_validation_happens_before_preflight(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = _config(
+        tmp_path,
+        contained_execution={
+            "version": 1,
+            "platform": "linux-docker-engine",
+            "network": "none",
+            "image_provenance": "digest-required",
+            "required_uid": os.geteuid(),
+            "required_gid": os.getegid(),
+            "environment": [
+                {"name": "HOST_VALUE", "source": "host", "required": True}
+            ],
+        },
+    )
+    monkeypatch.setenv("HOST_VALUE", "bad\nvalue")
+
+    def forbidden_preflight(*args, **kwargs):
+        raise AssertionError("invalid env must fail before preflight")
+
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        forbidden_preflight,
+    )
+
+    result = _run(config_path, ["true"], tmp_path)
+
+    assert result.failure is not None
+    assert result.failure.exit_code == contained_run.EXIT_CONFIG
+    assert "HOST_VALUE" in result.failure.message
+
+
+@pytest.mark.parametrize(
+    "command_result",
+    [
+        CommandResult("contained-run", 1, "secret=timeout-secret", "", 0.01),
+        CommandResult(
+            "contained-run",
+            124,
+            "",
+            "timeout-secret",
+            0.01,
+            timed_out=True,
+        ),
+        CommandResult("contained-run", 125, "", "timeout-secret", 0.01),
+    ],
+)
+def test_contained_run_redacts_secret_on_failure_and_timeout(
+    tmp_path: Path,
+    monkeypatch,
+    command_result: CommandResult,
+) -> None:
+    secret = "timeout-secret"
+    config_path = _config(
+        tmp_path,
+        contained_execution={
+            "version": 1,
+            "platform": "linux-docker-engine",
+            "network": "none",
+            "image_provenance": "digest-required",
+            "required_uid": os.geteuid(),
+            "required_gid": os.getegid(),
+            "environment": [
+                {
+                    "name": "FAILURE_TOKEN",
+                    "value": secret,
+                    "allow_sensitive": True,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    result = _run(
+        config_path,
+        ["true"],
+        tmp_path,
+        docker_executor=lambda argv, cwd, timeout_seconds, max_output_bytes: command_result,
+    )
+    serialized = json.dumps(
+        json.loads(result.report_path.read_text(encoding="utf-8")),
+        sort_keys=True,
+    )
+
+    assert secret not in serialized
+    assert secret not in repr(result)
 
 
 def test_contained_run_rejects_malformed_contained_config(tmp_path: Path) -> None:

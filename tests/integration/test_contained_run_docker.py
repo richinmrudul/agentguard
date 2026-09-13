@@ -138,6 +138,14 @@ def test_contained_run_with_hosted_docker_preserves_boundary(
                     "memory_limit": "128m",
                     "pids_limit": 64,
                     "tmpfs_size": "64k",
+                    "environment": [
+                        {"name": "ALLOWED_VALUE", "value": "inside"},
+                        {
+                            "name": "API_TOKEN",
+                            "value": "docker-secret-canary",
+                            "allow_sensitive": True,
+                        },
+                    ],
                 },
             }
         ),
@@ -155,6 +163,13 @@ def test_contained_run_with_hosted_docker_preserves_boundary(
             (
                 "set -eu\n"
                 "test \"${AGENTGUARD_SECRET_CANARY_HOST_ENV:-}\" = \"\" && "
+                "test \"${DOCKER_HOST:-}\" = \"\" && "
+                "test \"${SSH_AUTH_SOCK:-}\" = \"\" && "
+                "test \"${ALLOWED_VALUE:-}\" = \"inside\" && "
+                "test \"${API_TOKEN:-}\" = \"docker-secret-canary\" && "
+                "test \"${HOME:-}\" = \"/tmp/agentguard-home\" && "
+                "test \"${LANG:-}\" = \"C.UTF-8\" && "
+                "test \"${LC_ALL:-}\" = \"C.UTF-8\" && "
                 f"test \"$(id -u)\" = \"{uid}\" && "
                 f"test \"$(id -g)\" = \"{gid}\" && "
                 "printf changed > inside.txt && "
@@ -175,7 +190,10 @@ def test_contained_run_with_hosted_docker_preserves_boundary(
     assert result.preflight.supported is True
     assert result.diff_summary.added_files == ["inside.txt"]
     assert not (source / "inside.txt").exists()
-    assert "--env" not in result.docker_argv
+    assert "--env" in result.docker_argv
+    assert "ALLOWED_VALUE=[REDACTED]" in result.docker_argv
+    assert "API_TOKEN=[REDACTED]" in result.docker_argv
+    assert "docker-secret-canary" not in json.dumps(result.docker_argv)
     assert "--network" in result.docker_argv
     assert result.docker_argv[result.docker_argv.index("--network") + 1] == "none"
     assert "--read-only" in result.docker_argv

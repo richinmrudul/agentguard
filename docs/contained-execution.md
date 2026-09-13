@@ -188,10 +188,45 @@ does not provide Docker socket mounts, host devices, host namespaces,
 privileged mode, host networking, arbitrary host-path mounts, or arbitrary
 Docker flag strings.
 
-The contained process receives no AgentGuard environment allowlist and no
-arbitrary environment passthrough; broader environment allowlisting is future
-work. The host subprocess that invokes Docker keeps only the minimal host
-`PATH` needed to find the Docker CLI. A nonzero contained agent exit remains an
+The contained process receives no ambient host environment. AgentGuard supplies
+only fixed runtime defaults plus explicitly configured allowlist entries:
+`PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+`HOME=/tmp/agentguard-home`, `LANG=C.UTF-8`, and `LC_ALL=C.UTF-8`. User
+configuration cannot override those defaults, and AgentGuard does not forward
+the host's `PATH`, `HOME`, locale, Docker client state, credential stores,
+runtime sockets, SSH agent sockets, or other host-control path/config/socket
+variables.
+
+Allowlisted entries are rendered as structured Docker argv tokens, never as
+shell assignment strings, so argument boundaries are preserved. Literal entries
+must provide `value`. Host-sourced entries read exactly the named host
+environment variable only; optional absent values are omitted deterministically,
+and `required: true` values fail before Docker preflight, workspace
+preparation, or agent launch. Variable names must match
+`^[A-Z_][A-Z0-9_]*$`, are limited to 64 characters, and are rejected when they
+duplicate another configured name after normalization. The allowlist is bounded
+to 32 configured entries, 4096 characters per value, and 16384 serialized
+bytes across configured names and literal values. Names and values reject NUL
+and unsafe control characters.
+
+Docker/client/daemon/config variables and host-control/socket/config/path names
+are reserved, including `DOCKER_*`, `COMPOSE_*`, `DYLD_*`, `LD_*`, `PATH`,
+`HOME`, `LANG`, `LC_ALL`, `SSH_AUTH_SOCK`, `XDG_RUNTIME_DIR`,
+`KUBECONFIG`, certificate-bundle variables, and names ending in path, config,
+socket, runtime, home, or credential-store suffixes. Secret-like names such as
+tokens, passwords, API keys, credentials, auth values, and cookies are allowed
+only when the entry is explicit and includes `allow_sensitive: true`; those
+values are added to AgentGuard's destination-neutral redaction inputs before
+any contained-run evidence is persisted. Public diagnostics, JSON artifacts,
+reports, command displays, traces, and result serialization record environment
+names and redacted placeholders, not values. Redaction is defensive: Docker
+daemon administrators and host users able to inspect a live container or Docker
+daemon internals may still observe environment values while the container runs.
+AgentGuard does not create a long-lived credential store, token refresh
+mechanism, or secret manager.
+
+The host subprocess that invokes Docker keeps only the minimal host `PATH`
+needed to find the Docker CLI. A nonzero contained agent exit remains an
 agent-command failure unless AgentGuard has specific Docker operational
 evidence, such as Docker's launch failure status or a Docker subprocess error.
 
@@ -257,10 +292,10 @@ agent-command, suite, matrix, or CI behavior.
 
 ## Configuration Contract
 
-The additive `contained_execution` config block is version-aware planning
-metadata. It is validated by the loader and JSON Schema so future examples can
-declare the intended boundary, but it does not execute a contained runner or
-change current `sandbox`, benchmark, local-command, Docker, or CI behavior.
+The additive `contained_execution` config block is version-aware boundary
+metadata for `contained-run`. It is validated by the loader and JSON Schema and
+does not change current `run`, `ci`, `benchmark`, `suite`, `matrix`,
+local-command, agent-command, or existing Docker test-runner behavior.
 
 Accepted v1 shape:
 
@@ -282,6 +317,13 @@ contained_execution:
   allow_docker_socket_mount: false
   allow_device_exposure: false
   allow_host_namespace_sharing: false
+  environment:
+    - name: AGENT_API_TOKEN
+      source: host
+      required: true
+      allow_sensitive: true
+    - name: AGENT_MODE
+      value: batch
 ```
 
 `network: bridge` is accepted only when explicitly configured; omission defaults
@@ -291,6 +333,14 @@ defaults shown above. Attempts to opt into host networking, privileged
 containers, Docker socket mounts, host devices, host namespaces, mutable
 tag-only provenance, in-repository evidence, malformed limits, or unbounded
 limits are rejected by configuration validation.
+
+The optional `environment` list is the only way to pass user-configured
+variables to the contained agent. Each entry has a `name`, an optional
+`source` of `literal` or `host` (`literal` is the default), either a literal
+`value` or an exact host lookup, optional `required`, optional `sensitive`, and
+`allow_sensitive` for secret-like names or values intentionally marked
+sensitive. Existing configs that omit `contained_execution.environment` remain
+valid and run with only the fixed runtime defaults.
 
 ## Compatibility
 

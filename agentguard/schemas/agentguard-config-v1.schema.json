@@ -190,7 +190,7 @@
     },
     "contained_execution": {
       "$ref": "#/$defs/containedExecution",
-      "description": "Additive v1 planning contract for future contained-agent execution. It is validated but does not change current runtime behavior."
+      "description": "Additive v1 contained-agent execution contract. Existing configs without this block keep current runtime behavior."
     },
     "benchmark": {
       "type": ["object", "null"],
@@ -404,8 +404,57 @@
         "allow_host_network": {"type": "boolean", "const": false, "default": false, "description": "Host networking is forbidden by the contained-execution contract."},
         "allow_docker_socket_mount": {"type": "boolean", "const": false, "default": false, "description": "Docker socket mounts are forbidden by the contained-execution contract."},
         "allow_device_exposure": {"type": "boolean", "const": false, "default": false, "description": "Host device exposure is forbidden by the contained-execution contract."},
-        "allow_host_namespace_sharing": {"type": "boolean", "const": false, "default": false, "description": "Host PID, IPC, user, UTS, cgroup, or other host namespace sharing is forbidden by the contained-execution contract."}
+        "allow_host_namespace_sharing": {"type": "boolean", "const": false, "default": false, "description": "Host PID, IPC, user, UTS, cgroup, or other host namespace sharing is forbidden by the contained-execution contract."},
+        "environment": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {"$ref": "#/$defs/containedEnvironmentEntry"},
+          "default": [],
+          "description": "Explicit allowlist for environment variables supplied to contained agents. Ambient host environment is otherwise denied."
+        }
       }
+    },
+    "containedEnvironmentEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Z_][A-Z0-9_]*$",
+          "not": {
+            "anyOf": [
+              {"enum": ["BASH_ENV", "BUILDKIT_HOST", "CDPATH", "COMPOSE_FILE", "COMPOSE_PROJECT_NAME", "DOCKER_CERT_PATH", "DOCKER_CONFIG", "DOCKER_CONTEXT", "DOCKER_HOST", "DOCKER_TLS", "DOCKER_TLS_VERIFY", "ENV", "GIT_ASKPASS", "GNUPGHOME", "GPG_AGENT_INFO", "HOME", "KUBECONFIG", "LANG", "LC_ALL", "LD_LIBRARY_PATH", "PATH", "PYTHONHOME", "PYTHONPATH", "REQUESTS_CA_BUNDLE", "SSL_CERT_DIR", "SSL_CERT_FILE", "SSH_AGENT_PID", "SSH_AUTH_SOCK", "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR"]},
+              {"pattern": "^(COMPOSE_|DOCKER_|DYLD_|LD_)"},
+              {"pattern": "(_CONFIG|_CONFIG_DIR|_CONFIG_HOME|_HOME|_PATH|_RUNTIME_DIR|_SOCK|_SOCKET|_STORE)$"}
+            ]
+          },
+          "description": "Uppercase contained variable name. Docker, socket, path, credential-store, runtime, home, locale, and loader-control names are reserved."
+        },
+        "source": {"type": "string", "enum": ["literal", "host"], "default": "literal", "description": "Literal entries use value; host entries read exactly this variable name from the host environment."},
+        "value": {"type": "string", "maxLength": 4096, "pattern": "^[^\\u0000-\\u001f\\u007f]*$", "description": "Literal value. Values are passed as Docker argv argument values, not shell assignment strings."},
+        "required": {"type": "boolean", "default": false, "description": "Host-sourced entries marked required fail before Docker launch when absent."},
+        "sensitive": {"type": "boolean", "default": false, "description": "Marks the value as sensitive and adds it to contained-run redaction inputs."},
+        "allow_sensitive": {"type": "boolean", "default": false, "description": "Must be true when the name is secret-like or sensitive is true."}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"source": {"const": "host"}}, "required": ["source"]},
+          "then": {"not": {"required": ["value"]}},
+          "else": {"required": ["value"]}
+        },
+        {
+          "if": {
+            "anyOf": [
+              {"properties": {"sensitive": {"const": true}}, "required": ["sensitive"]},
+              {"properties": {"name": {"pattern": "(TOKEN|SECRET|PASSWORD|PASS|KEY|CREDENTIAL|AUTH|COOKIE)"}}}
+            ]
+          },
+          "then": {"properties": {"allow_sensitive": {"const": true}}, "required": ["allow_sensitive"]}
+        }
+      ]
     }
   }
 }

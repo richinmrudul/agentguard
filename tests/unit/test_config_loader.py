@@ -80,6 +80,118 @@ secret_content_patterns:
     ]
 
 
+def _contained_config(environment: object) -> str:
+    return yaml.safe_dump(
+        {
+            "task_id": "task",
+            "description": "Task.",
+            "repo_template": "examples/repos/auth_bug",
+            "test_command": "pytest",
+            "expected_modified_files": {"min": 0, "max": 2},
+            "sandbox": {
+                "type": "docker",
+                "image": "example.com/team/agent@sha256:" + "a" * 64,
+                "network": "none",
+            },
+            "contained_execution": {
+                "version": 1,
+                "platform": "linux-docker-engine",
+                "environment": environment,
+            },
+        }
+    )
+
+
+def test_config_accepts_contained_environment_allowlist(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        _contained_config(
+            [
+                {"name": "ALLOWED_VALUE", "value": "hello"},
+                {"name": "API_TOKEN", "value": "secret", "allow_sensitive": True},
+                {"name": "OPTIONAL_HOST", "source": "host"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    entries = load_config(config_path).contained_execution.environment
+
+    assert [entry.name for entry in entries] == [
+        "ALLOWED_VALUE",
+        "API_TOKEN",
+        "OPTIONAL_HOST",
+    ]
+    assert entries[1].sensitive is True
+    assert entries[1].allow_sensitive is True
+
+
+@pytest.mark.parametrize(
+    ("entry", "match"),
+    [
+        ({"name": "lower", "value": "x"}, "uppercase"),
+        ({"name": "PATH", "value": "x"}, "reserved"),
+        ({"name": "DOCKER_HOST", "value": "x"}, "reserved"),
+        ({"name": "LD_PRELOAD", "value": "x"}, "reserved"),
+        ({"name": "SSH_AUTH_SOCK", "value": "x"}, "reserved"),
+        ({"name": "CONFIG_PATH", "value": "x"}, "reserved"),
+        ({"name": "API_TOKEN", "value": "x"}, "allow_sensitive"),
+        ({"name": "HOST_VALUE", "source": "host", "value": "x"}, "omitted"),
+        ({"name": "LITERAL_VALUE"}, "value"),
+        ({"name": "CONTROL", "value": "bad\x00value"}, "control"),
+        ({"name": "A" * 65, "value": "x"}, "too long"),
+        ({"name": "TOO_BIG", "value": "x" * 4097}, "too long"),
+    ],
+)
+def test_config_rejects_invalid_contained_environment_entries(
+    tmp_path: Path,
+    entry: dict[str, object],
+    match: str,
+) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(_contained_config([entry]), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=match):
+        load_config(config_path)
+
+
+def test_config_rejects_duplicate_contained_environment_names(tmp_path: Path) -> None:
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(
+        _contained_config(
+            [
+                {"name": "ALLOWED", "value": "one"},
+                {"name": "ALLOWED", "value": "two"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate"):
+        load_config(config_path)
+
+
+def test_config_rejects_contained_environment_count_and_total_bounds(
+    tmp_path: Path,
+) -> None:
+    too_many = [
+        {"name": f"VALUE_{index}", "value": "x"}
+        for index in range(33)
+    ]
+    config_path = tmp_path / "agentguard.yaml"
+    config_path.write_text(_contained_config(too_many), encoding="utf-8")
+    with pytest.raises(ValueError, match="maximum"):
+        load_config(config_path)
+
+    total_too_large = [
+        {"name": f"VALUE_{index}", "value": "x" * 4096}
+        for index in range(5)
+    ]
+    config_path.write_text(_contained_config(total_too_large), encoding="utf-8")
+    with pytest.raises(ValueError, match="total serialized"):
+        load_config(config_path)
+
+
 def test_config_accepts_builtin_secret_content_detectors(tmp_path: Path) -> None:
     config_path = tmp_path / "agentguard.yaml"
     config_path.write_text(
