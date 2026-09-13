@@ -235,9 +235,23 @@ workspace mutations, cleanup status, Docker preflight evidence, and a compact
 contained-run JSON artifact with sanitized diagnostics. Existing post-execution
 policy checks are evaluated against the captured workspace mutation summary
 where feasible. This is not the broad report, trace, manifest, or incident
-integration planned separately. `contained-run` does not provide a liveness
-guarantee beyond bounded command timeout and best-effort owned container and
-workspace cleanup reporting.
+integration planned separately.
+
+For every container it successfully creates, `contained-run` binds cleanup to
+the exact Docker container identity returned by Docker and verified through an
+AgentGuard-owned label. Cleanup never selects targets using attacker-controlled
+names alone. Bounded stop, kill, remove, and inspect operations are attempted
+after success, agent failure, policy failure after workspace preparation,
+timeout, cancellation, Docker launch failure after creation, output capture
+failure, mutation/evidence processing failure, and unexpected exceptions after
+creation. AgentGuard verifies absence or liveness with Docker inspection before
+reporting success and before deleting the lifecycle-owned workspace. Cleanup
+states distinguish removed, cleanly terminated, force-killed, already absent,
+incomplete cleanup, and unavailable verification. A cleanup or liveness
+verification failure fails the contained run even when the contained agent
+exited successfully. When both execution and cleanup fail, the primary execution
+failure remains the main failure and the cleanup failure is recorded separately
+in the contained-run JSON artifact.
 
 ## Contained Workspace Lifecycle
 

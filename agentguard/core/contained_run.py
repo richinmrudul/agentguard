@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -84,8 +86,31 @@ EXIT_CLEANUP = 8
 
 DockerCommandExecutor = Callable[
     [list[str], Path, int, int],
-    CommandResult,
+    object,
 ]
+
+DOCKER_CONTROL_TIMEOUT_SECONDS = 5
+DOCKER_STOP_TIMEOUT_SECONDS = 2
+DOCKER_OUTPUT_MAX_BYTES = 4096
+DOCKER_INSPECT_MAX_BYTES = 65536
+DOCKER_DIAGNOSTIC_MAX_BYTES = 512
+CONTAINER_ID_PATTERN = re.compile(r"^[a-f0-9]{12,64}$")
+CONTAINER_ID_TEXT_PATTERN = re.compile(r"\b[a-f0-9]{12,64}\b", re.IGNORECASE)
+CONTAINER_NAME_TEXT_PATTERN = re.compile(r"\bagentguard-[a-z0-9_.-]{1,80}\b")
+CONTAINER_RUN_LABEL_TEXT_PATTERN = re.compile(
+    r"agentguard\.contained-run\.id=[A-Za-z0-9_.:-]+"
+)
+PRIVATE_PATH_TEXT_PATTERN = re.compile(
+    r"(?:/Users/[^/\s,;]+|/home/[^/\s,;]+|/private/tmp|/private/var|/tmp)"
+    r"(?:/[^\s,;]*)?"
+)
+DOCKER_ENV_ASSIGNMENT_TEXT_PATTERN = re.compile(
+    r"\b[A-Z_][A-Z0-9_]{0,63}=[^\s,;]+"
+)
+CONTAINER_CLEANUP_COMPLETE_STATUSES = {
+    "removed",
+    "already_absent",
+}
 
 
 @dataclass(frozen=True)
@@ -93,6 +118,43 @@ class ContainedRunFailure:
     stage: str
     exit_code: int
     message: str
+
+
+@dataclass(frozen=True)
+class ContainedContainerIdentity:
+    container_id: str
+    container_name: str
+    owner_label: str
+
+
+@dataclass(frozen=True)
+class ContainedCleanupResult:
+    attempted: bool = False
+    complete: bool = True
+    status: str = "not_created"
+    container: Optional[dict[str, str]] = None
+    message: Optional[str] = None
+    workspace_complete: Optional[bool] = None
+    workspace_status: Optional[str] = None
+    workspace_message: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ContainedDockerExecution:
+    command_result: CommandResult
+    cleanup: ContainedCleanupResult
+
+
+class DockerContainerCreatedError(subprocess.SubprocessError):
+    def __init__(self, identity: ContainedContainerIdentity) -> None:
+        super().__init__("docker container was created before launch failure")
+        self.identity = identity
+
+
+class DockerOperationalError(subprocess.SubprocessError):
+    def __init__(self, diagnostic: str) -> None:
+        super().__init__(diagnostic)
+        self.diagnostic = diagnostic
 
 
 @dataclass(frozen=True)
@@ -111,7 +173,9 @@ class ContainedRunResult:
     score: int
     mutations: dict[str, object]
     cleanup_complete: bool
+    cleanup: ContainedCleanupResult = field(default_factory=ContainedCleanupResult)
     failure: Optional[ContainedRunFailure] = None
+    cleanup_failure: Optional[ContainedRunFailure] = None
     report_path: Optional[Path] = None
     environment: ContainedEnvironmentDiagnostics = field(
         default_factory=ContainedEnvironmentDiagnostics
@@ -121,6 +185,8 @@ class ContainedRunResult:
     def exit_code(self) -> int:
         if self.failure is not None:
             return self.failure.exit_code
+        if self.cleanup_failure is not None:
+            return self.cleanup_failure.exit_code
         return 0 if self.result == "PASS" else 1
 
 
@@ -158,8 +224,10 @@ def run_contained_agent_command(
     mutations: dict[str, object] = {}
     environment = ContainedEnvironmentDiagnostics()
     sensitive_values = _sensitive_values(config, source, run_dir)
+    cleanup = ContainedCleanupResult()
     cleanup_complete = True
     failure: Optional[ContainedRunFailure] = None
+    cleanup_failure: Optional[ContainedRunFailure] = None
 
     try:
         try:
@@ -225,6 +293,7 @@ def run_contained_agent_command(
             run_dir,
         )
         container_name = f"agentguard-{run_id[-32:]}".lower()
+        owner_label = f"agentguard.contained-run.id={run_id[-48:].lower()}"
         spec = contained_exec_spec_from_config(
             config.contained_execution,
             image=config.sandbox.image or "",
@@ -234,7 +303,10 @@ def run_contained_agent_command(
             container_name=container_name,
             environment=resolved_environment.values,
         )
-        docker_argv = build_contained_docker_run_argv(spec)
+        docker_argv = _add_container_owner_labels(
+            build_contained_docker_run_argv(spec),
+            owner_label=owner_label,
+        )
         policy = evaluate_command_policy(
             command_text=shlex.join(command),
             unsafe_patterns=config.unsafe_commands,
@@ -255,12 +327,20 @@ def run_contained_agent_command(
             )
         else:
             executor = docker_executor or _execute_docker_argv
-            command_result = executor(
+            execution = executor(
                 docker_argv,
                 prepared.workspace_dir,
                 config.command_timeout_seconds,
                 config.max_output_bytes,
             )
+            if isinstance(execution, ContainedDockerExecution):
+                command_result = execution.command_result
+                cleanup = execution.cleanup
+                cleanup_complete = cleanup.complete
+            elif isinstance(execution, CommandResult):
+                command_result = execution
+            else:
+                raise TypeError("contained docker executor returned an unsupported result.")
             if command_result.timed_out:
                 failure = ContainedRunFailure(
                     ContainedRunStage.TIMEOUT,
@@ -324,32 +404,44 @@ def run_contained_agent_command(
         )
     finally:
         if prepared is not None:
-            cleanup = prepared.cleanup()
-            cleanup_complete = cleanup.complete
-            if not cleanup.complete and failure is None:
-                failure = ContainedRunFailure(
-                    ContainedRunStage.CLEANUP,
-                    EXIT_CLEANUP,
-                    cleanup.message or "contained workspace cleanup failed.",
-                )
-            container_cleanup = (
-                _remove_container(container_name if "container_name" in locals() else None)
-                if docker_executor is None
+            workspace_cleanup = (
+                prepared.cleanup()
+                if cleanup.complete
                 else None
             )
-            if container_cleanup is not None:
-                cleanup_complete = False
+            if workspace_cleanup is None:
+                cleanup = _with_workspace_cleanup(
+                    cleanup,
+                    complete=False,
+                    status="retained",
+                    message=(
+                        "contained workspace retained because container cleanup "
+                        "or liveness verification did not complete."
+                    ),
+                )
+            else:
+                cleanup = _with_workspace_cleanup(
+                    cleanup,
+                    complete=workspace_cleanup.complete,
+                    status="removed" if workspace_cleanup.complete else "incomplete",
+                    message=workspace_cleanup.message,
+                )
+            cleanup_complete = cleanup.complete and cleanup.workspace_complete is not False
+            if not cleanup_complete:
+                cleanup_failure = ContainedRunFailure(
+                    ContainedRunStage.CLEANUP,
+                    EXIT_CLEANUP,
+                    _cleanup_failure_message(cleanup),
+                )
                 if failure is None:
-                    failure = ContainedRunFailure(
-                        ContainedRunStage.CLEANUP,
-                        EXIT_CLEANUP,
-                        container_cleanup,
-                    )
+                    failure = cleanup_failure
 
     score = score_checks(check_results).score if check_results else 0
     result = "PASS" if command_result is not None and command_result.exit_code == 0 else "FAIL"
     if check_results:
         result = score_checks(check_results).result
+    if cleanup_failure is not None or not cleanup_complete:
+        result = "FAIL"
     elapsed = round(time.monotonic() - started, 6)
     if command_result is not None:
         command_result = _sanitize_command_result(
@@ -374,7 +466,9 @@ def run_contained_agent_command(
         score=score,
         mutations=mutations,
         cleanup_complete=cleanup_complete,
+        cleanup=cleanup,
         failure=failure,
+        cleanup_failure=cleanup_failure if cleanup_failure != failure else None,
         environment=environment,
     )
     return _write_report(final, elapsed)
@@ -411,15 +505,17 @@ def _execute_docker_argv(
     cwd: Path,
     timeout_seconds: int,
     max_output_bytes: int,
-) -> CommandResult:
+) -> ContainedDockerExecution:
     started = time.monotonic()
     process = None
     capture = None
-    cleanup = ProcessCleanupResult()
+    cleanup = ContainedCleanupResult()
     timed_out = False
+    identity: Optional[ContainedContainerIdentity] = None
     try:
+        identity = _create_owned_container(argv)
         process = subprocess.Popen(
-            argv,
+            ["docker", "start", "-a", identity.container_id],
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -429,42 +525,147 @@ def _execute_docker_argv(
         capture = BoundedProcessOutput(process, max_output_bytes)
         exit_code = capture.wait(timeout=timeout_seconds)
         captured = capture.finish()
+        if _looks_like_docker_start_failure(exit_code, captured.stderr.text):
+            cleanup = _cleanup_owned_container(identity)
+            diagnostic = _sanitize_docker_operational_text(captured.stderr.text)
+            return ContainedDockerExecution(
+                CommandResult(
+                    command=CONTAINED_RUNNER_NAME,
+                    exit_code=125,
+                    stdout="",
+                    stderr=f"Docker launch failed: start failed: {diagnostic}",
+                    duration_seconds=round(time.monotonic() - started, 6),
+                    process_cleanup_attempted=cleanup.attempted,
+                    process_cleanup_complete=cleanup.complete,
+                    process_cleanup_message=cleanup.message,
+                ),
+                cleanup,
+            )
     except FileNotFoundError as error:
-        return CommandResult(
-            command=CONTAINED_RUNNER_NAME,
-            exit_code=125,
-            stdout="",
-            stderr=f"Docker executable not found: {redact_credentials(error.filename)}",
-            duration_seconds=round(time.monotonic() - started, 6),
+        cleanup = _cleanup_owned_container(identity)
+        return ContainedDockerExecution(
+            CommandResult(
+                command=CONTAINED_RUNNER_NAME,
+                exit_code=125,
+                stdout="",
+                stderr=f"Docker executable not found: {redact_credentials(error.filename)}",
+                duration_seconds=round(time.monotonic() - started, 6),
+                process_cleanup_attempted=cleanup.attempted,
+                process_cleanup_complete=cleanup.complete,
+                process_cleanup_message=cleanup.message,
+            ),
+            cleanup,
         )
     except subprocess.TimeoutExpired:
         timed_out = True
         exit_code = 124
-        if process is not None:
-            cleanup = terminate_process_tree(process)
-        try:
-            capture.wait(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
-        except BaseException:
-            pass
-        try:
-            captured = capture.finish(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
-        except BaseException:
-            captured = ProcessOutput(
-                stdout=LimitedOutput(text="", truncated=False),
-                stderr=LimitedOutput(text="", truncated=False),
+        cleanup = _cleanup_owned_container(identity)
+        process_cleanup = ProcessCleanupResult()
+        captured = ProcessOutput(
+            stdout=LimitedOutput(text="", truncated=False),
+            stderr=LimitedOutput(text="", truncated=False),
+        )
+        if capture is not None:
+            try:
+                capture.wait(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
+            except BaseException:
+                if process is not None:
+                    process_cleanup = terminate_process_tree(process)
+                try:
+                    capture.wait(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
+                except BaseException:
+                    pass
+            try:
+                captured = capture.finish(timeout=PROCESS_OUTPUT_DRAIN_TIMEOUT_SECONDS)
+            except BaseException:
+                captured = ProcessOutput(
+                    stdout=LimitedOutput(text="", truncated=False),
+                    stderr=LimitedOutput(text="", truncated=False),
+                )
+        elif process is not None:
+            process_cleanup = terminate_process_tree(process)
+        if (
+            process_cleanup.attempted
+            and process_cleanup.message
+            and cleanup.complete
+            and not process_cleanup.complete
+        ):
+            cleanup = ContainedCleanupResult(
+                attempted=cleanup.attempted,
+                complete=False,
+                status=cleanup.status,
+                container=cleanup.container,
+                message=(
+                    f"{cleanup.message}; {process_cleanup.message}"
+                    if cleanup.message
+                    else process_cleanup.message
+                ),
             )
+    except DockerContainerCreatedError as error:
+        cleanup = _cleanup_owned_container(error.identity)
+        return ContainedDockerExecution(
+            CommandResult(
+                command=CONTAINED_RUNNER_NAME,
+                exit_code=125,
+                stdout="",
+                stderr="Docker launch failed: container identity cleanup required",
+                duration_seconds=round(time.monotonic() - started, 6),
+                process_cleanup_attempted=cleanup.attempted,
+                process_cleanup_complete=cleanup.complete,
+                process_cleanup_message=cleanup.message,
+            ),
+            cleanup,
+        )
+    except DockerOperationalError as error:
+        cleanup_process_after_exception(process, capture)
+        cleanup = _cleanup_owned_container(identity)
+        return ContainedDockerExecution(
+            CommandResult(
+                command=CONTAINED_RUNNER_NAME,
+                exit_code=125,
+                stdout="",
+                stderr=f"Docker launch failed: {error.diagnostic}",
+                duration_seconds=round(time.monotonic() - started, 6),
+                process_cleanup_attempted=cleanup.attempted,
+                process_cleanup_complete=cleanup.complete,
+                process_cleanup_message=cleanup.message,
+            ),
+            cleanup,
+        )
     except (OSError, subprocess.SubprocessError) as error:
         cleanup_process_after_exception(process, capture)
-        return CommandResult(
-            command=CONTAINED_RUNNER_NAME,
-            exit_code=125,
-            stdout="",
-            stderr=f"Docker launch failed: {redact_credentials(error.__class__.__name__)}",
-            duration_seconds=round(time.monotonic() - started, 6),
+        cleanup = _cleanup_owned_container(identity)
+        return ContainedDockerExecution(
+            CommandResult(
+                command=CONTAINED_RUNNER_NAME,
+                exit_code=125,
+                stdout="",
+                stderr=f"Docker launch failed: {redact_credentials(error.__class__.__name__)}",
+                duration_seconds=round(time.monotonic() - started, 6),
+                process_cleanup_attempted=cleanup.attempted,
+                process_cleanup_complete=cleanup.complete,
+                process_cleanup_message=cleanup.message,
+            ),
+            cleanup,
         )
     except BaseException:
         cleanup_process_after_exception(process, capture)
-        raise
+        cleanup = _cleanup_owned_container(identity)
+        return ContainedDockerExecution(
+            CommandResult(
+                command=CONTAINED_RUNNER_NAME,
+                exit_code=125,
+                stdout="",
+                stderr="Docker launch interrupted before completion.",
+                duration_seconds=round(time.monotonic() - started, 6),
+                process_cleanup_attempted=cleanup.attempted,
+                process_cleanup_complete=cleanup.complete,
+                process_cleanup_message=cleanup.message,
+            ),
+            cleanup,
+        )
+    if not timed_out:
+        cleanup = _cleanup_owned_container(identity)
 
     stdout = captured.stdout.text
     stderr = captured.stderr.text
@@ -476,18 +677,21 @@ def _execute_docker_argv(
         stderr = append_cleanup_message(stderr, cleanup)
     limited_stdout = limit_output(stdout, max_output_bytes)
     limited_stderr = limit_output(stderr, max_output_bytes)
-    return CommandResult(
-        command=CONTAINED_RUNNER_NAME,
-        exit_code=exit_code,
-        stdout=limited_stdout.text,
-        stderr=limited_stderr.text,
-        duration_seconds=round(time.monotonic() - started, 6),
-        timed_out=timed_out,
-        stdout_truncated=captured.stdout.truncated or limited_stdout.truncated,
-        stderr_truncated=captured.stderr.truncated or limited_stderr.truncated,
-        process_cleanup_attempted=cleanup.attempted,
-        process_cleanup_complete=cleanup.complete,
-        process_cleanup_message=cleanup.message,
+    return ContainedDockerExecution(
+        CommandResult(
+            command=CONTAINED_RUNNER_NAME,
+            exit_code=exit_code,
+            stdout=limited_stdout.text,
+            stderr=limited_stderr.text,
+            duration_seconds=round(time.monotonic() - started, 6),
+            timed_out=timed_out,
+            stdout_truncated=captured.stdout.truncated or limited_stdout.truncated,
+            stderr_truncated=captured.stderr.truncated or limited_stderr.truncated,
+            process_cleanup_attempted=cleanup.attempted,
+            process_cleanup_complete=cleanup.complete,
+            process_cleanup_message=cleanup.message,
+        ),
+        cleanup,
     )
 
 
@@ -509,6 +713,445 @@ def _remove_container(container_name: Optional[str]) -> Optional[str]:
     except (OSError, subprocess.SubprocessError):
         return "contained container cleanup failed."
     return None
+
+
+def _add_container_owner_labels(argv: list[str], *, owner_label: str) -> list[str]:
+    if "--" not in argv:
+        return list(argv)
+    boundary = argv.index("--")
+    return [
+        *argv[:boundary],
+        "--label",
+        "agentguard.owner=contained-run",
+        "--label",
+        owner_label,
+        *argv[boundary:],
+    ]
+
+
+def _docker_create_argv(argv: list[str]) -> list[str]:
+    create = list(argv)
+    if len(create) < 2 or create[0] != "docker" or create[1] != "run":
+        raise ValueError("contained Docker argv must start with docker run.")
+    create[1] = "create"
+    boundary = create.index("--") if "--" in create else len(create)
+    if boundary < len(create):
+        del create[boundary]
+    create = [
+        item
+        for index, item in enumerate(create)
+        if item != "--rm" or index >= boundary
+    ]
+    return create
+
+
+def _create_owned_container(argv: list[str]) -> ContainedContainerIdentity:
+    create_argv = _docker_create_argv(argv)
+    completed = _run_docker_control(create_argv)
+    container_name = _argv_option(create_argv, "--name") or ""
+    owner_label = _argv_option(create_argv, "--label", prefix="agentguard.contained-run.id=")
+    if completed.returncode != 0:
+        bind = _bind_container_identity_detail(
+            container_name,
+            expected_name=container_name,
+            expected_owner_label=owner_label or "",
+        )
+        if bind.identity is not None:
+            raise DockerContainerCreatedError(bind.identity)
+        raise DockerOperationalError(
+            _docker_control_failure_diagnostic("create", completed, bind.reason)
+        )
+    container_id = _first_container_id(completed.stdout)
+    bind = _bind_container_identity_detail(
+        container_id or container_name,
+        expected_name=container_name,
+        expected_owner_label=owner_label or "",
+    )
+    if bind.identity is None:
+        raise DockerOperationalError(f"identity verification failed: {bind.reason}")
+    return bind.identity
+
+
+def _cleanup_owned_container(
+    identity: Optional[ContainedContainerIdentity],
+) -> ContainedCleanupResult:
+    if identity is None:
+        return ContainedCleanupResult()
+    container = _container_evidence(identity)
+    first = _inspect_owned_container(identity)
+    was_running = first.running
+    if first.status == "already_absent":
+        return ContainedCleanupResult(
+            attempted=True,
+            complete=True,
+            status="already_absent",
+            container=container,
+            message="contained container already absent",
+        )
+    if first.status == "verification_unavailable":
+        return ContainedCleanupResult(
+            attempted=True,
+            complete=False,
+            status="verification_unavailable",
+            container=container,
+            message="contained container liveness verification unavailable",
+        )
+    if first.running:
+        stopped = _run_docker_control(
+            [
+                "docker",
+                "stop",
+                "--time",
+                str(DOCKER_STOP_TIMEOUT_SECONDS),
+                identity.container_id,
+            ]
+        )
+        if stopped.returncode != 0 and not _is_no_such_container(stopped):
+            return ContainedCleanupResult(
+                attempted=True,
+                complete=False,
+                status="cleanup_incomplete",
+                container=container,
+                message="contained container graceful stop failed",
+            )
+    after_stop = _inspect_owned_container(identity)
+    force_killed = False
+    graceful_stop = was_running and after_stop.status != "already_absent" and not after_stop.running
+    if after_stop.status == "verification_unavailable":
+        return ContainedCleanupResult(
+            attempted=True,
+            complete=False,
+            status="verification_unavailable",
+            container=container,
+            message="contained container liveness verification unavailable",
+        )
+    if after_stop.status == "already_absent":
+        return ContainedCleanupResult(
+            attempted=True,
+            complete=True,
+            status="already_absent",
+            container=container,
+            message="contained container already absent",
+        )
+    if after_stop.running:
+        killed = _run_docker_control(["docker", "kill", identity.container_id])
+        force_killed = killed.returncode == 0
+        if killed.returncode != 0 and not _is_no_such_container(killed):
+            return ContainedCleanupResult(
+                attempted=True,
+                complete=False,
+                status="cleanup_incomplete",
+                container=container,
+                message="contained container force kill failed",
+            )
+    after_kill = _inspect_owned_container(identity)
+    if after_kill.status == "verification_unavailable":
+        return ContainedCleanupResult(
+            attempted=True,
+            complete=False,
+            status="verification_unavailable",
+            container=container,
+            message="contained container liveness verification unavailable",
+        )
+    if after_kill.status != "already_absent" and after_kill.running:
+        return ContainedCleanupResult(
+            attempted=True,
+            complete=False,
+            status="cleanup_incomplete",
+            container=container,
+            message="contained container remained alive after cleanup",
+        )
+    removed = _run_docker_control(["docker", "rm", identity.container_id])
+    if removed.returncode != 0 and not _is_no_such_container(removed):
+        return ContainedCleanupResult(
+            attempted=True,
+            complete=False,
+            status="cleanup_incomplete",
+            container=container,
+            message="contained container removal failed",
+        )
+    final = _inspect_owned_container(identity)
+    if final.status == "already_absent":
+        if force_killed:
+            status = "force_killed"
+            message = "contained container force-killed and removed"
+        elif graceful_stop:
+            status = "cleanly_terminated"
+            message = "contained container gracefully stopped and removed"
+        else:
+            status = "removed"
+            message = "contained container removed"
+        return ContainedCleanupResult(
+            attempted=True,
+            complete=True,
+            status=status,
+            container=container,
+            message=message,
+        )
+    if final.status == "verification_unavailable":
+        return ContainedCleanupResult(
+            attempted=True,
+            complete=False,
+            status="verification_unavailable",
+            container=container,
+            message="contained container absence verification unavailable",
+        )
+    return ContainedCleanupResult(
+        attempted=True,
+        complete=False,
+        status="cleanup_incomplete",
+        container=container,
+        message="contained container removal could not be verified",
+    )
+
+
+@dataclass(frozen=True)
+class _ContainerInspection:
+    status: str
+    running: bool = False
+
+
+@dataclass(frozen=True)
+class _InspectJsonResult:
+    status: str
+    payload: Optional[dict[str, object]] = None
+
+
+def _bind_container_identity(
+    target: str,
+    *,
+    expected_name: str,
+    expected_owner_label: str,
+) -> Optional[ContainedContainerIdentity]:
+    return _bind_container_identity_detail(
+        target,
+        expected_name=expected_name,
+        expected_owner_label=expected_owner_label,
+    ).identity
+
+
+@dataclass(frozen=True)
+class _BindIdentityResult:
+    identity: Optional[ContainedContainerIdentity]
+    reason: str = ""
+
+
+def _bind_container_identity_detail(
+    target: str,
+    *,
+    expected_name: str,
+    expected_owner_label: str,
+) -> _BindIdentityResult:
+    if not target:
+        return _BindIdentityResult(None, "inspect target unavailable")
+    inspect = _inspect_container_json(target)
+    if inspect.status != "present" or inspect.payload is None:
+        return _BindIdentityResult(None, f"identity inspect {inspect.status}")
+    container_id = _normal_container_id(inspect.payload.get("Id"))
+    name = str(inspect.payload.get("Name") or "").lstrip("/")
+    config = inspect.payload.get("Config")
+    labels = config.get("Labels", {}) if isinstance(config, dict) else {}
+    if not isinstance(labels, dict):
+        labels = {}
+    label_name, _, label_value = expected_owner_label.partition("=")
+    if not container_id:
+        return _BindIdentityResult(None, "identity inspect returned invalid id")
+    if name != expected_name:
+        return _BindIdentityResult(None, "identity name mismatch")
+    if labels.get("agentguard.owner") != "contained-run":
+        return _BindIdentityResult(None, "identity owner label mismatch")
+    if not label_name or labels.get(label_name) != label_value:
+        return _BindIdentityResult(None, "identity run label mismatch")
+    return _BindIdentityResult(
+        ContainedContainerIdentity(
+            container_id=container_id,
+            container_name=expected_name,
+            owner_label=expected_owner_label,
+        )
+    )
+
+
+def _inspect_owned_container(identity: ContainedContainerIdentity) -> _ContainerInspection:
+    inspect = _inspect_container_json(identity.container_id)
+    if inspect.status == "absent":
+        return _ContainerInspection("already_absent")
+    if inspect.status != "present" or inspect.payload is None:
+        return _ContainerInspection("verification_unavailable")
+    rebound = _bind_container_identity(
+        identity.container_id,
+        expected_name=identity.container_name,
+        expected_owner_label=identity.owner_label,
+    )
+    if rebound is None or rebound.container_id != identity.container_id:
+        return _ContainerInspection("verification_unavailable")
+    state = inspect.payload.get("State", {})
+    running = bool(state.get("Running")) if isinstance(state, dict) else False
+    return _ContainerInspection("running" if running else "stopped", running=running)
+
+
+def _inspect_container_json(target: str) -> _InspectJsonResult:
+    completed = _run_docker_control(
+        ["docker", "container", "inspect", "--format", "{{json .}}", target]
+    )
+    if completed.returncode != 0:
+        if _is_no_such_container(completed):
+            return _InspectJsonResult("absent")
+        return _InspectJsonResult("unavailable")
+    try:
+        bounded = limit_output(completed.stdout, DOCKER_INSPECT_MAX_BYTES)
+        if bounded.truncated:
+            return _InspectJsonResult("unavailable")
+        data = json.loads(bounded.text)
+    except (ValueError, TypeError):
+        return _InspectJsonResult("unavailable")
+    if isinstance(data, list) and len(data) == 1:
+        data = data[0]
+    return (
+        _InspectJsonResult("present", data)
+        if isinstance(data, dict)
+        else _InspectJsonResult("unavailable")
+    )
+
+
+def _run_docker_control(argv: list[str]) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=DOCKER_CONTROL_TIMEOUT_SECONDS,
+            env={"PATH": os.environ.get("PATH", "")},
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, 124, stdout="", stderr="timeout")
+    except OSError as error:
+        return subprocess.CompletedProcess(
+            argv,
+            125,
+            stdout="",
+            stderr=redact_credentials(error.__class__.__name__),
+        )
+
+
+def _docker_control_failure_diagnostic(
+    operation: str,
+    completed: subprocess.CompletedProcess,
+    detail: str = "",
+) -> str:
+    parts = [f"{operation} failed", f"rc={completed.returncode}"]
+    if detail:
+        parts.append(detail)
+    stdout = _sanitize_docker_operational_text(completed.stdout)
+    stderr = _sanitize_docker_operational_text(completed.stderr)
+    if stdout:
+        parts.append(f"stdout={stdout}")
+    if stderr:
+        parts.append(f"stderr={stderr}")
+    return limit_output("; ".join(parts), DOCKER_DIAGNOSTIC_MAX_BYTES).text
+
+
+def _sanitize_docker_operational_text(value: object) -> str:
+    text = redact_credentials(str(value))
+    text = CONTAINER_RUN_LABEL_TEXT_PATTERN.sub(
+        "agentguard.contained-run.id=[REDACTED]",
+        text,
+    )
+    text = CONTAINER_NAME_TEXT_PATTERN.sub("agentguard-[REDACTED]", text)
+    text = CONTAINER_ID_TEXT_PATTERN.sub("[REDACTED_CONTAINER_ID]", text)
+    text = DOCKER_ENV_ASSIGNMENT_TEXT_PATTERN.sub(_redact_safe_env_assignment, text)
+    text = PRIVATE_PATH_TEXT_PATTERN.sub("[REDACTED_PATH]", text)
+    return limit_output(text.strip(), DOCKER_DIAGNOSTIC_MAX_BYTES).text
+
+
+def _redact_safe_env_assignment(match: re.Match) -> str:
+    name = match.group(0).split("=", 1)[0]
+    return f"{name}=[REDACTED]"
+
+
+def _looks_like_docker_start_failure(exit_code: int, stderr: str) -> bool:
+    if exit_code == 0:
+        return False
+    lowered = stderr.lower()
+    return (
+        "error response from daemon" in lowered
+        or "no such container" in lowered
+        or "docker: error" in lowered
+    )
+
+
+def _argv_option(argv: list[str], option: str, *, prefix: Optional[str] = None) -> Optional[str]:
+    for index, item in enumerate(argv[:-1]):
+        if item != option:
+            continue
+        value = argv[index + 1]
+        if prefix is None or value.startswith(prefix):
+            return value
+    return None
+
+
+def _first_container_id(output: str) -> str:
+    for line in output.splitlines():
+        candidate = line.strip().lower()
+        if CONTAINER_ID_PATTERN.fullmatch(candidate):
+            return candidate
+    return ""
+
+
+def _normal_container_id(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    candidate = value.strip().lower()
+    if CONTAINER_ID_PATTERN.fullmatch(candidate):
+        return candidate
+    return ""
+
+
+def _container_evidence(identity: ContainedContainerIdentity) -> dict[str, str]:
+    return {
+        "id_sha256": _sha256_short(identity.container_id),
+        "name_sha256": _sha256_short(identity.container_name),
+        "owner_label_sha256": _sha256_short(identity.owner_label),
+    }
+
+
+def _sha256_short(value: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def _is_no_such_container(completed: subprocess.CompletedProcess) -> bool:
+    output = f"{completed.stdout}\n{completed.stderr}".lower()
+    return "no such container" in output or "no such object" in output
+
+
+def _with_workspace_cleanup(
+    cleanup: ContainedCleanupResult,
+    *,
+    complete: bool,
+    status: str,
+    message: str,
+) -> ContainedCleanupResult:
+    return ContainedCleanupResult(
+        attempted=cleanup.attempted,
+        complete=cleanup.complete,
+        status=cleanup.status,
+        container=cleanup.container,
+        message=cleanup.message,
+        workspace_complete=complete,
+        workspace_status=status,
+        workspace_message=message,
+    )
+
+
+def _cleanup_failure_message(cleanup: ContainedCleanupResult) -> str:
+    parts = []
+    if not cleanup.complete:
+        parts.append(cleanup.message or "contained container cleanup failed")
+    if cleanup.workspace_complete is False:
+        parts.append(cleanup.workspace_message or "contained workspace cleanup failed")
+    return "; ".join(parts) or "contained cleanup failed"
 
 
 def _diff_summary_from_mutations(mutations) -> DiffSummary:
@@ -575,6 +1218,12 @@ def _sanitize_argv(
             env_argument = sanitized[index + 1]
             if "=" in env_argument:
                 sanitized[index + 1] = f"{env_argument.split('=', 1)[0]}=[REDACTED]"
+        elif argument == "--name":
+            sanitized[index + 1] = "agentguard-[REDACTED]"
+        elif argument == "--label":
+            label_argument = sanitized[index + 1]
+            if label_argument.startswith("agentguard.contained-run.id="):
+                sanitized[index + 1] = "agentguard.contained-run.id=[REDACTED]"
     return sanitized
 
 
@@ -626,7 +1275,9 @@ def _finalize(**kwargs) -> ContainedRunResult:
         score=0,
         mutations=kwargs["mutations"],
         cleanup_complete=kwargs["cleanup_complete"],
+        cleanup=kwargs.get("cleanup", ContainedCleanupResult()),
         failure=kwargs["failure"],
+        cleanup_failure=kwargs.get("cleanup_failure"),
         environment=kwargs.get("environment", ContainedEnvironmentDiagnostics()),
     )
     return _write_report(result, 0.0)
@@ -653,7 +1304,11 @@ def _write_report(result: ContainedRunResult, elapsed: float) -> ContainedRunRes
         "mutations": result.mutations,
         "checks": [asdict(check) for check in result.check_results],
         "cleanup_complete": result.cleanup_complete,
+        "cleanup": asdict(result.cleanup),
         "failure": asdict(result.failure) if result.failure else None,
+        "cleanup_failure": (
+            asdict(result.cleanup_failure) if result.cleanup_failure else None
+        ),
     }
     atomic_write_json(report_path, payload)
     return ContainedRunResult(
