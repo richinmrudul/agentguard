@@ -4,7 +4,7 @@ import os
 import shlex
 import subprocess
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -34,6 +34,10 @@ from agentguard.policy.command_policy import evaluate_command_policy
 from agentguard.policy.evaluation import PolicyEvaluationContext, evaluate_policy_checks
 from agentguard.provenance.manifest import sanitize_text
 from agentguard.redaction import redact_credential_arguments, redact_credentials
+from agentguard.sandbox.contained_environment import (
+    ContainedEnvironmentDiagnostics,
+    resolve_contained_environment,
+)
 from agentguard.sandbox.contained_workspace import (
     DEFAULT_AGENT_WORKSPACE_PATH,
     ContainedWorkspaceError,
@@ -109,6 +113,9 @@ class ContainedRunResult:
     cleanup_complete: bool
     failure: Optional[ContainedRunFailure] = None
     report_path: Optional[Path] = None
+    environment: ContainedEnvironmentDiagnostics = field(
+        default_factory=ContainedEnvironmentDiagnostics
+    )
 
     @property
     def exit_code(self) -> int:
@@ -149,10 +156,39 @@ def run_contained_agent_command(
     diff_summary = _empty_diff_summary()
     check_results: list[CheckResult] = []
     mutations: dict[str, object] = {}
+    environment = ContainedEnvironmentDiagnostics()
+    sensitive_values = _sensitive_values(config, source, run_dir)
     cleanup_complete = True
     failure: Optional[ContainedRunFailure] = None
 
     try:
+        try:
+            resolved_environment = resolve_contained_environment(
+                config.contained_execution.environment,
+            )
+            environment = resolved_environment.diagnostics
+            sensitive_values.extend(resolved_environment.sensitive_values)
+        except ValueError as error:
+            failure = ContainedRunFailure(
+                ContainedRunStage.CONFIG,
+                EXIT_CONFIG,
+                _sanitize_diagnostic(error, sensitive_values),
+            )
+            return _finalize(
+                config=config,
+                source=source,
+                run_dir=run_dir,
+                command=list(command),
+                docker_argv=docker_argv,
+                preflight=preflight,
+                command_result=command_result,
+                diff_summary=diff_summary,
+                check_results=check_results,
+                mutations=mutations,
+                cleanup_complete=cleanup_complete,
+                failure=failure,
+                environment=environment,
+            )
         preflight = run_docker_preflight(config)
         if preflight.status not in {
             DockerPreflightStatus.SUPPORTED,
@@ -176,6 +212,7 @@ def run_contained_agent_command(
                 mutations=mutations,
                 cleanup_complete=cleanup_complete,
                 failure=failure,
+                environment=environment,
             )
 
         prepared = prepare_contained_workspace(
@@ -195,6 +232,7 @@ def run_contained_agent_command(
             workspace_container_path=DEFAULT_AGENT_WORKSPACE_PATH,
             command=list(command),
             container_name=container_name,
+            environment=resolved_environment.values,
         )
         docker_argv = build_contained_docker_run_argv(spec)
         policy = evaluate_command_policy(
@@ -260,7 +298,7 @@ def run_contained_agent_command(
             failure = failure or ContainedRunFailure(
                 ContainedRunStage.WORKSPACE_PREP,
                 EXIT_WORKSPACE_PREP,
-                _sanitize_diagnostic(error),
+                _sanitize_diagnostic(error, sensitive_values),
             )
 
         if command_result is not None:
@@ -276,13 +314,13 @@ def run_contained_agent_command(
         failure = ContainedRunFailure(
             ContainedRunStage.WORKSPACE_PREP,
             EXIT_WORKSPACE_PREP,
-            _sanitize_diagnostic(error),
+            _sanitize_diagnostic(error, sensitive_values),
         )
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         failure = ContainedRunFailure(
             ContainedRunStage.CONFIG,
             EXIT_CONFIG,
-            _sanitize_diagnostic(error),
+            _sanitize_diagnostic(error, sensitive_values),
         )
     finally:
         if prepared is not None:
@@ -314,14 +352,20 @@ def run_contained_agent_command(
         result = score_checks(check_results).result
     elapsed = round(time.monotonic() - started, 6)
     if command_result is not None:
-        command_result = _sanitize_command_result(command_result, config, source, run_dir)
+        command_result = _sanitize_command_result(
+            command_result,
+            config,
+            source,
+            run_dir,
+            sensitive_values,
+        )
     final = ContainedRunResult(
         task_id=config.task_id,
         config_path=config.config_path,
         source_dir=source,
         run_dir=run_dir,
-        command=list(command),
-        docker_argv=_sanitize_argv(docker_argv, config, source, run_dir),
+        command=redact_credential_arguments(list(command), sensitive_values),
+        docker_argv=_sanitize_argv(docker_argv, sensitive_values),
         preflight=preflight,
         command_result=command_result,
         diff_summary=diff_summary,
@@ -331,6 +375,7 @@ def run_contained_agent_command(
         mutations=mutations,
         cleanup_complete=cleanup_complete,
         failure=failure,
+        environment=environment,
     )
     return _write_report(final, elapsed)
 
@@ -490,9 +535,12 @@ def _display_command(command: Sequence[str]) -> str:
     return f"{CONTAINED_RUNNER_NAME}: {shlex.join(list(command))}"
 
 
-def _sanitize_diagnostic(error: object) -> str:
+def _sanitize_diagnostic(
+    error: object,
+    sensitive_values: Optional[list[str]] = None,
+) -> str:
     text = error.__class__.__name__ if isinstance(error, OSError) else str(error)
-    return _sanitize_host_text(redact_credentials(text))
+    return _sanitize_host_text(redact_credentials(text, sensitive_values))
 
 
 def _sensitive_values(
@@ -519,12 +567,15 @@ def _sanitize_host_text(value: object, sensitive_values: Optional[list[str]] = N
 
 def _sanitize_argv(
     argv: list[str],
-    config: AgentGuardConfig,
-    source: Path,
-    run_dir: Path,
+    sensitive_values: list[str],
 ) -> list[str]:
-    sensitive = _sensitive_values(config, source, run_dir)
-    return redact_credential_arguments(argv, sensitive)
+    sanitized = redact_credential_arguments(argv, sensitive_values)
+    for index, argument in enumerate(list(sanitized[:-1])):
+        if argument == "--env":
+            env_argument = sanitized[index + 1]
+            if "=" in env_argument:
+                sanitized[index + 1] = f"{env_argument.split('=', 1)[0]}=[REDACTED]"
+    return sanitized
 
 
 def _sanitize_command_result(
@@ -532,8 +583,11 @@ def _sanitize_command_result(
     config: AgentGuardConfig,
     source: Path,
     run_dir: Path,
+    extra_sensitive_values: Optional[list[str]] = None,
 ) -> CommandResult:
     sensitive = _sensitive_values(config, source, run_dir)
+    if extra_sensitive_values:
+        sensitive.extend(extra_sensitive_values)
     stdout = limit_output(sanitize_text(result.stdout, sensitive), config.max_output_bytes)
     stderr = limit_output(sanitize_text(result.stderr, sensitive), config.max_output_bytes)
     return CommandResult(
@@ -573,6 +627,7 @@ def _finalize(**kwargs) -> ContainedRunResult:
         mutations=kwargs["mutations"],
         cleanup_complete=kwargs["cleanup_complete"],
         failure=kwargs["failure"],
+        environment=kwargs.get("environment", ContainedEnvironmentDiagnostics()),
     )
     return _write_report(result, 0.0)
 
@@ -590,9 +645,10 @@ def _write_report(result: ContainedRunResult, elapsed: float) -> ContainedRunRes
         "config_path": _sanitize_host_text(result.config_path),
         "source_dir": _sanitize_host_text(result.source_dir),
         "run_dir": _sanitize_host_text(result.run_dir),
-        "command": redact_credential_arguments(result.command),
+        "command": result.command,
         "docker_argv": result.docker_argv,
         "preflight": result.preflight.to_evidence() if result.preflight else None,
+        "environment": asdict(result.environment),
         "command_result": asdict(result.command_result) if result.command_result else None,
         "mutations": result.mutations,
         "checks": [asdict(check) for check in result.check_results],

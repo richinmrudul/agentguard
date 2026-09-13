@@ -19,6 +19,16 @@ MAX_CONTAINED_EXECUTION_UID_GID = 2147483647
 
 
 @dataclass(frozen=True)
+class ContainedEnvironmentEntry:
+    name: str
+    value: Optional[str] = None
+    source: str = "literal"
+    required: bool = False
+    sensitive: bool = False
+    allow_sensitive: bool = False
+
+
+@dataclass(frozen=True)
 class BenchmarkMetadata:
     id: Optional[str] = None
     version: Optional[int] = None
@@ -93,6 +103,7 @@ class ContainedExecutionConfig:
     allow_docker_socket_mount: bool = False
     allow_device_exposure: bool = False
     allow_host_namespace_sharing: bool = False
+    environment: list[ContainedEnvironmentEntry] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

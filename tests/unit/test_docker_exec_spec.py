@@ -330,6 +330,34 @@ def test_deterministic_ordering_is_stable(tmp_path: Path) -> None:
     assert first.index("ALPHA=first") < first.index("ZED=last")
 
 
+@pytest.mark.parametrize(
+    ("environment", "match"),
+    [
+        ({"lower": "value"}, "uppercase"),
+        ({"1BAD": "value"}, "uppercase"),
+        ({"A" * 65: "value"}, "uppercase"),
+        ({"VALID": "bad\x00value"}, "control"),
+        ({"VALID": "bad\x1fvalue"}, "control"),
+        ({"VALID": "x" * 4097}, "bounded"),
+        ({f"VALUE_{index}": "x" for index in range(37)}, "entry limit"),
+        ({f"VALUE_{index}": "x" * 4096 for index in range(5)}, "total byte"),
+    ],
+)
+def test_environment_validation_rejects_invalid_names_values_and_bounds(
+    tmp_path: Path,
+    environment: dict[str, str],
+    match: str,
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        validate_docker_exec_spec(_spec(tmp_path, environment=environment))
+
+
+def test_environment_boundary_values_are_accepted(tmp_path: Path) -> None:
+    environment = {f"VALUE_{index}": "x" for index in range(36)}
+
+    validate_docker_exec_spec(_spec(tmp_path, environment=environment))
+
+
 def test_apply_contained_config_rejects_prohibited_switches(tmp_path: Path) -> None:
     spec = _spec(tmp_path)
     for field in [

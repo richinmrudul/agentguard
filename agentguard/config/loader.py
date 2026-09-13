@@ -18,6 +18,7 @@ from agentguard.config.schema import (
     BenchmarkMetadata,
     CommandPolicyConfig,
     ContainedExecutionConfig,
+    ContainedEnvironmentEntry,
     DiffLimits,
     ExpectedModifiedFiles,
     FilesystemWatcherConfig,
@@ -42,7 +43,12 @@ MIN_SECRET_CONTENT_LITERAL_LENGTH = 8
 MAX_SECRET_CONTENT_LITERAL_LENGTH = 1024
 MAX_SECRET_CONTENT_LITERAL_BYTES = 2048
 MAX_SECRET_CONTENT_TOTAL_LITERAL_BYTES = 16384
+MAX_CONTAINED_ENVIRONMENT_ENTRIES = 32
+MAX_CONTAINED_ENVIRONMENT_NAME_LENGTH = 64
+MAX_CONTAINED_ENVIRONMENT_VALUE_LENGTH = 4096
+MAX_CONTAINED_ENVIRONMENT_TOTAL_BYTES = 16384
 SECRET_CONTENT_PATTERN_ID = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
+CONTAINED_ENVIRONMENT_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 POSITIVE_FLOAT_STRING_PATTERN = re.compile(
     r"^\+?(?=[0-9.]*[1-9])"
     r"(?:[0-9]{1,16}(?:\.[0-9]{0,16})?|\.[0-9]{1,16})"
@@ -120,6 +126,7 @@ CONTAINED_EXECUTION_KEYS = {
     "allow_host_network",
     "allow_privileged",
     "cpu_limit",
+    "environment",
     "image_provenance",
     "memory_limit",
     "network",
@@ -131,6 +138,69 @@ CONTAINED_EXECUTION_KEYS = {
     "tmpfs_size",
     "version",
 }
+CONTAINED_ENVIRONMENT_ENTRY_KEYS = {
+    "allow_sensitive",
+    "name",
+    "required",
+    "sensitive",
+    "source",
+    "value",
+}
+CONTAINED_ENVIRONMENT_SOURCES = {"host", "literal"}
+CONTAINED_ENVIRONMENT_BLOCKED_NAMES = {
+    "BASH_ENV",
+    "BUILDKIT_HOST",
+    "CDPATH",
+    "COMPOSE_FILE",
+    "COMPOSE_PROJECT_NAME",
+    "DOCKER_CERT_PATH",
+    "DOCKER_CONFIG",
+    "DOCKER_CONTEXT",
+    "DOCKER_HOST",
+    "DOCKER_TLS",
+    "DOCKER_TLS_VERIFY",
+    "ENV",
+    "GIT_ASKPASS",
+    "GNUPGHOME",
+    "GPG_AGENT_INFO",
+    "HOME",
+    "KUBECONFIG",
+    "LANG",
+    "LC_ALL",
+    "LD_LIBRARY_PATH",
+    "PATH",
+    "PYTHONHOME",
+    "PYTHONPATH",
+    "REQUESTS_CA_BUNDLE",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "SSH_AGENT_PID",
+    "SSH_AUTH_SOCK",
+    "XDG_CONFIG_HOME",
+    "XDG_RUNTIME_DIR",
+}
+CONTAINED_ENVIRONMENT_BLOCKED_PREFIXES = (
+    "COMPOSE_",
+    "DOCKER_",
+    "DYLD_",
+    "LD_",
+)
+CONTAINED_ENVIRONMENT_BLOCKED_SUFFIXES = (
+    "_CONFIG",
+    "_CONFIG_DIR",
+    "_CONFIG_HOME",
+    "_HOME",
+    "_PATH",
+    "_RUNTIME_DIR",
+    "_SOCK",
+    "_SOCKET",
+    "_STORE",
+)
+CONTAINED_ENVIRONMENT_SENSITIVE_NAME = re.compile(
+    r"(TOKEN|SECRET|PASSWORD|PASS|KEY|CREDENTIAL|AUTH|COOKIE)",
+    re.IGNORECASE,
+)
+CONTAINED_ENVIRONMENT_UNSAFE_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 SANDBOX_KEYS = {
     "docker",
     "image",
@@ -735,6 +805,134 @@ def _contained_pids_limit(mapping: dict[str, Any]) -> int:
     return value
 
 
+def _contained_environment_bool(
+    entry: dict[str, Any],
+    key: str,
+    label: str,
+    default: bool,
+) -> bool:
+    value = entry.get(key, default)
+    if not isinstance(value, bool):
+        raise ValueError(f"Config field '{label}.{key}' must be a boolean.")
+    return value
+
+
+def _validate_contained_environment_name(name: object, label: str) -> str:
+    if not isinstance(name, str) or not name:
+        raise ValueError(f"Config field '{label}.name' must be a non-empty string.")
+    if len(name) > MAX_CONTAINED_ENVIRONMENT_NAME_LENGTH:
+        raise ValueError(f"Config field '{label}.name' is too long.")
+    if CONTAINED_ENVIRONMENT_NAME.fullmatch(name) is None:
+        raise ValueError(
+            f"Config field '{label}.name' must use uppercase letters, digits, "
+            "and underscores, and must not start with a digit."
+        )
+    if (
+        name in CONTAINED_ENVIRONMENT_BLOCKED_NAMES
+        or any(name.startswith(prefix) for prefix in CONTAINED_ENVIRONMENT_BLOCKED_PREFIXES)
+        or any(name.endswith(suffix) for suffix in CONTAINED_ENVIRONMENT_BLOCKED_SUFFIXES)
+    ):
+        raise ValueError(
+            f"Config field '{label}.name' is reserved for host or Docker control "
+            "state and cannot be forwarded."
+        )
+    return name
+
+
+def _validate_contained_environment_value(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"Config field '{label}.value' must be a string.")
+    if len(value) > MAX_CONTAINED_ENVIRONMENT_VALUE_LENGTH:
+        raise ValueError(f"Config field '{label}.value' is too long.")
+    if CONTAINED_ENVIRONMENT_UNSAFE_CONTROL.search(value) is not None:
+        raise ValueError(
+            f"Config field '{label}.value' must not contain NUL or unsafe "
+            "control characters."
+        )
+    return value
+
+
+def _load_contained_environment(
+    contained: dict[str, Any],
+) -> list[ContainedEnvironmentEntry]:
+    raw_entries = contained.get("environment", [])
+    if raw_entries is None:
+        raw_entries = []
+    if not isinstance(raw_entries, list):
+        raise ValueError(
+            "Config field 'contained_execution.environment' must be a list."
+        )
+    if len(raw_entries) > MAX_CONTAINED_ENVIRONMENT_ENTRIES:
+        raise ValueError(
+            "Config field 'contained_execution.environment' exceeds the "
+            f"maximum of {MAX_CONTAINED_ENVIRONMENT_ENTRIES} entries."
+        )
+    entries: list[ContainedEnvironmentEntry] = []
+    seen_names: set[str] = set()
+    total_bytes = 0
+    for index, raw_entry in enumerate(raw_entries):
+        label = f"contained_execution.environment[{index}]"
+        if not isinstance(raw_entry, dict):
+            raise ValueError(f"Config field '{label}' must be an object.")
+        reject_unknown_keys(raw_entry, CONTAINED_ENVIRONMENT_ENTRY_KEYS, label)
+        name = _validate_contained_environment_name(raw_entry.get("name"), label)
+        normalized = name.casefold()
+        if normalized in seen_names:
+            raise ValueError(
+                "Config field 'contained_execution.environment' contains "
+                f"duplicate variable name '{name}'."
+            )
+        seen_names.add(normalized)
+        source = raw_entry.get("source", "literal")
+        if source not in CONTAINED_ENVIRONMENT_SOURCES:
+            valid = ", ".join(sorted(CONTAINED_ENVIRONMENT_SOURCES))
+            raise ValueError(f"Config field '{label}.source' must be one of: {valid}.")
+        has_value = "value" in raw_entry and raw_entry["value"] is not None
+        if source == "literal" and not has_value:
+            raise ValueError(f"Config field '{label}.value' is required for literal source.")
+        if source == "host" and has_value:
+            raise ValueError(f"Config field '{label}.value' must be omitted for host source.")
+        value = (
+            _validate_contained_environment_value(raw_entry["value"], label)
+            if has_value
+            else None
+        )
+        required = _contained_environment_bool(raw_entry, "required", label, False)
+        sensitive = _contained_environment_bool(raw_entry, "sensitive", label, False)
+        allow_sensitive = _contained_environment_bool(
+            raw_entry,
+            "allow_sensitive",
+            label,
+            False,
+        )
+        if CONTAINED_ENVIRONMENT_SENSITIVE_NAME.search(name) is not None:
+            sensitive = True
+        if sensitive and not allow_sensitive:
+            raise ValueError(
+                f"Config field '{label}' marks or names a sensitive variable "
+                "without allow_sensitive: true."
+            )
+        total_bytes += len(name.encode("utf-8")) + 1
+        if value is not None:
+            total_bytes += len(value.encode("utf-8"))
+        if total_bytes > MAX_CONTAINED_ENVIRONMENT_TOTAL_BYTES:
+            raise ValueError(
+                "Config field 'contained_execution.environment' exceeds the "
+                "total serialized byte limit."
+            )
+        entries.append(
+            ContainedEnvironmentEntry(
+                name=name,
+                value=value,
+                source=source,
+                required=required,
+                sensitive=sensitive,
+                allow_sensitive=allow_sensitive,
+            )
+        )
+    return entries
+
+
 def _load_contained_execution(
     data: dict[str, Any],
 ) -> Optional[ContainedExecutionConfig]:
@@ -810,6 +1008,7 @@ def _load_contained_execution(
             "allow_host_namespace_sharing",
             False,
         ),
+        environment=_load_contained_environment(contained),
     )
 
 
