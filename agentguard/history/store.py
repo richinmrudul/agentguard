@@ -178,7 +178,7 @@ def init_history_db(db_path: Path) -> None:
                 "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)"
             )
             current_version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if current_version != 5:
+            if current_version < 5:
                 connection.execute("PRAGMA user_version = 5")
 
 

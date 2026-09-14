@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from agentguard.containment.evidence import parse_containment_evidence
 from agentguard.core.result import BenchmarkResult
 from agentguard.io import atomic_write_text
 from agentguard.reports.markdown import markdown_text
@@ -236,17 +237,17 @@ def _guard_metric_lines(result: BenchmarkResult) -> list[str]:
 
 
 def _containment_lines(result: BenchmarkResult) -> list[str]:
-    evidence = result.containment_evidence
-    if not isinstance(evidence, dict):
+    if result.containment_evidence is None:
         return []
-    preflight = evidence.get("preflight") if isinstance(evidence.get("preflight"), dict) else {}
-    image = evidence.get("image") if isinstance(evidence.get("image"), dict) else {}
-    cleanup = evidence.get("cleanup") if isinstance(evidence.get("cleanup"), dict) else {}
+    evidence = parse_containment_evidence(result.containment_evidence)
+    preflight = evidence["preflight"]
+    image = evidence["image"]
+    cleanup = evidence["cleanup"]
     workspace = (
-        evidence.get("workspace") if isinstance(evidence.get("workspace"), dict) else {}
+        evidence["workspace"] if isinstance(evidence["workspace"], dict) else {}
     )
     execution = (
-        evidence.get("execution") if isinstance(evidence.get("execution"), dict) else {}
+        evidence["execution"] if isinstance(evidence["execution"], dict) else {}
     )
     lines = [
         "",

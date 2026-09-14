@@ -92,6 +92,18 @@ def test_init_creates_db_schema_and_version(tmp_path: Path) -> None:
     assert user_version == 5
 
 
+def test_init_does_not_downgrade_future_db_version(tmp_path: Path) -> None:
+    db_path = tmp_path / "history.db"
+    init_history_db(db_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 6")
+
+    init_history_db(db_path)
+
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+
+
 def test_record_inserts_row(tmp_path: Path) -> None:
     db_path = tmp_path / "history.db"
 

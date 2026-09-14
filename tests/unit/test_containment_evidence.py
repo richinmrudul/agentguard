@@ -22,6 +22,7 @@ from agentguard.core.result import (
 )
 from agentguard.reports.json_report import write_json_report
 from agentguard.reports.markdown_report import write_markdown_report
+from agentguard.reports.site import _containment_summary
 from agentguard.provenance.manifest import (
     AgentGuardIdentity,
     ArtifactIdentity,
@@ -345,3 +346,31 @@ def test_manifest_serializes_canonical_containment_evidence() -> None:
     malformed = replace(manifest, containment_evidence={"schema": "bad"})
     with pytest.raises(ValueError, match="fields are invalid"):
         serialize_manifest(malformed)
+
+
+def test_static_site_renders_only_allowlisted_containment_summary() -> None:
+    evidence = evidence_from_benchmark_result(
+        BenchmarkResult(
+            task_id="task",
+            agent="agent",
+            result="PASS",
+            score=100,
+            config_path=Path("agentguard.yaml"),
+            run_dir=Path(".agentguard/runs/run"),
+            repo_dir=Path("."),
+            test_result=CommandResult("true", 0, "", "", 0.01),
+            diff_summary=DiffSummary([], [], [], 0, 0, ""),
+            check_results=[],
+            report_paths=ReportPaths(Path("report.json"), Path("report.md")),
+        )
+    ).to_dict()
+
+    html = _containment_summary(evidence)
+    assert "not_applicable" in html
+    assert "Environment" not in html
+    assert "command" not in html
+    malformed = _containment_summary(
+        {"schema": "bad", "secret": "AGENTGUARD_SECRET_CANARY_SITE"}
+    )
+    assert "malformed or unsupported" in malformed
+    assert "AGENTGUARD_SECRET_CANARY_SITE" not in malformed
