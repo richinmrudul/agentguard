@@ -5,6 +5,7 @@ from typing import Optional
 
 from agentguard import __version__
 from agentguard.checks.registry import registered_checks
+from agentguard.containment.evidence import parse_containment_evidence
 from agentguard.config.schema import (
     AgentGuardConfig,
     CommandPolicyConfig,
@@ -200,7 +201,11 @@ def reconstruct_replay_evidence(trace: ExecutionTrace) -> ReplayEvidence:
         ),
     )
     command_events = []
+    containment_evidence = None
     for event in trace.events:
+        if event.event_type == "containment_evidence":
+            containment_evidence = parse_containment_evidence(event.payload)
+            continue
         if event.event_type != "agent_command":
             continue
         payload = event.payload
@@ -256,6 +261,7 @@ def reconstruct_replay_evidence(trace: ExecutionTrace) -> ReplayEvidence:
             unified_diff="",
         ),
         command_events=command_events,
+        containment_evidence=containment_evidence,
     )
 
 

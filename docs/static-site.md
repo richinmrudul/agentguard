@@ -44,6 +44,11 @@ The site includes:
   `docs/results/*.json` or `docs/results/*.md` summaries exist.
 - Detail pages for discovered history records, reports, matrices, diagnostics,
   traces, and result documents.
+- Run detail pages render an allowlisted containment summary when canonical
+  evidence is present: mode, evidence state, security claim, preflight status,
+  configured image reference, execution status, and cleanup status. Raw
+  containment payloads, environment values, Docker output, and host paths are
+  not rendered.
 - Matrix detail pages include a `Guard Incidents` section when the matrix JSON
   contains a structured `guard_summary`. It shows the existing aggregate run,
   incident, block, violation, timing-distribution, and per-guard-type values.

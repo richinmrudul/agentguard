@@ -233,6 +233,19 @@ def test_contained_run_with_hosted_docker_preserves_boundary(
     assert not diagnostic_source.startswith("/")
     assert path_canary not in mount
     assert "must-not-enter" not in mount
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+    evidence = report["containment_evidence"]
+    assert evidence["execution_mode"] == "contained-run"
+    assert evidence["preflight"]["status"] in {"supported", "experimental"}
+    assert evidence["image"]["registry_digest"] == f"amd64/alpine@{ALPINE_AMD64_DIGEST}"
+    assert evidence["image"]["container_bound_image_id"].startswith("sha256:")
+    assert evidence["controls"]["read_only_root"] is True
+    assert evidence["environment"]["sensitive_names"] == ["API_TOKEN"]
+    assert evidence["environment"]["values_recorded"] is False
+    assert evidence["cleanup"]["overall_complete"] is True
+    serialized_evidence = json.dumps(evidence, sort_keys=True)
+    assert "docker-secret-canary" not in serialized_evidence
+    assert str(tmp_path) not in serialized_evidence
 
 
 def _base_config(tmp_path: Path, *, image: str, task_id: str) -> tuple[Path, Path]:

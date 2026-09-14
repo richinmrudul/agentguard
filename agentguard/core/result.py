@@ -112,6 +112,7 @@ class BenchmarkResult:
         default_factory=CommandGuardSummary
     )
     guard_metrics: dict[str, object] = field(default_factory=dict)
+    containment_evidence: Optional[dict[str, object]] = None
 
 
 @dataclass(frozen=True)

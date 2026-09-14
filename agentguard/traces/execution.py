@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from agentguard.checks.registry import registered_checks
 from agentguard.config.schema import VALID_SEVERITIES, AgentGuardConfig
+from agentguard.containment.evidence import parse_containment_evidence
 from agentguard.core.result import BenchmarkResult, CheckResult, CommandResult
 from agentguard.instrumentation.command_tracker import CommandEvent
 from agentguard.sandbox.docker_identity import parse_docker_image_identity
@@ -33,13 +34,14 @@ from agentguard.traces.models import ReplayPolicySnapshot
 
 
 TRACE_SCHEMA = "agentguard.execution-trace"
-TRACE_SCHEMA_VERSION = 2
-SUPPORTED_TRACE_SCHEMA_VERSIONS = {1, 2}
+TRACE_SCHEMA_VERSION = 3
+SUPPORTED_TRACE_SCHEMA_VERSIONS = {1, 2, 3}
 HASH_ALGORITHM = "sha256"
 ZERO_HASH = "0" * 64
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 EVENT_TYPES = {
     "execution_started",
+    "containment_evidence",
     "agent_command",
     "guard_summary",
     "command_guard_summary",
@@ -784,6 +786,13 @@ def build_execution_trace(
             },
         )
     ]
+    if result.containment_evidence is not None:
+        event_values.append(
+            (
+                "containment_evidence",
+                parse_containment_evidence(result.containment_evidence),
+            )
+        )
     event_values.extend(
         (
             "agent_command",
@@ -1164,7 +1173,7 @@ def _parse_header(data: dict[str, Any]) -> TraceHeader:
     }
     schema_version = data.get("schema_version")
     expected = set(base_expected)
-    if schema_version == 2:
+    if schema_version in {2, 3}:
         expected.update({"policy_snapshot", "policy_snapshot_hash"})
     _require_exact_fields(data, expected, "trace header")
     if data.pop("record_type") != "header":
@@ -1502,6 +1511,22 @@ def _validate_payload(event: TraceEvent) -> None:
             "agent",
             "truncation",
         },
+        "containment_evidence": {
+            "schema",
+            "schema_version",
+            "execution_mode",
+            "state",
+            "security_claim_level",
+            "requested",
+            "preflight",
+            "image",
+            "controls",
+            "environment",
+            "workspace",
+            "execution",
+            "cleanup",
+            "notes",
+        },
         "guard_summary": {
             "mode",
             "triggered",
@@ -1631,6 +1656,9 @@ def _validate_payload(event: TraceEvent) -> None:
                 parse_docker_image_identity(event.payload["docker_image"])
     _require_exact_fields(event.payload, event_fields, f"{event.event_type} payload")
     _validate_bounds(event.payload)
+    if event.event_type == "containment_evidence":
+        parse_containment_evidence(event.payload)
+        return
     if event.event_type == "guard_summary":
         patterns = event.payload.get("configured_ignore_patterns", [])
         if not isinstance(patterns, list) or not all(
@@ -1884,20 +1912,27 @@ def _validate_structure(trace: ExecutionTrace) -> None:
         raise ValueError("Trace start/completion event ordering is invalid.")
     if types.count("execution_started") != 1:
         raise ValueError("Trace must contain one execution_started event.")
+    if types.count("containment_evidence") > 1:
+        raise ValueError("Trace must contain at most one containment_evidence event.")
+    if trace.header.schema_version < 3 and "containment_evidence" in types:
+        raise ValueError(
+            "Containment evidence events require trace schema version 3."
+        )
     if types.count("test_result") != 1:
         raise ValueError("Trace must contain one test_result event.")
     if types.count("execution_completed") != 1:
         raise ValueError("Trace must contain one execution_completed event.")
     order = {
         "execution_started": 0,
-        "agent_command": 1,
-        "guard_summary": 2,
-        "command_guard_summary": 2,
-        "guard_metrics": 2,
-        "file_change": 3,
-        "test_result": 4,
-        "check_result": 5,
-        "execution_completed": 6,
+        "containment_evidence": 1,
+        "agent_command": 2,
+        "guard_summary": 3,
+        "command_guard_summary": 3,
+        "guard_metrics": 3,
+        "file_change": 4,
+        "test_result": 5,
+        "check_result": 6,
+        "execution_completed": 7,
     }
     if [order[event_type] for event_type in types] != sorted(
         order[event_type] for event_type in types
@@ -2051,6 +2086,8 @@ def trace_summary(trace: ExecutionTrace) -> str:
         ),
         f"Truncated event payloads: {truncated}",
         f"Redaction markers present: {'yes' if redacted else 'no'}",
+        "Containment evidence: "
+        + ("recorded" if counts["containment_evidence"] else "unavailable"),
         f"Root digest: {trace.header.integrity.root_hash}",
     ]
     return "\n".join(lines)
@@ -2480,6 +2517,11 @@ def _result_from_report(
             report.get("guard_metrics")
             if isinstance(report.get("guard_metrics"), dict)
             else {}
+        ),
+        containment_evidence=(
+            parse_containment_evidence(report["containment_evidence"])
+            if report.get("containment_evidence") is not None
+            else None
         ),
     )
     return result, report

@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any
 
 from agentguard.core.result import BenchmarkResult
+from agentguard.containment.evidence import parse_containment_evidence
 from agentguard.io import atomic_write_json
 from agentguard.provenance.artifact_paths import (
     artifact_roots,
@@ -54,6 +55,10 @@ def write_json_report(result: BenchmarkResult, reports_dir: Path) -> Path:
         portable_artifact_value(result.report_paths.guard_incident_markdown, roots)
     )
     data["provenance"] = result.provenance_summary
+    if result.containment_evidence is not None:
+        data["containment_evidence"] = parse_containment_evidence(
+            result.containment_evidence
+        )
     data["evidence"] = [
         evidence for check in result.check_results for evidence in check.evidence
     ]

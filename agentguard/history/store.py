@@ -10,6 +10,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Optional
 
+from agentguard.containment.evidence import parse_containment_evidence
 from agentguard.provenance.artifact_paths import artifact_roots, portable_artifact_value
 from agentguard.terminal import sanitize_terminal_text
 
@@ -93,6 +94,7 @@ class HistoryRecord:
     guard_violations_total: int = 0
     guard_incident_path: Optional[Path] = None
     time_to_first_violation_ms: Optional[int] = None
+    containment_evidence: Optional[dict[str, object]] = None
 
 
 @dataclass(frozen=True)
@@ -165,6 +167,7 @@ def init_history_db(db_path: Path) -> None:
             )
             _ensure_column(connection, "guard_incident_path", "TEXT")
             _ensure_column(connection, "time_to_first_violation_ms", "INTEGER")
+            _ensure_column(connection, "containment_evidence_json", "TEXT")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_run_type ON runs(run_type)"
             )
@@ -175,8 +178,8 @@ def init_history_db(db_path: Path) -> None:
                 "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)"
             )
             current_version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if current_version != 4:
-                connection.execute("PRAGMA user_version = 4")
+            if current_version < 5:
+                connection.execute("PRAGMA user_version = 5")
 
 
 @_translate_storage_errors("write")
@@ -210,9 +213,10 @@ def record_history(
               guard_blocked,
               guard_violations_total,
               guard_incident_path,
-              time_to_first_violation_ms
+              time_to_first_violation_ms,
+              containment_evidence_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               run_type = excluded.run_type,
               name = excluded.name,
@@ -233,7 +237,8 @@ def record_history(
               guard_blocked = excluded.guard_blocked,
               guard_violations_total = excluded.guard_violations_total,
               guard_incident_path = excluded.guard_incident_path,
-              time_to_first_violation_ms = excluded.time_to_first_violation_ms
+              time_to_first_violation_ms = excluded.time_to_first_violation_ms,
+              containment_evidence_json = excluded.containment_evidence_json
             """,
             (
                 record.id,
@@ -257,6 +262,7 @@ def record_history(
                 record.guard_violations_total,
                 _optional_path(record.guard_incident_path),
                 record.time_to_first_violation_ms,
+                _containment_evidence_json(record.containment_evidence),
             ),
         )
 
@@ -318,7 +324,8 @@ def list_history(
           guard_blocked,
           guard_violations_total,
           guard_incident_path,
-          time_to_first_violation_ms
+          time_to_first_violation_ms,
+          containment_evidence_json
         FROM runs
         {where}
         ORDER BY created_at DESC, id DESC
@@ -461,6 +468,7 @@ def history_records_to_dicts(records: list[HistoryRecord]) -> list[dict[str, obj
                 roots,
             ),
             "time_to_first_violation_ms": record.time_to_first_violation_ms,
+            "containment_evidence": record.containment_evidence,
         }
         for record in records
     ]
@@ -485,6 +493,7 @@ def export_history_csv(records: list[HistoryRecord]) -> str:
                     else value
                 )
                 for column, value in row.items()
+                if column in HISTORY_CSV_COLUMNS
             }
         )
     return output.getvalue()
@@ -530,6 +539,18 @@ def _optional_path_from_value(value: Optional[str]) -> Optional[Path]:
 
 def _optional_int_from_value(value: Optional[object]) -> Optional[int]:
     return int(value) if value is not None else None
+
+
+def _containment_evidence_json(value: Optional[dict[str, object]]) -> Optional[str]:
+    if value is None:
+        return None
+    return json.dumps(parse_containment_evidence(value), sort_keys=True)
+
+
+def _containment_evidence_from_value(value: Optional[str]) -> Optional[dict[str, object]]:
+    if value is None:
+        return None
+    return parse_containment_evidence(json.loads(value))
 
 
 def _ensure_column(
@@ -616,4 +637,5 @@ def _record_from_row(row: tuple) -> HistoryRecord:
         guard_violations_total=int(row[18] or 0),
         guard_incident_path=_optional_path_from_value(row[19]),
         time_to_first_violation_ms=_optional_int_from_value(row[20]),
+        containment_evidence=_containment_evidence_from_value(row[21]),
     )

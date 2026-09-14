@@ -89,7 +89,19 @@ def test_init_creates_db_schema_and_version(tmp_path: Path) -> None:
         }
         user_version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert "runs" in tables
-    assert user_version == 4
+    assert user_version == 5
+
+
+def test_init_does_not_downgrade_future_db_version(tmp_path: Path) -> None:
+    db_path = tmp_path / "history.db"
+    init_history_db(db_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA user_version = 6")
+
+    init_history_db(db_path)
+
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 def test_record_inserts_row(tmp_path: Path) -> None:
@@ -103,6 +115,48 @@ def test_record_inserts_row(tmp_path: Path) -> None:
     assert records[0].benchmark_id == "auth_bug_safe"
     assert records[0].benchmark_version == 1
     assert records[0].failed_checks == []
+
+
+def test_history_round_trips_containment_evidence(tmp_path: Path) -> None:
+    db_path = tmp_path / "history.db"
+    evidence = {
+        "schema": "agentguard.containment-evidence",
+        "schema_version": 1,
+        "execution_mode": "local",
+        "state": "not_applicable",
+        "security_claim_level": "not_applicable",
+        "requested": {"state": "not_applicable"},
+        "preflight": {
+            "state": "not_applicable",
+            "status": "not_applicable",
+            "claim_level": "not_applicable",
+        },
+        "image": {"state": "not_applicable"},
+        "controls": {"state": "not_applicable", "tmpfs_paths": []},
+        "environment": {
+            "state": "not_applicable",
+            "supplied_names": [],
+            "sensitive_names": [],
+            "missing_names": [],
+            "default_names": [],
+            "values_recorded": False,
+        },
+        "workspace": {"state": "not_applicable", "writable_paths": []},
+        "execution": {
+            "state": "not_applicable",
+            "status": "skipped",
+            "command": [],
+        },
+        "cleanup": {"state": "not_applicable"},
+        "notes": [],
+    }
+
+    record_history(replace(_record(), containment_evidence=evidence), db_path)
+
+    [record] = list_history(db_path)
+    assert record.containment_evidence == evidence
+    exported = json.loads(export_history_json([record]))
+    assert exported[0]["containment_evidence"]["execution_mode"] == "local"
 
 
 def test_record_same_id_updates_row(tmp_path: Path) -> None:

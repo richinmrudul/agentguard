@@ -12,6 +12,7 @@ from typing import Any, Optional, Union
 
 from agentguard import __version__
 from agentguard.config.schema import AgentGuardConfig, ScalarMetadata
+from agentguard.containment.evidence import parse_containment_evidence
 from agentguard.io import atomic_write_text
 from agentguard.instrumentation.output_limits import BoundedProcessOutput, limit_output
 from agentguard.instrumentation.command_tracker import CommandTracker
@@ -150,6 +151,7 @@ class ExecutionManifest:
     policies: list[PolicyIdentity]
     artifacts: ArtifactIdentity
     docker_images: list[dict[str, object]] = field(default_factory=list)
+    containment_evidence: Optional[dict[str, object]] = None
     parent_execution_id: Optional[str] = None
     parent_execution_type: Optional[str] = None
     child_executions: list[ChildExecution] = field(default_factory=list)
@@ -640,7 +642,14 @@ def artifact_identity(
 
 
 def manifest_dict(manifest: ExecutionManifest) -> dict[str, Any]:
-    return _drop_none(asdict(manifest))
+    raw = asdict(manifest)
+    containment_evidence = raw.pop("containment_evidence", None)
+    data = _drop_none(raw)
+    if containment_evidence is not None:
+        data["containment_evidence"] = parse_containment_evidence(
+            containment_evidence
+        )
+    return data
 
 
 def serialize_manifest(manifest: ExecutionManifest) -> str:
@@ -813,6 +822,8 @@ def _validate_manifest_structure(data: dict[str, Any]) -> None:
             key in benchmark for key in ("config_path", "config_sha256")
         ):
             raise ValueError("Invalid manifest benchmark identity.")
+    if data.get("containment_evidence") is not None:
+        parse_containment_evidence(data["containment_evidence"])
 
 
 def _require_mapping_fields(
