@@ -622,5 +622,5 @@ def test_history_migrates_manifest_path_column(tmp_path: Path) -> None:
         }
         version = connection.execute("PRAGMA user_version").fetchone()[0]
     assert "manifest_path" in columns
-    assert version == 4
+    assert version == 5
     assert list_history(db_path) == []

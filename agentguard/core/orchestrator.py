@@ -14,6 +14,7 @@ from agentguard.checks.base import Check
 from agentguard.checks.registry import instantiate_checks
 from agentguard.checks.secret_content import with_secret_content_scan
 from agentguard.config.loader import load_config
+from agentguard.containment.evidence import evidence_from_benchmark_result
 from agentguard.core.result import (
     BenchmarkResult,
     CheckResult,
@@ -486,6 +487,7 @@ def _record_run_history(result: BenchmarkResult) -> None:
                 time_to_first_violation_ms=(
                     result.guard_metrics.get("time_to_first_violation_ms")
                 ),
+                containment_evidence=result.containment_evidence,
             )
         )
     except HistoryStorageError:
@@ -1017,6 +1019,10 @@ def run_benchmark(
         command_guard_summary=command_guard_summary,
         guard_metrics=asdict(metrics),
     )
+    partial_result = replace(
+        partial_result,
+        containment_evidence=evidence_from_benchmark_result(partial_result).to_dict(),
+    )
     with _measure_stage(timing_recorder, "report_writing"):
         json_path = write_json_report(partial_result, reports_dir)
         markdown_path = write_markdown_report(partial_result, reports_dir)
@@ -1086,6 +1092,7 @@ def run_benchmark(
         guard_summary=partial_result.guard_summary,
         command_guard_summary=partial_result.command_guard_summary,
         guard_metrics=partial_result.guard_metrics,
+        containment_evidence=partial_result.containment_evidence,
     )
     agentguard_details = agentguard_identity()
     policy_details = policy_identity(config)
@@ -1137,6 +1144,7 @@ def run_benchmark(
             for event in result.command_events
             if event.docker_image is not None
         ],
+        containment_evidence=result.containment_evidence,
         parent_execution_id=parent_execution_id,
         parent_execution_type=parent_execution_type,
         guard=asdict(guard_summary),

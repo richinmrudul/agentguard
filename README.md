@@ -927,6 +927,10 @@ results. Evaluation commands preserve their primary result and report a warning
 when that result could not be persisted to history. Export destination failures
 are reported separately from history storage failures.
 
+JSON history exports include canonical containment evidence when a run records
+it. CSV columns remain unchanged so existing tabular consumers keep a stable
+flat schema.
+
 ## Execution Provenance
 
 Every run, suite, and matrix writes a versioned execution manifest after its
@@ -950,6 +954,9 @@ changed or is missing, and `2` for invalid JSON or schema. It never runs an
 agent or benchmark.
 
 Manifests deliberately omit full environment variables and raw stdout/stderr.
+Run manifests include the same bounded canonical containment evidence used by
+reports and traces when available; suite and matrix manifests omit the field
+when it is not applicable.
 Configured agent environment variable names are recorded without values.
 Secret-sensitive metadata values and common credential-bearing argument forms
 such as `--token`, `--api-key`, `--password`, authorization headers, and URL

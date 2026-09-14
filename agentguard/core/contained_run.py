@@ -16,6 +16,10 @@ from agentguard.artifact_paths import artifact_directory
 from agentguard.checks.secret_content import with_secret_content_scan
 from agentguard.config.loader import load_config
 from agentguard.config.schema import AgentGuardConfig
+from agentguard.containment.evidence import (
+    ContainmentEvidence,
+    evidence_from_contained_run,
+)
 from agentguard.core.result import CheckResult, CommandResult, DiffSummary
 from agentguard.instrumentation.output_limits import (
     BoundedProcessOutput,
@@ -52,6 +56,7 @@ from agentguard.sandbox.docker_exec_spec import (
     contained_exec_spec_from_config,
     validate_workspace_mount_containment,
 )
+from agentguard.sandbox.docker_identity import IMAGE_ID_PATTERN
 from agentguard.sandbox.docker_preflight import (
     DockerPreflightResult,
     DockerPreflightStatus,
@@ -125,6 +130,7 @@ class ContainedContainerIdentity:
     container_id: str
     container_name: str
     owner_label: str
+    image_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +186,7 @@ class ContainedRunResult:
     environment: ContainedEnvironmentDiagnostics = field(
         default_factory=ContainedEnvironmentDiagnostics
     )
+    containment_evidence: Optional[ContainmentEvidence] = None
 
     @property
     def exit_code(self) -> int:
@@ -256,6 +263,7 @@ def run_contained_agent_command(
                 cleanup_complete=cleanup_complete,
                 failure=failure,
                 environment=environment,
+                sensitive_values=sensitive_values,
             )
         preflight = run_docker_preflight(config)
         if preflight.status not in {
@@ -281,6 +289,7 @@ def run_contained_agent_command(
                 cleanup_complete=cleanup_complete,
                 failure=failure,
                 environment=environment,
+                sensitive_values=sensitive_values,
             )
 
         prepared = prepare_contained_workspace(
@@ -470,6 +479,14 @@ def run_contained_agent_command(
         failure=failure,
         cleanup_failure=cleanup_failure if cleanup_failure != failure else None,
         environment=environment,
+    )
+    final = _with_containment_evidence(
+        final,
+        config=config,
+        source=source,
+        run_dir=run_dir,
+        prepared=prepared,
+        sensitive_values=sensitive_values,
     )
     return _write_report(final, elapsed)
 
@@ -967,6 +984,7 @@ def _bind_container_identity_detail(
             container_id=container_id,
             container_name=expected_name,
             owner_label=expected_owner_label,
+            image_id=_normal_image_id(inspect.payload.get("Image")),
         )
     )
 
@@ -1107,12 +1125,22 @@ def _normal_container_id(value: object) -> str:
     return ""
 
 
+def _normal_image_id(value: object) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip().lower()
+    return candidate if IMAGE_ID_PATTERN.fullmatch(candidate) else None
+
+
 def _container_evidence(identity: ContainedContainerIdentity) -> dict[str, str]:
-    return {
+    evidence = {
         "id_sha256": _sha256_short(identity.container_id),
         "name_sha256": _sha256_short(identity.container_name),
         "owner_label_sha256": _sha256_short(identity.owner_label),
     }
+    if identity.image_id is not None:
+        evidence["image_id"] = identity.image_id
+    return evidence
 
 
 def _sha256_short(value: str) -> str:
@@ -1280,7 +1308,44 @@ def _finalize(**kwargs) -> ContainedRunResult:
         cleanup_failure=kwargs.get("cleanup_failure"),
         environment=kwargs.get("environment", ContainedEnvironmentDiagnostics()),
     )
+    result = _with_containment_evidence(
+        result,
+        config=kwargs["config"],
+        source=kwargs["source"],
+        run_dir=kwargs["run_dir"],
+        prepared=kwargs.get("prepared"),
+        sensitive_values=kwargs.get("sensitive_values", []),
+    )
     return _write_report(result, 0.0)
+
+
+def _with_containment_evidence(
+    result: ContainedRunResult,
+    *,
+    config: AgentGuardConfig,
+    source: Path,
+    run_dir: Path,
+    prepared: Optional[PreparedContainedWorkspace],
+    sensitive_values: list[str],
+) -> ContainedRunResult:
+    evidence = evidence_from_contained_run(
+        config=config,
+        source=source,
+        run_dir=run_dir,
+        command=result.command,
+        preflight=result.preflight,
+        prepared=prepared,
+        environment=result.environment,
+        command_result=result.command_result,
+        cleanup=result.cleanup,
+        cleanup_complete=result.cleanup_complete,
+        mutations=result.mutations,
+        failure=result.failure,
+        sensitive_values=sensitive_values,
+    )
+    return ContainedRunResult(
+        **{**result.__dict__, "containment_evidence": evidence}
+    )
 
 
 def _write_report(result: ContainedRunResult, elapsed: float) -> ContainedRunResult:
@@ -1299,6 +1364,11 @@ def _write_report(result: ContainedRunResult, elapsed: float) -> ContainedRunRes
         "command": result.command,
         "docker_argv": result.docker_argv,
         "preflight": result.preflight.to_evidence() if result.preflight else None,
+        "containment_evidence": (
+            result.containment_evidence.to_dict()
+            if result.containment_evidence is not None
+            else None
+        ),
         "environment": asdict(result.environment),
         "command_result": asdict(result.command_result) if result.command_result else None,
         "mutations": result.mutations,

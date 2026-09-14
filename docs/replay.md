@@ -19,7 +19,7 @@ Replay performs five steps:
 
 1. Verify the trace schema, event ordering, hash chain, and root digest.
 2. Reconstruct typed command, test, and file-change evidence.
-3. Reconstruct the normalized policy snapshot committed by trace schema v2.
+3. Reconstruct the normalized policy snapshot committed by trace schema v2 or v3.
 4. Call the same registered check implementations and scorer used by live runs.
 5. Compare recomputed checks, evidence, score, and result with recorded events.
 
@@ -28,10 +28,14 @@ values never construct recomputed results.
 
 ## Policy Snapshot And Evidence
 
-Schema v2 records the enabled check identifiers, resolved severities, scoring
+Schema v2 and v3 record the enabled check identifiers, resolved severities, scoring
 weights, path and command patterns, expected file-count bounds, diff limits,
 and command-policy mode. The canonical snapshot hash is part of header
 integrity.
+
+Schema v3 also reconstructs canonical containment evidence when present. Replay
+preserves that evidence for audit and never reruns Docker, upgrades a recorded
+claim, or treats missing evidence in older traces as containment success.
 
 Known environment values and secret-like metadata values are never embedded.
 If sanitization changes a policy pattern required for exact evaluation, the

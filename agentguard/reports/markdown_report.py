@@ -235,6 +235,42 @@ def _guard_metric_lines(result: BenchmarkResult) -> list[str]:
     return lines
 
 
+def _containment_lines(result: BenchmarkResult) -> list[str]:
+    evidence = result.containment_evidence
+    if not isinstance(evidence, dict):
+        return []
+    preflight = evidence.get("preflight") if isinstance(evidence.get("preflight"), dict) else {}
+    image = evidence.get("image") if isinstance(evidence.get("image"), dict) else {}
+    cleanup = evidence.get("cleanup") if isinstance(evidence.get("cleanup"), dict) else {}
+    workspace = (
+        evidence.get("workspace") if isinstance(evidence.get("workspace"), dict) else {}
+    )
+    execution = (
+        evidence.get("execution") if isinstance(evidence.get("execution"), dict) else {}
+    )
+    lines = [
+        "",
+        "## Containment Evidence",
+        f"- Mode: {_escape_markdown(evidence.get('execution_mode'))}",
+        f"- Evidence state: {_escape_markdown(evidence.get('state'))}",
+        f"- Security claim: {_escape_markdown(evidence.get('security_claim_level'))}",
+        f"- Preflight: {_escape_markdown(preflight.get('status'))} ({_escape_markdown(preflight.get('claim_level'))})",
+        f"- Image ref: {_escape_markdown(image.get('configured_reference') or image.get('state'))}",
+        f"- Registry digest: {_escape_markdown(image.get('registry_digest') or 'unavailable')}",
+        f"- Local image ID: {_escape_markdown(image.get('local_image_id') or 'unavailable')}",
+        f"- Container-bound image ID: {_escape_markdown(image.get('container_bound_image_id') or 'unavailable')}",
+        f"- Execution: {_escape_markdown(execution.get('status'))}",
+        f"- Workspace cleanup: {_escape_markdown(workspace.get('cleanup_status') or 'unknown')}",
+        f"- Container cleanup: {_escape_markdown(cleanup.get('container_status') or 'unknown')}",
+        f"- Cleanup verified: {_escape_markdown(cleanup.get('overall_complete'))}",
+    ]
+    notes = evidence.get("notes")
+    if isinstance(notes, list) and notes:
+        lines.append("- Notes:")
+        lines.extend(f"  - {_escape_markdown(note)}" for note in notes[:5])
+    return lines
+
+
 def _fmt_metric_ms(value: object) -> str:
     return f"{value} ms" if isinstance(value, int) else "-"
 
@@ -266,6 +302,7 @@ def write_markdown_report(result: BenchmarkResult, reports_dir: Path) -> Path:
     lines.extend(_guard_lines(result))
     lines.extend(_command_guard_lines(result))
     lines.extend(_guard_metric_lines(result))
+    lines.extend(_containment_lines(result))
     if result.profile_id is not None:
         lines.extend(
             [

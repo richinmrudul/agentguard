@@ -61,13 +61,25 @@ def _write_trace(tmp_path: Path, trace: ExecutionTrace, name: str) -> Path:
 
 
 def _v1_trace(trace: ExecutionTrace) -> ExecutionTrace:
+    events = [
+        replace(event, sequence=sequence)
+        for sequence, event in enumerate(
+            (
+                event
+                for event in trace.events
+                if event.event_type != "containment_evidence"
+            ),
+            start=1,
+        )
+    ]
     header = replace(
         trace.header,
         schema_version=1,
         policy_snapshot=None,
         policy_snapshot_hash=None,
+        event_count=len(events),
     )
-    return rehash_execution_trace(replace(trace, header=header))
+    return rehash_execution_trace(replace(trace, header=header, events=events))
 
 
 def _replace_check_payload(

@@ -234,8 +234,39 @@ The command captures bounded stdout, stderr, exit status, timeout state,
 workspace mutations, cleanup status, Docker preflight evidence, and a compact
 contained-run JSON artifact with sanitized diagnostics. Existing post-execution
 policy checks are evaluated against the captured workspace mutation summary
-where feasible. This is not the broad report, trace, manifest, or incident
-integration planned separately.
+where feasible.
+
+## Containment Evidence
+
+Contained runs emit the versioned `agentguard.containment-evidence` v1 object.
+The same canonical object is used by JSON and Markdown reports, run manifests,
+execution traces and replay evidence, JSON history exports, and static-site run
+details. Standard local runs record containment as `not_applicable`; the older
+Docker test sandbox is identified separately as `docker-sandbox` and is not
+presented as the `contained-run` boundary.
+
+The object separates requested intent from observed state. `requested` records
+the selected platform, network, image-provenance policy, and sanitized command
+and path roles. The `preflight`, `image`, `controls`, `environment`, `workspace`,
+`execution`, and `cleanup` sections each carry their own state. Image evidence
+distinguishes the configured reference, registry digest, local image ID, and
+container-bound image ID. Cleanup evidence records bounded hashed container
+identity, liveness verification, workspace cleanup, and overall completion.
+
+Evidence is canonicalized with deterministic key ordering and strict enum,
+shape, nesting, item-count, string-length, and serialized-size bounds. Known
+credentials, configured sensitive values, control characters, raw Docker argv
+and output, environment values, and host-private absolute paths are omitted or
+redacted. Environment variable names may be recorded; their values are never
+recorded. Portable path roles such as `${REPOSITORY_ROOT}` and `${RUN_ROOT}` are
+used where a known artifact root is relevant.
+
+This evidence proves only what AgentGuard configured and observed through its
+trusted host-side Docker and filesystem checks. It is not a VM, syscall-level
+isolation, container-escape, kernel-integrity, or honest-producer proof. Docker
+Desktop retains its reduced claim level. SARIF and JUnit remain unchanged
+because containment is run provenance rather than an individual finding or
+testcase result.
 
 For every container it successfully creates, `contained-run` binds cleanup to
 the exact Docker container identity returned by Docker and verified through an

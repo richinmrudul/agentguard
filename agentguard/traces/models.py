@@ -35,6 +35,7 @@ class ReplayEvidence:
     test_result: CommandResult
     diff_summary: DiffSummary
     command_events: list[CommandEvent]
+    containment_evidence: Optional[dict[str, object]] = None
 
 
 @dataclass(frozen=True)

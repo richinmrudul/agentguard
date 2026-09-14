@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 
 from agentguard.history.store import HistoryRecord, list_history
+from agentguard.containment.evidence import parse_containment_evidence
 from agentguard.io import atomic_write_text
 from agentguard.reports.exports import SECRET_PATTERNS
 from agentguard.traces.execution import (
@@ -1334,6 +1335,9 @@ def _render_detail_page(
                     _render_matrix_guard_summary(guard_summary),
                 )
             )
+    containment = _containment_summary(record.data.get("containment_evidence"))
+    if containment:
+        sections.append(_section("Containment", containment))
     sections.append(_section("Summary", _data_summary(record.data)))
     return _page(
         options,
@@ -1455,6 +1459,7 @@ def _data_summary(data: dict[str, Any]) -> str:
         "report_paths",
         "manifest_path",
         "trace_path",
+        "containment_evidence",
         "runs",
         "check_results",
     ]
@@ -1467,6 +1472,39 @@ def _data_summary(data: dict[str, Any]) -> str:
             f"<tr><th>{html(str(key))}</th><td>{html(_compact_value(value))}</td></tr>"
         )
     return f'<table class="facts"><tbody>{"".join(rows)}</tbody></table>'
+
+
+def _containment_summary(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        evidence = parse_containment_evidence(value)
+    except ValueError:
+        return _empty("Containment evidence is malformed or unsupported.")
+    preflight = evidence.get("preflight")
+    image = evidence.get("image")
+    cleanup = evidence.get("cleanup")
+    execution = evidence.get("execution")
+    facts = {
+        "Mode": evidence.get("execution_mode"),
+        "State": evidence.get("state"),
+        "Security claim": evidence.get("security_claim_level"),
+        "Preflight": (
+            preflight.get("status") if isinstance(preflight, dict) else "-"
+        ),
+        "Image": (
+            image.get("configured_reference") or image.get("state")
+            if isinstance(image, dict)
+            else "-"
+        ),
+        "Execution": (
+            execution.get("status") if isinstance(execution, dict) else "-"
+        ),
+        "Cleanup": (
+            cleanup.get("container_status") if isinstance(cleanup, dict) else "-"
+        ),
+    }
+    return _facts_table(facts)
 
 
 def _render_matrix_guard_summary(summary: dict[str, Any]) -> str:

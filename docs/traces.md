@@ -6,7 +6,7 @@ AgentGuard benchmark runs write a portable execution trace to:
 .agentguard/runs/<run-id>/trace.jsonl
 ```
 
-The current version 2 schema is `agentguard.execution-trace`. A trace contains one
+The current version 3 schema is `agentguard.execution-trace`. A trace contains one
 canonical JSON header followed by ordered canonical JSON event records.
 
 ## Evidence Model
@@ -15,19 +15,22 @@ The header records execution, AgentGuard, benchmark, agent, configuration,
 policy, sandbox, and source-artifact identities. Its `trace_id` is the root
 content digest rather than a random identifier.
 
-Version 2 also commits to a normalized replay policy snapshot containing the
+Versions 2 and 3 commit to a normalized replay policy snapshot containing the
 enabled checks, resolved severities, score weights, path and command patterns,
 file-count bounds, diff limits, and command-policy mode. Version 1 remains
 parseable and verifiable but normally lacks enough policy evidence for replay.
+Version 3 adds at most one canonical `containment_evidence` event. Versions 1
+and 2 remain parseable and verifiable without that event.
 
 Events are ordered as:
 
 1. `execution_started`
-2. zero or more `agent_command`
-3. zero or more `file_change`
-4. one `test_result`
-5. zero or more `check_result`
-6. one `execution_completed`
+2. zero or one `containment_evidence`
+3. zero or more `agent_command`
+4. zero or more `file_change`
+5. one `test_result`
+6. zero or more `check_result`
+7. one `execution_completed`
 
 Command and test events retain sanitized commands, working-directory roles,
 status, duration, timeout/truncation state, preflight policy evidence, and
@@ -181,7 +184,8 @@ Trace validity does not prove benchmark correctness, policy completeness,
 agent identity, or that recorded evidence was honestly produced. Traces are
 not signed. Schema v2 traces can be replayed through the real checks and scorer
 without invoking an agent, model, tests, Docker, network, or the original
-repository:
+repository. Schema v3 replay additionally reconstructs the canonical
+containment evidence without rerunning or strengthening its recorded claims:
 
 ```bash
 agentguard trace replayability trace.jsonl

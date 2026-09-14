@@ -354,7 +354,7 @@ def test_history_export_guard_filters(
     if export_format == "json":
         rows = json.loads(result.output)
         assert [row["id"] for row in rows] == ["audit"]
-        assert list(rows[0]) == HISTORY_CSV_COLUMNS
+        assert list(rows[0]) == [*HISTORY_CSV_COLUMNS, "containment_evidence"]
     else:
         reader = csv.DictReader(StringIO(result.output))
         assert reader.fieldnames == HISTORY_CSV_COLUMNS
@@ -399,4 +399,4 @@ def test_guard_filters_do_not_change_database_version(tmp_path: Path) -> None:
     list_history(db_path, incidents_only=True, guard_blocked=False)
 
     with sqlite3.connect(db_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
