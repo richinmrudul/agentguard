@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentguard.dev/schemas/verifier-projection-policy-v1.schema.json",
+  "title": "AgentGuard verifier projection policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "actor", "task", "verifier_policy", "event_rules", "outcome_rules"],
+  "properties": {
+    "schema": {"const": "agentguard.verifier-projection-policy"},
+    "schema_version": {"const": 1},
+    "actor": {"type": "string", "minLength": 1, "maxLength": 256},
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_outcomes", "max_steps", "budget_usd"],
+      "properties": {
+        "required_outcomes": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}, "uniqueItems": true},
+        "max_steps": {"type": "integer", "minimum": 0},
+        "budget_usd": {"type": "number", "minimum": 0}
+      }
+    },
+    "verifier_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_effects", "review_required", "evidence_required", "authority"],
+      "properties": {
+        "allowed_effects": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}, "uniqueItems": true},
+        "review_required": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}, "uniqueItems": true},
+        "evidence_required": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}, "uniqueItems": true},
+        "authority": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 256}, "uniqueItems": true}}
+      }
+    },
+    "event_rules": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 9,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "event_type", "resource", "effect", "authority", "status", "cost_usd", "include_source_evidence", "review"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 256},
+          "event_type": {"enum": ["execution_started", "agent_command", "guard_summary", "command_guard_summary", "guard_metrics", "file_change", "test_result", "check_result", "execution_completed"]},
+          "resource": {
+            "oneOf": [
+              {"type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": {"kind": {"const": "constant"}, "value": {"type": "string", "minLength": 1, "maxLength": 256}}},
+              {"type": "object", "additionalProperties": false, "required": ["kind", "field", "prefix"], "properties": {"kind": {"const": "repository_path"}, "field": {"type": "string", "minLength": 1, "maxLength": 256}, "prefix": {"type": "string", "minLength": 1, "maxLength": 256}}}
+            ]
+          },
+          "effect": {"type": "string", "minLength": 1, "maxLength": 256},
+          "authority": {"type": "string", "minLength": 1, "maxLength": 256},
+          "status": {"enum": ["derived", "succeeded", "failed", "cancelled"]},
+          "cost_usd": {"type": "number", "minimum": 0},
+          "include_source_evidence": {"type": "boolean"},
+          "review": {"oneOf": [{"type": "null"}, {"type": "object", "additionalProperties": false, "required": ["status", "reviewer"], "properties": {"status": {"const": "approved"}, "reviewer": {"type": "string", "minLength": 1, "maxLength": 256}}}]}
+        }
+      }
+    },
+    "outcome_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["outcome", "event_type", "field", "equals"],
+        "properties": {
+          "outcome": {"type": "string", "minLength": 1, "maxLength": 256},
+          "event_type": {"enum": ["execution_started", "agent_command", "guard_summary", "command_guard_summary", "guard_metrics", "file_change", "test_result", "check_result", "execution_completed"]},
+          "field": {"type": "string", "minLength": 1, "maxLength": 256},
+          "equals": {"type": ["string", "number", "integer", "boolean"]}
+        }
+      }
+    }
+  }
+}

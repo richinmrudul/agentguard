@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentguard.dev/schemas/verifier-projection-report-v1.schema.json",
+  "title": "AgentGuard verifier projection conversion report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "status", "projection_contract", "source_trace", "adapter_policy", "projection", "event_mappings", "missing_inputs", "unverifiable", "conflicts"],
+  "properties": {
+    "schema": {"const": "agentguard.verifier-projection-report"},
+    "schema_version": {"const": 1},
+    "status": {"enum": ["complete", "incomplete"]},
+    "projection_contract": {"const": "bonfyre.agent_trace.v1"},
+    "source_trace": {"type": "object", "additionalProperties": false, "required": ["sha256", "trace_id", "root_hash", "final_event_hash"], "properties": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "trace_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "root_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "final_event_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
+    "adapter_policy": {"type": "object", "additionalProperties": false, "required": ["schema", "schema_version", "sha256"], "properties": {"schema": {"const": "agentguard.verifier-projection-policy"}, "schema_version": {"const": 1}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
+    "projection": {"type": "object", "additionalProperties": false, "required": ["sha256"], "properties": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}},
+    "event_mappings": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["source_sequence", "source_event_hash", "rule_id", "projected_event_id"], "properties": {"source_sequence": {"type": "integer", "minimum": 1}, "source_event_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "rule_id": {"type": "string", "minLength": 1}, "projected_event_id": {"type": "string", "pattern": "^agentguard:[1-9][0-9]*:[0-9a-f]{64}$"}}}},
+    "missing_inputs": {"type": "array", "items": {"type": "string"}},
+    "unverifiable": {"type": "array", "items": {"type": "string"}},
+    "conflicts": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["kind", "event_ids"], "properties": {"kind": {"const": "terminal_result_conflict"}, "event_ids": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string", "pattern": "^agentguard:[1-9][0-9]*:[0-9a-f]{64}$"}}}}}
+  }
+}
