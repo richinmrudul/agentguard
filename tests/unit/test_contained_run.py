@@ -155,6 +155,7 @@ def test_contained_run_preserves_structured_argv_and_uses_docker_spec(
     report = json.loads(result.report_path.read_text(encoding="utf-8"))
     assert report["command"] == command
     assert "source repo" not in " ".join(report["docker_argv"])
+    assert str(tmp_path) not in json.dumps(report, sort_keys=True)
     assert report["source_dir"] == "[REDACTED_PATH]"
     assert report["run_dir"] == "[REDACTED_PATH]"
 
@@ -183,6 +184,42 @@ def test_contained_run_fails_before_workspace_when_preflight_unavailable(
     assert result.failure is not None
     assert result.failure.exit_code == EXIT_PREFLIGHT
     assert result.report_path.is_file()
+
+
+def test_contained_run_report_sanitizes_command_paths_with_spaces_and_unicode(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source repo café 日本語"
+    source.mkdir()
+    (source / "input.txt").write_text("hello\n", encoding="utf-8")
+    config_path = _config(tmp_path, repo_template=str(source))
+    private_path = tmp_path / "private dir café" / "secret.txt"
+
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    result = _run(
+        config_path,
+        ["tool", str(private_path)],
+        tmp_path,
+        docker_executor=lambda argv, cwd, timeout_seconds, max_output_bytes: CommandResult(
+            "contained-run",
+            0,
+            "",
+            "",
+            0.01,
+        ),
+    )
+
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+    serialized = json.dumps(report, ensure_ascii=False, sort_keys=True)
+    assert "[REDACTED_PATH]" in report["command"]
+    assert str(tmp_path) not in serialized
+    assert "source repo café" not in serialized
+    assert "private dir café" not in serialized
 
 
 def test_contained_run_rejects_incompatible_bind_uid_gid_before_preflight(
