@@ -9,6 +9,7 @@ import yaml
 WORKFLOW_DIR = Path("examples/github-actions")
 WORKFLOW_PATHS = {
     "agentguard-ci.yml",
+    "agentguard-contained-run.yml",
     "agentguard-gate.yml",
     "agentguard-pr-summary.yml",
     "agentguard-sarif-junit.yml",
@@ -50,6 +51,9 @@ HIDDEN_AGENTGUARD_UPLOAD_PATHS = {
         ".agentguard/ci/*/manifest.json",
         ".agentguard/pr-report.json",
     },
+    "agentguard-contained-run.yml": {
+        ".agentguard/contained-runs/*/contained-run.json",
+    },
     "agentguard-showcase.yml": {
         ".agentguard/showcase/showcase-summary.json",
         ".agentguard/showcase/showcase-summary.md",
@@ -78,6 +82,9 @@ REQUIRED_HIDDEN_AGENTGUARD_EVIDENCE = {
         ".agentguard/ci/*/command_log.json",
         ".agentguard/pr-report.json",
     },
+    "agentguard-contained-run.yml": {
+        ".agentguard/contained-runs/*/contained-run.json",
+    },
     "agentguard-showcase.yml": {
         ".agentguard/showcase/showcase-summary.json",
         ".agentguard/showcase/showcase-summary.md",
@@ -100,6 +107,7 @@ KNOWN_AGENTGUARD_ARTIFACT_FILENAMES = {
     "showcase-summary.md",
     "suite.json",
     "suite.md",
+    "contained-run.json",
 }
 
 
@@ -215,6 +223,8 @@ def test_github_actions_examples_upload_expected_artifacts() -> None:
             assert ".agentguard/showcase" in serialized
         elif name == "agentguard-gate.yml":
             assert ".agentguard/suites" in serialized
+        elif name == "agentguard-contained-run.yml":
+            assert ".agentguard/contained-runs" in serialized
         else:
             assert ".agentguard/ci" in serialized
 
@@ -345,6 +355,88 @@ def test_suite_gate_example_still_uses_core_suite_baseline() -> None:
     assert "--baseline /tmp/agentguard-core-baseline.json" in text
     assert str(CORE_SUITE_PATH) in text
     assert _artifact_steps(workflow)
+
+
+def test_contained_run_example_uses_safe_opt_in_boundary() -> None:
+    workflow = _workflow("agentguard-contained-run.yml")
+    text = _text("agentguard-contained-run.yml")
+    job = _job(workflow, "contained-run")
+    steps = _job_steps(workflow, "contained-run")
+
+    triggers = workflow.get("on", workflow.get(True))
+    assert triggers == {"pull_request": None}
+    assert workflow["permissions"] == {"contents": "read"}
+    assert job["runs-on"] == "ubuntu-latest"
+    assert "pull_request_target" not in text
+    assert "workflow_dispatch" not in text
+    assert "push:" not in text
+
+    checkout = next(step for step in steps if step.get("uses") == CHECKOUT)
+    assert checkout["with"] == {"fetch-depth": 0, "persist-credentials": False}
+    assert "agentguard-evals==0.4.0" in text
+    assert "agentguard-evals==0.3.1" not in text
+    assert "pip install -e" not in text
+    assert "@main" not in text
+
+    verify_docker = next(
+        step for step in steps if step.get("name") == "Verify hosted Linux Docker runner"
+    )
+    run_contained = next(
+        step for step in steps if step.get("name") == "Run deterministic contained command"
+    )
+    assert steps.index(verify_docker) < steps.index(run_contained)
+    assert 'test "$(uname -s)" = "Linux"' in verify_docker["run"]
+    assert "docker info" in verify_docker["run"]
+    assert "agentguard contained-run agentguard-contained.yaml" in run_contained["run"]
+    assert "cmd+=(-- /bin/true)" in run_contained["run"]
+    assert '"${cmd[@]}"' in run_contained["run"]
+    assert "eval" not in run_contained["run"]
+    assert "sh -c" not in run_contained["run"]
+
+    config_step = next(
+        step for step in steps if step.get("name") == "Write contained execution config"
+    )
+    config_source = config_step["run"]
+    assert "platform: linux-docker-engine" in config_source
+    assert "network: none" in config_source
+    assert "image_provenance: digest-required" in config_source
+    assert "amd64/alpine@sha256:c64c687cbea9300178b30c95835354e34c4e4febc4badfe27102879de0483b5e" in config_source
+    assert "required_uid: {os.getuid()}" in config_source
+    assert "required_gid: {os.getgid()}" in config_source
+    for unsafe in (
+        "privileged",
+        "host.docker.internal",
+        "/var/run/docker.sock",
+        "--network host",
+        "pid: host",
+        "ipc: host",
+        "devices:",
+        "GITHUB_TOKEN",
+        "secrets.",
+    ):
+        assert unsafe not in text
+
+
+def test_contained_run_example_uploads_bounded_sanitized_evidence() -> None:
+    workflow = _workflow("agentguard-contained-run.yml")
+    steps = _job_steps(workflow, "contained-run")
+    upload = next(step for step in steps if step.get("uses") == UPLOAD_ARTIFACT)
+    verify = next(
+        step for step in steps if step.get("name") == "Verify retained contained-run evidence"
+    )
+
+    assert upload["if"] == "always()"
+    assert upload["with"] == {
+        "name": "agentguard-contained-run-evidence",
+        "path": ".agentguard/contained-runs/*/contained-run.json",
+        "if-no-files-found": "error",
+        "include-hidden-files": True,
+        "retention-days": 7,
+    }
+    assert verify["if"] == "always()"
+    assert "agentguard.contained-run" in verify["run"]
+    assert '"/home/" not in serialized' in verify["run"]
+    assert '"/tmp/" not in serialized' in verify["run"]
 
 
 def test_sarif_junit_example_exports_existing_reports() -> None:
@@ -488,6 +580,30 @@ def test_docs_reference_github_actions_examples() -> None:
     for name in WORKFLOW_PATHS:
         path = f"examples/github-actions/{name}"
         assert path in docs
+
+
+def test_contained_actions_docs_keep_version_strategy_truthful() -> None:
+    docs = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in [
+            Path("docs/github-actions.md"),
+            Path("docs/contained-execution.md"),
+            Path("docs/project-initialization.md"),
+        ]
+    )
+    workflow = _text("agentguard-contained-run.yml")
+
+    assert "source tree currently remains version `0.3.1`" in docs
+    assert "v0.4.0 has not been published yet" in docs
+    assert "after the v0.4.0 package is published" in docs
+    assert "agentguard-evals==0.4.0" in docs
+    assert "do not replace it with\n`agentguard-evals==0.3.1`" in docs
+    assert "mutable branch" in docs
+    assert "source checkout" in docs
+    assert "agentguard-evals==0.4.0" in workflow
+    assert "agentguard-evals==0.3.1" not in workflow
+    assert "git+https" not in workflow
+    assert "@main" not in workflow
 
 
 def test_workflows_do_not_embed_local_paths_or_secret_like_values() -> None:

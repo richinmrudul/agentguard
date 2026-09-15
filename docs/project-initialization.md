@@ -226,6 +226,14 @@ path does not enforce those controls. No `untrusted-agent` preset is exposed;
 contained execution is tracked separately in
 [issue #157](https://github.com/richinmrudul/agentguard/issues/157).
 
+`agentguard init --ci github` continues to generate only the post-execution CI
+gate described above. It does not silently replace an existing workflow with a
+contained-run workflow, and it does not add contained-execution settings to the
+`minimal`, `recommended`, or `strict` presets. For the separate, explicit
+GitHub Actions contained-run adoption path, copy and review
+[`examples/github-actions/agentguard-contained-run.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-contained-run.yml)
+after the v0.4.0 package is published.
+
 ## Overwrite And Idempotency Model
 
 The initializer computes and validates the complete plan before writing:

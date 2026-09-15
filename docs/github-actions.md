@@ -34,6 +34,10 @@ Copyable workflow examples live under
   exports existing reports to SARIF and JUnit.
 - [`agentguard-gate.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-gate.yml):
   compares a suite against an approved baseline.
+- [`agentguard-contained-run.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-contained-run.yml):
+  opt-in contained execution smoke for supported Linux Docker pull-request
+  runners. This example is for the upcoming v0.4.0 package after publication;
+  do not substitute `agentguard-evals==0.3.1` for it.
 
 The v0.3.1 `agentguard init --ci github` command can
 generate a maintained starter workflow at `.github/workflows/agentguard.yml`.
@@ -74,6 +78,39 @@ commit, verify the commit belongs to that upstream project, review the upstream
 diff and release notes, update the SHA and comment together, and merge the
 change through normal human review. Do not configure automated Action updates
 that merge without review.
+
+## Opt-In Contained Execution On GitHub Actions
+
+Contained execution is a separate opt-in path from `agentguard ci`. It runs one
+explicit argv through `agentguard contained-run` after Docker capability
+preflight and writes contained-run evidence under `.agentguard/contained-runs/`.
+The maintained copyable example is
+[`examples/github-actions/agentguard-contained-run.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-contained-run.yml).
+
+Use it only on hosted Linux Docker runners such as `ubuntu-latest`, on
+`pull_request` events, with read-only `contents` permission. Do not use
+`pull_request_target` for this path. The example checks out the repository with
+`persist-credentials: false`, verifies the Linux Docker runner before
+`contained-run`, keeps the default contained network as `none`, runs a
+deterministic `/bin/true` command instead of a third-party coding agent, and
+uploads only `.agentguard/contained-runs/*/contained-run.json` with
+`if: always()`, hidden-file upload enabled, and bounded retention.
+
+Version strategy: the source tree currently remains version `0.3.1`.
+`contained-run` is documented here as a maintained adoption path for the next
+release line, and the copyable package-install step uses
+`agentguard-evals==0.4.0` intentionally. Replace that pin only after v0.4.0 is
+published to production PyPI. Do not install from `main`, do not use a mutable
+source checkout as the trusted adoption path, and do not claim that the
+published `agentguard-evals==0.3.1` package contains this workflow.
+
+The contained runner constructs Docker arguments from validated structured
+configuration. The workflow must not add raw Docker flags, host networking,
+privileged mode, host PID/IPC/user namespaces, host devices, the Docker socket,
+or ambient `GITHUB_TOKEN` or secret environment values to the contained
+process. Put any future command arguments after the literal `--` boundary and
+assemble them as an argv array, not by evaluating a shell string or
+interpolating attacker-controlled GitHub event fields into shell source.
 
 ## Exit Codes
 

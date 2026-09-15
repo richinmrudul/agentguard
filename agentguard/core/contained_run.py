@@ -465,7 +465,10 @@ def run_contained_agent_command(
         config_path=config.config_path,
         source_dir=source,
         run_dir=run_dir,
-        command=redact_credential_arguments(list(command), sensitive_values),
+        command=[
+            _sanitize_host_text(argument, sensitive_values)
+            for argument in redact_credential_arguments(list(command), sensitive_values)
+        ],
         docker_argv=_sanitize_argv(docker_argv, sensitive_values),
         preflight=preflight,
         command_result=command_result,
@@ -1252,7 +1255,7 @@ def _sanitize_argv(
             label_argument = sanitized[index + 1]
             if label_argument.startswith("agentguard.contained-run.id="):
                 sanitized[index + 1] = "agentguard.contained-run.id=[REDACTED]"
-    return sanitized
+    return [_sanitize_host_text(argument, sensitive_values) for argument in sanitized]
 
 
 def _sanitize_command_result(
