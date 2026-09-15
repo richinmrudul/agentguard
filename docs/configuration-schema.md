@@ -20,15 +20,18 @@ limits. YAML can also represent non-finite floats such as `.nan` and `.inf`,
 which are outside JSON Schema's standard JSON data model; the production loader
 explicitly rejects them in metadata and numeric configuration fields.
 
-The additive `contained_execution` block is a version-aware planning contract,
-not a runtime mode. It validates the future contained-execution boundary
-documented in [Contained Execution Contract](contained-execution.md), including
-Linux Docker Engine as the authoritative platform, Docker Desktop as
-experimental/reduced-claim, default network `none`, digest-required image
-provenance, required non-root UID/GID planning defaults for Docker preflight,
-evidence outside the agent-mounted repository, and rejection of privileged
-containers, host networking, Docker socket mounts, device exposure, and host
-namespace sharing. Omitting the block preserves existing behavior.
+The additive `contained_execution` block is a version-aware contract for
+`agentguard contained-run`. Ordinary `agentguard ci`, `local-command`,
+`agent-command`, and other uncontained paths reject configs with this block
+before running tests or agents. The contract is documented in
+[Contained Execution Contract](contained-execution.md), including Linux Docker
+Engine as the supported platform, Docker Desktop as experimental/reduced-claim,
+default network `none`, digest-required image provenance, required non-root
+UID/GID Docker preflight values, evidence outside the agent-mounted repository,
+explicit environment allowlists with no ambient token forwarding, and rejection
+of privileged containers, host networking, Docker socket mounts, device
+exposure, and host namespace sharing. Omitting the block preserves existing
+behavior.
 
 The checked-in JSON file is the canonical editor schema. CI runs
 `python scripts/validate_config_schema.py`, which:

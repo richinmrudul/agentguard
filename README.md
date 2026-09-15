@@ -126,8 +126,15 @@ overwrite non-identical files without `--force`; or change Git state. See
 overwrite, CI security, and customization details. The
 [`minimal`, `recommended`, and `strict` CI policy presets](docs/policy-presets.md)
 configure only settings consumed by post-execution `agentguard ci` validation;
-they do not contain agent or test execution. Inspect them with `agentguard
-presets list` and `agentguard presets show PRESET`.
+they do not contain agent or test execution. These stable presets are the ones
+available in the published `agentguard-evals==0.3.1` package. Inspect them with
+`agentguard presets list` and `agentguard presets show PRESET`.
+
+Current source after issue #261 also contains an experimental `untrusted-agent`
+preset for `agentguard contained-run`, intended for v0.4.0 after release. It is
+not available in the current published `agentguard-evals==0.3.1` package.
+Ordinary CI and uncontained agent modes reject its generated contained config
+before running tests or agents.
 
 Generated workflows from this source pin `agentguard-evals==0.3.1`.
 

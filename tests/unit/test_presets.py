@@ -13,6 +13,7 @@ from agentguard.presets import (
     PRESET_REGISTRY,
     PRESETS,
     PolicyPreset,
+    UNTRUSTED_AGENT_PRESET,
     _registry_by_name,
     get_preset,
     preset_names,
@@ -42,7 +43,8 @@ def _captured_output(result) -> str:
 
 
 def test_registry_contains_exactly_three_stable_presets() -> None:
-    assert preset_names() == ("minimal", "recommended", "strict")
+    assert [preset.name for preset in PRESETS] == ["minimal", "recommended", "strict"]
+    assert preset_names() == ("minimal", "recommended", "strict", "untrusted-agent")
     assert tuple(PRESET_REGISTRY) == preset_names()
     assert DEFAULT_PRESET_NAME == "recommended"
     assert [preset.name for preset in PRESETS if preset.default] == ["recommended"]
@@ -128,10 +130,12 @@ def test_preset_list_is_human_readable_and_states_execution_boundary() -> None:
     for name in preset_names():
         assert f"- {name}" in result.output
     assert "recommended (default)" in result.output
-    assert "none of these presets contains agent execution" in result.output
+    assert "untrusted-agent (experimental)" in result.output
+    assert "minimal/recommended/strict contain no execution" in result.output
+    assert "contained-run and Docker preflight" in result.output
 
 
-@pytest.mark.parametrize("name", preset_names())
+@pytest.mark.parametrize("name", [preset.name for preset in PRESETS])
 def test_preset_show_text_explains_truthful_posture(name: str) -> None:
     result = runner.invoke(app, ["presets", "show", name])
 
@@ -143,7 +147,7 @@ def test_preset_show_text_explains_truthful_posture(name: str) -> None:
 
 
 @pytest.mark.parametrize("output_format", ["yaml", "json"])
-@pytest.mark.parametrize("name", preset_names())
+@pytest.mark.parametrize("name", [preset.name for preset in PRESETS])
 def test_machine_output_is_deterministic_parseable_and_control_free(
     name: str,
     output_format: str,
@@ -170,9 +174,12 @@ def test_machine_output_is_deterministic_parseable_and_control_free(
     [
         (
             ("presets", "show", "Recommended"),
-            "Valid presets: minimal, recommended, strict",
+            "Valid presets: minimal, recommended, strict, untrusted-agent",
         ),
-        (("presets", "show", "missing"), "Valid presets: minimal, recommended, strict"),
+        (
+            ("presets", "show", "missing"),
+            "Valid presets: minimal, recommended, strict, untrusted-agent",
+        ),
         (
             ("presets", "show", "minimal", "--format", "toml"),
             "Valid formats: text, yaml, json",
@@ -208,6 +215,7 @@ def test_documented_comparison_matches_registry_and_rejects_containment_claims()
     initializer = Path("docs/project-initialization.md").read_text(encoding="utf-8")
     github_actions = Path("docs/github-actions.md").read_text(encoding="utf-8")
     combined = "\n".join((page, initializer, github_actions)).lower()
+    page_flat = " ".join(page.split())
 
     for preset in PRESETS:
         settings = preset.settings
@@ -215,7 +223,14 @@ def test_documented_comparison_matches_registry_and_rejects_containment_claims()
         assert f"{settings.command_timeout_seconds} seconds" in page
         assert f"{settings.max_output_bytes:,} bytes" in page
     assert "does not contain" in combined
-    assert "`untrusted-agent` preset is intentionally not available" in page
+    assert "`untrusted-agent`" in page
+    assert "experimental for v0.4.0" in combined
+    assert (
+        "published production `agentguard-evals==0.3.1` package includes the stable"
+        in page_flat
+    )
+    assert "does not include the experimental `untrusted-agent` preset" in page_flat
+    assert "available in this source after issue #261" in page_flat
     for unsupported_claim in (
         "fully sandboxed",
         "maximum security",
@@ -223,6 +238,41 @@ def test_documented_comparison_matches_registry_and_rejects_containment_claims()
         "guarantees safe behavior",
     ):
         assert unsupported_claim not in combined
+
+
+def test_untrusted_agent_preset_show_is_contained_only_and_experimental() -> None:
+    result = runner.invoke(app, ["presets", "show", "untrusted-agent"])
+
+    assert result.exit_code == 0, result.output
+    assert "experimental for v0.4.0" in result.output
+    assert "agentguard contained-run" in result.output
+    assert "ordinary CI and uncontained agent modes fail closed" in result.output
+    assert "network: none" in result.output
+    assert "digest-required" in result.output
+    assert "explicit allowlist" in result.output
+    assert "ambient host env or token forwarding" in result.output
+    assert "Docker-backed application-level containment" in result.output
+    assert "documented Docker and host trust assumptions" in result.output
+
+
+@pytest.mark.parametrize("output_format", ["yaml", "json"])
+def test_untrusted_agent_machine_output_is_truthful(output_format: str) -> None:
+    result = runner.invoke(
+        app,
+        ["presets", "show", "untrusted-agent", "--format", output_format],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = (
+        json.loads(result.stdout)
+        if output_format == "json"
+        else yaml.safe_load(result.stdout)
+    )
+    assert data == UNTRUSTED_AGENT_PRESET.as_public_mapping()
+    assert data["experimental"] is True
+    assert data["mode"] == "contained-run"
+    assert data["settings"]["contained_execution"]["ambient_env_forwarding"] is False
+    assert data["settings"]["contained_execution"]["ambient_token_forwarding"] is False
 
 
 def test_policy_preset_page_is_in_mkdocs_navigation() -> None:

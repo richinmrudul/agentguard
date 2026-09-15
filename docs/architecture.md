@@ -643,7 +643,11 @@ Docker mode runs commands in a container with a mounted repository workspace. Co
 
 Command preflight policy can audit or enforce unsafe command patterns before custom-command agent execution. Audit mode records matched patterns and allows execution; enforce mode blocks matched commands before they run. Later checks can still fail a run based on unsafe command evidence.
 
-Docker reduces risk and improves reproducibility, but it is not a complete isolation guarantee and should not be oversold as a perfect security boundary. Current limitations include no full VM isolation, no dynamic syscall tracing, deterministic pattern-based command detection, and dependence on the host Docker daemon and configuration.
+Docker reduces risk and improves reproducibility, but it is not a complete
+isolation guarantee and should not be oversold as a perfect security boundary.
+Current limitations include no hardware virtualization, no dynamic syscall
+tracing, deterministic pattern-based command detection, and dependence on the
+host Docker daemon and configuration.
 
 ## Policy and Check Model
 
@@ -774,7 +778,7 @@ other unpinned environmental inputs.
 
 AgentGuard is intentionally honest about what it does and does not prove.
 
-- Docker sandboxing is not a full VM boundary.
+- Docker-backed execution is not hardware virtualization.
 - Command detection is deterministic and pattern-based.
 - There is no dynamic syscall tracing yet.
 - There is no hosted backend or dashboard yet.

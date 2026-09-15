@@ -4,11 +4,14 @@ import stat
 import subprocess
 from types import SimpleNamespace
 from pathlib import Path
+from typing import Optional
 
 import pytest
 import yaml
 
 from agentguard.config.loader import load_config
+from agentguard.core.ci import run_ci
+from agentguard.core.orchestrator import run_benchmark
 from agentguard.core.contained_run import (
     EXIT_DOCKER,
     EXIT_POLICY,
@@ -256,6 +259,44 @@ def test_contained_run_rejects_incompatible_bind_uid_gid_before_preflight(
 
     with pytest.raises(ValueError, match="host bind mounts require"):
         _run(config_path, ["true"], tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("runner_name", "agent_name"),
+    [
+        ("agentguard ci", None),
+        ("agentguard run --agent local-command", "local-command"),
+        ("agentguard run --agent agent-command", "agent-command"),
+    ],
+)
+def test_uncontained_runners_reject_contained_execution_before_launch(
+    tmp_path: Path,
+    monkeypatch,
+    runner_name: str,
+    agent_name: Optional[str],
+) -> None:
+    config_path = _config(
+        tmp_path,
+        agent_command=["python", "-c", "raise SystemExit('must not run')"],
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("uncontained path must reject before launch")
+
+    monkeypatch.setattr("agentguard.core.ci.detect_repo_dir", forbidden)
+    monkeypatch.setattr("agentguard.core.orchestrator.RepoManager.prepare", forbidden)
+
+    with pytest.raises(ValueError) as error:
+        if agent_name is None:
+            run_ci(config_path, repo_dir=tmp_path)
+        else:
+            run_benchmark(config_path, agent_name)
+
+    message = str(error.value)
+    assert "contained_execution" in message
+    assert "agentguard contained-run" in message
+    assert runner_name in message
+    assert "uncontained execution path" in message
 
 
 def test_contained_run_records_docker_desktop_experimental_preflight(

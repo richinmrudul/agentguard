@@ -23,11 +23,13 @@ from agentguard.project_init import (
     UNKNOWN_TEST_COMMAND,
 )
 from agentguard.presets import get_preset, preset_names
+from agentguard.presets import PRESETS
 
 
 runner = CliRunner()
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 ANSI_STYLE = re.compile(r"\x1b\[[0-9;]*m")
+STABLE_PRESET_NAMES = tuple(preset.name for preset in PRESETS)
 
 
 def _error_output(result) -> str:
@@ -279,7 +281,7 @@ def test_default_is_byte_identical_to_explicit_recommended(tmp_path: Path) -> No
     assert "Selected preset: recommended" in implicit_result.output
 
 
-@pytest.mark.parametrize("preset_name", preset_names())
+@pytest.mark.parametrize("preset_name", STABLE_PRESET_NAMES)
 def test_every_preset_generates_configuration_accepted_by_production_loader(
     tmp_path: Path, preset_name: str
 ) -> None:
@@ -308,6 +310,53 @@ def test_every_preset_generates_configuration_accepted_by_production_loader(
         "benchmark:",
     ):
         assert unsupported not in source
+
+
+def test_untrusted_agent_init_generates_contained_run_config(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    result = _invoke(root, "--no-ci", "--preset", "untrusted-agent")
+
+    assert result.exit_code == 0, result.output
+    config = load_config(root / CONFIG_PATH)
+    source = (root / CONFIG_PATH).read_text(encoding="utf-8")
+    assert config.contained_execution is not None
+    assert config.sandbox.type == "docker"
+    assert config.sandbox.network == "none"
+    assert config.sandbox.image.startswith("registry.example.invalid/")
+    assert config.sandbox.image.endswith("@sha256:" + "0" * 64)
+    assert config.contained_execution.platform == "linux-docker-engine"
+    assert config.contained_execution.image_provenance == "digest-required"
+    assert config.contained_execution.environment == []
+    assert "experimental untrusted-agent preset for v0.4.0" in source
+    assert (
+        "Ordinary agentguard ci, local-command, and agent-command reject this config"
+        in source
+    )
+    assert "Network defaults to none" in source
+    assert "does not forward ambient host environment variables or tokens" in source
+    assert "Docker-backed application-level containment" in source
+    assert "not a broad safety guarantee" in source
+    assert "Next contained command: agentguard contained-run agentguard.yaml -- AGENT_ARGV" in result.output
+    assert not (root / GITHUB_WORKFLOW_PATH).exists()
+
+
+def test_untrusted_agent_init_is_idempotent_and_rejects_ordinary_ci_workflow(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    first = _invoke(root, "--no-ci", "--preset", "untrusted-agent")
+    second = _invoke(root, "--no-ci", "--preset", "untrusted-agent")
+    with_ci = _invoke(root, "--preset", "untrusted-agent", "--ci", "github")
+
+    assert first.exit_code == second.exit_code == 0
+    assert "Already current:" in second.output
+    assert with_ci.exit_code == 2
+    assert "contained-run only" in _error_output(with_ci)
+    assert not (root / GITHUB_WORKFLOW_PATH).exists()
 
 
 def test_explicit_test_command_is_preserved_as_one_yaml_value(tmp_path: Path) -> None:
@@ -793,7 +842,7 @@ def test_go_dry_run_and_idempotent_apply_preserve_project_files(tmp_path: Path) 
     assert "Already current:" in second.output
 
 
-@pytest.mark.parametrize("preset_name", preset_names())
+@pytest.mark.parametrize("preset_name", STABLE_PRESET_NAMES)
 def test_github_workflow_is_valid_least_privilege_and_pinned(
     tmp_path: Path, preset_name: str
 ) -> None:
@@ -1066,7 +1115,7 @@ def test_switching_presets_conflicts_then_force_replaces_only_config(
     assert "Already current:\n- .gitignore\n- .github/workflows/agentguard.yml" in forced.output
 
 
-@pytest.mark.parametrize("preset_name", preset_names())
+@pytest.mark.parametrize("preset_name", STABLE_PRESET_NAMES)
 def test_dry_run_for_each_preset_writes_nothing(
     tmp_path: Path, preset_name: str
 ) -> None:

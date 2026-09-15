@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Mapping, Union
 
 import yaml
 
@@ -84,6 +84,70 @@ class PolicyPreset:
             "execution_boundary": "post-execution CI validation; no execution containment",
             "settings": self.settings.as_public_mapping(),
         }
+
+
+@dataclass(frozen=True)
+class ContainedAgentPreset:
+    name: str
+    summary: str
+    intended_use: str
+    validation_posture: str
+    requirements: tuple[str, ...]
+    limitations: tuple[str, ...]
+    experimental_for: str
+    default: bool = False
+    posture_rank: int = 3
+
+    def as_public_mapping(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "name": self.name,
+            "default": self.default,
+            "experimental": True,
+            "experimental_for": self.experimental_for,
+            "mode": "contained-run",
+            "summary": self.summary,
+            "intended_use": self.intended_use,
+            "validation_posture": self.validation_posture,
+            "requirements": list(self.requirements),
+            "limitations": list(self.limitations),
+            "suitable_for_untrusted_code": (
+                "only when launched by agentguard contained-run after successful "
+                "Docker preflight"
+            ),
+            "execution_boundary": (
+                "Docker-backed application-level containment via agentguard "
+                "contained-run with documented Docker and host trust assumptions"
+            ),
+            "settings": {
+                "mode": "contained-run",
+                "sandbox": {
+                    "type": "docker",
+                    "image": "digest-pinned Docker image required",
+                    "network": "none",
+                },
+                "contained_execution": {
+                    "version": 1,
+                    "platform": [
+                        "linux-docker-engine",
+                        "docker-desktop-experimental",
+                    ],
+                    "image_provenance": "digest-required",
+                    "network": "none",
+                    "environment": "explicit allowlist only",
+                    "ambient_env_forwarding": False,
+                    "ambient_token_forwarding": False,
+                    "allow_privileged": False,
+                    "allow_host_network": False,
+                    "allow_docker_socket_mount": False,
+                    "allow_device_exposure": False,
+                    "allow_host_namespace_sharing": False,
+                },
+            },
+        }
+
+
+PresetDefinition = Union[PolicyPreset, ContainedAgentPreset]
 
 
 _COMMON_FORBIDDEN_PATHS = (
@@ -221,8 +285,42 @@ PRESETS = (
     ),
 )
 
+UNTRUSTED_AGENT_PRESET = ContainedAgentPreset(
+    name="untrusted-agent",
+    summary=(
+        "Experimental contained-run starter for explicitly launched untrusted "
+        "coding agents."
+    ),
+    intended_use=(
+        "High-caution evaluation through agentguard contained-run with a "
+        "reviewed digest-pinned Docker image and explicit agent argv."
+    ),
+    validation_posture=(
+        "Requires Docker-backed application-level containment before agent "
+        "startup; ordinary CI and uncontained agent modes fail closed."
+    ),
+    requirements=(
+        "agentguard contained-run with argv after the literal '--' boundary.",
+        "Supported Linux Docker Engine for full claims; Docker Desktop is reduced and experimental.",
+        "A digest-pinned Docker image reference in sandbox.image.",
+        "Default network none unless bridge is explicitly reviewed.",
+        "Explicit contained_execution.environment allowlist; no ambient host env or token forwarding.",
+    ),
+    limitations=(
+        "Experimental for v0.4.0 and not available in the published 0.3.1 package.",
+        "Does not claim broad safety guarantees, hardware virtualization, or host-kernel isolation.",
+        "Requires Docker daemon and host kernel trust; unsupported platforms fail before launch.",
+        "Generated placeholders intentionally fail until a maintainer supplies reviewed project values.",
+    ),
+    experimental_for="v0.4.0",
+)
 
-def _registry_by_name(presets: tuple[PolicyPreset, ...]) -> Mapping[str, PolicyPreset]:
+ALL_PRESETS: tuple[PresetDefinition, ...] = (*PRESETS, UNTRUSTED_AGENT_PRESET)
+
+
+def _registry_by_name(
+    presets: tuple[PresetDefinition, ...],
+) -> Mapping[str, PresetDefinition]:
     registry = {preset.name: preset for preset in presets}
     if len(registry) != len(presets):
         raise ValueError("Preset names must be unique.")
@@ -234,14 +332,14 @@ def _registry_by_name(presets: tuple[PolicyPreset, ...]) -> Mapping[str, PolicyP
     return MappingProxyType(registry)
 
 
-PRESET_REGISTRY = _registry_by_name(PRESETS)
+PRESET_REGISTRY = _registry_by_name(ALL_PRESETS)
 
 
 def preset_names() -> tuple[str, ...]:
     return tuple(PRESET_REGISTRY)
 
 
-def get_preset(name: str) -> PolicyPreset:
+def get_preset(name: str) -> PresetDefinition:
     try:
         return PRESET_REGISTRY[name]
     except KeyError as error:
@@ -249,7 +347,31 @@ def get_preset(name: str) -> PolicyPreset:
         raise ValueError(f"Unknown preset {name!r}. Valid presets: {valid}.") from error
 
 
-def render_preset_text(preset: PolicyPreset) -> str:
+def render_preset_text(preset: PresetDefinition) -> str:
+    if isinstance(preset, ContainedAgentPreset):
+        settings = preset.as_public_mapping()["settings"]
+        lines = [
+            f"AgentGuard preset: {preset.name} (experimental for {preset.experimental_for})",
+            f"Summary: {preset.summary}",
+            f"Intended use: {preset.intended_use}",
+            f"Validation posture: {preset.validation_posture}",
+            (
+                "Execution boundary: Docker-backed application-level containment "
+                "via agentguard contained-run with documented Docker and host trust assumptions"
+            ),
+            (
+                "Suitable for untrusted code: only when launched by "
+                "agentguard contained-run after successful Docker preflight"
+            ),
+            "Requirements:",
+            *(f"- {item}" for item in preset.requirements),
+            "Limitations:",
+            *(f"- {item}" for item in preset.limitations),
+            "Contained-run settings:",
+            yaml.safe_dump(settings, sort_keys=False, allow_unicode=True).rstrip(),
+        ]
+        return "\n".join(lines)
+
     settings = preset.settings.as_public_mapping()
     lines = [
         f"AgentGuard preset: {preset.name}{' (default)' if preset.default else ''}",

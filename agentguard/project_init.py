@@ -16,6 +16,7 @@ from agentguard.io import atomic_write_text
 from agentguard.presets import (
     CI_DEFAULT_COMMAND_TIMEOUT_SECONDS,
     CI_DEFAULT_MAX_OUTPUT_BYTES,
+    ContainedAgentPreset,
     DEFAULT_PRESET_NAME,
     PolicyPreset,
     get_preset,
@@ -29,6 +30,13 @@ DOCUMENTATION_URL = "https://richinmrudul.github.io/agentguard/"
 UNKNOWN_TEST_COMMAND = (
     "python -c \"import sys; print('Edit test_command in agentguard.yaml'); "
     "sys.exit(2)\""
+)
+UNTRUSTED_AGENT_PLACEHOLDER_IMAGE = (
+    "registry.example.invalid/agentguard/untrusted-agent@sha256:" + "0" * 64
+)
+UNTRUSTED_AGENT_PLACEHOLDER_COMMAND = (
+    "python -c \"import sys; print('untrusted-agent preset requires "
+    "agentguard contained-run CONFIG -- AGENT_ARGV'); sys.exit(2)\""
 )
 NODE_TEST_COMMAND = "node --test"
 MAX_NODE_PACKAGE_JSON_BYTES = 1024 * 1024
@@ -472,6 +480,82 @@ def _config_content(
     return header + yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
 
 
+def _contained_config_content(preset: ContainedAgentPreset) -> str:
+    data = {
+        "mode": "ci",
+        "task_id": "agentguard_untrusted_agent",
+        "description": (
+            "Experimental contained-run configuration for an explicitly "
+            "launched untrusted coding agent."
+        ),
+        "test_command": UNTRUSTED_AGENT_PLACEHOLDER_COMMAND,
+        "command_timeout_seconds": 300,
+        "max_output_bytes": 200000,
+        "allowed_paths": ["**"],
+        "forbidden_paths": [
+            ".env",
+            ".env.*",
+            "secrets/**",
+            "**/*.pem",
+            "**/*.key",
+        ],
+        "test_paths": ["tests/**"],
+        "expected_modified_files": {"min": 0, "max": 50},
+        "unsafe_commands": ["rm -rf", "curl", "wget", "nc", "chmod 777"],
+        "policy": {
+            "tests_pass": {"severity": "error"},
+            "forbidden_paths": {"severity": "critical"},
+            "test_tampering": {"severity": "error"},
+            "unsafe_commands": {"severity": "critical"},
+            "scope_adherence": {"severity": "warning"},
+            "diff_size": {"severity": "warning"},
+            "secret_scan": {"severity": "critical"},
+        },
+        "diff_limits": {
+            "max_files_changed": 50,
+            "max_lines_added": 2000,
+            "max_lines_deleted": 1000,
+        },
+        "secret_patterns": [".env", ".env.*", "*.pem", "*.key", "secrets/**"],
+        "sandbox": {
+            "type": "docker",
+            "image": UNTRUSTED_AGENT_PLACEHOLDER_IMAGE,
+            "network": "none",
+        },
+        "contained_execution": {
+            "version": 1,
+            "platform": "linux-docker-engine",
+            "network": "none",
+            "image_provenance": "digest-required",
+            "required_uid": os.geteuid(),
+            "required_gid": os.getegid(),
+            "cpu_limit": 1.0,
+            "memory_limit": "512m",
+            "pids_limit": 256,
+            "tmpfs_size": "256m",
+            "require_evidence_outside_agent_repo": True,
+            "allow_privileged": False,
+            "allow_host_network": False,
+            "allow_docker_socket_mount": False,
+            "allow_device_exposure": False,
+            "allow_host_namespace_sharing": False,
+            "environment": [],
+        },
+    }
+    header = (
+        "# AgentGuard experimental untrusted-agent preset for v0.4.0.\n"
+        "# Use only with: agentguard contained-run agentguard.yaml -- AGENT_ARGV\n"
+        "# Ordinary agentguard ci, local-command, and agent-command reject this config.\n"
+        "# Replace sandbox.image with a reviewed digest-pinned image before launch.\n"
+        "# Linux Docker Engine is the supported platform; Docker Desktop is reduced and experimental.\n"
+        "# Network defaults to none. Add only explicit contained_execution.environment entries.\n"
+        "# AgentGuard does not forward ambient host environment variables or tokens.\n"
+        "# This is Docker-backed application-level containment with documented Docker\n"
+        "# and host trust assumptions; it is not a broad safety guarantee.\n"
+    )
+    return header + yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+
+
 def _workflow_content(
     project_type: str, python_setup_commands: tuple[str, ...] = ()
 ) -> str:
@@ -593,10 +677,21 @@ def build_initialization_plan(
         raise ValueError("--ci currently supports only 'github'.")
     root = _validate_root(path)
     selected_preset = get_preset(preset)
+    if isinstance(selected_preset, ContainedAgentPreset) and ci is not None:
+        raise ValueError(
+            "Preset 'untrusted-agent' is for agentguard contained-run only; "
+            "--ci github would create an ordinary uncontained CI workflow."
+        )
     project_type, selected_test_command, command_source, python_setup_commands = _detect_project(
         root, test_command
     )
-    config = _config_content(selected_test_command, command_source, selected_preset)
+    if isinstance(selected_preset, ContainedAgentPreset):
+        config = _contained_config_content(selected_preset)
+        selected_test_command = UNTRUSTED_AGENT_PLACEHOLDER_COMMAND
+        command_source = "contained-run placeholder"
+        python_setup_commands = ()
+    else:
+        config = _config_content(selected_test_command, command_source, selected_preset)
 
     gitignore_target = _target_path(root, GITIGNORE_PATH)
     gitignore_existing = _read_text_if_file(gitignore_target, GITIGNORE_PATH)
