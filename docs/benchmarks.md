@@ -116,7 +116,8 @@ needed, and records sanitized cleanup status. Interruptions and unexpected
 exceptions after process startup use the same bounded cleanup path while the
 original exception remains observable. Docker-backed runs additionally attempt
 to remove the managed container on timeout/error. Cleanup hardening is
-best-effort process containment, not syscall interception or a VM boundary.
+best-effort process containment, not syscall interception or hardware
+virtualization.
 
 ## Core Suite
 

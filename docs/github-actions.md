@@ -112,6 +112,16 @@ process. Put any future command arguments after the literal `--` boundary and
 assemble them as an argv array, not by evaluating a shell string or
 interpolating attacker-controlled GitHub event fields into shell source.
 
+The experimental `untrusted-agent` preset for v0.4.0 generates a starter
+contained-run config for this path only. It requires a digest-pinned Docker
+image, defaults network to `none`, uses explicit
+`contained_execution.environment` allowlist entries, and does not forward
+ambient host environment variables or tokens. Linux Docker Engine is the
+supported platform for full contained-run claims; Docker Desktop is reduced and
+experimental. Do not use ordinary `agentguard ci`, `local-command`, or
+`agent-command` with the generated config; those uncontained paths reject it
+before running tests or agents.
+
 ## Exit Codes
 
 - `PASS` exits `0`.

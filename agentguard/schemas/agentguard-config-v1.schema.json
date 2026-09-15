@@ -190,7 +190,7 @@
     },
     "contained_execution": {
       "$ref": "#/$defs/containedExecution",
-      "description": "Additive v1 contained-agent execution contract. Existing configs without this block keep current runtime behavior."
+      "description": "Additive v1 contained-agent execution contract for agentguard contained-run. Ordinary CI and uncontained agent modes reject configs with this block."
     },
     "benchmark": {
       "type": ["object", "null"],
@@ -389,13 +389,13 @@
       "additionalProperties": false,
       "required": ["version", "platform"],
       "properties": {
-        "version": {"type": "integer", "const": 1, "description": "Contained-execution contract version. Version 1 is a planning contract and is not a runtime mode."},
-        "platform": {"type": "string", "enum": ["linux-docker-engine", "docker-desktop-experimental"], "description": "Claim boundary for future contained execution. Linux Docker Engine is authoritative; Docker Desktop is experimental with reduced claims."},
+        "version": {"type": "integer", "const": 1, "description": "Contained-execution contract version for Docker-backed application-level containment through agentguard contained-run."},
+        "platform": {"type": "string", "enum": ["linux-docker-engine", "docker-desktop-experimental"], "description": "Claim boundary for contained execution. Linux Docker Engine is authoritative; Docker Desktop is experimental with reduced claims."},
         "network": {"type": "string", "enum": ["none", "bridge"], "default": "none", "description": "Default network mode is none; bridge networking requires explicit opt-in. Host networking is never accepted."},
-        "image_provenance": {"type": "string", "const": "digest-required", "default": "digest-required", "description": "Future contained execution must use validated image provenance with immutable digest identity."},
-        "required_uid": {"type": "integer", "minimum": 1, "maximum": 2147483647, "default": 1000, "description": "Required non-root UID for the deterministic Docker preflight probe and future contained execution planning."},
-        "required_gid": {"type": "integer", "minimum": 1, "maximum": 2147483647, "default": 1000, "description": "Required non-root GID for the deterministic Docker preflight probe and future contained execution planning."},
-        "cpu_limit": {"type": "number", "minimum": 0.1, "maximum": 8, "default": 1.0, "description": "Bounded CPU limit for least-privilege contained Docker execution planning."},
+        "image_provenance": {"type": "string", "const": "digest-required", "default": "digest-required", "description": "Contained execution requires image provenance with immutable digest identity."},
+        "required_uid": {"type": "integer", "minimum": 1, "maximum": 2147483647, "default": 1000, "description": "Required non-root UID for the deterministic Docker preflight probe and contained execution."},
+        "required_gid": {"type": "integer", "minimum": 1, "maximum": 2147483647, "default": 1000, "description": "Required non-root GID for the deterministic Docker preflight probe and contained execution."},
+        "cpu_limit": {"type": "number", "minimum": 0.1, "maximum": 8, "default": 1.0, "description": "Bounded CPU limit for least-privilege contained Docker execution."},
         "memory_limit": {"type": "string", "pattern": "^[1-9][0-9]*[kKmMgG]?$", "default": "512m", "description": "Bounded Docker memory limit from 64m through 16g. Production validation enforces byte bounds."},
         "pids_limit": {"type": "integer", "minimum": 16, "maximum": 4096, "default": 256, "description": "Bounded Docker PID limit for contained execution planning."},
         "tmpfs_size": {"type": "string", "pattern": "^[1-9][0-9]*[kKmMgG]?$", "default": "256m", "description": "Bounded tmpfs size from 64k through 4g. Production validation enforces byte bounds."},
@@ -410,7 +410,7 @@
           "maxItems": 32,
           "items": {"$ref": "#/$defs/containedEnvironmentEntry"},
           "default": [],
-          "description": "Explicit allowlist for environment variables supplied to contained agents. Ambient host environment is otherwise denied."
+          "description": "Explicit allowlist for environment variables supplied to contained agents. Ambient host environment and tokens are otherwise denied."
         }
       }
     },

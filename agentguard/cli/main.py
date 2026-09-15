@@ -208,7 +208,7 @@ diagnostics_app = typer.Typer(help="Run deterministic AgentGuard diagnostics.")
 app.add_typer(diagnostics_app, name="diagnostics")
 guard_app = typer.Typer(help="Inspect online guard incident reports.")
 app.add_typer(guard_app, name="guard")
-presets_app = typer.Typer(help="List and inspect post-execution CI policy presets.")
+presets_app = typer.Typer(help="List and inspect AgentGuard presets.")
 app.add_typer(presets_app, name="presets")
 
 
@@ -300,7 +300,10 @@ def init_command(
     preset: str = typer.Option(
         DEFAULT_PRESET_NAME,
         "--preset",
-        help="CI validation preset: minimal, recommended (default), or strict.",
+        help=(
+            "Preset: minimal, recommended (default), strict, or experimental "
+            "untrusted-agent for contained-run only."
+        ),
     ),
 ) -> None:
     """Safely initialize AgentGuard in an existing project."""
@@ -351,10 +354,18 @@ def init_command(
             for item in matching:
                 safe_echo(f"- {item.relative_path.as_posix()}")
 
-    safe_echo(f"Next local command: agentguard ci --config {INIT_CONFIG_PATH}")
+    if plan.preset_name == "untrusted-agent":
+        safe_echo(
+            f"Next contained command: agentguard contained-run {INIT_CONFIG_PATH} -- AGENT_ARGV"
+        )
+        safe_echo(
+            "Next CI step: do not use ordinary agentguard ci; review contained-run docs/workflow."
+        )
+    else:
+        safe_echo(f"Next local command: agentguard ci --config {INIT_CONFIG_PATH}")
     if plan.ci_enabled:
         safe_echo("Next CI step: review and commit .github/workflows/agentguard.yml")
-    else:
+    elif plan.preset_name != "untrusted-agent":
         safe_echo("Next CI step: rerun with --ci github to generate GitHub Actions")
     safe_echo(f"Documentation: {INIT_DOCUMENTATION_URL}")
 
@@ -371,13 +382,24 @@ def init_command(
 
 @presets_app.command("list")
 def presets_list() -> None:
-    """List the available post-execution CI validation presets."""
-    safe_echo("AgentGuard CI policy presets")
+    """List the available AgentGuard presets."""
+    safe_echo("AgentGuard presets")
     for preset in PRESETS:
         default = " (default)" if preset.default else ""
         safe_echo(f"- {preset.name}{default}: {preset.intended_use}")
         safe_echo(f"  {preset.validation_posture}")
-    safe_echo("Execution boundary: none of these presets contains agent execution.")
+    safe_echo(
+        "- untrusted-agent (experimental): contained-run only for explicitly "
+        "launched untrusted agents."
+    )
+    safe_echo(
+        "  Docker-backed application-level containment via agentguard contained-run; "
+        "ordinary CI and uncontained modes reject it."
+    )
+    safe_echo(
+        "Execution boundary: minimal/recommended/strict contain no execution; "
+        "untrusted-agent requires contained-run and Docker preflight."
+    )
 
 
 @presets_app.command("show")
@@ -389,7 +411,7 @@ def presets_show(
         help="Output format: text, yaml, or json.",
     ),
 ) -> None:
-    """Show the exact public definition of a CI validation preset."""
+    """Show the exact public definition of an AgentGuard preset."""
     try:
         preset = get_preset(name)
         if output_format == "text":

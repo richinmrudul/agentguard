@@ -16,11 +16,12 @@ from agentguard.core.ci import run_ci
 from agentguard.core.result import CommandResult
 from agentguard.instrumentation.command_tracker import CommandTracker
 from agentguard.instrumentation.test_runner import TestRunner as CommandTestRunner
-from agentguard.presets import get_preset, preset_names
+from agentguard.presets import PRESETS, get_preset
 from agentguard.project_init import build_initialization_plan
 
 
 runner = CliRunner()
+STABLE_PRESET_NAMES = tuple(preset.name for preset in PRESETS)
 
 
 def _write_fixture_wheel(
@@ -333,7 +334,7 @@ def test_explicit_test_command_metacharacters_are_not_shell_injectable(
 def test_all_presets_load_and_evaluate_through_production_ci_path(
     tmp_path: Path,
 ) -> None:
-    for preset_name in preset_names():
+    for preset_name in STABLE_PRESET_NAMES:
         root = tmp_path / preset_name
         _repository(root)
         initialized = runner.invoke(
@@ -367,7 +368,7 @@ def test_preset_thresholds_change_actual_ci_validation_behavior(
     tmp_path: Path,
 ) -> None:
     outcomes = {}
-    for preset_name in preset_names():
+    for preset_name in STABLE_PRESET_NAMES:
         root = tmp_path / preset_name
         _repository(root)
         initialized = runner.invoke(
@@ -434,7 +435,7 @@ def test_generated_execution_limits_are_consumed_by_ci_test_runner(
             )
 
     monkeypatch.setattr("agentguard.core.ci.TestRunner", RecordingTestRunner)
-    for preset_name in preset_names():
+    for preset_name in STABLE_PRESET_NAMES:
         root = tmp_path / preset_name
         _repository(root)
         initialized = runner.invoke(
@@ -461,7 +462,7 @@ def test_generated_execution_limits_are_consumed_by_ci_test_runner(
             get_preset(name).settings.command_timeout_seconds,
             get_preset(name).settings.max_output_bytes,
         )
-        for name in preset_names()
+        for name in STABLE_PRESET_NAMES
     ]
 
 

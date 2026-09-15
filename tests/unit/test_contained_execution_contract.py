@@ -28,7 +28,7 @@ def test_contained_execution_contract_documents_required_boundaries() -> None:
         "malicious or vulnerable host kernels",
         "existing execution modes remain unchanged",
         "future contained-agent application-level boundary",
-        "`untrusted-agent` preset remains unavailable",
+        "experimental `untrusted-agent` preset is available only for this contained-run workflow",
         "contained workspace lifecycle foundation",
         "the original repository is never mounted as the writable agent workspace",
         "without inheriting `.git` control metadata",
@@ -39,7 +39,7 @@ def test_contained_execution_contract_documents_required_boundaries() -> None:
         "causes capture to fail closed",
         "regular-file copy uses a copy-time identity check",
         "user-visible errors do not expose private absolute host paths or credentials",
-        "does not launch an agent",
+        "does not change existing benchmark, local-command, agent-command, suite, matrix, or ci behavior",
     ]
 
     for phrase in required_phrases:

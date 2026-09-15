@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from agentguard.artifact_paths import artifact_directory
 from agentguard.config.loader import load_config
+from agentguard.config.contained_only import reject_contained_execution_in_uncontained_mode
 from agentguard.checks.secret_content import with_secret_content_scan
 from agentguard.core.orchestrator import default_checks
 from agentguard.core.result import CiResult, ReportPaths
@@ -210,6 +211,7 @@ def run_ci(
     head_ref: Optional[str] = None,
 ) -> CiResult:
     config = load_config(config_path)
+    reject_contained_execution_in_uncontained_mode(config, "agentguard ci")
     timeline = TimelineRecorder()
     timeline.add(
         "ci_started",

@@ -7,9 +7,9 @@ fails before agent startup when required security properties cannot be verified.
 
 This page is authoritative for containment claims. Existing execution modes
 remain unchanged by this contract, including current benchmark, Docker,
-local-command, and CI modes. The
-`untrusted-agent` preset remains unavailable until AgentGuard has a complete
-workflow that implements this contract end to end.
+local-command, and CI modes. The experimental `untrusted-agent` preset is
+available only for this contained-run workflow; uncontained execution paths
+reject configs with `contained_execution` before running tests or agents.
 
 ## Assets And Goals
 
@@ -362,10 +362,9 @@ workspace. Preparation, capture, cleanup, and recovery diagnostics are
 controlled and sanitized so user-visible errors do not expose private absolute
 host paths or credentials.
 
-This lifecycle foundation is not a public contained runner, does not launch an
-agent, does not execute repository code, does not change Docker preflight
-semantics, and does not change existing benchmark, local-command,
-agent-command, suite, matrix, or CI behavior.
+This lifecycle foundation is used by the public `contained-run` entrypoint. It
+does not change Docker preflight semantics and does not change existing
+benchmark, local-command, agent-command, suite, matrix, or CI behavior.
 
 ## Configuration Contract
 
@@ -405,7 +404,7 @@ contained_execution:
 
 `network: bridge` is accepted only when explicitly configured; omission defaults
 to `none`. `platform: docker-desktop-experimental` is accepted only as a
-reduced-claim planning value. Omitted optional fields take the secure v1
+reduced-claim value. Omitted optional fields take the conservative v1
 defaults shown above. Attempts to opt into host networking, privileged
 containers, Docker socket mounts, host devices, host namespaces, mutable
 tag-only provenance, in-repository evidence, malformed limits, or unbounded
@@ -430,8 +429,8 @@ The v1 JSON Schema remains additive and keeps package version `0.3.1`.
 
 ## Explicit Non-Goals And Non-Claims
 
-Contained execution is not a formal sandbox proof, VM isolation claim, malware
-analysis environment, or substitute for least-privilege host credentials.
+Contained execution is not a formal isolation proof, malware analysis
+environment, or substitute for least-privilege host credentials.
 
 Container escape, malicious or vulnerable host kernels, malicious Docker daemon
 behavior, compromised host administrators, side channels, supply-chain attacks

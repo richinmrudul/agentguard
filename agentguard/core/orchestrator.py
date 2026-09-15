@@ -14,6 +14,7 @@ from agentguard.checks.base import Check
 from agentguard.checks.registry import instantiate_checks
 from agentguard.checks.secret_content import with_secret_content_scan
 from agentguard.config.loader import load_config
+from agentguard.config.contained_only import reject_contained_execution_in_uncontained_mode
 from agentguard.containment.evidence import evidence_from_benchmark_result
 from agentguard.core.result import (
     BenchmarkResult,
@@ -548,6 +549,10 @@ def run_benchmark(
     started = time.monotonic()
     with _measure_stage(timing_recorder, "configuration"):
         config = load_config(config_path)
+        reject_contained_execution_in_uncontained_mode(
+            config,
+            f"agentguard run --agent {agent_name}",
+        )
     if evaluation_profile is None:
         _validate_agent_config(config, agent_name)
     timeline = TimelineRecorder()
