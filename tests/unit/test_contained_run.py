@@ -70,6 +70,34 @@ def _config(tmp_path: Path, **updates) -> Path:
     return path
 
 
+def _cwd_config(tmp_path: Path, **updates) -> Path:
+    data = {
+        "task_id": updates.pop("task_id", "contained_default_artifacts"),
+        "mode": "ci",
+        "description": "Contained run current-working-directory source test.",
+        "test_command": "true",
+        "expected_modified_files": {"min": 0, "max": 5},
+        "unsafe_commands": [],
+        "sandbox": {
+            "type": "docker",
+            "image": IMAGE,
+            "network": "none",
+        },
+        "contained_execution": {
+            "version": 1,
+            "platform": "linux-docker-engine",
+            "network": "none",
+            "image_provenance": "digest-required",
+            "required_uid": os.geteuid(),
+            "required_gid": os.getegid(),
+        },
+    }
+    data.update(updates)
+    path = tmp_path / f"{data['task_id']}.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return path
+
+
 def _run(config_path: Path, command: list[str], tmp_path: Path, **kwargs):
     return run_contained_agent_command(
         config_path,
@@ -91,6 +119,227 @@ def _preflight(_config, *, status=DockerPreflightStatus.SUPPORTED):
         in {DockerPreflightStatus.SUPPORTED, DockerPreflightStatus.EXPERIMENTAL},
         checks=[],
     )
+
+
+def _successful_fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+    return CommandResult(
+        command="contained-run",
+        exit_code=0,
+        stdout="ok",
+        stderr="",
+        duration_seconds=0.01,
+    )
+
+
+def test_default_contained_run_artifacts_do_not_poison_cwd_workspace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source repo"
+    source.mkdir()
+    (source / "hello.txt").write_text("hello\n", encoding="utf-8")
+    config_path = _cwd_config(tmp_path)
+    monkeypatch.chdir(source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    first = run_contained_agent_command(
+        config_path,
+        ["true"],
+        docker_executor=_successful_fake_executor,
+    )
+    second = run_contained_agent_command(
+        config_path,
+        ["true"],
+        docker_executor=_successful_fake_executor,
+    )
+
+    assert first.result == "PASS"
+    assert second.result == "PASS"
+    assert first.report_path.is_file()
+    assert second.report_path.is_file()
+    assert first.run_dir.resolve().is_relative_to(
+        source / ".agentguard" / "contained-runs"
+    )
+    assert second.run_dir.resolve().is_relative_to(
+        source / ".agentguard" / "contained-runs"
+    )
+    assert ".agentguard" not in second.diff_summary.changed_files
+    assert second.mutations["changed_files"] == []
+    assert not (source / "workspace-lifecycle").exists()
+
+
+def test_default_prior_artifacts_do_not_change_mutation_totals_or_policy(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "hello.txt").write_text("hello\n", encoding="utf-8")
+    config_path = _cwd_config(
+        tmp_path,
+        forbidden_paths=[".agentguard/**"],
+        secret_patterns=[".agentguard/**"],
+        expected_modified_files={"min": 0, "max": 0},
+    )
+    monkeypatch.chdir(source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    first = run_contained_agent_command(
+        config_path,
+        ["true"],
+        docker_executor=_successful_fake_executor,
+    )
+    second = run_contained_agent_command(
+        config_path,
+        ["true"],
+        docker_executor=_successful_fake_executor,
+    )
+
+    assert first.result == "PASS"
+    assert second.result == "PASS"
+    assert second.diff_summary.added_files == []
+    assert second.diff_summary.deleted_files == []
+    assert second.diff_summary.modified_files == []
+    assert second.mutations["changed_files"] == []
+    assert all(check.passed for check in second.check_results)
+
+
+def test_default_artifact_filter_preserves_ignored_and_untracked_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / ".gitignore").write_text("ignored.txt\n", encoding="utf-8")
+    (source / "ignored.txt").write_text("ignored\n", encoding="utf-8")
+    (source / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+    config_path = _cwd_config(tmp_path)
+    monkeypatch.chdir(source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+    captured: dict[str, list[str]] = {}
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        captured["workspace"] = sorted(
+            path.relative_to(cwd).as_posix()
+            for path in cwd.rglob("*")
+            if path.is_file()
+        )
+        return _successful_fake_executor(argv, cwd, timeout_seconds, max_output_bytes)
+
+    result = run_contained_agent_command(
+        config_path,
+        ["true"],
+        docker_executor=fake_executor,
+    )
+
+    assert result.result == "PASS"
+    assert "ignored.txt" in captured["workspace"]
+    assert "untracked.txt" in captured["workspace"]
+
+
+def test_default_artifact_filter_rejects_attacker_agentguard_content(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source"
+    (source / ".agentguard").mkdir(parents=True)
+    (source / ".agentguard" / "attacker.txt").write_text("owned by user\n", encoding="utf-8")
+    config_path = _cwd_config(tmp_path)
+    monkeypatch.chdir(source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    result = run_contained_agent_command(
+        config_path,
+        ["true"],
+        docker_executor=_successful_fake_executor,
+    )
+
+    assert result.result == "FAIL"
+    assert result.failure is not None
+    assert result.failure.stage == "workspace_prep"
+    assert "reserved path" in result.failure.message
+
+
+def test_forged_default_artifact_metadata_is_not_excluded(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "source"
+    forged = source / ".agentguard" / "contained-runs" / "forged-contained-20260101000000000000-deadbeef"
+    forged.mkdir(parents=True)
+    (forged / "agentguard-contained-run-artifact.json").write_text(
+        json.dumps(
+            {
+                "schema": "agentguard.contained-run-artifact",
+                "schema_version": 1,
+                "owner": "agentguard",
+                "artifact_kind": "contained-run",
+                "run_id": forged.name,
+                "lifecycle_state": "complete",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (forged / "payload.txt").write_text("attacker controlled\n", encoding="utf-8")
+    config_path = _cwd_config(tmp_path)
+    monkeypatch.chdir(source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    result = run_contained_agent_command(
+        config_path,
+        ["true"],
+        docker_executor=_successful_fake_executor,
+    )
+
+    assert result.result == "FAIL"
+    assert result.failure is not None
+    assert "reserved path" in result.failure.message
+
+
+def test_default_artifact_symlink_and_hardlink_are_not_trusted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    if not hasattr(os, "symlink"):
+        pytest.skip("Symlinks are unavailable")
+    source = tmp_path / "source"
+    runs = source / ".agentguard" / "contained-runs"
+    runs.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "payload.txt").write_text("outside\n", encoding="utf-8")
+    (runs / "linked-contained-20260101000000000000-deadbeef").symlink_to(outside)
+    config_path = _cwd_config(tmp_path)
+    monkeypatch.chdir(source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    result = run_contained_agent_command(
+        config_path,
+        ["true"],
+        docker_executor=_successful_fake_executor,
+    )
+
+    assert result.result == "FAIL"
+    assert result.failure is not None
+    assert "reserved path" in result.failure.message
 
 
 def test_contained_run_preserves_structured_argv_and_uses_docker_spec(
