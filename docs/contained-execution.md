@@ -143,8 +143,11 @@ control or adjacent controls including non-root identity, read-only rootfs,
 absence of privileged mode, host devices, Docker socket mounts, and host
 namespace sharing. AgentGuard does not claim that Docker inspection proves
 host-kernel or daemon enforcement beyond those Docker-inspectable container
-facts. Malformed, missing, contradictory, oversized, timed-out, or unsupported
-responses fail closed.
+facts. Probe cleanup removes only the owned probe container by immutable
+container identity and verifies post-remove absence; a cleanup failure or
+ambiguous liveness check is reported as failed cleanup evidence. Malformed,
+missing, contradictory, oversized, timed-out, or unsupported responses fail
+closed.
 
 Results are structured as one of:
 

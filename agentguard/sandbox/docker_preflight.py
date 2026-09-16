@@ -758,7 +758,8 @@ def _validate_required_capabilities(
         max_output_bytes,
         checks,
     )
-    if config.sandbox.memory is not None and info.get("MemoryLimit") is not True:
+    contained = config.contained_execution
+    if info.get("MemoryLimit") is not True:
         raise DockerPreflightError(
             DockerPreflightStatus.UNSAFE,
             _check(
@@ -766,9 +767,20 @@ def _validate_required_capabilities(
                 False,
                 DockerPreflightStatus.UNSAFE,
                 "Docker daemon did not report memory limit support.",
+                {
+                    "requested": {
+                        "pids_limit": contained.pids_limit,
+                        "memory_limit": contained.memory_limit,
+                        "cpu_limit": contained.cpu_limit,
+                    },
+                    "daemon_signals": {
+                        "memory_limit": info.get("MemoryLimit") is True,
+                        "cpu_count_present": _positive_int(info.get("NCPU")) is not None,
+                    },
+                },
             ),
         )
-    if config.sandbox.cpus is not None and _positive_int(info.get("NCPU")) is None:
+    if _positive_int(info.get("NCPU")) is None:
         raise DockerPreflightError(
             DockerPreflightStatus.UNSAFE,
             _check(
@@ -776,6 +788,17 @@ def _validate_required_capabilities(
                 False,
                 DockerPreflightStatus.UNSAFE,
                 "Docker daemon did not report CPU limit support.",
+                {
+                    "requested": {
+                        "pids_limit": contained.pids_limit,
+                        "memory_limit": contained.memory_limit,
+                        "cpu_limit": contained.cpu_limit,
+                    },
+                    "daemon_signals": {
+                        "memory_limit": info.get("MemoryLimit") is True,
+                        "cpu_count_present": _positive_int(info.get("NCPU")) is not None,
+                    },
+                },
             ),
         )
     checks.append(
@@ -786,9 +809,9 @@ def _validate_required_capabilities(
             "Requested Docker resource-limit inputs are in range; exact container configuration is verified by the controlled inspect probe.",
             {
                 "requested": {
-                    "pids_limit": config.contained_execution.pids_limit,
-                    "memory_limit": config.contained_execution.memory_limit,
-                    "cpu_limit": config.contained_execution.cpu_limit,
+                    "pids_limit": contained.pids_limit,
+                    "memory_limit": contained.memory_limit,
+                    "cpu_limit": contained.cpu_limit,
                 },
                 "daemon_signals": {
                     "memory_limit": info.get("MemoryLimit") is True,
@@ -1516,7 +1539,12 @@ def _cleanup_probe_container(
         )
     except DockerPreflightError:
         return "cleanup_failed"
-    return "removed"
+    return _verify_probe_container_absent(
+        runner,
+        container_ref,
+        timeout_seconds,
+        max_output_bytes,
+    )
 
 
 def _cleanup_probe_container_quiet(
@@ -1526,6 +1554,33 @@ def _cleanup_probe_container_quiet(
     max_output_bytes: int,
 ) -> str:
     return _cleanup_probe_container(runner, container_ref, timeout_seconds, max_output_bytes)
+
+
+def _verify_probe_container_absent(
+    runner: CommandRunner,
+    container_ref: str,
+    timeout_seconds: int,
+    max_output_bytes: int,
+) -> str:
+    completed = runner(
+        ["docker", "container", "inspect", "--format", "{{json .}}", container_ref],
+        timeout_seconds,
+        max_output_bytes,
+    )
+    if completed.timed_out or completed.stdout_truncated or completed.stderr_truncated:
+        return "cleanup_verification_failed"
+    if completed.returncode != 0:
+        return "removed"
+    try:
+        value = json.loads(completed.stdout)
+        _validate_json_bounds(value, depth=0)
+    except (json.JSONDecodeError, ValueError):
+        return "cleanup_verification_failed"
+    if isinstance(value, list) and len(value) == 1:
+        value = value[0]
+    if isinstance(value, dict):
+        return "cleanup_still_present"
+    return "cleanup_verification_failed"
 
 
 def _cleanup_named_probe_if_owned(

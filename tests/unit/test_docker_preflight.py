@@ -89,6 +89,7 @@ class FakeDocker:
         inspect=None,
         probe=None,
         fail=None,
+        present_after_rm=False,
     ) -> None:
         self.version = _version() if version is None else version
         self.info = _info() if info is None else info
@@ -108,6 +109,8 @@ class FakeDocker:
         self.fail = fail or {}
         self.commands = []
         self.removed = []
+        self.container_present = True
+        self.present_after_rm = present_after_rm
 
     def _inspect_payload(self, **overrides):
         payload = {
@@ -189,7 +192,14 @@ class FakeDocker:
             return DockerPreflightCommandResult(argv, 0, stdout="")
         if key == "rm":
             self.removed.append(argv[-1])
+            self.container_present = self.present_after_rm
             return DockerPreflightCommandResult(argv, 0, stdout=argv[-1])
+        if key == "inspect" and not self.container_present:
+            return DockerPreflightCommandResult(
+                argv,
+                1,
+                stderr=f"Error: No such container: {argv[-1]}",
+            )
         payload = {
             "version": self.version,
             "info": self.info,
@@ -263,6 +273,7 @@ def test_authoritative_linux_preflight_success() -> None:
         ["docker", "container"],
         ["docker", "start"],
         ["docker", "rm"],
+        ["docker", "container"],
         ["docker", "run"],
     ]
     create_command = fake.commands[4]
@@ -278,6 +289,7 @@ def test_authoritative_linux_preflight_success() -> None:
     assert fake.commands[5][-1] == CONTAINER_ID
     assert fake.commands[6][-1] == CONTAINER_ID
     assert fake.commands[7][-1] == CONTAINER_ID
+    assert fake.commands[8][-1] == CONTAINER_ID
     run_command = fake.commands[-1]
     assert "--user" in run_command
     assert "1000:1000" in run_command
@@ -422,6 +434,34 @@ def test_missing_required_capability_is_unsafe() -> None:
 
 
 @pytest.mark.parametrize(
+    ("info", "signal"),
+    [
+        (_info(memory_limit=False), "memory_limit"),
+        ({key: value for key, value in _info().items() if key != "NCPU"}, "cpu_count_present"),
+    ],
+)
+def test_contained_resource_capabilities_required_when_legacy_sandbox_limits_unset(
+    info: dict[str, object],
+    signal: str,
+) -> None:
+    sandbox = replace(_config().sandbox, memory=None, cpus=None)
+
+    result = run_docker_preflight(
+        _config(sandbox=sandbox),
+        command_runner=FakeDocker(info=info),
+    )
+
+    assert result.status == DockerPreflightStatus.UNSAFE
+    assert result.checks[-1].name == "resource_limits"
+    assert result.checks[-1].evidence["requested"] == {
+        "pids_limit": 256,
+        "memory_limit": "512m",
+        "cpu_limit": 1.0,
+    }
+    assert result.checks[-1].evidence["daemon_signals"][signal] is False
+
+
+@pytest.mark.parametrize(
     ("field", "value"),
     [
         ("PidsLimit", 0),
@@ -547,6 +587,36 @@ def test_resource_control_probe_cleanup_failure_is_reported() -> None:
     assert result.status == DockerPreflightStatus.UNSAFE
     assert result.checks[-1].name == "resource_control_probe_cleanup"
     assert result.checks[-1].evidence["cleanup_status"] == "cleanup_failed"
+
+
+def test_resource_control_probe_cleanup_success_requires_verified_absence() -> None:
+    fake = FakeDocker()
+
+    result = run_docker_preflight(_config(), command_runner=fake)
+
+    assert result.status == DockerPreflightStatus.SUPPORTED
+    resource = next(check for check in result.checks if check.name == "resource_control_probe")
+    assert resource.evidence["cleanup"]["status"] == "removed"
+    rm_index = fake.commands.index(["docker", "rm", "-f", CONTAINER_ID])
+    assert fake.commands[rm_index + 1] == [
+        "docker",
+        "container",
+        "inspect",
+        "--format",
+        "{{json .}}",
+        CONTAINER_ID,
+    ]
+
+
+def test_resource_control_probe_cleanup_fails_when_container_still_present() -> None:
+    fake = FakeDocker(present_after_rm=True)
+
+    result = run_docker_preflight(_config(), command_runner=fake)
+
+    assert result.status == DockerPreflightStatus.UNSAFE
+    assert result.checks[-1].name == "resource_control_probe_cleanup"
+    assert result.checks[-1].evidence["cleanup_status"] == "cleanup_still_present"
+    assert ["docker", "rm", "-f", CONTAINER_ID] in fake.commands
 
 
 def test_failed_create_does_not_remove_unrelated_similarly_named_container() -> None:
