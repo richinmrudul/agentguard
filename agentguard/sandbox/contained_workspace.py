@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import codecs
 import json
 import os
 import shutil
 import stat
 import subprocess
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Optional
 from uuid import uuid4
@@ -19,6 +20,7 @@ CONTAINED_WORKSPACE_SCHEMA_VERSION = 1
 CONTAINED_RUN_ARTIFACT_SCHEMA = "agentguard.contained-run-artifact"
 CONTAINED_RUN_ARTIFACT_SCHEMA_VERSION = 1
 CONTAINED_RUN_ARTIFACT_MARKER = "agentguard-contained-run-artifact.json"
+CONTAINED_BASELINE_TEXT_MAX_BYTES = 8 * 1024 * 1024
 DEFAULT_AGENT_WORKSPACE_PATH = "/agentguard-workspace"
 DEFAULT_EVIDENCE_PATH = "/agentguard-evidence"
 RESERVED_PATHS = (
@@ -62,6 +64,9 @@ class ContainedPathSnapshot:
     size: int
     sha256: Optional[str]
     mode: int
+    line_count: Optional[int] = None
+    line_count_complete: bool = True
+    content_kind: str = "not_applicable"
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,13 @@ class ContainedWorkspaceMutations:
     deleted_files: tuple[str, ...]
     renamed_files: tuple[tuple[str, str], ...]
     current_digest: str
+    baseline_files: tuple[ContainedPathSnapshot, ...] = ()
+    current_files: tuple[ContainedPathSnapshot, ...] = ()
+    baseline_text_files: dict[str, tuple[bytes, ...]] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
 
     @property
     def changed_files(self) -> tuple[str, ...]:
@@ -134,6 +146,11 @@ class PreparedContainedWorkspace:
     workspace_dir: Path
     evidence_dir: Path
     metadata: ContainedWorkspaceMetadata
+    baseline_text_files: dict[str, tuple[bytes, ...]] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
 
     def capture_mutations(
         self,
@@ -223,6 +240,11 @@ def prepare_contained_workspace(
         workspace_dir.mkdir(parents=True)
         evidence_dir.mkdir()
         _copy_validated_tree(source_root, workspace_dir, limits, exclusions=exclusions)
+        baseline_text_files = _collect_baseline_text_files(
+            workspace_dir,
+            baseline.files,
+            limits,
+        )
         _write_metadata(evidence_dir / "workspace-metadata.json", metadata)
         os.replace(staging_dir, run_dir)
     except ContainedWorkspaceError:
@@ -240,6 +262,7 @@ def prepare_contained_workspace(
         workspace_dir=final_workspace_dir,
         evidence_dir=final_evidence_dir,
         metadata=metadata,
+        baseline_text_files=baseline_text_files,
     )
 
 
@@ -296,6 +319,9 @@ def capture_contained_workspace_mutations(
         deleted_files=tuple(deleted),
         renamed_files=tuple(renamed),
         current_digest=digest,
+        baseline_files=prepared.metadata.baseline.files,
+        current_files=current_files,
+        baseline_text_files=dict(prepared.baseline_text_files),
     )
 
 
@@ -775,13 +801,18 @@ def _scan_tree(
             total_bytes += size
             if total_bytes > limits.max_total_bytes:
                 raise ContainedWorkspaceError("contained workspace total size limit exceeded")
+            digest = _hash_regular_file(source_path, info)
+            line_count, line_complete, content_kind = _measure_file(source_path, info)
             snapshots.append(
                 ContainedPathSnapshot(
                     path=relative_path,
                     kind="file",
                     size=size,
-                    sha256=_hash_regular_file(source_path, info),
+                    sha256=digest,
                     mode=stat.S_IMODE(info.st_mode),
+                    line_count=line_count,
+                    line_count_complete=line_complete,
+                    content_kind=content_kind,
                 )
             )
         elif stat.S_ISLNK(info.st_mode):
@@ -797,6 +828,7 @@ def _scan_tree(
                     size=len(target.encode("utf-8")),
                     sha256=hashlib.sha256(target.encode("utf-8")).hexdigest(),
                     mode=stat.S_IMODE(info.st_mode),
+                    content_kind="symlink",
                 )
             )
     return sorted(snapshots, key=lambda item: item.path)
@@ -1028,6 +1060,77 @@ def _hash_regular_file(
             except OSError:
                 pass
     return digest.hexdigest()
+
+
+def _measure_file(
+    source_path: Path,
+    expected: os.stat_result,
+) -> tuple[Optional[int], bool, str]:
+    descriptor = _open_validated_regular_file(source_path, expected)
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    newline_count = 0
+    saw_bytes = False
+    last_byte = b""
+    binary = False
+    text_decodable = True
+    try:
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                if chunk:
+                    saw_bytes = True
+                    last_byte = chunk[-1:]
+                    newline_count += chunk.count(b"\n")
+                    if b"\0" in chunk:
+                        binary = True
+                    if text_decodable:
+                        try:
+                            decoder.decode(chunk)
+                        except UnicodeDecodeError:
+                            text_decodable = False
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    if text_decodable:
+        try:
+            decoder.decode(b"", final=True)
+        except UnicodeDecodeError:
+            text_decodable = False
+    if binary:
+        return None, False, "binary"
+    if not text_decodable:
+        return None, False, "non_utf8"
+    line_count = newline_count + (1 if saw_bytes and last_byte != b"\n" else 0)
+    return line_count, True, "text"
+
+
+def _collect_baseline_text_files(
+    workspace_dir: Path,
+    files: tuple[ContainedPathSnapshot, ...],
+    limits: ContainedWorkspaceLimits,
+) -> dict[str, tuple[bytes, ...]]:
+    collected: dict[str, tuple[bytes, ...]] = {}
+    total_bytes = 0
+    for snapshot in files:
+        if snapshot.kind != "file" or snapshot.content_kind != "text":
+            continue
+        if not snapshot.line_count_complete:
+            continue
+        total_bytes += snapshot.size
+        if total_bytes > min(limits.max_total_bytes, CONTAINED_BASELINE_TEXT_MAX_BYTES):
+            break
+        path = _destination_for(workspace_dir, snapshot.path)
+        try:
+            content = path.read_bytes()
+        except OSError:
+            continue
+        if len(content) != snapshot.size or b"\0" in content:
+            continue
+        collected[snapshot.path] = tuple(content.splitlines(keepends=True))
+    return collected
 
 
 def _read_validated_symlink(

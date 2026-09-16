@@ -26,6 +26,12 @@ from agentguard.core.contained_run import (
 from agentguard.core import contained_run
 from agentguard.core.result import CommandResult
 from agentguard.sandbox import docker_preflight
+from agentguard.sandbox.contained_workspace import (
+    ContainedPathSnapshot,
+    ContainedWorkspaceLimits,
+    _collect_baseline_text_files,
+    _measure_file,
+)
 from agentguard.sandbox.docker_preflight import DockerPreflightStatus
 
 
@@ -411,6 +417,466 @@ def test_contained_run_preserves_structured_argv_and_uses_docker_spec(
     assert str(tmp_path) not in json.dumps(report, sort_keys=True)
     assert report["source_dir"] == "[REDACTED_PATH]"
     assert report["run_dir"] == "[REDACTED_PATH]"
+
+
+def test_contained_run_diff_size_uses_exact_mutation_line_counts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = _config(
+        tmp_path,
+        diff_limits={"max_lines_added": 2, "max_lines_deleted": 0},
+        policy={"diff_size": {"severity": "error"}},
+    )
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        (cwd / "hello.txt").write_text("HELLO\nnew\n", encoding="utf-8")
+        (cwd / "created.txt").write_text("tail", encoding="utf-8")
+        return _successful_fake_executor(argv, cwd, timeout_seconds, max_output_bytes)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.result == "FAIL"
+    assert result.diff_summary.lines_added == 3
+    assert result.diff_summary.lines_deleted == 1
+    assert result.diff_summary.line_count_status == "exact"
+    assert result.diff_summary.line_count_complete is True
+    assert result.diff_summary.unified_diff == ""
+    assert result.diff_summary.unified_diff_status == "not_recorded"
+    diff_size = next(check for check in result.check_results if check.name == "Diff size")
+    assert diff_size.passed is False
+    assert diff_size.evidence == [
+        "Added 3 lines; limit is 2.",
+        "Deleted 1 lines; limit is 0.",
+    ]
+
+
+def test_contained_run_diff_size_fails_closed_for_binary_mutation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = _config(
+        tmp_path,
+        diff_limits={"max_lines_added": 100, "max_lines_deleted": 100},
+        policy={"diff_size": {"severity": "error"}},
+    )
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        (cwd / "blob.bin").write_bytes(b"\0\1binary")
+        return _successful_fake_executor(argv, cwd, timeout_seconds, max_output_bytes)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.result == "FAIL"
+    assert result.diff_summary.line_count_status == "binary"
+    assert result.diff_summary.line_count_complete is False
+    assert result.diff_summary.line_count_error is not None
+    assert "counted safely" in result.diff_summary.line_count_error
+    diff_size = next(check for check in result.check_results if check.name == "Diff size")
+    assert diff_size.passed is False
+    assert diff_size.evidence == [
+        "Diff line count evidence is incomplete or unavailable; "
+        "failing closed for configured line limits "
+        f"({result.diff_summary.line_count_error})."
+    ]
+
+
+def test_contained_run_diff_summary_records_counts_without_raw_diff_text(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = _config(
+        tmp_path,
+        diff_limits={"max_lines_added": 100, "max_lines_deleted": 100},
+        policy={"diff_size": {"severity": "error"}},
+    )
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        (cwd / "many.txt").write_text(
+            "".join(f"line {index}\n" for index in range(20)),
+            encoding="utf-8",
+        )
+        return _successful_fake_executor(argv, cwd, timeout_seconds, max_output_bytes)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.diff_summary.lines_added == 20
+    assert result.diff_summary.lines_deleted == 0
+    assert result.diff_summary.line_count_status == "exact"
+    assert result.diff_summary.unified_diff == ""
+    assert result.diff_summary.unified_diff_truncated is False
+    assert result.diff_summary.unified_diff_status == "not_recorded"
+    diff_size = next(check for check in result.check_results if check.name == "Diff size")
+    assert diff_size.passed is True
+
+
+def test_contained_run_diff_size_passes_exactly_at_line_limit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = _config(
+        tmp_path,
+        diff_limits={"max_lines_added": 2, "max_lines_deleted": 0},
+        policy={"diff_size": {"severity": "error"}},
+    )
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        (cwd / "created.txt").write_text("one\ntwo\n", encoding="utf-8")
+        return _successful_fake_executor(argv, cwd, timeout_seconds, max_output_bytes)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.result == "PASS"
+    assert result.diff_summary.lines_added == 2
+    assert result.diff_summary.lines_deleted == 0
+    assert result.diff_summary.line_count_status == "exact"
+
+
+def test_contained_run_diff_size_counts_deletions(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = _config(
+        tmp_path,
+        diff_limits={"max_lines_added": 0, "max_lines_deleted": 0},
+        policy={"diff_size": {"severity": "error"}},
+    )
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        (cwd / "hello.txt").unlink()
+        return _successful_fake_executor(argv, cwd, timeout_seconds, max_output_bytes)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.result == "FAIL"
+    assert result.diff_summary.lines_added == 0
+    assert result.diff_summary.lines_deleted == 1
+    diff_size = next(check for check in result.check_results if check.name == "Diff size")
+    assert diff_size.evidence == ["Deleted 1 lines; limit is 0."]
+
+
+def test_contained_run_diff_size_counts_added_file_without_final_newline(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = _config(
+        tmp_path,
+        diff_limits={"max_lines_added": 0, "max_lines_deleted": 0},
+        policy={"diff_size": {"severity": "error"}},
+    )
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        (cwd / "tail.txt").write_text("tail", encoding="utf-8")
+        return _successful_fake_executor(argv, cwd, timeout_seconds, max_output_bytes)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.result == "FAIL"
+    assert result.diff_summary.lines_added == 1
+    assert result.diff_summary.lines_deleted == 0
+
+
+def test_contained_run_diff_size_counts_large_single_line_from_snapshot(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = _config(
+        tmp_path,
+        diff_limits={"max_lines_added": 1, "max_lines_deleted": 0},
+        policy={"diff_size": {"severity": "error"}},
+    )
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+    monkeypatch.setattr(contained_run, "CONTAINED_DIFF_MAX_TEXT_BYTES", 4)
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        (cwd / "long.txt").write_text("abcdef", encoding="utf-8")
+        return _successful_fake_executor(argv, cwd, timeout_seconds, max_output_bytes)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.result == "PASS"
+    assert result.diff_summary.lines_added == 1
+    assert result.diff_summary.line_count_status == "exact"
+
+
+def test_contained_run_diff_size_pure_rename_has_no_line_delta(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = _config(
+        tmp_path,
+        expected_modified_files={"min": 0, "max": 3},
+        diff_limits={"max_lines_added": 0, "max_lines_deleted": 0},
+        policy={"diff_size": {"severity": "error"}},
+    )
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        (cwd / "hello.txt").rename(cwd / "moved.txt")
+        return _successful_fake_executor(argv, cwd, timeout_seconds, max_output_bytes)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.result == "PASS"
+    assert result.diff_summary.renamed_files[0].source_path == "hello.txt"
+    assert result.diff_summary.renamed_files[0].destination_path == "moved.txt"
+    assert result.diff_summary.lines_added == 0
+    assert result.diff_summary.lines_deleted == 0
+
+
+def test_contained_diff_build_counts_rename_with_content_change(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "new.txt").write_text("new\nextra\n", encoding="utf-8")
+    old_snapshot = ContainedPathSnapshot(
+        path="old.txt",
+        kind="file",
+        size=4,
+        sha256="old",
+        mode=0o644,
+        line_count=1,
+        content_kind="text",
+    )
+    mutations = SimpleNamespace(
+        modified_files=(),
+        added_files=(),
+        deleted_files=(),
+        renamed_files=(("old.txt", "new.txt"),),
+        baseline_files=(old_snapshot,),
+        current_files=(),
+        baseline_text_files={"old.txt": (b"old\n",)},
+    )
+
+    summary = contained_run._diff_summary_from_mutations(
+        mutations,
+        workspace_dir=workspace,
+    )
+
+    assert summary.renamed_files[0].source_path == "old.txt"
+    assert summary.renamed_files[0].destination_path == "new.txt"
+    assert summary.lines_added == 2
+    assert summary.lines_deleted == 1
+    assert summary.line_count_status == "exact"
+
+
+def test_contained_diff_build_fails_closed_when_total_text_limit_exceeded(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "file.txt").write_text("new\n", encoding="utf-8")
+    snapshot = ContainedPathSnapshot(
+        path="file.txt",
+        kind="file",
+        size=4,
+        sha256="old",
+        mode=0o644,
+        line_count=1,
+        content_kind="text",
+    )
+    mutations = SimpleNamespace(
+        modified_files=("file.txt",),
+        added_files=(),
+        deleted_files=(),
+        renamed_files=(),
+        baseline_files=(snapshot,),
+        current_files=(),
+        baseline_text_files={"file.txt": (b"old\n",)},
+    )
+    monkeypatch.setattr(contained_run, "CONTAINED_DIFF_MAX_TOTAL_TEXT_BYTES", 1)
+
+    summary = contained_run._diff_summary_from_mutations(
+        mutations,
+        workspace_dir=workspace,
+    )
+
+    assert summary.line_count_status == "incomplete"
+    assert summary.line_count_complete is False
+    assert summary.line_count_error == "total diff byte limit exceeded"
+
+
+def test_contained_run_diff_size_fails_closed_when_baseline_text_evidence_missing(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = _config(
+        tmp_path,
+        diff_limits={"max_lines_added": 100, "max_lines_deleted": 100},
+        policy={"diff_size": {"severity": "error"}},
+    )
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+    monkeypatch.setattr(
+        "agentguard.sandbox.contained_workspace._collect_baseline_text_files",
+        lambda workspace_dir, files, limits: {},
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        (cwd / "hello.txt").write_text("changed\n", encoding="utf-8")
+        return _successful_fake_executor(argv, cwd, timeout_seconds, max_output_bytes)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.result == "FAIL"
+    assert result.diff_summary.line_count_status == "unavailable"
+    assert result.diff_summary.line_count_complete is False
+    assert result.diff_summary.line_count_error == "baseline text evidence unavailable"
+    diff_size = next(check for check in result.check_results if check.name == "Diff size")
+    assert diff_size.passed is False
+
+
+def test_contained_diff_helpers_fail_closed_for_malformed_and_unavailable_paths(
+    tmp_path: Path,
+) -> None:
+    missing = contained_run._read_contained_workspace_text(tmp_path, "missing.txt")
+    malformed = contained_run._read_contained_workspace_text(tmp_path, "../escape.txt")
+
+    assert isinstance(missing, contained_run._ContainedTextError)
+    assert missing.status == "unavailable"
+    assert isinstance(malformed, contained_run._ContainedTextError)
+    assert malformed.status == "malformed"
+
+
+def test_contained_diff_helpers_fail_closed_for_non_text_and_oversized_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    binary = tmp_path / "binary.bin"
+    non_utf8 = tmp_path / "non-utf8.txt"
+    large = tmp_path / "large.txt"
+    binary.write_bytes(b"a\0b")
+    non_utf8.write_bytes(b"\xff")
+    large.write_text("abcde", encoding="utf-8")
+    monkeypatch.setattr(contained_run, "CONTAINED_DIFF_MAX_TEXT_BYTES", 4)
+
+    binary_result = contained_run._read_contained_workspace_text(tmp_path, "binary.bin")
+    non_utf8_result = contained_run._read_contained_workspace_text(
+        tmp_path,
+        "non-utf8.txt",
+    )
+    large_result = contained_run._read_contained_workspace_text(tmp_path, "large.txt")
+
+    assert isinstance(binary_result, contained_run._ContainedTextError)
+    assert binary_result.status == "binary"
+    assert isinstance(non_utf8_result, contained_run._ContainedTextError)
+    assert non_utf8_result.status == "binary"
+    assert isinstance(large_result, contained_run._ContainedTextError)
+    assert large_result.status == "incomplete"
+
+
+def test_contained_diff_accumulator_prefers_stronger_error() -> None:
+    accumulator = contained_run._ContainedDiffAccumulator()
+
+    accumulator.add_file_counts(
+        added=contained_run._ContainedTextError("incomplete", "too large"),
+        deleted=0,
+    )
+    accumulator.add_file_counts(
+        added=contained_run._ContainedTextError("malformed", "bad evidence"),
+        deleted=0,
+    )
+    result = accumulator.finish()
+
+    assert result.line_count_status == "malformed"
+    assert result.line_count_error == "bad evidence"
+
+
+def test_contained_workspace_measure_file_classifies_binary_and_non_utf8(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "binary.bin"
+    non_utf8 = tmp_path / "non-utf8.txt"
+    text = tmp_path / "text.txt"
+    binary.write_bytes(b"a\0b")
+    non_utf8.write_bytes(b"\xff")
+    text.write_text("one\ntwo", encoding="utf-8")
+
+    assert _measure_file(binary, binary.lstat()) == (None, False, "binary")
+    assert _measure_file(non_utf8, non_utf8.lstat()) == (None, False, "non_utf8")
+    assert _measure_file(text, text.lstat()) == (2, True, "text")
+
+
+def test_collect_baseline_text_files_is_bounded_and_skips_invalid_entries(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "one.txt").write_text("one\n", encoding="utf-8")
+    (workspace / "two.txt").write_text("two\n", encoding="utf-8")
+    (workspace / "binary.bin").write_bytes(b"\0")
+    files = (
+        ContainedPathSnapshot(
+            path="one.txt",
+            kind="file",
+            size=4,
+            sha256="a",
+            mode=0o644,
+            line_count=1,
+            content_kind="text",
+        ),
+        ContainedPathSnapshot(
+            path="binary.bin",
+            kind="file",
+            size=1,
+            sha256="b",
+            mode=0o644,
+            line_count=None,
+            line_count_complete=False,
+            content_kind="binary",
+        ),
+        ContainedPathSnapshot(
+            path="two.txt",
+            kind="file",
+            size=4,
+            sha256="c",
+            mode=0o644,
+            line_count=1,
+            content_kind="text",
+        ),
+    )
+
+    collected = _collect_baseline_text_files(
+        workspace,
+        files,
+        ContainedWorkspaceLimits(max_total_bytes=4),
+    )
+
+    assert collected == {"one.txt": (b"one\n",)}
 
 
 def test_contained_run_fails_before_workspace_when_preflight_unavailable(
