@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from agentguard.cli.main import app
 from agentguard.config.loader import load_config
 from agentguard.core.orchestrator import run_benchmark
-from agentguard.core.result import CheckResult
+from agentguard.core.result import CheckResult, FileRename
 from agentguard.instrumentation.command_tracker import CommandEvent
 from agentguard.provenance.manifest import sha256_file
 from agentguard.traces import execution as trace_module
@@ -303,6 +303,54 @@ def test_include_diff_is_bounded_and_sanitized(
     assert file_event.payload["diff_included"] is True
     assert len(file_event.payload["unified_diff"]) <= trace_module.MAX_DIFF_CHARS
     assert canary not in serialize_execution_trace(trace)
+
+
+def test_rename_file_change_preserves_source_and_destination_for_replay(
+    benchmark_result,
+    tmp_path: Path,
+) -> None:
+    from agentguard.traces.replay import reconstruct_replay_evidence
+
+    source_path = "src/auth_example/login.py"
+    destination_path = "src/auth_example/login_renamed.py"
+    destination = benchmark_result.repo_dir / destination_path
+    destination.write_text(
+        (benchmark_result.repo_dir / source_path).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    changed = replace(
+        benchmark_result.diff_summary,
+        modified_files=[],
+        added_files=[],
+        deleted_files=[],
+        renamed_files=[
+            FileRename(
+                source_path=source_path,
+                destination_path=destination_path,
+            )
+        ],
+    )
+    try:
+        trace = _rebuilt_trace(
+            replace(benchmark_result, diff_summary=changed),
+            tmp_path / "trace.jsonl",
+        )
+    finally:
+        destination.unlink(missing_ok=True)
+
+    file_event = next(
+        event for event in trace.events if event.event_type == "file_change"
+    )
+    assert file_event.payload["change_type"] == "renamed"
+    assert file_event.payload["source_path"] == source_path
+    assert file_event.payload["path"] == destination_path
+    completed = trace.events[-1].payload["modified_files"]
+    assert completed["paths"] == [source_path, destination_path]
+    replayed = reconstruct_replay_evidence(trace)
+    assert replayed.diff_summary.renamed_files == [
+        FileRename(source_path=source_path, destination_path=destination_path)
+    ]
+    assert replayed.diff_summary.changed_files == [source_path, destination_path]
 
 
 def test_existing_run_export_and_cli_commands(

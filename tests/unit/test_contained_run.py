@@ -2,6 +2,7 @@ import json
 import os
 import stat
 import subprocess
+import unicodedata
 from types import SimpleNamespace
 from pathlib import Path
 from typing import Optional
@@ -223,6 +224,331 @@ def test_contained_run_report_sanitizes_command_paths_with_spaces_and_unicode(
     assert str(tmp_path) not in serialized
     assert "source repo café" not in serialized
     assert "private dir café" not in serialized
+
+
+def _rename_config(tmp_path: Path, source: Path, **updates) -> Path:
+    data = {
+        "task_id": "contained_rename_policy",
+        "description": "Contained rename policy regression.",
+        "repo_template": str(source),
+        "test_command": "true",
+        "allowed_paths": ["src/**"],
+        "forbidden_paths": ["secrets/**", ".agentguard/**"],
+        "test_paths": ["tests/**"],
+        "secret_patterns": ["secrets/**"],
+        "expected_modified_files": {"min": 0, "max": 20},
+        "policy": {"scope_adherence": {"severity": "error"}},
+        "unsafe_commands": [],
+        "sandbox": {
+            "type": "docker",
+            "image": IMAGE,
+            "network": "none",
+        },
+        "contained_execution": {
+            "version": 1,
+            "platform": "linux-docker-engine",
+            "network": "none",
+            "image_provenance": "digest-required",
+            "required_uid": os.geteuid(),
+            "required_gid": os.getegid(),
+        },
+    }
+    data.update(updates)
+    path = tmp_path / f"{data['task_id']}.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return path
+
+
+def _rename_source(tmp_path: Path) -> Path:
+    source = tmp_path / "rename-source"
+    (source / "src").mkdir(parents=True)
+    (source / "tests").mkdir()
+    (source / "secrets" / "nested").mkdir(parents=True)
+    (source / "src" / "ok.txt").write_text("same\n", encoding="utf-8")
+    (source / "src" / "space café.txt").write_text("unicode\n", encoding="utf-8")
+    (source / "secrets" / "token.txt").write_text("secret\n", encoding="utf-8")
+    (source / "secrets" / "nested" / "child.txt").write_text("child\n", encoding="utf-8")
+    (source / "secrets" / "CaseOnly.txt").write_text("case\n", encoding="utf-8")
+    return source
+
+
+@pytest.mark.parametrize(
+    ("source_path", "destination_path", "expected_result", "failed_checks", "evidence"),
+    [
+        ("src/ok.txt", "src/renamed.txt", "PASS", set(), set()),
+        (
+            "secrets/token.txt",
+            "src/recovered.txt",
+            "FAIL",
+            {"Forbidden paths", "Scope adherence", "Secret scan"},
+            {"secrets/token.txt"},
+        ),
+        (
+            "src/ok.txt",
+            "tests/ok.txt",
+            "FAIL",
+            {"Test tampering", "Scope adherence"},
+            {"tests/ok.txt"},
+        ),
+        (
+            "src/ok.txt",
+            "secrets/ok.txt",
+            "FAIL",
+            {"Forbidden paths", "Scope adherence", "Secret scan"},
+            {"secrets/ok.txt"},
+        ),
+        (
+            "secrets/token.txt",
+            "secrets/token-renamed.txt",
+            "FAIL",
+            {"Forbidden paths", "Scope adherence", "Secret scan"},
+            {"secrets/token.txt", "secrets/token-renamed.txt"},
+        ),
+        (
+            "secrets/CaseOnly.txt",
+            "src/caseonly.txt",
+            "FAIL",
+            {"Forbidden paths", "Scope adherence", "Secret scan"},
+            {"secrets/CaseOnly.txt"},
+        ),
+        (
+            "src/space café.txt",
+            "src/renamed café.txt",
+            "PASS",
+            set(),
+            set(),
+        ),
+    ],
+)
+def test_contained_run_rename_endpoints_are_policy_inputs(
+    tmp_path: Path,
+    monkeypatch,
+    source_path: str,
+    destination_path: str,
+    expected_result: str,
+    failed_checks: set[str],
+    evidence: set[str],
+) -> None:
+    source = _rename_source(tmp_path)
+    config_path = _rename_config(tmp_path, source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        destination = cwd / destination_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        (cwd / source_path).rename(destination)
+        return CommandResult("contained-run", 0, "", "", 0.01)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.result == expected_result
+    assert result.diff_summary.renamed_files[0].source_path == source_path
+    assert result.diff_summary.renamed_files[0].destination_path == destination_path
+    assert result.diff_summary.changed_files == [source_path, destination_path]
+    assert (source / source_path).exists()
+    assert not (source / destination_path).exists()
+    observed_failures = {check.name for check in result.check_results if not check.passed}
+    assert failed_checks <= observed_failures
+    observed_evidence = {
+        item
+        for check in result.check_results
+        for item in check.evidence
+    }
+    assert evidence <= observed_evidence
+
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+    rename = report["mutations"]["renamed_files"][0]
+    assert rename["old"] == source_path
+    assert rename["new"] == destination_path
+    assert rename["source_path"] == source_path
+    assert rename["destination_path"] == destination_path
+    assert rename["change_type"] == "renamed"
+    assert report["diff_summary"]["renamed_files"] == [
+        {
+            "source_path": source_path,
+            "destination_path": destination_path,
+            "change_type": "renamed",
+        }
+    ]
+    serialized = json.dumps(report, ensure_ascii=False, sort_keys=True)
+    assert str(tmp_path) not in serialized
+
+
+def test_contained_run_directory_rename_evaluates_protected_descendants(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = _rename_source(tmp_path)
+    config_path = _rename_config(tmp_path, source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        (cwd / "src" / "moved-secrets").parent.mkdir(exist_ok=True)
+        (cwd / "secrets").rename(cwd / "src" / "moved-secrets")
+        return CommandResult("contained-run", 0, "", "", 0.01)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    renamed = {
+        (rename.source_path, rename.destination_path)
+        for rename in result.diff_summary.renamed_files
+    }
+    assert ("secrets/nested/child.txt", "src/moved-secrets/nested/child.txt") in renamed
+    forbidden = next(check for check in result.check_results if check.name == "Forbidden paths")
+    assert forbidden.passed is False
+    assert "secrets/nested/child.txt" in forbidden.evidence
+
+
+def test_contained_run_rename_with_content_change_degrades_to_delete_add_policy(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = _rename_source(tmp_path)
+    config_path = _rename_config(tmp_path, source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        destination = cwd / "tests" / "ok.txt"
+        destination.write_text(
+            (cwd / "src" / "ok.txt").read_text(encoding="utf-8") + "changed\n",
+            encoding="utf-8",
+        )
+        (cwd / "src" / "ok.txt").unlink()
+        return CommandResult("contained-run", 0, "", "", 0.01)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.diff_summary.renamed_files == []
+    assert result.diff_summary.deleted_files == ["src/ok.txt"]
+    assert result.diff_summary.added_files == ["tests/ok.txt"]
+    test_tampering = next(check for check in result.check_results if check.name == "Test tampering")
+    assert test_tampering.passed is False
+    assert test_tampering.evidence == ["tests/ok.txt"]
+
+
+def test_contained_run_many_renames_are_bounded_and_deterministic(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "many-renames"
+    (source / "src").mkdir(parents=True)
+    for index in range(12):
+        (source / "src" / f"file-{index:02d}.txt").write_text(
+            f"{index}\n",
+            encoding="utf-8",
+        )
+    config_path = _rename_config(tmp_path, source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        for index in reversed(range(12)):
+            (cwd / "src" / f"file-{index:02d}.txt").rename(
+                cwd / "src" / f"renamed-{index:02d}.txt"
+            )
+        return CommandResult("contained-run", 0, "", "", 0.01)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.result == "FAIL"
+    assert len(result.diff_summary.renamed_files) == 12
+    assert result.diff_summary.renamed_files[0].source_path == "src/file-00.txt"
+    diff_size = next(check for check in result.check_results if check.name == "Diff size")
+    assert diff_size.passed is True
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="Symlinks are unavailable")
+def test_contained_run_symlink_rename_evaluates_link_path_without_following(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = _rename_source(tmp_path)
+    (source / "secrets" / "link.txt").symlink_to("../src/ok.txt")
+    config_path = _rename_config(tmp_path, source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        (cwd / "secrets" / "link.txt").rename(cwd / "src" / "link.txt")
+        return CommandResult("contained-run", 0, "", "", 0.01)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.diff_summary.renamed_files[0].source_path == "secrets/link.txt"
+    forbidden = next(check for check in result.check_results if check.name == "Forbidden paths")
+    assert forbidden.passed is False
+    assert forbidden.evidence == ["secrets/link.txt"]
+
+
+def test_contained_run_unicode_normalization_sensitive_rename_when_supported(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "unicode-normalization"
+    (source / "secrets").mkdir(parents=True)
+    decomposed = unicodedata.normalize("NFD", "café")
+    composed = unicodedata.normalize("NFC", "café")
+    source_path = f"secrets/{decomposed}.txt"
+    destination_path = f"src/{composed}.txt"
+    (source / source_path).write_text("accent\n", encoding="utf-8")
+    if not (source / source_path).exists():
+        pytest.skip("filesystem normalizes Unicode paths before capture")
+    config_path = _rename_config(tmp_path, source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        destination = cwd / destination_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        (cwd / source_path).rename(destination)
+        return CommandResult("contained-run", 0, "", "", 0.01)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.diff_summary.renamed_files[0].source_path == source_path
+    forbidden = next(check for check in result.check_results if check.name == "Forbidden paths")
+    assert forbidden.passed is False
+    assert source_path in forbidden.evidence
+
+
+def test_contained_run_reserved_agentguard_destination_fails_closed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = _rename_source(tmp_path)
+    config_path = _rename_config(tmp_path, source)
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        destination = cwd / ".agentguard" / "report.json"
+        destination.parent.mkdir()
+        (cwd / "src" / "ok.txt").rename(destination)
+        return CommandResult("contained-run", 0, "", "", 0.01)
+
+    result = _run(config_path, ["true"], tmp_path, docker_executor=fake_executor)
+
+    assert result.result == "FAIL"
+    assert result.failure is not None
+    assert result.failure.stage == "workspace_prep"
+    assert "reserved path" in result.failure.message
 
 
 def test_contained_run_rejects_incompatible_bind_uid_gid_before_preflight(

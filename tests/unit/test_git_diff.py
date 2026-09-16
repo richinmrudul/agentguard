@@ -502,6 +502,15 @@ def test_collect_diff_staged_renames_include_both_paths_for_policy_checks(
         unusual_new,
     }
     assert set(working_diff.modified_files) == expected_rename_paths
+    assert {
+        (rename.source_path, rename.destination_path)
+        for rename in working_diff.renamed_files
+    } == {
+        ("tests/old_test.py", "src/moved_test.py"),
+        ("secrets/old.txt", "src/recovered.txt"),
+        ("src/original.py", "secrets/renamed.py"),
+        (unusual_old, unusual_new),
+    }
     config = replace(
         load_config(Path("examples/configs/fix_auth_bug.yaml")),
         test_paths=["tests/**"],
@@ -557,6 +566,15 @@ def test_collect_diff_staged_renames_include_both_paths_for_policy_checks(
     ref_diff = collect_diff_between_refs(repo_dir, "main", "HEAD")
 
     assert set(ref_diff.modified_files) == expected_rename_paths
+    assert {
+        (rename.source_path, rename.destination_path)
+        for rename in ref_diff.renamed_files
+    } == {
+        ("tests/old_test.py", "src/moved_test.py"),
+        ("secrets/old.txt", "src/recovered.txt"),
+        ("src/original.py", "secrets/renamed.py"),
+        (unusual_old, unusual_new),
+    }
     assert set(ref_diff.changed_files) == set(working_diff.changed_files)
 
 
@@ -588,6 +606,7 @@ def test_collect_diff_unstaged_rename_exposes_source_and_destination(
 
     assert diff.deleted_files == ["tests/old_test.py"]
     assert diff.added_files == ["src/moved_test.py"]
+    assert diff.renamed_files == []
     assert set(diff.changed_files) == {"tests/old_test.py", "src/moved_test.py"}
 
 

@@ -2,7 +2,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from agentguard.core.result import DiffSummary
+from agentguard.core.result import DiffSummary, FileRename
 from agentguard.repo.internal_artifacts import OwnedArtifact, verified_owned_paths
 
 
@@ -51,11 +51,12 @@ def _classify_name_status(
     name_status: str,
     *,
     excluded_paths: Optional[set[str]] = None,
-) -> tuple[list[str], list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str], list[FileRename]]:
     excluded_paths = excluded_paths or set()
     modified_files: list[str] = []
     added_files: list[str] = []
     deleted_files: list[str] = []
+    renamed_files: list[FileRename] = []
 
     fields = name_status.split("\0")
     index = 0
@@ -75,8 +76,15 @@ def _classify_name_status(
             deleted_files.extend(visible_paths)
         elif status_type in {"C", "M", "R", "T", "U", "X"}:
             modified_files.extend(visible_paths)
+            if status_type == "R" and len(visible_paths) == 2:
+                renamed_files.append(
+                    FileRename(
+                        source_path=visible_paths[0],
+                        destination_path=visible_paths[1],
+                    )
+                )
 
-    return modified_files, added_files, deleted_files
+    return modified_files, added_files, deleted_files, renamed_files
 
 
 def _untracked_files(
@@ -127,7 +135,7 @@ def collect_diff(
 ) -> DiffSummary:
     _require_baseline_commit(repo_dir, baseline_ref)
     excluded_paths = verified_owned_paths(repo_dir, owned_artifacts)
-    modified_files, added_files, deleted_files = _classify_name_status(
+    modified_files, added_files, deleted_files, renamed_files = _classify_name_status(
         _git(
             repo_dir,
             "diff",
@@ -165,6 +173,7 @@ def collect_diff(
             ".",
             *(f":(literal,exclude){path}" for path in sorted(excluded_paths)),
         ),
+        renamed_files=renamed_files,
     )
 
 
@@ -174,7 +183,7 @@ def collect_diff_between_refs(
     head_ref: str,
 ) -> DiffSummary:
     diff_ref = f"{base_ref}...{head_ref}"
-    modified_files, added_files, deleted_files = _classify_name_status(
+    modified_files, added_files, deleted_files, renamed_files = _classify_name_status(
         _git(repo_dir, "diff", diff_ref, "--find-renames", "--name-status", "-z")
     )
     lines_added, lines_deleted = _numstat_for_diff(repo_dir, diff_ref)
@@ -186,4 +195,5 @@ def collect_diff_between_refs(
         lines_added=lines_added,
         lines_deleted=lines_deleted,
         unified_diff=_git(repo_dir, "diff", diff_ref),
+        renamed_files=renamed_files,
     )

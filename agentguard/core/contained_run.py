@@ -20,7 +20,7 @@ from agentguard.containment.evidence import (
     ContainmentEvidence,
     evidence_from_contained_run,
 )
-from agentguard.core.result import CheckResult, CommandResult, DiffSummary
+from agentguard.core.result import CheckResult, CommandResult, DiffSummary, FileRename
 from agentguard.instrumentation.output_limits import (
     BoundedProcessOutput,
     LimitedOutput,
@@ -38,6 +38,7 @@ from agentguard.instrumentation.processes import (
 from agentguard.io import atomic_write_json
 from agentguard.policy.command_policy import evaluate_command_policy
 from agentguard.policy.evaluation import PolicyEvaluationContext, evaluate_policy_checks
+from agentguard.policy.path_matcher import matching_patterns
 from agentguard.provenance.manifest import sanitize_text
 from agentguard.redaction import redact_credential_arguments, redact_credentials
 from agentguard.sandbox.contained_environment import (
@@ -370,7 +371,7 @@ def run_contained_agent_command(
                 "added_files": list(captured.added_files),
                 "deleted_files": list(captured.deleted_files),
                 "renamed_files": [
-                    {"old": old, "new": new}
+                    _rename_mutation_evidence(old, new, config)
                     for old, new in captured.renamed_files
                 ],
                 "changed_files": list(captured.changed_files),
@@ -449,6 +450,8 @@ def run_contained_agent_command(
     result = "PASS" if command_result is not None and command_result.exit_code == 0 else "FAIL"
     if check_results:
         result = score_checks(check_results).result
+    if failure is not None:
+        result = "FAIL"
     if cleanup_failure is not None or not cleanup_complete:
         result = "FAIL"
     elapsed = round(time.monotonic() - started, 6)
@@ -1193,11 +1196,50 @@ def _diff_summary_from_mutations(mutations) -> DiffSummary:
         lines_added=0,
         lines_deleted=0,
         unified_diff="",
+        renamed_files=[
+            FileRename(source_path=old, destination_path=new)
+            for old, new in mutations.renamed_files
+        ],
     )
 
 
 def _empty_diff_summary() -> DiffSummary:
     return DiffSummary([], [], [], 0, 0, "")
+
+
+def _rename_mutation_evidence(
+    source_path: str,
+    destination_path: str,
+    config: AgentGuardConfig,
+) -> dict[str, object]:
+    return {
+        "old": source_path,
+        "new": destination_path,
+        "source_path": source_path,
+        "destination_path": destination_path,
+        "change_type": "renamed",
+        "policy": {
+            "source": _path_policy_evidence(source_path, config),
+            "destination": _path_policy_evidence(destination_path, config),
+        },
+    }
+
+
+def _path_policy_evidence(path: str, config: AgentGuardConfig) -> dict[str, object]:
+    forbidden = matching_patterns(path, config.forbidden_paths)
+    test = matching_patterns(path, config.test_paths)
+    secret = matching_patterns(path, config.secret_patterns)
+    allowed = matching_patterns(path, config.allowed_paths)
+    return {
+        "path": path,
+        "allowed": bool(allowed),
+        "allowed_patterns": allowed,
+        "outside_allowed": not bool(allowed),
+        "forbidden_patterns": forbidden,
+        "test_patterns": test,
+        "secret_patterns": secret,
+        "policy_outcome": "fail" if forbidden or test or secret or not allowed else "pass",
+    }
 
 
 def _run_id(task_id: str) -> str:
@@ -1375,6 +1417,10 @@ def _write_report(result: ContainedRunResult, elapsed: float) -> ContainedRunRes
         "environment": asdict(result.environment),
         "command_result": asdict(result.command_result) if result.command_result else None,
         "mutations": result.mutations,
+        "diff_summary": {
+            **asdict(result.diff_summary),
+            "changed_files": result.diff_summary.changed_files,
+        },
         "checks": [asdict(check) for check in result.check_results],
         "cleanup_complete": result.cleanup_complete,
         "cleanup": asdict(result.cleanup),

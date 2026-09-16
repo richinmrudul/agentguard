@@ -25,6 +25,11 @@ def write_json_report(result: BenchmarkResult, reports_dir: Path) -> Path:
         config_path=result.config_path,
     )
     data = portable_artifact_value(result, roots)
+    if isinstance(data.get("diff_summary"), dict):
+        data["diff_summary"]["changed_files"] = portable_artifact_value(
+            result.diff_summary.changed_files,
+            roots,
+        )
     if isinstance(data.get("benchmark"), dict):
         data["benchmark"] = {
             key: value
