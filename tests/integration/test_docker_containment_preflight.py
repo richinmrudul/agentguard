@@ -82,6 +82,8 @@ def test_docker_preflight_with_hosted_docker() -> None:
             platform="linux-docker-engine",
             network="none",
             image_provenance="digest-required",
+            memory_limit="128m",
+            pids_limit=64,
         ),
     )
 
@@ -89,4 +91,28 @@ def test_docker_preflight_with_hosted_docker() -> None:
 
     assert result.status == DockerPreflightStatus.SUPPORTED
     assert result.docker_image is not None
+    resource = next(check for check in result.checks if check.name == "resource_control_probe")
+    assert resource.evidence["requested"]["pids_limit"] == 64
+    assert resource.evidence["requested"]["memory_limit"] == "128m"
+    assert resource.evidence["inspected"]["pids_limit"] == 64
+    assert resource.evidence["inspected"]["memory_bytes"] == 128 * 1024 * 1024
+    assert resource.evidence["inspected"]["cpu"]["requested_cpus"] == 1.0
+    assert resource.evidence["inspected"]["read_only_rootfs"] is True
+    assert resource.evidence["cleanup"]["status"] == "removed"
     assert result.checks[-1].name == "uid_gid_writable_path_probe"
+
+    remaining = _run_docker_control(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            "label=agentguard.owner=preflight",
+            "--filter",
+            "label=agentguard.preflight=resource-controls",
+            "--format",
+            "{{.ID}}",
+        ]
+    )
+    assert remaining.returncode == 0
+    assert remaining.stdout.strip() == ""

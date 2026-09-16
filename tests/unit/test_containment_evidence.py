@@ -100,6 +100,40 @@ def _preflight(_config) -> docker_preflight.DockerPreflightResult:
                 passed=True,
                 status="supported",
                 diagnostic="ok",
+            ),
+            docker_preflight.DockerPreflightCheck(
+                name="resource_control_probe",
+                passed=True,
+                status="supported",
+                diagnostic="verified",
+                evidence={
+                    "requested": {
+                        "pids_limit": 256,
+                        "memory_limit": "512m",
+                        "cpu_limit": 1.0,
+                    },
+                    "inspected": {
+                        "container_identity": "matched",
+                        "image_identity": "matched",
+                        "pids_limit": 256,
+                        "memory_bytes": 512 * 1024 * 1024,
+                        "cpu": {
+                            "requested_cpus": 1.0,
+                            "nano_cpus": 1_000_000_000,
+                            "representation": "NanoCpus",
+                        },
+                        "uid_gid": f"{os.geteuid()}:{os.getegid()}",
+                        "network": "none",
+                        "read_only_rootfs": True,
+                        "no_new_privileges": True,
+                        "cap_drop_all": True,
+                        "tmpfs_paths": ["/tmp", "/agentguard-workspace"],
+                        "privileged": False,
+                        "host_namespace_sharing": False,
+                        "device_exposure": False,
+                        "docker_socket_mount": False,
+                    },
+                },
             )
         ],
         docker_image=_image(),
@@ -159,6 +193,14 @@ def test_contained_run_writes_canonical_sanitized_evidence(
     assert evidence["environment"]["sensitive_names"] == ["API_TOKEN"]
     assert evidence["environment"]["values_recorded"] is False
     assert evidence["controls"]["tmpfs_paths"] == ["/tmp"]
+    assert evidence["controls"]["resource_verification_state"] == "recorded"
+    assert evidence["controls"]["requested_resource_controls"]["memory_limit"] == "512m"
+    assert evidence["controls"]["verified_resource_controls"]["memory_bytes"] == (
+        512 * 1024 * 1024
+    )
+    assert evidence["controls"]["verified_resource_controls"]["container_identity"] == (
+        "matched"
+    )
     assert evidence["cleanup"]["overall_complete"] is True
     assert secret not in serialized
     assert str(tmp_path) not in serialized
