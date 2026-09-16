@@ -127,10 +127,25 @@ arbitrary user-controlled Docker flags.
 
 The preflight checks Docker CLI availability, daemon availability, bounded
 client and server JSON responses, Linux engine identity, Docker Desktop
-classification, the selected allowed network, requested resource-limit signals,
+classification, the selected allowed network, requested resource-limit inputs,
 read-only-root and tmpfs API support, digest-pinned local image identity, a
+controlled created container inspected by immutable container identity, a
 controlled run as the required non-root UID/GID with a bounded writable tmpfs
-path, and rejection of prohibited contained-execution options. Malformed,
+path, and rejection of prohibited contained-execution options. The controlled
+resource probe distinguishes four evidence categories: the resource controls
+AgentGuard requested from validated config, whether Docker accepted a created
+probe container, the exact configuration Docker exposes through inspection of
+that created probe container, and unavailable, ambiguous, malformed, missing,
+zero, downgraded, or mismatched evidence. Linux Docker Engine preflight fails
+closed when inspection cannot establish the required PID, memory, or CPU
+control or adjacent controls including non-root identity, read-only rootfs,
+`no-new-privileges`, dropped capabilities, network policy, bounded tmpfs, and
+absence of privileged mode, host devices, Docker socket mounts, and host
+namespace sharing. AgentGuard does not claim that Docker inspection proves
+host-kernel or daemon enforcement beyond those Docker-inspectable container
+facts. Probe cleanup removes only the owned probe container by immutable
+container identity and verifies post-remove absence; a cleanup failure or
+ambiguous liveness check is reported as failed cleanup evidence. Malformed,
 missing, contradictory, oversized, timed-out, or unsupported responses fail
 closed.
 

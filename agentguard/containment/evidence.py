@@ -116,6 +116,9 @@ class ContainmentControlsEvidence:
     privileged: Optional[bool] = None
     device_exposure: Optional[bool] = None
     host_namespace_sharing: Optional[bool] = None
+    resource_verification_state: Optional[str] = None
+    requested_resource_controls: dict[str, object] = field(default_factory=dict)
+    verified_resource_controls: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -330,6 +333,8 @@ def evidence_from_contained_run(
             image_evidence,
             container_bound_image_id=observed_image_id,
         )
+    requested_controls = _requested_resource_controls(contained)
+    verified_controls = _verified_resource_controls(preflight)
     controls = ContainmentControlsEvidence(
         state="recorded" if contained is not None else "unavailable",
         network=contained.network if contained is not None else None,
@@ -349,6 +354,11 @@ def evidence_from_contained_run(
         host_namespace_sharing=(
             contained.allow_host_namespace_sharing if contained is not None else None
         ),
+        resource_verification_state=(
+            "recorded" if verified_controls else "unavailable"
+        ),
+        requested_resource_controls=requested_controls,
+        verified_resource_controls=verified_controls,
     )
     workspace = _workspace_evidence(prepared, mutations, cleanup)
     failure_stage = getattr(failure, "stage", None)
@@ -510,6 +520,46 @@ def _preflight_evidence(
         include_executed=False,
     )
     return preflight_evidence, image, preflight_evidence.claim_level
+
+
+def _requested_resource_controls(
+    contained: Optional[object],
+) -> dict[str, object]:
+    if contained is None:
+        return {}
+    return {
+        "platform": getattr(contained, "platform", None),
+        "network": getattr(contained, "network", None),
+        "pids_limit": getattr(contained, "pids_limit", None),
+        "memory_limit": getattr(contained, "memory_limit", None),
+        "cpu_limit": getattr(contained, "cpu_limit", None),
+        "uid": getattr(contained, "required_uid", None),
+        "gid": getattr(contained, "required_gid", None),
+        "read_only_root": True,
+        "no_new_privileges": True,
+        "cap_drop_all": True,
+        "docker_socket_mount": False,
+        "host_network": getattr(contained, "allow_host_network", None),
+        "privileged": getattr(contained, "allow_privileged", None),
+        "device_exposure": getattr(contained, "allow_device_exposure", None),
+        "host_namespace_sharing": getattr(
+            contained,
+            "allow_host_namespace_sharing",
+            None,
+        ),
+    }
+
+
+def _verified_resource_controls(preflight: object) -> dict[str, object]:
+    checks = list(getattr(preflight, "checks", []) or [])
+    for check in checks:
+        if getattr(check, "name", None) != "resource_control_probe":
+            continue
+        evidence = getattr(check, "evidence", {}) or {}
+        inspected = evidence.get("inspected") if isinstance(evidence, dict) else None
+        if isinstance(inspected, dict):
+            return dict(inspected)
+    return {}
 
 
 def _image_evidence(
@@ -739,6 +789,9 @@ def _validate_image(data: dict[str, object]) -> None:
 
 def _validate_controls(data: dict[str, object]) -> None:
     _require_enum(data.get("state"), STATE_VALUES, "controls state")
+    verification_state = data.get("resource_verification_state")
+    if verification_state is not None:
+        _require_enum(verification_state, STATE_VALUES, "controls verification state")
     for key in (
         "no_new_privileges",
         "cap_drop_all",
@@ -758,6 +811,10 @@ def _validate_controls(data: dict[str, object]) -> None:
     tmpfs = data.get("tmpfs_paths")
     if not isinstance(tmpfs, list) or not all(isinstance(item, str) for item in tmpfs):
         raise ValueError("Containment tmpfs paths must be strings.")
+    for key in ("requested_resource_controls", "verified_resource_controls"):
+        value = data.get(key)
+        if value is not None and not isinstance(value, dict):
+            raise ValueError("Containment resource controls evidence must be an object.")
 
 
 def _validate_environment(data: dict[str, object]) -> None:

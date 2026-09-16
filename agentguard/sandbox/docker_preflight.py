@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Optional
@@ -30,9 +31,17 @@ from agentguard.sandbox.docker_exec_spec import (
 PREFLIGHT_TIMEOUT_SECONDS = 5
 PREFLIGHT_MAX_OUTPUT_BYTES = 65536
 DIAGNOSTIC_MAX_BYTES = 512
+PREFLIGHT_JSON_MAX_NESTING = 32
+PREFLIGHT_JSON_MAX_ITEMS = 512
+PREFLIGHT_JSON_MAX_STRING_BYTES = 65536
 MIN_DOCKER_API_FOR_READ_ONLY_TMPFS = (1, 25)
 PROBE_WRITABLE_PATH = "/agentguard-preflight"
 PROBE_WRITABLE_FILE = f"{PROBE_WRITABLE_PATH}/write-check"
+PROBE_WORKSPACE_PATH = "/agentguard-workspace"
+PROBE_CONTAINER_PREFIX = "agentguard-preflight-"
+PROBE_OWNER_LABEL = "agentguard.owner=preflight"
+PROBE_KIND_LABEL = "agentguard.preflight=resource-controls"
+CONTAINER_ID_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SECRET_VALUE_PATTERN = re.compile(
     r"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|KEY|CREDENTIAL)[A-Z0-9_]*)"
     r"\s*=\s*[^\s,;]+"
@@ -207,6 +216,15 @@ def run_docker_preflight(
             image_metadata,
             checks,
         )
+        _probe_resource_controls(
+            config.contained_execution,
+            image,
+            docker_image,
+            runner,
+            timeout_seconds,
+            max_output_bytes,
+            checks,
+        )
         _probe_uid_gid_writable_path(
             config.contained_execution,
             image,
@@ -300,39 +318,40 @@ def _docker_json(
     check_name: str,
     timeout_seconds: int,
     max_output_bytes: int,
+    failure_status: DockerPreflightStatus = DockerPreflightStatus.UNAVAILABLE,
 ) -> dict[str, object]:
     started = time.monotonic()
     completed = runner(argv, timeout_seconds, max_output_bytes)
     duration = round(time.monotonic() - started, 6)
     if completed.timed_out:
         raise DockerPreflightError(
-            DockerPreflightStatus.UNAVAILABLE,
+            failure_status,
             _check(
                 check_name,
                 False,
-                DockerPreflightStatus.UNAVAILABLE,
+                failure_status,
                 "Docker command timed out.",
                 {"duration_seconds": duration},
             ),
         )
     if completed.stdout_truncated or completed.stderr_truncated:
         raise DockerPreflightError(
-            DockerPreflightStatus.UNAVAILABLE,
+            failure_status,
             _check(
                 check_name,
                 False,
-                DockerPreflightStatus.UNAVAILABLE,
+                failure_status,
                 "Docker command output exceeded the preflight bound.",
                 {"duration_seconds": duration},
             ),
         )
     if completed.returncode != 0:
         raise DockerPreflightError(
-            DockerPreflightStatus.UNAVAILABLE,
+            failure_status,
             _check(
                 check_name,
                 False,
-                DockerPreflightStatus.UNAVAILABLE,
+                failure_status,
                 "Docker command did not complete successfully.",
                 {
                     "returncode": completed.returncode,
@@ -345,12 +364,25 @@ def _docker_json(
         value = json.loads(completed.stdout)
     except json.JSONDecodeError:
         raise DockerPreflightError(
-            DockerPreflightStatus.UNAVAILABLE,
+            failure_status,
             _check(
                 check_name,
                 False,
-                DockerPreflightStatus.UNAVAILABLE,
+                failure_status,
                 "Docker command returned malformed JSON.",
+                {"duration_seconds": duration},
+            ),
+        ) from None
+    try:
+        _validate_json_bounds(value, depth=0)
+    except ValueError as error:
+        raise DockerPreflightError(
+            failure_status,
+            _check(
+                check_name,
+                False,
+                failure_status,
+                str(error),
                 {"duration_seconds": duration},
             ),
         ) from None
@@ -358,15 +390,68 @@ def _docker_json(
         value = value[0]
     if not isinstance(value, dict):
         raise DockerPreflightError(
-            DockerPreflightStatus.UNAVAILABLE,
+            failure_status,
             _check(
                 check_name,
                 False,
-                DockerPreflightStatus.UNAVAILABLE,
+                failure_status,
                 "Docker command returned an unsupported JSON shape.",
             ),
         )
     return value
+
+
+def _docker_text(
+    runner: CommandRunner,
+    argv: list[str],
+    check_name: str,
+    timeout_seconds: int,
+    max_output_bytes: int,
+    *,
+    unsafe: bool = True,
+) -> str:
+    started = time.monotonic()
+    completed = runner(argv, timeout_seconds, max_output_bytes)
+    duration = round(time.monotonic() - started, 6)
+    status = DockerPreflightStatus.UNSAFE if unsafe else DockerPreflightStatus.UNAVAILABLE
+    if completed.timed_out:
+        raise DockerPreflightError(
+            status,
+            _check(
+                check_name,
+                False,
+                status,
+                "Docker probe command timed out.",
+                {"duration_seconds": duration},
+            ),
+        )
+    if completed.stdout_truncated or completed.stderr_truncated:
+        raise DockerPreflightError(
+            status,
+            _check(
+                check_name,
+                False,
+                status,
+                "Docker probe command output exceeded the preflight bound.",
+                {"duration_seconds": duration},
+            ),
+        )
+    if completed.returncode != 0:
+        raise DockerPreflightError(
+            status,
+            _check(
+                check_name,
+                False,
+                status,
+                "Docker probe command did not complete successfully.",
+                {
+                    "returncode": completed.returncode,
+                    "stderr": _sanitize_diagnostic(completed.stderr),
+                    "duration_seconds": duration,
+                },
+            ),
+        )
+    return completed.stdout
 
 
 def _probe_json(
@@ -673,7 +758,8 @@ def _validate_required_capabilities(
         max_output_bytes,
         checks,
     )
-    if config.sandbox.memory is not None and info.get("MemoryLimit") is not True:
+    contained = config.contained_execution
+    if info.get("MemoryLimit") is not True:
         raise DockerPreflightError(
             DockerPreflightStatus.UNSAFE,
             _check(
@@ -681,9 +767,20 @@ def _validate_required_capabilities(
                 False,
                 DockerPreflightStatus.UNSAFE,
                 "Docker daemon did not report memory limit support.",
+                {
+                    "requested": {
+                        "pids_limit": contained.pids_limit,
+                        "memory_limit": contained.memory_limit,
+                        "cpu_limit": contained.cpu_limit,
+                    },
+                    "daemon_signals": {
+                        "memory_limit": info.get("MemoryLimit") is True,
+                        "cpu_count_present": _positive_int(info.get("NCPU")) is not None,
+                    },
+                },
             ),
         )
-    if config.sandbox.cpus is not None and _positive_int(info.get("NCPU")) is None:
+    if _positive_int(info.get("NCPU")) is None:
         raise DockerPreflightError(
             DockerPreflightStatus.UNSAFE,
             _check(
@@ -691,6 +788,17 @@ def _validate_required_capabilities(
                 False,
                 DockerPreflightStatus.UNSAFE,
                 "Docker daemon did not report CPU limit support.",
+                {
+                    "requested": {
+                        "pids_limit": contained.pids_limit,
+                        "memory_limit": contained.memory_limit,
+                        "cpu_limit": contained.cpu_limit,
+                    },
+                    "daemon_signals": {
+                        "memory_limit": info.get("MemoryLimit") is True,
+                        "cpu_count_present": _positive_int(info.get("NCPU")) is not None,
+                    },
+                },
             ),
         )
     checks.append(
@@ -698,10 +806,17 @@ def _validate_required_capabilities(
             "resource_limits",
             True,
             DockerPreflightStatus.SUPPORTED,
-            "Required Docker resource-limit signals are present.",
+            "Requested Docker resource-limit inputs are in range; exact container configuration is verified by the controlled inspect probe.",
             {
-                "memory_limit_required": config.sandbox.memory is not None,
-                "cpu_limit_required": config.sandbox.cpus is not None,
+                "requested": {
+                    "pids_limit": contained.pids_limit,
+                    "memory_limit": contained.memory_limit,
+                    "cpu_limit": contained.cpu_limit,
+                },
+                "daemon_signals": {
+                    "memory_limit": info.get("MemoryLimit") is True,
+                    "cpu_count_present": _positive_int(info.get("NCPU")) is not None,
+                },
             },
         )
     )
@@ -874,6 +989,292 @@ def _record_image_user_declaration(
     )
 
 
+def _probe_resource_controls(
+    contained: ContainedExecutionConfig,
+    image: str,
+    docker_image: DockerImageIdentity,
+    runner: CommandRunner,
+    timeout_seconds: int,
+    max_output_bytes: int,
+    checks: list[DockerPreflightCheck],
+) -> None:
+    container_name = f"{PROBE_CONTAINER_PREFIX}{uuid.uuid4().hex[:16]}"
+    name_label = f"agentguard.preflight.name={container_name}"
+    owner_labels = [PROBE_OWNER_LABEL, PROBE_KIND_LABEL, name_label]
+    argv = build_contained_docker_run_argv(
+        DockerExecSpec(
+            image=image,
+            workspace_host_path=None,
+            workspace_container_path=PROBE_WORKSPACE_PATH,
+            command=["-c", "true"],
+            uid=contained.required_uid,
+            gid=contained.required_gid,
+            network=contained.network,
+            cpu_limit=contained.cpu_limit,
+            memory_limit=contained.memory_limit,
+            pids_limit=contained.pids_limit,
+            tmpfs_path="/tmp",
+            tmpfs_size=contained.tmpfs_size,
+            workspace_tmpfs_size=contained.tmpfs_size,
+            container_name=container_name,
+            entrypoint="/bin/sh",
+        )
+    )
+    create_argv = _docker_create_probe_argv(argv, owner_labels)
+    cleanup_status = "not_created"
+    container_id = ""
+    validation_evidence: dict[str, object] = {}
+    try:
+        container_id = _create_probe_container(
+            runner,
+            create_argv,
+            container_name,
+            name_label,
+            timeout_seconds,
+            max_output_bytes,
+        )
+        inspect = _docker_json(
+            runner,
+            ["docker", "container", "inspect", "--format", "{{json .}}", container_id],
+            "resource_control_probe_inspect",
+            timeout_seconds,
+            max_output_bytes,
+            DockerPreflightStatus.UNSAFE,
+        )
+        validation_evidence = _validate_resource_probe_inspect(
+            inspect,
+            contained=contained,
+            docker_image=docker_image,
+            container_id=container_id,
+            container_name=container_name,
+            name_label=name_label,
+        )
+        _docker_text(
+            runner,
+            ["docker", "start", "-a", container_id],
+            "resource_control_probe_start",
+            timeout_seconds,
+            max_output_bytes,
+        )
+        cleanup_status = _cleanup_probe_container(
+            runner,
+            container_id,
+            timeout_seconds,
+            max_output_bytes,
+        )
+    except DockerPreflightError:
+        if container_id:
+            cleanup_status = _cleanup_probe_container_quiet(
+                runner,
+                container_id,
+                timeout_seconds,
+                max_output_bytes,
+            )
+        raise
+    if cleanup_status != "removed":
+        raise DockerPreflightError(
+            DockerPreflightStatus.UNSAFE,
+            _check(
+                "resource_control_probe_cleanup",
+                False,
+                DockerPreflightStatus.UNSAFE,
+                "Docker resource-control probe cleanup failed.",
+                {"cleanup_status": cleanup_status},
+            ),
+        )
+    checks.append(
+        _check(
+            "resource_control_probe",
+            True,
+            DockerPreflightStatus.SUPPORTED,
+            "Docker accepted and exposed the requested container controls on the exact created probe container.",
+            {
+                **validation_evidence,
+                "docker_accepted": {"container_created": True, "container_started": True},
+                "cleanup": {"status": cleanup_status},
+            },
+        )
+    )
+
+
+def _docker_create_probe_argv(
+    run_argv: list[str],
+    owner_labels: list[str],
+) -> list[str]:
+    if run_argv[:2] != ["docker", "run"]:
+        raise DockerPreflightError(
+            DockerPreflightStatus.UNSAFE,
+            _check(
+                "resource_control_probe_create",
+                False,
+                DockerPreflightStatus.UNSAFE,
+                "Docker resource-control probe could not render a create command.",
+            ),
+        )
+    create = ["docker", "create", *[part for part in run_argv[2:] if part != "--rm"]]
+    try:
+        boundary = create.index("--")
+    except ValueError:
+        boundary = len(create)
+    label_args: list[str] = []
+    for label in owner_labels:
+        label_args.extend(["--label", label])
+    return [*create[:boundary], *label_args, *create[boundary:]]
+
+
+def _create_probe_container(
+    runner: CommandRunner,
+    create_argv: list[str],
+    container_name: str,
+    name_label: str,
+    timeout_seconds: int,
+    max_output_bytes: int,
+) -> str:
+    try:
+        stdout = _docker_text(
+            runner,
+            create_argv,
+            "resource_control_probe_create",
+            timeout_seconds,
+            max_output_bytes,
+        )
+    except DockerPreflightError as error:
+        cleanup_status = _cleanup_named_probe_if_owned(
+            runner,
+            container_name,
+            name_label,
+            timeout_seconds,
+            max_output_bytes,
+        )
+        if cleanup_status != "not_found":
+            error.check.evidence["cleanup_status"] = cleanup_status
+        raise
+    container_id = stdout.strip().lower()
+    if CONTAINER_ID_PATTERN.fullmatch(container_id) is None:
+        _cleanup_probe_container_quiet(
+            runner,
+            container_name,
+            timeout_seconds,
+            max_output_bytes,
+        )
+        raise DockerPreflightError(
+            DockerPreflightStatus.UNSAFE,
+            _check(
+                "resource_control_probe_create",
+                False,
+                DockerPreflightStatus.UNSAFE,
+                "Docker create returned a missing or ambiguous probe container identity.",
+            ),
+        )
+    return container_id
+
+
+def _validate_resource_probe_inspect(
+    inspect: dict[str, object],
+    *,
+    contained: ContainedExecutionConfig,
+    docker_image: DockerImageIdentity,
+    container_id: str,
+    container_name: str,
+    name_label: str,
+) -> dict[str, object]:
+    try:
+        host = _inspect_object(inspect, "HostConfig")
+        config = _inspect_object(inspect, "Config")
+        labels = config.get("Labels")
+        if not isinstance(labels, dict):
+            labels = {}
+        _expect(inspect.get("Id") == container_id, "container identity mismatch")
+        _expect(inspect.get("Name") == f"/{container_name}", "container name mismatch")
+        _expect(labels.get("agentguard.owner") == "preflight", "owner label mismatch")
+        _expect(
+            labels.get("agentguard.preflight") == "resource-controls",
+            "probe label mismatch",
+        )
+        _expect(
+            labels.get("agentguard.preflight.name") == container_name
+            and name_label.endswith(container_name),
+            "probe name label mismatch",
+        )
+        _expect(
+            _normalized_image_id(inspect.get("Image")) == docker_image.local_image_id,
+            "container image identity mismatch",
+        )
+        _expect(
+            config.get("User") == f"{contained.required_uid}:{contained.required_gid}",
+            "container user identity mismatch",
+        )
+        requested_memory = _docker_size_bytes(contained.memory_limit)
+        inspected_memory = _required_int(host.get("Memory"), "memory limit")
+        _expect(
+            inspected_memory == requested_memory,
+            "container memory limit is missing, zero, or mismatched",
+        )
+        inspected_pids = _required_int(host.get("PidsLimit"), "PID limit")
+        _expect(
+            inspected_pids == contained.pids_limit,
+            "container PID limit is missing, zero, or mismatched",
+        )
+        cpu_evidence = _validate_cpu_controls(host, contained.cpu_limit)
+        _expect(host.get("ReadonlyRootfs") is True, "read-only rootfs is not set")
+        security_opt = _string_list(host.get("SecurityOpt"))
+        _expect(
+            "no-new-privileges" in security_opt,
+            "no-new-privileges is not inspectable",
+        )
+        cap_drop = [value.upper() for value in _string_list(host.get("CapDrop"))]
+        _expect("ALL" in cap_drop, "capability drop-all is not inspectable")
+        _expect(host.get("NetworkMode") == contained.network, "network mode mismatch")
+        _expect(host.get("Privileged") is False, "privileged mode is enabled")
+        _validate_no_host_namespace_config(host)
+        _validate_no_devices_or_socket(inspect, host)
+        tmpfs_paths = _validate_tmpfs_controls(
+            host,
+            contained=contained,
+            paths=["/tmp", PROBE_WORKSPACE_PATH],
+        )
+    except ValueError as error:
+        raise DockerPreflightError(
+            DockerPreflightStatus.UNSAFE,
+            _check(
+                "resource_control_probe",
+                False,
+                DockerPreflightStatus.UNSAFE,
+                f"Docker inspect could not establish required container controls: {error}.",
+            ),
+        ) from None
+    return {
+        "requested": {
+            "pids_limit": contained.pids_limit,
+            "memory_limit": contained.memory_limit,
+            "memory_bytes": requested_memory,
+            "cpu_limit": contained.cpu_limit,
+            "uid": contained.required_uid,
+            "gid": contained.required_gid,
+            "network": contained.network,
+            "tmpfs_size": contained.tmpfs_size,
+        },
+        "inspected": {
+            "container_identity": "matched",
+            "image_identity": "matched",
+            "pids_limit": inspected_pids,
+            "memory_bytes": inspected_memory,
+            "cpu": cpu_evidence,
+            "uid_gid": config.get("User"),
+            "network": host.get("NetworkMode"),
+            "read_only_rootfs": host.get("ReadonlyRootfs"),
+            "no_new_privileges": True,
+            "cap_drop_all": True,
+            "tmpfs_paths": tmpfs_paths,
+            "privileged": host.get("Privileged"),
+            "host_namespace_sharing": False,
+            "device_exposure": False,
+            "docker_socket_mount": False,
+        },
+        "unavailable_or_ambiguous": [],
+    }
+
+
 def _probe_uid_gid_writable_path(
     contained: ContainedExecutionConfig,
     image: str,
@@ -970,6 +1371,257 @@ def _uid_gid_probe_script(uid: int, gid: int) -> str:
     )
 
 
+def _inspect_object(mapping: dict[str, object], key: str) -> dict[str, object]:
+    value = mapping.get(key)
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} is missing or malformed")
+    return value
+
+
+def _expect(condition: bool, message: str) -> None:
+    if not condition:
+        raise ValueError(message)
+
+
+def _required_int(value: object, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} is missing, zero, or malformed")
+    return value
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _validate_cpu_controls(
+    host: dict[str, object],
+    requested_cpu: float,
+) -> dict[str, object]:
+    expected_nano = int(round(requested_cpu * 1_000_000_000))
+    nano = host.get("NanoCpus")
+    quota = host.get("CpuQuota")
+    period = host.get("CpuPeriod")
+    representations = []
+    if isinstance(nano, int) and not isinstance(nano, bool) and nano > 0:
+        representations.append("NanoCpus")
+        if nano != expected_nano:
+            raise ValueError("container CPU limit NanoCpus is mismatched")
+    elif nano not in {None, 0}:
+        raise ValueError("container CPU limit NanoCpus is malformed")
+    quota_period_present = (
+        isinstance(quota, int)
+        and not isinstance(quota, bool)
+        and quota > 0
+        and isinstance(period, int)
+        and not isinstance(period, bool)
+        and period > 0
+    )
+    if quota_period_present:
+        representations.append("CpuQuota/CpuPeriod")
+        observed = quota / period
+        if abs(observed - requested_cpu) > 0.000001:
+            raise ValueError("container CPU quota/period is mismatched")
+    elif quota not in {None, 0} or period not in {None, 0}:
+        raise ValueError("container CPU quota/period is malformed or ambiguous")
+    if not representations:
+        raise ValueError("container CPU limit is missing or zero")
+    return {
+        "requested_cpus": requested_cpu,
+        "nano_cpus": nano if isinstance(nano, int) else None,
+        "cpu_quota": quota if isinstance(quota, int) else None,
+        "cpu_period": period if isinstance(period, int) else None,
+        "representation": "+".join(representations),
+    }
+
+
+def _validate_no_host_namespace_config(host: dict[str, object]) -> None:
+    namespace_fields = {
+        "PidMode": {"", "private"},
+        "IpcMode": {"", "private"},
+        "UsernsMode": {"", "private"},
+        "UTSMode": {"", "private"},
+        "CgroupnsMode": {"", "private"},
+    }
+    for field_name, safe_values in namespace_fields.items():
+        value = host.get(field_name, "")
+        if value is None:
+            value = ""
+        if not isinstance(value, str) or value not in safe_values:
+            raise ValueError(f"{field_name} indicates host namespace sharing")
+
+
+def _validate_no_devices_or_socket(
+    inspect: dict[str, object],
+    host: dict[str, object],
+) -> None:
+    for field_name in ("Devices", "DeviceRequests"):
+        value = host.get(field_name)
+        if value not in (None, []):
+            raise ValueError(f"{field_name} exposes host devices")
+    for bind in _string_list(host.get("Binds")):
+        if "/var/run/docker.sock" in bind:
+            raise ValueError("Docker socket bind mount is configured")
+        raise ValueError("unexpected bind mount is configured")
+    mounts = inspect.get("Mounts")
+    if mounts is None:
+        mounts = []
+    if not isinstance(mounts, list):
+        raise ValueError("Mounts is malformed")
+    for mount in mounts:
+        if not isinstance(mount, dict):
+            raise ValueError("Mounts contains malformed entries")
+        if mount.get("Type") == "bind":
+            source = str(mount.get("Source", ""))
+            destination = str(mount.get("Destination", ""))
+            if "/var/run/docker.sock" in f"{source}:{destination}":
+                raise ValueError("Docker socket mount is configured")
+            raise ValueError("unexpected bind mount is configured")
+        if mount.get("Type") not in {None, "tmpfs"}:
+            raise ValueError("unsupported mount type is configured")
+
+
+def _validate_tmpfs_controls(
+    host: dict[str, object],
+    *,
+    contained: ContainedExecutionConfig,
+    paths: list[str],
+) -> list[str]:
+    tmpfs = host.get("Tmpfs")
+    if not isinstance(tmpfs, dict):
+        raise ValueError("tmpfs configuration is missing or malformed")
+    observed = []
+    for path in paths:
+        options = tmpfs.get(path)
+        if not isinstance(options, str):
+            raise ValueError(f"tmpfs {path} is missing")
+        option_set = set(options.split(","))
+        required = {
+            "rw",
+            "noexec",
+            "nosuid",
+            "nodev",
+            f"size={contained.tmpfs_size}",
+            f"uid={contained.required_uid}",
+            f"gid={contained.required_gid}",
+            "mode=700",
+        }
+        if not required.issubset(option_set):
+            raise ValueError(f"tmpfs {path} is missing required bounded options")
+        observed.append(path)
+    return observed
+
+
+def _docker_size_bytes(value: str) -> int:
+    match = re.fullmatch(r"([1-9][0-9]*)([kKmMgG]?)", value)
+    if match is None:
+        raise ValueError("Docker size string is malformed")
+    amount = int(match.group(1))
+    suffix = match.group(2).lower()
+    multiplier = {"": 1, "k": 1024, "m": 1024 * 1024, "g": 1024 * 1024 * 1024}[suffix]
+    return amount * multiplier
+
+
+def _cleanup_probe_container(
+    runner: CommandRunner,
+    container_ref: str,
+    timeout_seconds: int,
+    max_output_bytes: int,
+) -> str:
+    try:
+        _docker_text(
+            runner,
+            ["docker", "rm", "-f", container_ref],
+            "resource_control_probe_cleanup",
+            timeout_seconds,
+            max_output_bytes,
+        )
+    except DockerPreflightError:
+        return "cleanup_failed"
+    return _verify_probe_container_absent(
+        runner,
+        container_ref,
+        timeout_seconds,
+        max_output_bytes,
+    )
+
+
+def _cleanup_probe_container_quiet(
+    runner: CommandRunner,
+    container_ref: str,
+    timeout_seconds: int,
+    max_output_bytes: int,
+) -> str:
+    return _cleanup_probe_container(runner, container_ref, timeout_seconds, max_output_bytes)
+
+
+def _verify_probe_container_absent(
+    runner: CommandRunner,
+    container_ref: str,
+    timeout_seconds: int,
+    max_output_bytes: int,
+) -> str:
+    completed = runner(
+        ["docker", "container", "inspect", "--format", "{{json .}}", container_ref],
+        timeout_seconds,
+        max_output_bytes,
+    )
+    if completed.timed_out or completed.stdout_truncated or completed.stderr_truncated:
+        return "cleanup_verification_failed"
+    if completed.returncode != 0:
+        return "removed"
+    try:
+        value = json.loads(completed.stdout)
+        _validate_json_bounds(value, depth=0)
+    except (json.JSONDecodeError, ValueError):
+        return "cleanup_verification_failed"
+    if isinstance(value, list) and len(value) == 1:
+        value = value[0]
+    if isinstance(value, dict):
+        return "cleanup_still_present"
+    return "cleanup_verification_failed"
+
+
+def _cleanup_named_probe_if_owned(
+    runner: CommandRunner,
+    container_name: str,
+    name_label: str,
+    timeout_seconds: int,
+    max_output_bytes: int,
+) -> str:
+    try:
+        inspect = _docker_json(
+            runner,
+            ["docker", "container", "inspect", "--format", "{{json .}}", container_name],
+            "resource_control_probe_create_cleanup_inspect",
+            timeout_seconds,
+            max_output_bytes,
+        )
+    except DockerPreflightError:
+        return "not_found"
+    config = inspect.get("Config")
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    if (
+        inspect.get("Name") != f"/{container_name}"
+        or not isinstance(labels, dict)
+        or labels.get("agentguard.owner") != "preflight"
+        or labels.get("agentguard.preflight") != "resource-controls"
+        or labels.get("agentguard.preflight.name") != container_name
+        or not name_label.endswith(container_name)
+    ):
+        return "unowned_not_removed"
+    container_id = str(inspect.get("Id", ""))
+    if CONTAINER_ID_PATTERN.fullmatch(container_id) is None:
+        return "ambiguous_not_removed"
+    return _cleanup_probe_container(
+        runner,
+        container_id,
+        timeout_seconds,
+        max_output_bytes,
+    )
+
+
 def _object_field(
     mapping: dict[str, object],
     key: str,
@@ -1039,11 +1691,7 @@ def _check(
     diagnostic: str,
     evidence: Optional[dict[str, object]] = None,
 ) -> DockerPreflightCheck:
-    sanitized_evidence = {}
-    for key, value in (evidence or {}).items():
-        sanitized_evidence[key] = (
-            _sanitize_diagnostic(value) if isinstance(value, str) else value
-        )
+    sanitized_evidence = _sanitize_evidence_mapping(evidence or {})
     return DockerPreflightCheck(
         name=name,
         passed=passed,
@@ -1051,6 +1699,70 @@ def _check(
         diagnostic=_sanitize_diagnostic(diagnostic),
         evidence=sanitized_evidence,
     )
+
+
+def _validate_json_bounds(value: object, *, depth: int) -> None:
+    if depth > PREFLIGHT_JSON_MAX_NESTING:
+        raise ValueError("Docker command returned JSON beyond the nesting bound.")
+    if isinstance(value, str):
+        if len(value.encode("utf-8")) > PREFLIGHT_JSON_MAX_STRING_BYTES:
+            raise ValueError("Docker command returned a JSON string beyond the size bound.")
+        return
+    if value is None or isinstance(value, (bool, int, float)):
+        return
+    if isinstance(value, list):
+        if len(value) > PREFLIGHT_JSON_MAX_ITEMS:
+            raise ValueError("Docker command returned a JSON array beyond the item bound.")
+        for item in value:
+            _validate_json_bounds(item, depth=depth + 1)
+        return
+    if isinstance(value, dict):
+        if len(value) > PREFLIGHT_JSON_MAX_ITEMS:
+            raise ValueError("Docker command returned a JSON object beyond the item bound.")
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("Docker command returned JSON with non-string keys.")
+            _validate_json_bounds(key, depth=depth + 1)
+            _validate_json_bounds(item, depth=depth + 1)
+        return
+    raise ValueError("Docker command returned unsupported JSON values.")
+
+
+def _sanitize_evidence_mapping(value: dict[str, object]) -> dict[str, object]:
+    sanitized = _sanitize_evidence_value(value, depth=0)
+    if not isinstance(sanitized, dict):
+        return {}
+    return sanitized
+
+
+def _sanitize_evidence_value(value: object, *, depth: int) -> object:
+    if depth > 8:
+        return "<truncated>"
+    if isinstance(value, str):
+        return _sanitize_diagnostic(value)
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value if abs(value) <= 10**15 else 0
+    if isinstance(value, float):
+        return round(value, 6) if -10**12 <= value <= 10**12 else 0.0
+    if isinstance(value, list):
+        return [
+            _sanitize_evidence_value(item, depth=depth + 1)
+            for item in value[:64]
+        ]
+    if isinstance(value, tuple):
+        return [
+            _sanitize_evidence_value(item, depth=depth + 1)
+            for item in value[:64]
+        ]
+    if isinstance(value, dict):
+        sanitized = {}
+        for key, item in list(value.items())[:64]:
+            safe_key = _sanitize_diagnostic(key)
+            sanitized[safe_key] = _sanitize_evidence_value(item, depth=depth + 1)
+        return sanitized
+    return _sanitize_diagnostic(value)
 
 
 def _result(
