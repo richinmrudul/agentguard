@@ -27,6 +27,13 @@ from agentguard.traces.models import (
     ReplayResult,
     ReplayabilityStatus,
 )
+from agentguard.traces.verifier_projection import (
+    VerifierProjectionArtifacts,
+    load_projection_policy,
+    project_execution_trace,
+    validate_projection_policy,
+    write_verifier_projection,
+)
 
 __all__ = [
     "ExecutionTrace",
@@ -52,4 +59,9 @@ __all__ = [
     "ReplayPolicySnapshot",
     "ReplayResult",
     "ReplayabilityStatus",
+    "VerifierProjectionArtifacts",
+    "load_projection_policy",
+    "project_execution_trace",
+    "validate_projection_policy",
+    "write_verifier_projection",
 ]
