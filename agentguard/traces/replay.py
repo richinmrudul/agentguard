@@ -12,7 +12,7 @@ from agentguard.config.schema import (
     DiffLimits,
     ExpectedModifiedFiles,
 )
-from agentguard.core.result import CheckResult, CommandResult, DiffSummary
+from agentguard.core.result import CheckResult, CommandResult, DiffSummary, FileRename
 from agentguard.instrumentation.command_tracker import CommandEvent
 from agentguard.sandbox.docker_identity import parse_docker_image_identity
 from agentguard.io import atomic_write_json, atomic_write_text
@@ -153,17 +153,27 @@ def reconstruct_replay_evidence(trace: ExecutionTrace) -> ReplayEvidence:
     modified_files = []
     added_files = []
     deleted_files = []
+    renamed_files = []
     event_paths = []
     for event in trace.events:
         if event.event_type != "file_change":
             continue
         path = str(event.payload["path"])
-        event_paths.append(path)
         change_type = event.payload["change_type"]
+        if change_type == "renamed":
+            event_paths.append(str(event.payload["source_path"]))
+        event_paths.append(path)
         if change_type == "added":
             added_files.append(path)
         elif change_type == "deleted":
             deleted_files.append(path)
+        elif change_type == "renamed":
+            renamed_files.append(
+                FileRename(
+                    source_path=str(event.payload["source_path"]),
+                    destination_path=path,
+                )
+            )
         elif (
             change_type == "symlink"
             and event.payload["old_content_sha256"] is None
@@ -259,6 +269,7 @@ def reconstruct_replay_evidence(trace: ExecutionTrace) -> ReplayEvidence:
             lines_added=int(modified["lines_added"]),
             lines_deleted=int(modified["lines_deleted"]),
             unified_diff="",
+            renamed_files=renamed_files,
         ),
         command_events=command_events,
         containment_evidence=containment_evidence,

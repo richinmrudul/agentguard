@@ -13,7 +13,7 @@ from typing import Any, Optional
 from agentguard.checks.registry import registered_checks
 from agentguard.config.schema import VALID_SEVERITIES, AgentGuardConfig
 from agentguard.containment.evidence import parse_containment_evidence
-from agentguard.core.result import BenchmarkResult, CheckResult, CommandResult
+from agentguard.core.result import BenchmarkResult, CheckResult, CommandResult, DiffSummary
 from agentguard.instrumentation.command_tracker import CommandEvent
 from agentguard.sandbox.docker_identity import parse_docker_image_identity
 from agentguard.io import atomic_write_text
@@ -504,15 +504,55 @@ def _file_payloads(
     sensitive_values: Optional[list[str]],
     include_diff: bool,
 ) -> list[dict[str, object]]:
-    changes = [
-        ("modified", path) for path in result.diff_summary.modified_files
-    ]
-    changes.extend(("added", path) for path in result.diff_summary.added_files)
-    changes.extend(("deleted", path) for path in result.diff_summary.deleted_files)
-    if len(changes) > MAX_CHANGED_FILES:
+    if len(result.diff_summary.changed_files) > MAX_CHANGED_FILES:
         raise ValueError("Trace has too many changed files.")
+    renames_by_endpoint: dict[str, object] = {}
+    for rename in result.diff_summary.renamed_files:
+        renames_by_endpoint[rename.source_path] = rename
+        renames_by_endpoint[rename.destination_path] = rename
+    emitted_renames: set[tuple[str, str]] = set()
     payloads = []
-    for change_type, raw_path in changes:
+    for raw_path in result.diff_summary.changed_files:
+        rename = renames_by_endpoint.get(raw_path)
+        if rename is not None:
+            key = (rename.source_path, rename.destination_path)
+            if key in emitted_renames:
+                continue
+            emitted_renames.add(key)
+            source_path = _normalized_path(rename.source_path)
+            path = _normalized_path(rename.destination_path)
+            old_content = _git_bytes(result.repo_dir, "show", f"HEAD:{source_path}")
+            new_hash, new_mode, symlink_target = _current_file_identity(
+                result.repo_dir,
+                path,
+            )
+            old_mode = _mode_from_git(result.repo_dir, source_path)
+            change_type = rename.change_type
+            lines_added, lines_deleted = _line_stats(result.repo_dir, path)
+            payload: dict[str, object] = {
+                "path": path,
+                "source_path": source_path,
+                "change_type": change_type,
+                "old_content_sha256": _hash_bytes(old_content),
+                "new_content_sha256": new_hash,
+                "old_mode": old_mode,
+                "new_mode": new_mode,
+                "lines_added": lines_added,
+                "lines_deleted": lines_deleted,
+                "symlink_target": symlink_target,
+                "diff_included": include_diff,
+            }
+            if include_diff:
+                diff, truncated = _diff_for_path(
+                    result.repo_dir,
+                    path,
+                    sensitive_values,
+                )
+                payload["unified_diff"] = diff
+                payload["diff_truncated"] = truncated
+            payloads.append(payload)
+            continue
+        change_type = _change_type_for_path(raw_path, result.diff_summary)
         path = _normalized_path(raw_path)
         old_content = _git_bytes(result.repo_dir, "show", f"HEAD:{path}")
         new_hash, new_mode, symlink_target = _current_file_identity(
@@ -545,6 +585,14 @@ def _file_payloads(
             payload["diff_truncated"] = truncated
         payloads.append(payload)
     return payloads
+
+
+def _change_type_for_path(path: str, diff_summary: DiffSummary) -> str:
+    if path in diff_summary.added_files:
+        return "added"
+    if path in diff_summary.deleted_files:
+        return "deleted"
+    return "modified"
 
 
 def _test_payload(
@@ -1599,6 +1647,8 @@ def _validate_payload(event: TraceEvent) -> None:
             "symlink_target",
             "diff_included",
         }
+        if event.payload.get("source_path") is not None:
+            event_fields = event_fields | {"source_path"}
         if event.payload.get("diff_included") is True:
             event_fields = event_fields | {"unified_diff", "diff_truncated"}
     else:
@@ -1781,13 +1831,21 @@ def _validate_payload(event: TraceEvent) -> None:
         if not isinstance(path, str):
             raise ValueError("File change path must be a string.")
         _normalized_path(path)
+        source_path = event.payload.get("source_path")
+        if source_path is not None:
+            if not isinstance(source_path, str):
+                raise ValueError("File change source_path must be a string.")
+            _normalized_path(source_path)
         if event.payload.get("change_type") not in {
             "added",
             "modified",
             "deleted",
+            "renamed",
             "symlink",
         }:
             raise ValueError("Invalid file change type.")
+        if event.payload.get("change_type") == "renamed" and source_path is None:
+            raise ValueError("Renamed file change requires source_path.")
         for hash_field in ("old_content_sha256", "new_content_sha256"):
             value = event.payload.get(hash_field)
             if value is not None:
@@ -2381,7 +2439,7 @@ def _result_from_report(
     manifest_path: Optional[Path],
 ) -> tuple[BenchmarkResult, dict[str, Any]]:
     from agentguard.config.schema import BenchmarkMetadata
-    from agentguard.core.result import DiffSummary, ReportPaths, SandboxMetadata
+    from agentguard.core.result import DiffSummary, FileRename, ReportPaths, SandboxMetadata
 
     report = _load_json(report_path)
     required = {
@@ -2435,7 +2493,17 @@ def _result_from_report(
             raise ValueError("Command log evidence is inconsistent with report.")
     benchmark_data = report.get("benchmark") or {}
     sandbox_data = report.get("sandbox")
-    diff_data = report["diff_summary"]
+    diff_data = dict(report["diff_summary"])
+    diff_data.pop("changed_files", None)
+    diff_data["renamed_files"] = [
+        FileRename(
+            source_path=str(item.get("source_path") or item.get("old")),
+            destination_path=str(item.get("destination_path") or item.get("new")),
+            change_type=str(item.get("change_type") or "renamed"),
+        )
+        for item in diff_data.get("renamed_files", [])
+        if isinstance(item, dict)
+    ]
     checks = [CheckResult(**item) for item in report["check_results"]]
     test_result = CommandResult(
         command=_resolve_report_text_value(test_data["command"], roots),

@@ -930,8 +930,22 @@ def _changed_paths(value: Any, repo_root: Optional[Path]) -> list[str]:
     if not isinstance(value, dict):
         return []
     paths: list[str] = []
+    paths.extend(_string_list(value.get("changed_files")))
     for key in ("modified_files", "added_files", "deleted_files"):
         paths.extend(_string_list(value.get(key)))
+    renamed = value.get("renamed_files")
+    if isinstance(renamed, list):
+        for item in renamed:
+            if not isinstance(item, dict):
+                continue
+            paths.extend(
+                _string_list(
+                    [
+                        item.get("source_path") or item.get("old"),
+                        item.get("destination_path") or item.get("new"),
+                    ]
+                )
+            )
     return [
         normalized
         for path in paths

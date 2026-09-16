@@ -27,6 +27,13 @@ class CommandResult:
 
 
 @dataclass(frozen=True)
+class FileRename:
+    source_path: str
+    destination_path: str
+    change_type: str = "renamed"
+
+
+@dataclass(frozen=True)
 class DiffSummary:
     modified_files: list[str]
     added_files: list[str]
@@ -34,13 +41,22 @@ class DiffSummary:
     lines_added: int
     lines_deleted: int
     unified_diff: str
+    renamed_files: list[FileRename] = field(default_factory=list)
     secret_content_matches: list[str] = field(default_factory=list)
     secret_content_scan_complete: bool = True
     secret_content_scan_error: Optional[str] = None
 
     @property
     def changed_files(self) -> list[str]:
-        return self.modified_files + self.added_files + self.deleted_files
+        changed: list[str] = []
+        for path in self.modified_files + self.added_files + self.deleted_files:
+            if path not in changed:
+                changed.append(path)
+        for rename in self.renamed_files:
+            for path in (rename.source_path, rename.destination_path):
+                if path not in changed:
+                    changed.append(path)
+        return changed
 
 
 @dataclass(frozen=True)

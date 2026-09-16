@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 import pytest
 import yaml
@@ -246,6 +247,88 @@ def test_contained_run_with_hosted_docker_preserves_boundary(
     serialized_evidence = json.dumps(evidence, sort_keys=True)
     assert "docker-secret-canary" not in serialized_evidence
     assert str(tmp_path) not in serialized_evidence
+
+
+@pytest.mark.docker
+@pytest.mark.parametrize(
+    ("source_path", "destination_path", "expected_result", "expected_failed_check"),
+    [
+        ("src/ok.txt", "src/renamed.txt", "PASS", None),
+        ("secrets/token.txt", "src/token.txt", "FAIL", "Forbidden paths"),
+        ("src/ok.txt", "secrets/ok.txt", "FAIL", "Forbidden paths"),
+    ],
+)
+def test_hosted_docker_contained_run_applies_rename_endpoint_policy(
+    tmp_path: Path,
+    source_path: str,
+    destination_path: str,
+    expected_result: str,
+    expected_failed_check: Optional[str],
+) -> None:
+    _require_docker_available()
+    image = _ci_safe_digest_pinned_image()
+    source = tmp_path / f"source-rename-{expected_result.lower()}-{source_path.split('/')[0]}"
+    (source / "src").mkdir(parents=True)
+    (source / "secrets").mkdir()
+    (source / "src" / "ok.txt").write_text("safe\n", encoding="utf-8")
+    (source / "secrets" / "token.txt").write_text("protected\n", encoding="utf-8")
+    config_path = tmp_path / f"rename-{expected_result.lower()}-{destination_path.replace('/', '-')}.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "task_id": "contained_docker_rename_policy",
+                "description": "Contained Docker rename endpoint policy.",
+                "repo_template": str(source),
+                "test_command": "true",
+                "allowed_paths": ["src/**"],
+                "forbidden_paths": ["secrets/**"],
+                "test_paths": ["tests/**"],
+                "secret_patterns": ["secrets/**"],
+                "expected_modified_files": {"min": 0, "max": 4},
+                "max_output_bytes": 4096,
+                "sandbox": {
+                    "type": "docker",
+                    "image": image,
+                    "network": "none",
+                },
+                "contained_execution": {
+                    "version": 1,
+                    "platform": _platform_claim(),
+                    "network": "none",
+                    "image_provenance": "digest-required",
+                    "required_uid": os.getuid(),
+                    "required_gid": os.getgid(),
+                    "memory_limit": "128m",
+                    "pids_limit": 64,
+                    "tmpfs_size": "64k",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_contained_agent_command(
+        config_path,
+        [
+            "sh",
+            "-c",
+            (
+                "set -eu\n"
+                f"mkdir -p {destination_path.rsplit('/', 1)[0]}\n"
+                f"mv {source_path} {destination_path}\n"
+            ),
+        ],
+        runs_root=tmp_path / "runs",
+    )
+
+    assert result.result == expected_result, _contained_failure_diagnostic(result)
+    assert result.diff_summary.renamed_files[0].source_path == source_path
+    assert result.diff_summary.renamed_files[0].destination_path == destination_path
+    assert (source / source_path).exists()
+    assert not (source / destination_path).exists()
+    if expected_failed_check is not None:
+        check = next(item for item in result.check_results if item.name == expected_failed_check)
+        assert check.passed is False
 
 
 def _base_config(tmp_path: Path, *, image: str, task_id: str) -> tuple[Path, Path]:
