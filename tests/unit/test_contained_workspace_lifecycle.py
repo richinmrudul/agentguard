@@ -6,6 +6,9 @@ from pathlib import Path
 import pytest
 
 from agentguard.sandbox.contained_workspace import (
+    CONTAINED_RUN_ARTIFACT_MARKER,
+    CONTAINED_RUN_ARTIFACT_SCHEMA,
+    CONTAINED_RUN_ARTIFACT_SCHEMA_VERSION,
     ContainedWorkspaceError,
     ContainedWorkspaceLimits,
     ContainedWorkspaceMutationError,
@@ -48,6 +51,36 @@ def _paths(root: Path) -> list[str]:
     return sorted(path.relative_to(root).as_posix() for path in root.rglob("*"))
 
 
+def _artifact_marker(run_dir: Path, *, state: str = "complete") -> None:
+    (run_dir / CONTAINED_RUN_ARTIFACT_MARKER).write_text(
+        json.dumps(
+            {
+                "schema": CONTAINED_RUN_ARTIFACT_SCHEMA,
+                "schema_version": CONTAINED_RUN_ARTIFACT_SCHEMA_VERSION,
+                "owner": "agentguard",
+                "artifact_kind": "contained-run",
+                "run_id": run_dir.name,
+                "lifecycle_state": state,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _owned_report(run_dir: Path) -> None:
+    (run_dir / "contained-run.json").write_text(
+        json.dumps(
+            {
+                "schema": "agentguard.contained-run",
+                "schema_version": 1,
+                "task_id": "prior",
+                "containment_evidence": {"schema": "agentguard.containment-evidence"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_prepare_contained_workspace_copies_regular_content_without_git_metadata(
     tmp_path: Path,
 ) -> None:
@@ -77,6 +110,137 @@ def test_prepare_contained_workspace_copies_regular_content_without_git_metadata
     assert prepared.metadata.baseline.source_kind == "git"
     assert prepared.metadata.agentguard_evidence == "evidence"
     assert prepared.metadata.cleanup_targets == (".",)
+
+
+def test_prepare_excludes_verified_agentguard_owned_prior_artifacts(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    run_dir = (
+        source
+        / ".agentguard"
+        / "contained-runs"
+        / "prior-contained-20260101000000000000-deadbeef"
+    )
+    run_dir.mkdir(parents=True)
+    _artifact_marker(run_dir)
+    _owned_report(run_dir)
+    (source / "file.txt").write_text("content\n", encoding="utf-8")
+
+    prepared = prepare_contained_workspace(
+        source,
+        tmp_path / "lifecycle",
+        workspace_id="prior-artifacts",
+        agentguard_owned_artifact_roots=(run_dir,),
+    )
+
+    assert (prepared.workspace_dir / "file.txt").is_file()
+    assert not (prepared.workspace_dir / ".agentguard").exists()
+    assert all(
+        not item.path.startswith(".agentguard/")
+        for item in prepared.metadata.baseline.files
+    )
+
+
+def test_prepare_rejects_malformed_or_incomplete_prior_artifact_metadata(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    run_dir = (
+        source
+        / ".agentguard"
+        / "contained-runs"
+        / "prior-contained-20260101000000000000-deadbeef"
+    )
+    run_dir.mkdir(parents=True)
+    _artifact_marker(run_dir)
+    (run_dir / "payload.txt").write_text("not enough evidence\n", encoding="utf-8")
+    (source / "file.txt").write_text("content\n", encoding="utf-8")
+
+    with pytest.raises(ContainedWorkspaceError, match="reserved path"):
+        prepare_contained_workspace(
+            source,
+            tmp_path / "lifecycle",
+            workspace_id="incomplete-artifacts",
+            agentguard_owned_artifact_roots=(run_dir,),
+        )
+
+
+def test_prepare_rejects_extra_top_level_files_in_owned_artifact_root(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    run_dir = (
+        source
+        / ".agentguard"
+        / "contained-runs"
+        / "prior-contained-20260101000000000000-deadbeef"
+    )
+    run_dir.mkdir(parents=True)
+    _artifact_marker(run_dir)
+    _owned_report(run_dir)
+    (run_dir / "attacker-extra.txt").write_text("do not hide me\n", encoding="utf-8")
+    (source / "file.txt").write_text("content\n", encoding="utf-8")
+
+    with pytest.raises(ContainedWorkspaceError, match="reserved path"):
+        prepare_contained_workspace(
+            source,
+            tmp_path / "lifecycle",
+            workspace_id="extra-artifact-content",
+            agentguard_owned_artifact_roots=(run_dir,),
+        )
+
+
+def test_prepare_rejects_forged_metadata_with_private_canaries_safely(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    run_dir = (
+        source
+        / ".agentguard"
+        / "contained-runs"
+        / "forged-contained-20260101000000000000-deadbeef"
+    )
+    run_dir.mkdir(parents=True)
+    _artifact_marker(run_dir)
+    (run_dir / "contained-run.json").write_text(
+        f"{PRIVATE_CANARY} {CREDENTIAL_CANARY}",
+        encoding="utf-8",
+    )
+    (source / "file.txt").write_text("content\n", encoding="utf-8")
+
+    with pytest.raises(ContainedWorkspaceError) as caught:
+        prepare_contained_workspace(
+            source,
+            tmp_path / "lifecycle",
+            workspace_id="forged-artifacts",
+            agentguard_owned_artifact_roots=(run_dir,),
+        )
+
+    message = str(caught.value)
+    assert "reserved path" in message
+    assert PRIVATE_CANARY not in message
+    assert CREDENTIAL_CANARY not in message
+
+
+def test_prepare_rejects_external_hardlink_under_artifact_like_path(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    run_dir = source / ".agentguard" / "contained-runs" / "hardlink"
+    run_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    os.link(outside, run_dir / "linked.txt")
+    (source / "file.txt").write_text("content\n", encoding="utf-8")
+
+    with pytest.raises(ContainedWorkspaceError, match="reserved path"):
+        prepare_contained_workspace(
+            source,
+            tmp_path / "lifecycle",
+            workspace_id="hardlink-artifact",
+            agentguard_owned_artifact_roots=(run_dir,),
+        )
 
 
 def test_prepare_records_tracked_untracked_ignored_deleted_and_renamed_evidence(

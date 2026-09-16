@@ -46,6 +46,9 @@ from agentguard.sandbox.contained_environment import (
     resolve_contained_environment,
 )
 from agentguard.sandbox.contained_workspace import (
+    CONTAINED_RUN_ARTIFACT_MARKER,
+    CONTAINED_RUN_ARTIFACT_SCHEMA,
+    CONTAINED_RUN_ARTIFACT_SCHEMA_VERSION,
     DEFAULT_AGENT_WORKSPACE_PATH,
     ContainedWorkspaceError,
     ContainedWorkspaceMutationError,
@@ -222,6 +225,7 @@ def run_contained_agent_command(
     run_id = _run_id(config.task_id)
     run_dir = artifact_directory(runs_root, run_id)
     run_dir.mkdir(parents=True, exist_ok=False)
+    _write_contained_run_artifact_marker(run_dir, run_id, lifecycle_state="created")
 
     preflight: Optional[DockerPreflightResult] = None
     prepared: Optional[PreparedContainedWorkspace] = None
@@ -297,6 +301,12 @@ def run_contained_agent_command(
             source,
             run_dir / "workspace-lifecycle",
             workspace_id="agent-workspace",
+            agentguard_owned_artifact_roots=_discover_contained_run_artifacts(
+                source,
+                runs_root,
+                current_run_dir=run_dir,
+            ),
+            agentguard_current_artifact_roots=(run_dir,),
         )
         workspace = validate_workspace_mount_containment(
             prepared.workspace_dir,
@@ -493,6 +503,11 @@ def run_contained_agent_command(
         run_dir=run_dir,
         prepared=prepared,
         sensitive_values=sensitive_values,
+    )
+    _write_contained_run_artifact_marker(
+        run_dir,
+        run_id,
+        lifecycle_state="complete" if cleanup_complete else "retained",
     )
     return _write_report(final, elapsed)
 
@@ -1245,6 +1260,59 @@ def _path_policy_evidence(path: str, config: AgentGuardConfig) -> dict[str, obje
 def _run_id(task_id: str) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     return f"{task_id}-contained-{timestamp}-{uuid4().hex[:8]}"
+
+
+def _write_contained_run_artifact_marker(
+    run_dir: Path,
+    run_id: str,
+    *,
+    lifecycle_state: str,
+) -> None:
+    atomic_write_json(
+        run_dir / CONTAINED_RUN_ARTIFACT_MARKER,
+        {
+            "schema": CONTAINED_RUN_ARTIFACT_SCHEMA,
+            "schema_version": CONTAINED_RUN_ARTIFACT_SCHEMA_VERSION,
+            "owner": "agentguard",
+            "artifact_kind": "contained-run",
+            "run_id": run_id,
+            "lifecycle_state": lifecycle_state,
+        },
+    )
+
+
+def _discover_contained_run_artifacts(
+    source: Path,
+    runs_root: Path,
+    *,
+    current_run_dir: Path,
+    max_artifacts: int = 4096,
+) -> tuple[Path, ...]:
+    try:
+        resolved_source = source.resolve()
+        resolved_root = runs_root.expanduser().resolve(strict=False)
+        resolved_root.relative_to(resolved_source)
+    except (OSError, RuntimeError, ValueError):
+        return ()
+    if not resolved_root.is_dir():
+        return ()
+    artifacts: list[Path] = []
+    try:
+        children = sorted(resolved_root.iterdir(), key=lambda path: path.name)
+    except OSError:
+        return ()
+    current_resolved = current_run_dir.expanduser().resolve(strict=False)
+    for child in children:
+        if len(artifacts) >= max_artifacts:
+            break
+        try:
+            child_resolved = child.resolve(strict=False)
+        except (OSError, RuntimeError):
+            continue
+        if child_resolved == current_resolved:
+            continue
+        artifacts.append(child)
+    return tuple(artifacts)
 
 
 def _display_command(command: Sequence[str]) -> str:

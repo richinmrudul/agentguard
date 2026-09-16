@@ -16,6 +16,9 @@ from agentguard.redaction import redact_credentials
 
 
 CONTAINED_WORKSPACE_SCHEMA_VERSION = 1
+CONTAINED_RUN_ARTIFACT_SCHEMA = "agentguard.contained-run-artifact"
+CONTAINED_RUN_ARTIFACT_SCHEMA_VERSION = 1
+CONTAINED_RUN_ARTIFACT_MARKER = "agentguard-contained-run-artifact.json"
 DEFAULT_AGENT_WORKSPACE_PATH = "/agentguard-workspace"
 DEFAULT_EVIDENCE_PATH = "/agentguard-evidence"
 RESERVED_PATHS = (
@@ -45,6 +48,11 @@ class ContainedWorkspaceLimits:
 class _ValidatedSourceEntry:
     path: Path
     info: os.stat_result
+
+
+@dataclass(frozen=True)
+class _SourceExclusions:
+    roots: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -164,6 +172,8 @@ def prepare_contained_workspace(
     agent_mount: str = DEFAULT_AGENT_WORKSPACE_PATH,
     evidence_mount: str = DEFAULT_EVIDENCE_PATH,
     agent_visible_writable_paths: Iterable[str] = (".",),
+    agentguard_owned_artifact_roots: Iterable[Path] = (),
+    agentguard_current_artifact_roots: Iterable[Path] = (),
 ) -> PreparedContainedWorkspace:
     """Prepare an isolated copy for future contained-agent execution.
 
@@ -189,7 +199,12 @@ def prepare_contained_workspace(
     _validate_agent_paths(agent_mount, evidence_mount, writable_paths)
 
     normalized_writable_paths = _normalize_writable_paths(writable_paths)
-    baseline = _baseline_snapshot(source_root, limits)
+    exclusions = _source_exclusions(
+        source_root,
+        agentguard_owned_artifact_roots,
+        current_artifact_roots=agentguard_current_artifact_roots,
+    )
+    baseline = _baseline_snapshot(source_root, limits, exclusions=exclusions)
     metadata = ContainedWorkspaceMetadata(
         schema_version=CONTAINED_WORKSPACE_SCHEMA_VERSION,
         workspace_id=workspace_name,
@@ -207,7 +222,7 @@ def prepare_contained_workspace(
     try:
         workspace_dir.mkdir(parents=True)
         evidence_dir.mkdir()
-        _copy_validated_tree(source_root, workspace_dir, limits)
+        _copy_validated_tree(source_root, workspace_dir, limits, exclusions=exclusions)
         _write_metadata(evidence_dir / "workspace-metadata.json", metadata)
         os.replace(staging_dir, run_dir)
     except ContainedWorkspaceError:
@@ -351,9 +366,14 @@ def _normalize_writable_paths(
 def _baseline_snapshot(
     source_root: Path,
     limits: ContainedWorkspaceLimits,
+    *,
+    exclusions: _SourceExclusions = _SourceExclusions(frozenset()),
 ) -> ContainedBaselineSnapshot:
-    source_kind, git_head, git_status = _git_baseline(source_root)
-    files = tuple(_scan_tree(source_root, limits))
+    source_kind, git_head, git_status = _git_baseline(
+        source_root,
+        exclusions=exclusions,
+    )
+    files = tuple(_scan_tree(source_root, limits, exclusions=exclusions))
     digest = _baseline_digest(source_kind, git_head, git_status, files)
     return ContainedBaselineSnapshot(
         source_kind=source_kind,
@@ -366,6 +386,8 @@ def _baseline_snapshot(
 
 def _git_baseline(
     source_root: Path,
+    *,
+    exclusions: _SourceExclusions = _SourceExclusions(frozenset()),
 ) -> tuple[str, Optional[str], tuple[ContainedGitStatusEntry, ...]]:
     if not _is_git_work_tree(source_root):
         return "directory", None, ()
@@ -379,7 +401,14 @@ def _git_baseline(
         "--ignored",
         "--untracked-files=all",
     )
-    return source_kind, git_head, _parse_porcelain_status(status_output or "")
+    git_status = _parse_porcelain_status(status_output or "")
+    if exclusions.roots:
+        git_status = tuple(
+            entry
+            for entry in git_status
+            if not _status_entry_excluded(source_root, entry, exclusions)
+        )
+    return source_kind, git_head, git_status
 
 
 def _is_git_work_tree(source_root: Path) -> bool:
@@ -451,11 +480,281 @@ def _normalize_git_path(path: str) -> str:
     return path.replace("\\", "/").strip("/")
 
 
+def _source_exclusions(
+    source_root: Path,
+    owned_artifact_roots: Iterable[Path],
+    *,
+    current_artifact_roots: Iterable[Path] = (),
+) -> _SourceExclusions:
+    roots: set[str] = set()
+    for artifact_root in current_artifact_roots:
+        relative_path = _relative_artifact_root(source_root, artifact_root)
+        if relative_path is not None:
+            roots.add(relative_path)
+    for artifact_root in owned_artifact_roots:
+        relative_path = _relative_artifact_root(source_root, artifact_root)
+        if relative_path is None:
+            continue
+        try:
+            resolved = artifact_root.expanduser().resolve()
+        except (OSError, RuntimeError):
+            continue
+        if not _is_valid_owned_contained_run_artifact(resolved):
+            continue
+        roots.add(relative_path)
+    return _SourceExclusions(frozenset(sorted(roots)))
+
+
+def _relative_artifact_root(source_root: Path, artifact_root: Path) -> Optional[str]:
+    try:
+        resolved = artifact_root.expanduser().resolve(strict=False)
+        relative = resolved.relative_to(source_root)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    relative_path = relative.as_posix().strip("/")
+    if not relative_path or relative_path == ".":
+        return None
+    try:
+        _validate_relative_path(relative_path)
+    except ContainedWorkspaceError:
+        return None
+    return relative_path
+
+
+def _read_bounded_json_file(path: Path, *, max_bytes: int) -> Optional[dict[str, Any]]:
+    try:
+        info = path.lstat()
+    except OSError:
+        return None
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_nlink != 1
+        or info.st_size > max_bytes
+    ):
+        return None
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        opened = os.fstat(descriptor)
+        if not _same_entry(info, opened) or not stat.S_ISREG(opened.st_mode):
+            return None
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
+            data = handle.read(max_bytes + 1)
+    except (OSError, ValueError):
+        return None
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    if len(data) > max_bytes:
+        return None
+    try:
+        decoded = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _has_contained_run_evidence(artifact_root: Path) -> bool:
+    report = _read_bounded_json_file(artifact_root / "contained-run.json", max_bytes=2 * 1024 * 1024)
+    if (
+        report is not None
+        and report.get("schema") == "agentguard.contained-run"
+        and report.get("schema_version") == 1
+        and isinstance(report.get("task_id"), str)
+        and isinstance(report.get("containment_evidence"), dict)
+    ):
+        return True
+    metadata = _read_bounded_json_file(
+        artifact_root
+        / "workspace-lifecycle"
+        / "agent-workspace"
+        / "evidence"
+        / "workspace-metadata.json",
+        max_bytes=1024 * 1024,
+    )
+    return (
+        metadata is not None
+        and metadata.get("schema_version") == CONTAINED_WORKSPACE_SCHEMA_VERSION
+        and metadata.get("workspace_id") == "agent-workspace"
+        and isinstance(metadata.get("baseline"), dict)
+        and metadata.get("agentguard_evidence") == "evidence"
+    )
+
+
+def _is_valid_owned_contained_run_artifact(artifact_root: Path) -> bool:
+    try:
+        root_info = artifact_root.lstat()
+    except OSError:
+        return False
+    if (
+        not stat.S_ISDIR(root_info.st_mode)
+        or stat.S_ISLNK(root_info.st_mode)
+    ):
+        return False
+    if not _artifact_root_has_only_known_entries(artifact_root):
+        return False
+    marker_data = _read_bounded_json_file(
+        artifact_root / CONTAINED_RUN_ARTIFACT_MARKER,
+        max_bytes=8192,
+    )
+    if marker_data is None:
+        return False
+    run_id = marker_data.get("run_id")
+    lifecycle_state = marker_data.get("lifecycle_state")
+    if not isinstance(run_id, str) or run_id != artifact_root.name:
+        return False
+    try:
+        validate_artifact_id(run_id, "run_id")
+    except ValueError:
+        return False
+    return (
+        marker_data.get("schema") == CONTAINED_RUN_ARTIFACT_SCHEMA
+        and marker_data.get("schema_version") == CONTAINED_RUN_ARTIFACT_SCHEMA_VERSION
+        and marker_data.get("owner") == "agentguard"
+        and marker_data.get("artifact_kind") == "contained-run"
+        and lifecycle_state in {"created", "complete", "retained", "failed"}
+        and _has_contained_run_evidence(artifact_root)
+    )
+
+
+def _artifact_root_has_only_known_entries(artifact_root: Path) -> bool:
+    allowed = {
+        CONTAINED_RUN_ARTIFACT_MARKER,
+        "contained-run.json",
+        "workspace-lifecycle",
+    }
+    try:
+        children = list(artifact_root.iterdir())
+    except OSError:
+        return False
+    return all(child.name in allowed for child in children)
+
+
+def _relative_path_excluded(
+    relative_path: str,
+    exclusions: _SourceExclusions,
+) -> bool:
+    return any(
+        relative_path == root or relative_path.startswith(f"{root}/")
+        for root in exclusions.roots
+    )
+
+
+def _relative_path_is_exclusion_container(
+    relative_path: str,
+    exclusions: _SourceExclusions,
+) -> bool:
+    return any(root.startswith(f"{relative_path}/") for root in exclusions.roots)
+
+
+def _source_path_excluded(
+    source_root: Path,
+    source_path: Path,
+    exclusions: _SourceExclusions,
+) -> bool:
+    if not exclusions.roots:
+        return False
+    try:
+        relative_path = _relative_to_root(source_root, source_path)
+    except ValueError:
+        return False
+    if _relative_path_excluded(relative_path, exclusions):
+        return True
+    if not _relative_path_is_exclusion_container(relative_path, exclusions):
+        return False
+    return _directory_contains_only_exclusions(
+        source_root,
+        source_path,
+        relative_path,
+        exclusions,
+        budget=[1024],
+    )
+
+
+def _directory_contains_only_exclusions(
+    source_root: Path,
+    directory: Path,
+    relative_path: str,
+    exclusions: _SourceExclusions,
+    *,
+    budget: list[int],
+) -> bool:
+    try:
+        directory_info = directory.lstat()
+    except OSError:
+        return False
+    if not stat.S_ISDIR(directory_info.st_mode):
+        return False
+    try:
+        with os.scandir(directory) as entries:
+            children = sorted(entries, key=lambda entry: entry.name)
+    except OSError:
+        return False
+    for child in children:
+        budget[0] -= 1
+        if budget[0] < 0:
+            return False
+        child_relative = f"{relative_path}/{child.name}"
+        if _relative_path_excluded(child_relative, exclusions):
+            continue
+        if not _relative_path_is_exclusion_container(child_relative, exclusions):
+            return False
+        if not _directory_contains_only_exclusions(
+            source_root,
+            Path(child.path),
+            child_relative,
+            exclusions,
+            budget=budget,
+        ):
+            return False
+    return True
+
+
+def _status_entry_excluded(
+    source_root: Path,
+    entry: ContainedGitStatusEntry,
+    exclusions: _SourceExclusions,
+) -> bool:
+    paths = [entry.path]
+    if entry.source_path is not None:
+        paths.append(entry.source_path)
+    return all(_status_path_excluded(source_root, path, exclusions) for path in paths)
+
+
+def _status_path_excluded(
+    source_root: Path,
+    path: str,
+    exclusions: _SourceExclusions,
+) -> bool:
+    if _relative_path_excluded(path, exclusions):
+        return True
+    if not _relative_path_is_exclusion_container(path, exclusions):
+        return False
+    return _directory_contains_only_exclusions(
+        source_root,
+        source_root / path,
+        path,
+        exclusions,
+        budget=[1024],
+    )
+
+
 def _scan_tree(
     source_root: Path,
     limits: ContainedWorkspaceLimits,
     *,
     reject_git_control: bool = False,
+    exclusions: _SourceExclusions = _SourceExclusions(frozenset()),
 ) -> list[ContainedPathSnapshot]:
     snapshots: list[ContainedPathSnapshot] = []
     entries_seen = 0
@@ -463,6 +762,7 @@ def _scan_tree(
     for relative_path, source_path, info in _walk_source(
         source_root,
         reject_git_control=reject_git_control,
+        exclusions=exclusions,
     ):
         entries_seen += 1
         if entries_seen > limits.max_entries:
@@ -530,10 +830,15 @@ def _copy_validated_tree(
     source_root: Path,
     workspace_dir: Path,
     limits: ContainedWorkspaceLimits,
+    *,
+    exclusions: _SourceExclusions = _SourceExclusions(frozenset()),
 ) -> None:
     entries_seen = 0
     total_bytes = 0
-    for relative_path, source_path, info in _walk_source(source_root):
+    for relative_path, source_path, info in _walk_source(
+        source_root,
+        exclusions=exclusions,
+    ):
         entries_seen += 1
         if entries_seen > limits.max_entries:
             raise ContainedWorkspaceError("contained workspace entry limit exceeded")
@@ -567,6 +872,7 @@ def _walk_source(
     source_root: Path,
     *,
     reject_git_control: bool = False,
+    exclusions: _SourceExclusions = _SourceExclusions(frozenset()),
 ) -> Iterator[tuple[str, Path, os.stat_result]]:
     for current, directory_names, file_names in os.walk(
         source_root,
@@ -583,11 +889,29 @@ def _walk_source(
             for name in directory_names
             if reject_git_control or name.casefold() != ".git"
         )
+        directory_names[:] = [
+            name
+            for name in directory_names
+            if not _source_path_excluded(
+                source_root,
+                current_path / name,
+                exclusions,
+            )
+        ]
         visible_files = sorted(
             name
             for name in file_names
             if reject_git_control or name.casefold() != ".git"
         )
+        visible_files = [
+            name
+            for name in visible_files
+            if not _source_path_excluded(
+                source_root,
+                current_path / name,
+                exclusions,
+            )
+        ]
         entries = sorted(directory_names) + visible_files
         for name in entries:
             source_path = current_path / name
