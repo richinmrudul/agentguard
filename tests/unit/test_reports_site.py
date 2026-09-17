@@ -1,5 +1,7 @@
 import json
+import re
 from pathlib import Path
+from typing import Optional
 
 import pytest
 from typer.testing import CliRunner
@@ -754,6 +756,236 @@ def test_guard_type_keys_are_escaped_and_raw_incident_data_is_omitted(
     assert "https://" not in detail
 
 
+def test_containment_evidence_after_generic_detail_limit_still_renders(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    data = {f"extra_{index}": f"value-{index}" for index in range(20)}
+    data.update(
+        {
+            "task_id": "contained late evidence",
+            "result": "PASS",
+            "score": 100,
+            "containment_evidence": _containment_evidence(),
+        }
+    )
+    _write_json(tmp_path / ".agentguard/runs/late/reports/report.json", data)
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", force=True)
+    )
+
+    detail = (tmp_path / "site/details/run-late.html").read_text(encoding="utf-8")
+    assert "<h2>Containment</h2>" in detail
+    assert "Contained execution mode" in detail
+    assert "contained-run" in detail
+    assert "Configured image reference" in detail
+    assert "example.com/team/agent@sha256:" in detail
+
+
+def test_nested_valid_containment_evidence_renders_requested_vs_verified(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    evidence = _containment_evidence(
+        controls={
+            "requested_resource_controls": {
+                "pids_limit": 256,
+                "memory_limit": "512m",
+                "cpu": {"requested_cpus": 1.0},
+            },
+            "verified_resource_controls": {
+                "pids_limit": 256,
+                "cpu": {
+                    "requested_cpus": 1.0,
+                    "nano_cpus": 1_000_000_000,
+                },
+            },
+        }
+    )
+    _write_json(
+        tmp_path / ".agentguard/runs/nested/reports/report.json",
+        {"task_id": "nested evidence", "result": "PASS", "containment_evidence": evidence},
+    )
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", force=True)
+    )
+
+    detail = (tmp_path / "site/details/run-nested.html").read_text(encoding="utf-8")
+    assert "requested_cpus=1.0" in detail
+    assert re.search(r"<td>memory_limit</td>\s*<td>512m</td>\s*<td>requested-unverified</td>", detail)
+    assert re.search(r"<td>pids_limit</td>\s*<td>256</td>\s*<td>verified</td>", detail)
+
+
+def test_cleanup_failure_and_unknown_liveness_are_prominent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    evidence = _containment_evidence(
+        cleanup={
+            "container_complete": False,
+            "container_status": "cleanup_incomplete",
+            "liveness_verified": None,
+            "overall_complete": False,
+            "workspace_complete": None,
+            "workspace_status": "unknown",
+        }
+    )
+    _write_json(
+        tmp_path / ".agentguard/runs/cleanup/reports/report.json",
+        {"task_id": "cleanup failed", "result": "FAIL", "containment_evidence": evidence},
+    )
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", force=True)
+    )
+
+    detail = (tmp_path / "site/details/run-cleanup.html").read_text(encoding="utf-8")
+    assert "containment-alert" in detail
+    assert "Cleanup or liveness is not fully verified" in detail
+    assert "cleanup_incomplete" in detail
+    assert "Overall cleanup</th><td>failed" in detail
+    assert "Liveness verified</th><td>not-recorded" in detail
+    assert "Overall cleanup</th><td>verified" not in detail
+
+
+def test_historical_and_non_contained_pages_remain_usable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_json(
+        tmp_path / ".agentguard/runs/plain/reports/report.json",
+        {"task_id": "plain run", "result": "PASS", "score": 100},
+    )
+    _write_json(
+        tmp_path / ".agentguard/runs/local/reports/report.json",
+        {
+            "task_id": "local run",
+            "result": "PASS",
+            "containment_evidence": _containment_evidence(
+                execution_mode="local",
+                state="not_applicable",
+                claim_level="not_applicable",
+                preflight={"status": "not_applicable", "claim_level": "not_applicable"},
+                execution={"status": "skipped"},
+            ),
+        },
+    )
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", force=True)
+    )
+
+    plain = (tmp_path / "site/details/run-plain.html").read_text(encoding="utf-8")
+    local = (tmp_path / "site/details/run-local.html").read_text(encoding="utf-8")
+    assert "<h2>Summary</h2>" in plain
+    assert "<h2>Containment</h2>" not in plain
+    assert "<h2>Containment</h2>" in local
+    assert "not_applicable" in local
+
+
+def test_containment_env_names_only_and_hostile_values_are_sanitized(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    secret_value = "AGENTGUARD_SECRET_CANARY_SITE"
+    private_path = str(tmp_path / "private" / "token.txt")
+    evidence = _containment_evidence(
+        environment={
+            "supplied_names": ["API_TOKEN", "TERM\x1b[31m"],
+            "sensitive_names": ["API_TOKEN"],
+            "missing_names": [],
+            "default_names": ["PATH"],
+        },
+        controls={
+            "requested_resource_controls": {
+                "memory_limit": "512m",
+                "canary": secret_value,
+                "private_path": private_path,
+                "html": "<img src=x onerror=alert(1)>",
+            },
+            "verified_resource_controls": {},
+        },
+        execution={"command": ["docker", "run", "--env", f"API_TOKEN={secret_value}"]},
+    )
+    _write_json(
+        tmp_path / ".agentguard/runs/hostile/reports/report.json",
+        {
+            "task_id": "hostile containment",
+            "result": "PASS",
+            "containment_evidence": evidence,
+            "docker_argv": ["docker", "run", "--env", f"API_TOKEN={secret_value}"],
+        },
+    )
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", force=True)
+    )
+
+    detail = (tmp_path / "site/details/run-hostile.html").read_text(encoding="utf-8")
+    assert "API_TOKEN" in detail
+    assert secret_value not in detail
+    assert str(tmp_path) not in detail
+    assert "[REDACTED]" in detail
+    assert "[REDACTED_PATH]" in detail
+    assert "<img" not in detail
+    assert "&lt;img" in detail
+    assert "\x1b" not in detail
+    assert "docker, run" not in detail
+    assert "API_TOKEN=" not in detail
+
+
+def test_malformed_and_oversized_containment_evidence_are_controlled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_json(
+        tmp_path / ".agentguard/runs/malformed/reports/report.json",
+        {
+            "task_id": "bad containment",
+            "result": "FAIL",
+            "containment_evidence": {
+                "schema": "bad",
+                "secret": "AGENTGUARD_SECRET_CANARY_MALFORMED",
+                "path": str(tmp_path / "private"),
+            },
+        },
+    )
+    oversized = _containment_evidence(
+        controls={
+            "requested_resource_controls": {
+                f"control_{index}": index for index in range(24)
+            },
+            "verified_resource_controls": {},
+        }
+    )
+    _write_json(
+        tmp_path / ".agentguard/runs/oversized/reports/report.json",
+        {"task_id": "wide containment", "result": "PASS", "containment_evidence": oversized},
+    )
+
+    generate_static_report_site(
+        StaticSiteOptions(output=tmp_path / "site", force=True)
+    )
+
+    malformed = (tmp_path / "site/details/run-malformed.html").read_text(encoding="utf-8")
+    oversized_detail = (tmp_path / "site/details/run-oversized.html").read_text(
+        encoding="utf-8"
+    )
+    assert "Containment evidence is malformed or unsupported." in malformed
+    assert "AGENTGUARD_SECRET_CANARY_MALFORMED" not in malformed
+    assert str(tmp_path) not in malformed
+    assert "12 additional control(s) omitted." in oversized_detail
+    assert "control_23" not in oversized_detail
+
+
 def _record(
     db_path: Path,
     record_id: str,
@@ -859,6 +1091,151 @@ def _generate_matrix_detail(tmp_path: Path) -> str:
     return (
         tmp_path / "site/details/matrix-matrix-guard.html"
     ).read_text(encoding="utf-8")
+
+
+def _containment_evidence(
+    *,
+    execution_mode: str = "contained-run",
+    state: str = "recorded",
+    claim_level: str = "linux-docker-engine",
+    preflight: Optional[dict[str, object]] = None,
+    controls: Optional[dict[str, object]] = None,
+    environment: Optional[dict[str, object]] = None,
+    execution: Optional[dict[str, object]] = None,
+    cleanup: Optional[dict[str, object]] = None,
+) -> dict[str, object]:
+    image = "example.com/team/agent@sha256:" + "a" * 64
+    base_preflight = {
+        "state": state,
+        "status": "supported",
+        "claim_level": claim_level,
+        "reduced_claim": claim_level == "docker-desktop-reduced",
+        "checks_total": 3,
+        "checks_passed": 3,
+        "approved_boundary_constructible": True,
+    }
+    if preflight is not None:
+        base_preflight.update(preflight)
+        base_preflight.setdefault("state", state)
+    base_controls = {
+        "state": state,
+        "network": "none",
+        "no_new_privileges": True,
+        "cap_drop_all": True,
+        "read_only_root": True,
+        "tmpfs_paths": ["/tmp"],
+        "pids_limit": 256,
+        "memory_limit": "512m",
+        "cpu_limit": 1.0,
+        "uid": 1000,
+        "gid": 1000,
+        "docker_socket_mount": False,
+        "host_network": False,
+        "privileged": False,
+        "device_exposure": False,
+        "host_namespace_sharing": False,
+        "resource_verification_state": "recorded",
+        "requested_resource_controls": {
+            "pids_limit": 256,
+            "memory_limit": "512m",
+            "read_only_root": True,
+        },
+        "verified_resource_controls": {
+            "pids_limit": 256,
+            "read_only_root": True,
+        },
+    }
+    if controls is not None:
+        base_controls.update(controls)
+    base_environment = {
+        "state": state,
+        "supplied_names": ["API_TOKEN"],
+        "sensitive_names": ["API_TOKEN"],
+        "missing_names": [],
+        "default_names": ["PATH"],
+        "values_recorded": False,
+    }
+    if environment is not None:
+        base_environment.update(environment)
+    base_execution = {
+        "state": state,
+        "status": "executed",
+        "command": [],
+        "exit_code": 0,
+        "timed_out": False,
+        "duration_seconds": 1.25,
+        "stdout_truncated": False,
+        "stderr_truncated": False,
+    }
+    if execution is not None:
+        base_execution.update(execution)
+    base_cleanup = {
+        "state": state,
+        "container_attempted": True,
+        "container_complete": True,
+        "container_status": "removed",
+        "container_identity": {
+            "id_sha256": "1" * 16,
+            "name_sha256": "2" * 16,
+            "owner_label_sha256": "3" * 16,
+            "image_id": "sha256:" + "b" * 64,
+        },
+        "liveness_verified": True,
+        "workspace_complete": True,
+        "workspace_status": "removed",
+        "overall_complete": True,
+    }
+    if cleanup is not None:
+        base_cleanup.update(cleanup)
+    return {
+        "schema": "agentguard.containment-evidence",
+        "schema_version": 1,
+        "execution_mode": execution_mode,
+        "state": state,
+        "security_claim_level": claim_level,
+        "requested": {
+            "state": state,
+            "platform": claim_level,
+            "network": "none",
+            "image_provenance": "digest-required",
+            "configured_image": image,
+            "command": [],
+            "source_dir": "${REPOSITORY_ROOT}",
+            "run_dir": "${RUN_ROOT}",
+        },
+        "preflight": base_preflight,
+        "image": {
+            "state": state,
+            "configured_reference": image,
+            "registry_digest": image,
+            "local_image_id": "sha256:" + "b" * 64,
+            "container_bound_image_id": "sha256:" + "b" * 64,
+            "platform": "linux/amd64",
+            "pull_policy": "docker-default",
+            "cache_status": "present",
+        },
+        "controls": base_controls,
+        "environment": base_environment,
+        "workspace": {
+            "state": state,
+            "source_kind": "copy",
+            "agent_mount": "/workspace",
+            "evidence_mount": "/evidence",
+            "writable_paths": ["/workspace"],
+            "baseline_digest": "c" * 64,
+            "current_digest": "d" * 64,
+            "changed_files_count": 1,
+            "lifecycle_schema_version": 1,
+            "cleanup_complete": True,
+            "cleanup_status": "removed",
+        },
+        "execution": base_execution,
+        "cleanup": base_cleanup,
+        "notes": [
+            "Docker argv, raw Docker stdout/stderr, secret values, and private host roots are omitted.",
+            "Docker is application-level containment, not a VM or syscall boundary.",
+        ],
+    }
 
 
 def _all_html(site: Path) -> str:
