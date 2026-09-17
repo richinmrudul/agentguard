@@ -409,7 +409,7 @@ def test_static_site_renders_only_allowlisted_containment_summary() -> None:
 
     html = _containment_summary(evidence)
     assert "not_applicable" in html
-    assert "Environment" not in html
+    assert "Environment Policy" in html
     assert "command" not in html
     malformed = _containment_summary(
         {"schema": "bad", "secret": "AGENTGUARD_SECRET_CANARY_SITE"}

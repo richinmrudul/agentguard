@@ -35,6 +35,7 @@ ABSOLUTE_PATH_PATTERN = re.compile(
     r"(?<![\w.-])(?:/[^\s,;:'\")\]}<>]+|[A-Za-z]:\\[^\s,;:'\")\]}<>]+)"
 )
 RAW_DIFF_MARKER_PATTERN = re.compile(r"diff --git", re.IGNORECASE)
+CONTROL_CHARACTER_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 SITE_OUTPUT_MARKER = ".agentguard-static-site"
 SITE_OUTPUT_MARKER_CONTENT = "agentguard-static-site-v1\n"
 
@@ -1459,7 +1460,6 @@ def _data_summary(data: dict[str, Any]) -> str:
         "report_paths",
         "manifest_path",
         "trace_path",
-        "containment_evidence",
         "runs",
         "check_results",
     ]
@@ -1483,28 +1483,318 @@ def _containment_summary(value: object) -> str:
         return _empty("Containment evidence is malformed or unsupported.")
     preflight = evidence.get("preflight")
     image = evidence.get("image")
+    controls = evidence.get("controls")
+    environment = evidence.get("environment")
+    workspace = evidence.get("workspace")
     cleanup = evidence.get("cleanup")
     execution = evidence.get("execution")
-    facts = {
-        "Mode": evidence.get("execution_mode"),
-        "State": evidence.get("state"),
-        "Security claim": evidence.get("security_claim_level"),
-        "Preflight": (
-            preflight.get("status") if isinstance(preflight, dict) else "-"
+    notes = evidence.get("notes")
+    content = [
+        _facts_table(
+            {
+                "Contained execution mode": evidence.get("execution_mode"),
+                "Evidence state": evidence.get("state"),
+                "Security claim level": evidence.get("security_claim_level"),
+                "Application-level containment claim": _application_containment_claim(
+                    notes
+                ),
+            }
         ),
-        "Image": (
-            image.get("configured_reference") or image.get("state")
-            if isinstance(image, dict)
-            else "-"
+        "<h3>Preflight</h3>",
+        _facts_table(
+            {
+                "Classification": _dict_value(preflight, "status"),
+                "Platform claim": _dict_value(preflight, "claim_level"),
+                "Reduced claim": _bool_value(_dict_value(preflight, "reduced_claim")),
+                "Checks": _checks_summary(preflight),
+                "Approved boundary constructible": _bool_value(
+                    _dict_value(preflight, "approved_boundary_constructible")
+                ),
+            }
         ),
-        "Execution": (
-            execution.get("status") if isinstance(execution, dict) else "-"
+        "<h3>Image Identity</h3>",
+        _facts_table(
+            {
+                "Configured image reference": _dict_value(
+                    image,
+                    "configured_reference",
+                    fallback=_dict_value(image, "state"),
+                ),
+                "Verified registry digest": _dict_value(image, "registry_digest"),
+                "Verified local image ID": _dict_value(image, "local_image_id"),
+                "Verified container-bound image ID": _dict_value(
+                    image,
+                    "container_bound_image_id",
+                ),
+                "Platform": _dict_value(image, "platform"),
+                "Pull policy": _dict_value(image, "pull_policy"),
+                "Cache status": _dict_value(image, "cache_status"),
+            }
         ),
-        "Cleanup": (
-            cleanup.get("container_status") if isinstance(cleanup, dict) else "-"
+        "<h3>Containment Controls</h3>",
+        _facts_table(
+            {
+                "Network policy": _dict_value(controls, "network"),
+                "Non-root UID/GID": _uid_gid_summary(controls),
+                "Read-only root filesystem": _bool_value(
+                    _dict_value(controls, "read_only_root")
+                ),
+                "No new privileges": _bool_value(
+                    _dict_value(controls, "no_new_privileges")
+                ),
+                "Capability drop all": _bool_value(
+                    _dict_value(controls, "cap_drop_all")
+                ),
+                "Temporary filesystems": _bounded_join(
+                    _dict_list(controls, "tmpfs_paths")
+                ),
+                "Docker socket mount": _bool_value(
+                    _dict_value(controls, "docker_socket_mount")
+                ),
+                "Host network": _bool_value(_dict_value(controls, "host_network")),
+                "Privileged": _bool_value(_dict_value(controls, "privileged")),
+                "Device exposure": _bool_value(
+                    _dict_value(controls, "device_exposure")
+                ),
+                "Host namespace sharing": _bool_value(
+                    _dict_value(controls, "host_namespace_sharing")
+                ),
+                "Resource verification": _dict_value(
+                    controls,
+                    "resource_verification_state",
+                ),
+            }
         ),
+        _resource_controls_table(controls),
+        "<h3>Environment Policy</h3>",
+        _facts_table(
+            {
+                "Values recorded": _bool_value(
+                    _dict_value(environment, "values_recorded")
+                ),
+                "Supplied names": _name_summary(environment, "supplied_names"),
+                "Sensitive names": _name_summary(environment, "sensitive_names"),
+                "Missing names": _name_summary(environment, "missing_names"),
+                "Default names": _name_summary(environment, "default_names"),
+            }
+        ),
+        "<h3>Workspace</h3>",
+        _facts_table(
+            {
+                "Isolation state": _dict_value(workspace, "state"),
+                "Source kind": _dict_value(workspace, "source_kind"),
+                "Agent mount": _dict_value(workspace, "agent_mount"),
+                "Evidence mount": _dict_value(workspace, "evidence_mount"),
+                "Writable paths": _bounded_join(
+                    _dict_list(workspace, "writable_paths")
+                ),
+                "Changed files": _dict_value(workspace, "changed_files_count"),
+                "Workspace cleanup": _cleanup_status(
+                    _dict_value(workspace, "cleanup_complete"),
+                    _dict_value(workspace, "cleanup_status"),
+                ),
+            }
+        ),
+        "<h3>Execution Outcome</h3>",
+        _facts_table(
+            {
+                "Status": _dict_value(execution, "status"),
+                "Exit code": _dict_value(execution, "exit_code"),
+                "Timed out": _bool_value(_dict_value(execution, "timed_out")),
+                "Duration": _duration(_dict_value(execution, "duration_seconds")),
+                "Stdout truncated": _bool_value(
+                    _dict_value(execution, "stdout_truncated")
+                ),
+                "Stderr truncated": _bool_value(
+                    _dict_value(execution, "stderr_truncated")
+                ),
+            }
+        ),
+        "<h3>Cleanup and Liveness</h3>",
+        _cleanup_alert(cleanup),
+        _facts_table(
+            {
+                "Container cleanup": _cleanup_status(
+                    _dict_value(cleanup, "container_complete"),
+                    _dict_value(cleanup, "container_status"),
+                ),
+                "Liveness verified": _status_bool(
+                    _dict_value(cleanup, "liveness_verified")
+                ),
+                "Workspace cleanup": _cleanup_status(
+                    _dict_value(cleanup, "workspace_complete"),
+                    _dict_value(cleanup, "workspace_status"),
+                ),
+                "Overall cleanup": _status_bool(
+                    _dict_value(cleanup, "overall_complete")
+                ),
+            }
+        ),
+    ]
+    return "".join(content)
+
+
+def _dict_value(value: object, key: str, *, fallback: object = "-") -> object:
+    if not isinstance(value, dict):
+        return fallback
+    item = value.get(key)
+    return fallback if item is None else item
+
+
+def _dict_list(value: object, key: str) -> list[object]:
+    item = _dict_value(value, key, fallback=[])
+    return item if isinstance(item, list) else []
+
+
+def _status_bool(value: object) -> str:
+    if value is True:
+        return "verified"
+    if value is False:
+        return "failed"
+    if value is None or value == "-":
+        return "not-recorded"
+    return sanitize_text(value)
+
+
+def _bool_value(value: object) -> str:
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value is None or value == "-":
+        return "not-recorded"
+    return sanitize_text(value)
+
+
+def _checks_summary(preflight: object) -> str:
+    total = _dict_value(preflight, "checks_total", fallback=None)
+    passed = _dict_value(preflight, "checks_passed", fallback=None)
+    if isinstance(total, int) and isinstance(passed, int):
+        return f"{passed} passed / {total} total"
+    return "not-recorded"
+
+
+def _application_containment_claim(notes: object) -> str:
+    if isinstance(notes, list):
+        for note in notes[:MAX_DETAIL_ITEMS]:
+            text = sanitize_text(note)
+            if "application-level containment" in text:
+                return text
+    return "Application-level containment evidence only; no VM or syscall boundary claim recorded."
+
+
+def _uid_gid_summary(controls: object) -> str:
+    uid = _dict_value(controls, "uid", fallback=None)
+    gid = _dict_value(controls, "gid", fallback=None)
+    if uid is None and gid is None:
+        return "not-recorded"
+    return f"uid {sanitize_text(uid)}/gid {sanitize_text(gid)}"
+
+
+def _bounded_join(values: list[object]) -> str:
+    if not values:
+        return "not-recorded"
+    rendered = [sanitize_text(value) for value in values[:MAX_DETAIL_ITEMS]]
+    if len(values) > MAX_DETAIL_ITEMS:
+        rendered.append(f"+{len(values) - MAX_DETAIL_ITEMS} more")
+    return ", ".join(rendered)
+
+
+def _name_summary(section: object, key: str) -> str:
+    names = _dict_list(section, key)
+    if not names:
+        return "0"
+    return f"{len(names)}: {_bounded_join(names)}"
+
+
+def _duration(value: object) -> str:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{float(value):.3f}s"
+    return "not-recorded"
+
+
+def _cleanup_status(complete: object, status: object) -> str:
+    status_text = sanitize_text(status if status not in (None, "-") else "unknown")
+    if complete is True:
+        return f"verified ({status_text})"
+    if complete is False:
+        return f"failed ({status_text})"
+    return f"unknown ({status_text})"
+
+
+def _cleanup_alert(cleanup: object) -> str:
+    if not isinstance(cleanup, dict):
+        return _empty("Cleanup and liveness evidence is not recorded.")
+    complete = cleanup.get("overall_complete")
+    liveness = cleanup.get("liveness_verified")
+    container_status = sanitize_text(cleanup.get("container_status") or "unknown")
+    workspace_status = sanitize_text(cleanup.get("workspace_status") or "unknown")
+    risky_statuses = {
+        "verification_unavailable",
+        "cleanup_incomplete",
+        "retained",
+        "incomplete",
+        "unknown",
     }
-    return _facts_table(facts)
+    if complete is True and liveness is True and container_status not in risky_statuses:
+        return ""
+    message = (
+        "Cleanup or liveness is not fully verified: "
+        f"container={container_status}, workspace={workspace_status}, "
+        f"overall={_status_bool(complete)}, liveness={_status_bool(liveness)}."
+    )
+    return f'<p class="containment-alert">{html(message)}</p>'
+
+
+def _resource_controls_table(controls: object) -> str:
+    if not isinstance(controls, dict):
+        return _empty("Resource control evidence is not recorded.")
+    requested = controls.get("requested_resource_controls")
+    verified = controls.get("verified_resource_controls")
+    requested_map = requested if isinstance(requested, dict) else {}
+    verified_map = verified if isinstance(verified, dict) else {}
+    names = sorted({*requested_map, *verified_map})[:MAX_DETAIL_ITEMS]
+    if not names:
+        return _empty("No requested or verified resource controls recorded.")
+    rows = []
+    for name in names:
+        requested_value = requested_map.get(name, "not-requested")
+        verified_present = name in verified_map
+        verified_value = verified_map.get(name, "not-recorded")
+        if verified_present:
+            status = "verified"
+        elif name in requested_map:
+            status = "requested-unverified"
+        else:
+            status = "not-applicable"
+        rows.append(
+            "<tr>"
+            f"<td>{html(name)}</td>"
+            f"<td>{html(_bounded_control_value(requested_value))}</td>"
+            f"<td>{html(status)}</td>"
+            f"<td>{html(_bounded_control_value(verified_value))}</td>"
+            "</tr>"
+        )
+    omitted = len({*requested_map, *verified_map}) - len(names)
+    notice = f"<p>{omitted} additional control(s) omitted.</p>" if omitted > 0 else ""
+    return (
+        '<table class="data"><thead><tr><th>Control</th><th>Requested</th>'
+        "<th>Status</th><th>Verified value</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>{notice}"
+    )
+
+
+def _bounded_control_value(value: object) -> str:
+    if isinstance(value, dict):
+        parts = []
+        for key, item in list(value.items())[:MAX_DETAIL_ITEMS]:
+            parts.append(f"{sanitize_text(key)}={_bounded_control_value(item)}")
+        if len(value) > MAX_DETAIL_ITEMS:
+            parts.append(f"+{len(value) - MAX_DETAIL_ITEMS} more")
+        return ", ".join(parts)
+    if isinstance(value, list):
+        return _bounded_join(value)
+    return sanitize_text(value)
 
 
 def _render_matrix_guard_summary(summary: dict[str, Any]) -> str:
@@ -1680,6 +1970,7 @@ def sanitize_text(value: object) -> str:
     text = str(value)
     for pattern in SECRET_PATTERNS:
         text = pattern.sub("[REDACTED]", text)
+    text = CONTROL_CHARACTER_PATTERN.sub("", text)
     text = ABSOLUTE_PATH_PATTERN.sub(_absolute_path_replacement, text)
     text = RAW_DIFF_MARKER_PATTERN.sub("[diff omitted]", text)
     return text
@@ -1922,6 +2213,13 @@ def _load_json_if_available(path: Path, *, kind: Optional[str] = None) -> Any:
 
 def _sanitize_report_data(data: dict[str, Any], kind: Optional[str]) -> dict[str, Any]:
     sanitized_data = sanitize_data(data)
+    if "containment_evidence" in data:
+        try:
+            sanitized_data["containment_evidence"] = parse_containment_evidence(
+                data.get("containment_evidence")
+            )
+        except ValueError:
+            sanitized_data["containment_evidence"] = "[malformed containment evidence]"
     guard_summary = _sanitize_matrix_guard_summary(data.get("guard_summary"))
     if kind == "matrix" and guard_summary is not None:
         sanitized_data["guard_summary"] = guard_summary
@@ -2053,6 +2351,7 @@ th { color: #344054; background: #eef2f6; font-weight: 650; }
 td a { color: var(--accent); }
 .facts th { width: 190px; }
 .empty { background: var(--panel); border: 1px dashed var(--line); border-radius: 8px; padding: 14px; }
+.containment-alert { background: #fff7ed; border: 1px solid #fdba74; border-radius: 8px; color: var(--warn); padding: 12px 14px; }
 .filter { display: block; margin: 0 0 12px; color: var(--muted); }
 .filter input { margin-left: 8px; width: min(360px, 100%); padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; }
 .incident-filters { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 12px; }
