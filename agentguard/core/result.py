@@ -45,6 +45,11 @@ class DiffSummary:
     secret_content_matches: list[str] = field(default_factory=list)
     secret_content_scan_complete: bool = True
     secret_content_scan_error: Optional[str] = None
+    line_count_status: str = "exact"
+    line_count_complete: bool = True
+    line_count_error: Optional[str] = None
+    unified_diff_status: str = "complete"
+    unified_diff_truncated: bool = False
 
     @property
     def changed_files(self) -> list[str]:

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import difflib
+import hashlib
 import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -71,6 +74,8 @@ from agentguard.scoring.scorer import score_checks
 
 CONTAINED_RUNNER_SCHEMA_VERSION = 1
 CONTAINED_RUNNER_NAME = "contained-run"
+CONTAINED_DIFF_MAX_TEXT_BYTES = 16 * 1024 * 1024
+CONTAINED_DIFF_MAX_TOTAL_TEXT_BYTES = 64 * 1024 * 1024
 
 
 class ContainedRunStage(str):
@@ -387,7 +392,10 @@ def run_contained_agent_command(
                 "changed_files": list(captured.changed_files),
                 "current_digest": captured.current_digest,
             }
-            diff_summary = _diff_summary_from_mutations(captured)
+            diff_summary = _diff_summary_from_mutations(
+                captured,
+                workspace_dir=prepared.workspace_dir,
+            )
             diff_summary = with_secret_content_scan(
                 prepared.workspace_dir,
                 diff_summary,
@@ -472,6 +480,11 @@ def run_contained_agent_command(
             source,
             run_dir,
             sensitive_values,
+        )
+    if diff_summary.unified_diff:
+        diff_summary = replace(
+            diff_summary,
+            unified_diff=sanitize_text(diff_summary.unified_diff, sensitive_values),
         )
     final = ContainedRunResult(
         task_id=config.task_id,
@@ -1203,23 +1216,349 @@ def _cleanup_failure_message(cleanup: ContainedCleanupResult) -> str:
     return "; ".join(parts) or "contained cleanup failed"
 
 
-def _diff_summary_from_mutations(mutations) -> DiffSummary:
+@dataclass(frozen=True)
+class _ContainedText:
+    lines: list[str]
+    byte_count: int
+
+
+@dataclass(frozen=True)
+class _ContainedTextError:
+    status: str
+    message: str
+
+
+@dataclass(frozen=True)
+class _ContainedDiffBuild:
+    lines_added: int
+    lines_deleted: int
+    unified_diff: str
+    line_count_status: str
+    line_count_complete: bool
+    line_count_error: Optional[str]
+    unified_diff_status: str
+    unified_diff_truncated: bool
+
+
+def _diff_summary_from_mutations(
+    mutations,
+    *,
+    workspace_dir: Path,
+) -> DiffSummary:
+    diff = _contained_diff_build(
+        mutations,
+        workspace_dir=workspace_dir,
+    )
     return DiffSummary(
         modified_files=list(mutations.modified_files),
         added_files=list(mutations.added_files),
         deleted_files=list(mutations.deleted_files),
-        lines_added=0,
-        lines_deleted=0,
-        unified_diff="",
+        lines_added=diff.lines_added,
+        lines_deleted=diff.lines_deleted,
+        unified_diff=diff.unified_diff,
         renamed_files=[
             FileRename(source_path=old, destination_path=new)
             for old, new in mutations.renamed_files
         ],
+        line_count_status=diff.line_count_status,
+        line_count_complete=diff.line_count_complete,
+        line_count_error=diff.line_count_error,
+        unified_diff_status=diff.unified_diff_status,
+        unified_diff_truncated=diff.unified_diff_truncated,
     )
 
 
 def _empty_diff_summary() -> DiffSummary:
     return DiffSummary([], [], [], 0, 0, "")
+
+
+def _contained_diff_build(
+    mutations,
+    *,
+    workspace_dir: Path,
+) -> _ContainedDiffBuild:
+    baseline_by_path = {entry.path: entry for entry in mutations.baseline_files}
+    current_by_path = {entry.path: entry for entry in mutations.current_files}
+    baseline_text_files = getattr(mutations, "baseline_text_files", None)
+    builder = _ContainedDiffAccumulator()
+    for path in mutations.modified_files:
+        old = _read_contained_baseline_text(
+            path,
+            baseline_by_path.get(path),
+            baseline_text_files,
+        )
+        new = _read_contained_workspace_text(workspace_dir, path)
+        builder.add_file_diff(old, new)
+    for path in mutations.added_files:
+        builder.add_file_counts(
+            added=_snapshot_line_count(
+                current_by_path.get(path),
+                unavailable_message="current evidence unavailable",
+            ),
+            deleted=0,
+        )
+    for path in mutations.deleted_files:
+        builder.add_file_counts(
+            added=0,
+            deleted=_snapshot_line_count(
+                baseline_by_path.get(path),
+                unavailable_message="baseline evidence unavailable",
+            ),
+        )
+    for old_path, new_path in mutations.renamed_files:
+        old_snapshot = baseline_by_path.get(old_path)
+        if old_snapshot is not None:
+            current_identity = _contained_path_identity(workspace_dir, new_path)
+            if current_identity == _contained_snapshot_identity(old_snapshot):
+                continue
+        old = _read_contained_baseline_text(
+            old_path,
+            old_snapshot,
+            baseline_text_files,
+        )
+        new = _read_contained_workspace_text(workspace_dir, new_path)
+        builder.add_file_diff(old, new)
+    return builder.finish()
+
+
+class _ContainedDiffAccumulator:
+    def __init__(self) -> None:
+        self.lines_added = 0
+        self.lines_deleted = 0
+        self._text_bytes = 0
+        self._error: Optional[_ContainedTextError] = None
+
+    def add_file_diff(
+        self,
+        old: _ContainedText | _ContainedTextError,
+        new: _ContainedText | _ContainedTextError,
+    ) -> None:
+        error = old if isinstance(old, _ContainedTextError) else new
+        if isinstance(error, _ContainedTextError):
+            self._record_error(error)
+            return
+        self._text_bytes += old.byte_count + new.byte_count
+        if self._text_bytes > CONTAINED_DIFF_MAX_TOTAL_TEXT_BYTES:
+            self._record_error(
+                _ContainedTextError("incomplete", "total diff byte limit exceeded")
+            )
+            return
+        added, deleted = _contained_line_delta(old.lines, new.lines)
+        self.lines_added += added
+        self.lines_deleted += deleted
+
+    def add_file_counts(
+        self,
+        *,
+        added: int | _ContainedTextError,
+        deleted: int | _ContainedTextError,
+    ) -> None:
+        error = added if isinstance(added, _ContainedTextError) else deleted
+        if isinstance(error, _ContainedTextError):
+            self._record_error(error)
+            return
+        self.lines_added += added
+        self.lines_deleted += deleted
+
+    def finish(self) -> _ContainedDiffBuild:
+        status = self._error.status if self._error is not None else "exact"
+        return _ContainedDiffBuild(
+            lines_added=self.lines_added,
+            lines_deleted=self.lines_deleted,
+            unified_diff="",
+            line_count_status=status,
+            line_count_complete=self._error is None,
+            line_count_error=self._error.message if self._error is not None else None,
+            unified_diff_status="not_recorded",
+            unified_diff_truncated=False,
+        )
+
+    def _record_error(self, error: _ContainedTextError) -> None:
+        if self._error is None:
+            self._error = error
+            return
+        priority = {
+            "malformed": 4,
+            "unavailable": 3,
+            "binary": 2,
+            "incomplete": 1,
+        }
+        if priority.get(error.status, 0) > priority.get(self._error.status, 0):
+            self._error = error
+
+
+def _contained_line_delta(old_lines: list[str], new_lines: list[str]) -> tuple[int, int]:
+    added = 0
+    deleted = 0
+    matcher = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    for tag, old_start, old_end, new_start, new_end in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        deleted += old_end - old_start
+        added += new_end - new_start
+    return added, deleted
+
+
+def _read_contained_baseline_text(
+    path: str,
+    snapshot,
+    baseline_text_files,
+) -> _ContainedText | _ContainedTextError:
+    if snapshot is None:
+        return _ContainedTextError("malformed", "baseline evidence unavailable")
+    if snapshot.kind != "file":
+        return _ContainedTextError("binary", "non-text mutation cannot be counted safely")
+    content_kind = getattr(snapshot, "content_kind", "not_applicable")
+    if content_kind in {"binary", "non_utf8", "symlink"}:
+        return _ContainedTextError("binary", "baseline mutation is not UTF-8 text")
+    if getattr(snapshot, "line_count_complete", True) is False:
+        return _ContainedTextError("incomplete", "baseline line count is incomplete")
+    if baseline_text_files is not None and path not in baseline_text_files:
+        return _ContainedTextError("unavailable", "baseline text evidence unavailable")
+    baseline_lines = (
+        baseline_text_files.get(path) if baseline_text_files is not None else None
+    )
+    if baseline_lines is not None:
+        try:
+            lines = [line.decode("utf-8") for line in baseline_lines]
+        except UnicodeDecodeError:
+            return _ContainedTextError("binary", "baseline mutation is not UTF-8 text")
+        byte_count = sum(len(line) for line in baseline_lines)
+        return _ContainedText(lines, byte_count)
+    return _ContainedTextError("unavailable", "baseline content unavailable")
+
+
+def _snapshot_line_count(
+    snapshot,
+    *,
+    unavailable_message: str,
+) -> int | _ContainedTextError:
+    if snapshot is None:
+        return _ContainedTextError("malformed", unavailable_message)
+    if snapshot.kind != "file":
+        return _ContainedTextError("binary", "non-text mutation cannot be counted safely")
+    content_kind = getattr(snapshot, "content_kind", "not_applicable")
+    if content_kind in {"binary", "non_utf8", "symlink"}:
+        return _ContainedTextError("binary", "non-text mutation cannot be counted safely")
+    if getattr(snapshot, "line_count_complete", True) is False:
+        return _ContainedTextError("incomplete", "line count is incomplete")
+    line_count = getattr(snapshot, "line_count", None)
+    if line_count is None:
+        return _ContainedTextError("unavailable", unavailable_message)
+    return int(line_count)
+
+
+def _read_contained_workspace_text(
+    workspace_dir: Path,
+    path: str,
+) -> _ContainedText | _ContainedTextError:
+    return _read_contained_text(workspace_dir, path)
+
+
+def _read_contained_text(
+    root: Path,
+    path: str,
+) -> _ContainedText | _ContainedTextError:
+    target = _contained_target(root, path)
+    if target is None:
+        return _ContainedTextError("malformed", "mutation path is malformed")
+    try:
+        info = target.lstat()
+    except OSError:
+        return _ContainedTextError("unavailable", "file content unavailable")
+    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        return _ContainedTextError("binary", "non-text mutation cannot be counted safely")
+    if info.st_size > CONTAINED_DIFF_MAX_TEXT_BYTES:
+        return _ContainedTextError("incomplete", "file byte limit exceeded")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = -1
+    try:
+        descriptor = os.open(target, flags)
+        opened = os.fstat(descriptor)
+        if (
+            stat.S_IFMT(info.st_mode) != stat.S_IFMT(opened.st_mode)
+            or info.st_ino != opened.st_ino
+            or info.st_dev != opened.st_dev
+            or not stat.S_ISREG(opened.st_mode)
+        ):
+            return _ContainedTextError("unavailable", "file content unavailable")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
+            data = handle.read(CONTAINED_DIFF_MAX_TEXT_BYTES + 1)
+    except OSError:
+        return _ContainedTextError("unavailable", "file content unavailable")
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+    if len(data) > CONTAINED_DIFF_MAX_TEXT_BYTES:
+        return _ContainedTextError("incomplete", "file byte limit exceeded")
+    if b"\0" in data:
+        return _ContainedTextError("binary", "binary mutation cannot be counted safely")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return _ContainedTextError("binary", "non-UTF-8 mutation cannot be counted safely")
+    return _ContainedText(text.splitlines(keepends=True), len(data))
+
+
+def _contained_target(root: Path, path: str) -> Optional[Path]:
+    if not path or path.startswith("/") or "\\" in path or "\0" in path:
+        return None
+    parts = path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        return None
+    try:
+        root_resolved = root.resolve(strict=True)
+        target = root_resolved / Path(*parts)
+        target.relative_to(root_resolved)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return target
+
+
+def _contained_snapshot_identity(snapshot) -> tuple[str, int, Optional[str], int]:
+    return snapshot.kind, snapshot.size, snapshot.sha256, snapshot.mode
+
+
+def _contained_path_identity(
+    root: Path,
+    path: str,
+) -> Optional[tuple[str, int, Optional[str], int]]:
+    target = _contained_target(root, path)
+    if target is None:
+        return None
+    try:
+        info = target.lstat()
+    except OSError:
+        return None
+    mode = stat.S_IMODE(info.st_mode)
+    if stat.S_ISREG(info.st_mode):
+        digest = _contained_file_sha256(target)
+        return None if digest is None else ("file", info.st_size, digest, mode)
+    if stat.S_ISLNK(info.st_mode):
+        try:
+            target_text = os.readlink(target)
+        except OSError:
+            return None
+        digest = hashlib.sha256(target_text.encode("utf-8")).hexdigest()
+        return "symlink", len(target_text.encode("utf-8")), digest, mode
+    return None
+
+
+def _contained_file_sha256(path: Path) -> Optional[str]:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
 
 
 def _rename_mutation_evidence(

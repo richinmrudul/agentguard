@@ -80,3 +80,29 @@ def test_diff_size_check_uses_policy_severity() -> None:
     )
 
     assert result.severity == "error"
+
+
+def test_diff_size_check_fails_closed_when_line_count_evidence_incomplete() -> None:
+    result = DiffSizeCheck().run(
+        _config(),
+        _test_result(),
+        DiffSummary(
+            modified_files=["src/a.py"],
+            added_files=[],
+            deleted_files=[],
+            lines_added=0,
+            lines_deleted=0,
+            unified_diff="",
+            line_count_status="binary",
+            line_count_complete=False,
+            line_count_error="binary mutation cannot be counted safely",
+        ),
+        [],
+    )
+
+    assert result.passed is False
+    assert result.evidence == [
+        "Diff line count evidence is incomplete or unavailable; "
+        "failing closed for configured line limits "
+        "(binary mutation cannot be counted safely)."
+    ]
