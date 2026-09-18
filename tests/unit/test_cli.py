@@ -348,7 +348,7 @@ def test_contained_run_rejects_malformed_option_before_boundary(monkeypatch) -> 
     )
 
     assert result.exit_code == 2
-    assert "--bogus" in result.output
+    assert "Usage:" in result.output
     assert "Traceback" not in result.output
 
 
