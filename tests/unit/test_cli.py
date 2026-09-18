@@ -336,14 +336,19 @@ def test_contained_run_rejects_missing_executable_after_boundary() -> None:
     assert "Traceback" not in result.output
 
 
-def test_contained_run_rejects_malformed_option_before_boundary() -> None:
+def test_contained_run_rejects_malformed_option_before_boundary(monkeypatch) -> None:
+    def fail_if_called(config_path, command, *, source_dir=None):
+        raise AssertionError("contained-run implementation should not be called")
+
+    monkeypatch.setattr(cli_main, "run_contained_agent_command", fail_if_called)
+
     result = runner.invoke(
         app,
         ["contained-run", "agentguard.yaml", "--bogus", "--", "true"],
     )
 
     assert result.exit_code == 2
-    assert "No such option: --bogus" in result.output
+    assert "--bogus" in result.output
     assert "Traceback" not in result.output
 
 
@@ -352,7 +357,7 @@ def test_contained_run_rejects_boundary_before_config_without_traceback() -> Non
 
     assert result.exit_code == 2
     assert "Missing argument" in result.output
-    assert "CONFIG_PATH" in result.output
+    assert "config_path" in result.output.lower()
     assert "Traceback" not in result.output
 
 
