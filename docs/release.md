@@ -156,18 +156,23 @@ Run from the repository root with the development environment installed:
 .venv/bin/python -m pytest
 .venv/bin/python -m ruff check .
 git diff --check
-.venv/bin/python scripts/validate_release_artifacts.py
+.venv/bin/python scripts/validate_release_artifacts.py --ordinary-ci
 bash scripts/build_release.sh
+.venv/bin/python scripts/validate_release_artifacts.py
 bash scripts/package_smoke.sh
 .venv/bin/python scripts/showcase_metrics.py --check
 .venv/bin/python scripts/adversarial_metrics.py --check
 ```
 
 `build_release.sh` creates a wheel and source distribution under `dist/` and
-validates package metadata and members. Its default ordinary-CI mode does not
-assert that `HEAD` is the target of the current version's release tag:
-post-release commits are expected, while published tags remain immutable. It
-never publishes artifacts.
+validates package metadata and members. The no-argument validator checks the
+current `dist/` directory and requires exactly one wheel and one source
+distribution whose filenames, archive metadata, embedded package payload, and
+version agree with `pyproject.toml`; strict workflow calls may additionally
+provide `EXPECTED_VERSION`, which must still match `pyproject.toml`. The
+default ordinary-CI mode does not assert that `HEAD` is the target of the
+current version's release tag: post-release commits are expected, while
+published tags remain immutable. It never publishes artifacts.
 `package_smoke.sh` normally builds temporary distributions. The publishing
 workflow passes its already-built `dist/` directory so the workflow installs
 and exercises the exact wheel without rebuilding.

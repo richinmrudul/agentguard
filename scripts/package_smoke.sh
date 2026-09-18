@@ -51,29 +51,35 @@ else
     --outdir "$DIST_DIR" \
     "$ROOT_DIR"
 fi
-WHEEL_PATH=$(find "$DIST_DIR" -maxdepth 1 -name 'agentguard_evals-*.whl' -print -quit)
-SDIST_PATH=$(find "$DIST_DIR" -maxdepth 1 -name 'agentguard_evals-*.tar.gz' -print -quit)
-test -n "$WHEEL_PATH"
-test -n "$SDIST_PATH"
-
 section "Validate wheel and source distribution"
 "$PYTHON" "$ROOT_DIR/scripts/validate_release_artifacts.py" \
-  "$WHEEL_PATH" \
-  "$SDIST_PATH"
+  "$DIST_DIR"
+
+WHEEL_PATH=$(find "$DIST_DIR" -maxdepth 1 -name 'agentguard_evals-*.whl' -print -quit)
 
 section "Install wheel"
 "$PYTHON" -m pip install "$WHEEL_PATH"
 
 section "Verify installed distribution metadata"
-"$PYTHON" - <<'PY'
+"$PYTHON" - "$ROOT_DIR/pyproject.toml" <<'PY'
 from importlib.metadata import PackageNotFoundError, distribution
+from pathlib import Path
+import re
+import sys
 
 installed = distribution("agentguard-evals")
+project_version_match = re.search(
+    r'(?m)^version\s*=\s*"([^"]+)"\s*$',
+    Path(sys.argv[1]).read_text(encoding="utf-8"),
+)
+if project_version_match is None:
+    raise SystemExit("pyproject.toml is missing project.version")
+expected_version = project_version_match.group(1)
 if installed.metadata["Name"] != "agentguard-evals":
     raise SystemExit(
         f"unexpected distribution name: {installed.metadata['Name']!r}"
     )
-if installed.version != "0.3.1":
+if installed.version != expected_version:
     raise SystemExit(f"unexpected distribution version: {installed.version!r}")
 try:
     distribution("agentguard")
