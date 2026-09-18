@@ -419,6 +419,50 @@ def test_contained_run_preserves_structured_argv_and_uses_docker_spec(
     assert report["run_dir"] == "[REDACTED_PATH]"
 
 
+def test_contained_run_preserves_child_argv_after_docker_image_boundary(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = _config(tmp_path)
+    captured = {}
+    command = [
+        "-leading-executable",
+        "--help",
+        "-h",
+        "--flag",
+        "one",
+        "--flag",
+        "two",
+        "--empty=",
+        "--",
+        "$HOME",
+        "$(whoami)",
+    ]
+
+    monkeypatch.setattr(
+        "agentguard.core.contained_run.run_docker_preflight",
+        lambda config: _preflight(config),
+    )
+
+    def fake_executor(argv, cwd, timeout_seconds, max_output_bytes):
+        captured["argv"] = argv
+        return _successful_fake_executor(argv, cwd, timeout_seconds, max_output_bytes)
+
+    result = _run(
+        config_path,
+        command,
+        tmp_path,
+        docker_executor=fake_executor,
+    )
+
+    boundary = captured["argv"].index("--")
+    assert result.exit_code == 0
+    assert captured["argv"][boundary + 2 :] == command
+    assert result.command == command
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+    assert report["command"] == command
+
+
 def test_contained_run_diff_size_uses_exact_mutation_line_counts(
     tmp_path: Path,
     monkeypatch,

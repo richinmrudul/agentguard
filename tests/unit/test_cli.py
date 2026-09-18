@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 
 import pytest
 import yaml
@@ -21,6 +22,32 @@ from agentguard.core.suite import (
 )
 
 runner = CliRunner()
+
+
+def _successful_contained_run_result(
+    tmp_path: Path,
+    config_path: Path,
+    command: list[str],
+    *,
+    source_dir: Optional[Path] = None,
+) -> ContainedRunResult:
+    return ContainedRunResult(
+        task_id="task",
+        config_path=Path(config_path),
+        source_dir=source_dir or Path("."),
+        run_dir=tmp_path,
+        command=list(command),
+        docker_argv=["docker", "run"],
+        preflight=None,
+        command_result=CommandResult("contained-run", 0, "", "", 0.01),
+        diff_summary=DiffSummary([], ["space name.txt"], [], 0, 0, ""),
+        check_results=[],
+        result="PASS",
+        score=100,
+        mutations={},
+        cleanup_complete=True,
+        report_path=tmp_path / "contained-run.json",
+    )
 
 
 @pytest.mark.parametrize(
@@ -185,6 +212,155 @@ def test_contained_run_rejects_command_without_boundary() -> None:
     assert "Traceback" not in result.output
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["contained-run", "--help"],
+        ["contained-run", "agentguard.yaml", "--help"],
+    ],
+)
+def test_contained_run_help_before_boundary_shows_agentguard_help(
+    monkeypatch,
+    arguments: list[str],
+) -> None:
+    def fail_if_called(config_path, command, *, source_dir=None):
+        raise AssertionError("contained-run implementation should not be called")
+
+    monkeypatch.setattr(cli_main, "run_contained_agent_command", fail_if_called)
+
+    result = runner.invoke(app, arguments)
+
+    assert result.exit_code == 0
+    assert "Usage:" in result.output
+    assert "Run one explicit argv" in result.output
+    assert "Path to the AgentGuard config file" in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("child_help", ["--help", "-h"])
+def test_contained_run_preserves_child_help_flags_after_boundary(
+    monkeypatch,
+    tmp_path: Path,
+    child_help: str,
+) -> None:
+    captured = {}
+
+    def fake_contained_run(config_path, command, *, source_dir=None):
+        captured["command"] = command
+        return _successful_contained_run_result(
+            tmp_path,
+            config_path,
+            command,
+            source_dir=source_dir,
+        )
+
+    monkeypatch.setattr(cli_main, "run_contained_agent_command", fake_contained_run)
+
+    result = runner.invoke(
+        app,
+        ["contained-run", "agentguard.yaml", "--", child_help],
+    )
+
+    assert result.exit_code == 0
+    assert captured["command"] == [child_help]
+    assert "Usage:" not in result.output
+    assert "AgentGuard Contained Run" in result.output
+
+
+def test_contained_run_preserves_child_flags_ordering_and_dash_executable(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured = {}
+
+    def fake_contained_run(config_path, command, *, source_dir=None):
+        captured["command"] = command
+        return _successful_contained_run_result(
+            tmp_path,
+            config_path,
+            command,
+            source_dir=source_dir,
+        )
+
+    monkeypatch.setattr(cli_main, "run_contained_agent_command", fake_contained_run)
+    child_argv = [
+        "-leading-executable",
+        "--flag",
+        "one",
+        "--flag",
+        "two",
+        "--empty=",
+        "--",
+        "literal-boundary",
+        "-h",
+    ]
+
+    result = runner.invoke(app, ["contained-run", "agentguard.yaml", "--", *child_argv])
+
+    assert result.exit_code == 0
+    assert captured["command"] == child_argv
+
+
+def test_contained_run_preserves_no_shell_interpolation_string(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured = {}
+
+    def fake_contained_run(config_path, command, *, source_dir=None):
+        captured["command"] = command
+        return _successful_contained_run_result(
+            tmp_path,
+            config_path,
+            command,
+            source_dir=source_dir,
+        )
+
+    monkeypatch.setattr(cli_main, "run_contained_agent_command", fake_contained_run)
+    shell_sensitive = 'printf "$HOME"; echo $(whoami); echo `id`; echo "semi;colon"'
+
+    result = runner.invoke(
+        app,
+        ["contained-run", "agentguard.yaml", "--", "sh", "-c", shell_sensitive],
+    )
+
+    assert result.exit_code == 0
+    assert captured["command"] == ["sh", "-c", shell_sensitive]
+
+
+def test_contained_run_rejects_missing_executable_after_boundary() -> None:
+    result = runner.invoke(app, ["contained-run", "agentguard.yaml", "--"])
+
+    assert result.exit_code == 2
+    assert "requires an argv after '--'" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_contained_run_rejects_malformed_option_before_boundary(monkeypatch) -> None:
+    def fail_if_called(config_path, command, *, source_dir=None):
+        raise AssertionError("contained-run implementation should not be called")
+
+    monkeypatch.setattr(cli_main, "run_contained_agent_command", fail_if_called)
+
+    result = runner.invoke(
+        app,
+        ["contained-run", "agentguard.yaml", "--bogus", "--", "true"],
+    )
+
+    assert result.exit_code == 2
+    assert "Usage:" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_contained_run_rejects_boundary_before_config_without_traceback() -> None:
+    result = runner.invoke(app, ["contained-run", "--", "true"])
+
+    assert result.exit_code == 2
+    assert "Missing argument" in result.output
+    assert "config_path" in result.output.lower()
+    assert "Traceback" not in result.output
+
+
 def test_contained_run_preserves_argv_after_boundary(monkeypatch, tmp_path: Path) -> None:
     captured = {}
 
@@ -192,22 +368,11 @@ def test_contained_run_preserves_argv_after_boundary(monkeypatch, tmp_path: Path
         captured["config_path"] = config_path
         captured["command"] = command
         captured["source_dir"] = source_dir
-        return ContainedRunResult(
-            task_id="task",
-            config_path=Path(config_path),
-            source_dir=source_dir or Path("."),
-            run_dir=tmp_path,
-            command=list(command),
-            docker_argv=["docker", "run"],
-            preflight=None,
-            command_result=CommandResult("contained-run", 0, "", "", 0.01),
-            diff_summary=DiffSummary([], ["space name.txt"], [], 0, 0, ""),
-            check_results=[],
-            result="PASS",
-            score=100,
-            mutations={},
-            cleanup_complete=True,
-            report_path=tmp_path / "contained-run.json",
+        return _successful_contained_run_result(
+            tmp_path,
+            config_path,
+            command,
+            source_dir=source_dir,
         )
 
     monkeypatch.setattr(cli_main, "run_contained_agent_command", fake_contained_run)
