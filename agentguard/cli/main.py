@@ -214,17 +214,17 @@ app.add_typer(presets_app, name="presets")
 
 class ContainedRunCommand(typer.core.TyperCommand):
     def parse_args(self, ctx: typer.Context, args: list[str]) -> list[str]:
-        if "--help" in args or "-h" in args:
-            return super().parse_args(ctx, args)
         try:
             boundary_index = args.index("--")
         except ValueError:
             ctx.meta["contained_run_has_boundary"] = False
             ctx.meta["contained_run_argv"] = []
+            parseable_args = args
         else:
             ctx.meta["contained_run_has_boundary"] = True
             ctx.meta["contained_run_argv"] = list(args[boundary_index + 1 :])
-        return super().parse_args(ctx, args)
+            parseable_args = args[:boundary_index]
+        return super().parse_args(ctx, parseable_args)
 
 
 def _echo_matrix_guard_summary(result: MatrixResult) -> None:
@@ -3260,7 +3260,7 @@ def ci_command(
 @app.command(
     "contained-run",
     cls=ContainedRunCommand,
-    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    context_settings={"allow_extra_args": True},
 )
 def contained_run_command(
     ctx: typer.Context,
@@ -3284,7 +3284,6 @@ def contained_run_command(
     if (
         not ctx.meta.get("contained_run_has_boundary", False)
         or not command
-        or command != list(ctx.args)
     ):
         safe_echo("Error: contained-run requires an argv after '--'.", err=True)
         raise typer.Exit(EXIT_CONFIG)

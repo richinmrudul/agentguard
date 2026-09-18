@@ -174,6 +174,10 @@ agentguard contained-run agentguard.yaml -- python -m pytest
 
 The literal `--` boundary is required. Tokens before that boundary are
 AgentGuard CLI arguments; only tokens after it become the contained agent argv.
+AgentGuard help flags before the boundary remain AgentGuard CLI help, while
+child flags after the boundary, including `--help`, `-h`, repeated flags,
+leading-dash arguments, empty-value options, and literal shell metacharacters,
+are preserved as structured argv tokens in their original order.
 Invocations such as `agentguard contained-run agentguard.yaml python -m pytest`
 fail with a controlled usage/configuration error. The argv is passed as a
 structured list into the Docker execution spec; AgentGuard does not concatenate
