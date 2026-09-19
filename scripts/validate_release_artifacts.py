@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import email.parser
-import json
+import os
 import re
 import subprocess
 import sys
@@ -38,27 +38,6 @@ FORBIDDEN_NAMES = {
 EXPECTED_NAME = "agentguard-evals"
 EXPECTED_NORMALIZED_NAME = "agentguard_evals"
 EXPECTED_LICENSE_FILE = "LICENSE"
-REQUIRED_RELEASE_READINESS_ARTIFACTS = (
-    "docs/results/release-readiness-v0.2.json",
-    "docs/results/release-readiness-v0.2.md",
-    "docs/results/release-candidate-v0.2.0.json",
-    "docs/results/release-candidate-v0.2.0.md",
-    "docs/results/adversarial-metrics.json",
-    "docs/results/adversarial-pack-summary.json",
-)
-FORBIDDEN_RELEASE_MARKERS = (
-    "AGENTGUARD_FAKE_TOKEN_EXAMPLE",
-    "AGENTGUARD_SHOWCASE_SECRET",
-    "AGENTGUARD_SECRET",
-    "diff --git",
-    "/Users/",
-    "/private/",
-    "/tmp/",
-    "HOME=",
-    "TMPDIR=",
-    "javascript:",
-    "file:",
-)
 CURRENT_STATE_HEADINGS = (
     "current",
     "quickstart",
@@ -122,6 +101,19 @@ def project_version(root: Path) -> str:
             if version:
                 return version
     raise AssertionError("pyproject.toml is missing project.version")
+
+
+def expected_version(root: Path) -> str:
+    declared_version = project_version(root)
+    provided_version = os.environ.get("EXPECTED_VERSION")
+    if provided_version is None:
+        return declared_version
+    if provided_version != declared_version:
+        raise AssertionError(
+            "EXPECTED_VERSION disagrees with pyproject.toml: "
+            f"{provided_version!r} != {declared_version!r}"
+        )
+    return provided_version
 
 
 def validate_ordinary_package_context(root: Path) -> None:
@@ -213,6 +205,29 @@ def _sdist_members(path: Path) -> set[str]:
     return normalized
 
 
+def _wheel_member_bytes(path: Path, member: str) -> bytes:
+    with zipfile.ZipFile(path) as archive:
+        return archive.read(member)
+
+
+def _sdist_member_bytes(path: Path, member: str) -> bytes:
+    with tarfile.open(path, "r:gz") as archive:
+        matching_names = [
+            name
+            for name in archive.getnames()
+            if len(Path(name).parts) > 1
+            and Path(*Path(name).parts[1:]).as_posix() == member
+        ]
+        if len(matching_names) != 1:
+            raise AssertionError(
+                f"sdist has ambiguous member for {member!r}: {matching_names}"
+            )
+        extracted = archive.extractfile(matching_names[0])
+        if extracted is None:
+            raise AssertionError(f"Could not read {matching_names[0]}")
+        return extracted.read()
+
+
 def _metadata_from_wheel(path: Path) -> email.message.Message:
     with zipfile.ZipFile(path) as archive:
         metadata_name = next(
@@ -236,6 +251,37 @@ def _metadata_from_sdist(path: Path) -> email.message.Message:
         return email.parser.Parser().parsestr(pkg_info.read().decode("utf-8"))
 
 
+def _sdist_prefix(path: Path) -> str:
+    with tarfile.open(path, "r:gz") as archive:
+        prefixes = {
+            Path(name).parts[0]
+            for name in archive.getnames()
+            if Path(name).parts
+        }
+    if len(prefixes) != 1:
+        raise AssertionError(
+            f"sdist must contain exactly one top-level directory: {sorted(prefixes)}"
+        )
+    return next(iter(prefixes))
+
+
+def resolve_artifact_pair(path: Path) -> tuple[Path, Path]:
+    if not path.is_dir():
+        raise AssertionError(f"Artifact directory does not exist: {path}")
+    wheels = sorted(path.glob(f"{EXPECTED_NORMALIZED_NAME}-*.whl"))
+    sdists = sorted(path.glob(f"{EXPECTED_NORMALIZED_NAME}-*.tar.gz"))
+    if len(wheels) != 1:
+        raise AssertionError(
+            f"Expected exactly one wheel in {path}; found {[item.name for item in wheels]}"
+        )
+    if len(sdists) != 1:
+        raise AssertionError(
+            "Expected exactly one source distribution in "
+            f"{path}; found {[item.name for item in sdists]}"
+        )
+    return wheels[0], sdists[0]
+
+
 def _assert_required_members(label: str, members: set[str]) -> None:
     missing = sorted(REQUIRED_PACKAGE_MEMBERS - members)
     if missing:
@@ -252,7 +298,11 @@ def _assert_forbidden_members(label: str, members: set[str]) -> None:
         raise AssertionError(f"{label} contains forbidden files: {sorted(forbidden)}")
 
 
-def _assert_metadata(label: str, metadata: email.message.Message) -> str:
+def _assert_metadata(
+    label: str,
+    metadata: email.message.Message,
+    expected: str,
+) -> str:
     name = metadata.get("Name")
     version = metadata.get("Version")
     requires_python = metadata.get("Requires-Python")
@@ -261,6 +311,10 @@ def _assert_metadata(label: str, metadata: email.message.Message) -> str:
         raise AssertionError(f"{label} has unexpected name: {name!r}")
     if not version:
         raise AssertionError(f"{label} is missing Version metadata")
+    if version != expected:
+        raise AssertionError(
+            f"{label} has unexpected Version metadata: {version!r} != {expected!r}"
+        )
     if requires_python != ">=3.9":
         raise AssertionError(
             f"{label} has unexpected Requires-Python: {requires_python!r}"
@@ -395,7 +449,43 @@ def _assert_long_description_release_state(
                 )
 
 
-def validate_artifacts(wheel_path: Path, sdist_path: Path) -> None:
+def _assert_same_build_payload(wheel_path: Path, sdist_path: Path) -> None:
+    shared_members = set(REQUIRED_PACKAGE_MEMBERS)
+    shared_members.add(EXPECTED_LICENSE_FILE)
+    for member in shared_members:
+        wheel_member = member
+        if member == EXPECTED_LICENSE_FILE:
+            wheel_members = _wheel_members(wheel_path)
+            license_members = [
+                candidate
+                for candidate in wheel_members
+                if candidate.endswith(f"/{EXPECTED_LICENSE_FILE}")
+            ]
+            if len(license_members) != 1:
+                raise AssertionError(
+                    f"wheel has ambiguous license files: {license_members}"
+                )
+            wheel_member = license_members[0]
+        if _wheel_member_bytes(wheel_path, wheel_member) != _sdist_member_bytes(
+            sdist_path,
+            member,
+        ):
+            raise AssertionError(
+                "wheel and sdist appear to come from different builds: "
+                f"{member} differs"
+            )
+
+
+def validate_artifacts(
+    wheel_path: Path,
+    sdist_path: Path,
+    expected: str,
+) -> None:
+    if not wheel_path.is_file():
+        raise AssertionError(f"Missing wheel artifact: {wheel_path}")
+    if not sdist_path.is_file():
+        raise AssertionError(f"Missing source distribution artifact: {sdist_path}")
+
     wheel_members = _wheel_members(wheel_path)
     sdist_members = _sdist_members(sdist_path)
 
@@ -408,14 +498,15 @@ def validate_artifacts(wheel_path: Path, sdist_path: Path) -> None:
     if EXPECTED_LICENSE_FILE not in sdist_members:
         raise AssertionError("sdist is missing the MIT license file")
 
-    wheel_version = _assert_metadata("wheel", _metadata_from_wheel(wheel_path))
-    sdist_version = _assert_metadata("sdist", _metadata_from_sdist(sdist_path))
+    wheel_version = _assert_metadata("wheel", _metadata_from_wheel(wheel_path), expected)
+    sdist_version = _assert_metadata("sdist", _metadata_from_sdist(sdist_path), expected)
     if wheel_version != sdist_version:
         raise AssertionError(
             f"wheel/sdist version mismatch: {wheel_version} != {sdist_version}"
         )
     expected_wheel = f"{EXPECTED_NORMALIZED_NAME}-{wheel_version}-py3-none-any.whl"
     expected_sdist = f"{EXPECTED_NORMALIZED_NAME}-{wheel_version}.tar.gz"
+    expected_sdist_prefix = f"{EXPECTED_NORMALIZED_NAME}-{wheel_version}"
     if wheel_path.name != expected_wheel:
         raise AssertionError(
             f"wheel has unexpected filename: {wheel_path.name!r}"
@@ -424,34 +515,13 @@ def validate_artifacts(wheel_path: Path, sdist_path: Path) -> None:
         raise AssertionError(
             f"sdist has unexpected filename: {sdist_path.name!r}"
         )
-
-
-def validate_release_readiness(root: Path) -> None:
-    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
-    if "## v0.2.0 - 2026-07-17" not in changelog:
-        raise AssertionError("CHANGELOG.md is missing the v0.2.0 section")
-    combined = []
-    for relative_path in REQUIRED_RELEASE_READINESS_ARTIFACTS:
-        path = root / relative_path
-        if not path.is_file():
-            raise AssertionError(f"Missing release readiness artifact: {relative_path}")
-        text = path.read_text(encoding="utf-8")
-        combined.append(text)
-        if path.suffix == ".json":
-            data = json.loads(text)
-            if not isinstance(data, dict):
-                raise AssertionError(f"{relative_path} must contain a JSON object")
-    release_readiness = root / "docs/results/release-readiness-v0.2.json"
-    readiness = json.loads(release_readiness.read_text(encoding="utf-8"))
-    if readiness.get("release") != "v0.2.0":
-        raise AssertionError("release-readiness-v0.2.json has wrong release")
-    if readiness.get("package_metadata", {}).get("version") != "0.2.0":
-        raise AssertionError("release-readiness-v0.2.json has wrong package version")
-    if readiness.get("recommendation") != "released":
-        raise AssertionError("release-readiness-v0.2.json has wrong release status")
-    for marker in FORBIDDEN_RELEASE_MARKERS:
-        if marker in "\n".join(combined):
-            raise AssertionError(f"Release readiness artifacts contain {marker!r}")
+    sdist_prefix = _sdist_prefix(sdist_path)
+    if sdist_prefix != expected_sdist_prefix:
+        raise AssertionError(
+            "sdist has unexpected top-level directory: "
+            f"{sdist_prefix!r}"
+        )
+    _assert_same_build_payload(wheel_path, sdist_path)
 
 
 def main() -> int:
@@ -464,19 +534,26 @@ def main() -> int:
         validate_strict_release_context(root)
         print("Strict package context and release tag validated.")
         return 0
+    expected = expected_version(root)
     if len(sys.argv) == 1:
-        validate_release_readiness(root)
-        print("Release readiness artifacts validated.")
+        wheel_path, sdist_path = resolve_artifact_pair(root / "dist")
+        validate_artifacts(wheel_path, sdist_path, expected)
+        print(f"Release artifacts validated for {EXPECTED_NAME} {expected}.")
+        return 0
+    if len(sys.argv) == 2:
+        wheel_path, sdist_path = resolve_artifact_pair(Path(sys.argv[1]))
+        validate_artifacts(wheel_path, sdist_path, expected)
+        print(f"Release artifacts validated for {EXPECTED_NAME} {expected}.")
         return 0
     if len(sys.argv) != 3:
         print(
             "Usage: validate_release_artifacts.py "
-            "[--ordinary-ci | --strict-release-tag | WHEEL SDIST]",
+            "[--ordinary-ci | --strict-release-tag | DIST_DIR | WHEEL SDIST]",
             file=sys.stderr,
         )
         return 2
-    validate_artifacts(Path(sys.argv[1]), Path(sys.argv[2]))
-    print("Release artifacts validated.")
+    validate_artifacts(Path(sys.argv[1]), Path(sys.argv[2]), expected)
+    print(f"Release artifacts validated for {EXPECTED_NAME} {expected}.")
     return 0
 
 

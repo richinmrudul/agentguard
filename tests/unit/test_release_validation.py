@@ -22,6 +22,8 @@ from scripts.release_readiness import (
     build_release_candidate_summary,
 )
 from scripts.validate_release_artifacts import (
+    expected_version,
+    resolve_artifact_pair,
     validate_artifacts,
     validate_ordinary_package_context,
     validate_strict_release_context,
@@ -87,11 +89,13 @@ def _write_release_artifacts(
     tmp_path: Path,
     wheel_description: str,
     sdist_description: str | None = None,
+    version: str = "0.3.0",
+    package_file_text: str = "",
 ) -> tuple[Path, Path]:
     if sdist_description is None:
         sdist_description = wheel_description
-    wheel = tmp_path / "agentguard_evals-0.3.0-py3-none-any.whl"
-    sdist = tmp_path / "agentguard_evals-0.3.0.tar.gz"
+    wheel = tmp_path / f"agentguard_evals-{version}-py3-none-any.whl"
+    sdist = tmp_path / f"agentguard_evals-{version}.tar.gz"
     required_package_files = (
         "agentguard/__init__.py",
         "agentguard/cli/main.py",
@@ -101,25 +105,29 @@ def _write_release_artifacts(
 
     with zipfile.ZipFile(wheel, "w") as archive:
         for member in required_package_files:
-            archive.writestr(member, "")
+            archive.writestr(member, package_file_text)
         archive.writestr(
-            "agentguard_evals-0.3.0.dist-info/METADATA",
-            _metadata(wheel_description),
+            f"agentguard_evals-{version}.dist-info/METADATA",
+            _metadata(wheel_description, version),
         )
         archive.writestr(
-            "agentguard_evals-0.3.0.dist-info/licenses/LICENSE",
+            f"agentguard_evals-{version}.dist-info/licenses/LICENSE",
             "MIT License\n",
         )
 
     with tarfile.open(sdist, "w:gz") as archive:
         for member in required_package_files:
-            _add_tar_text(archive, f"agentguard_evals-0.3.0/{member}", "")
+            _add_tar_text(
+                archive,
+                f"agentguard_evals-{version}/{member}",
+                package_file_text,
+            )
         _add_tar_text(
             archive,
-            "agentguard_evals-0.3.0/PKG-INFO",
-            _metadata(sdist_description),
+            f"agentguard_evals-{version}/PKG-INFO",
+            _metadata(sdist_description, version),
         )
-        _add_tar_text(archive, "agentguard_evals-0.3.0/LICENSE", "MIT License\n")
+        _add_tar_text(archive, f"agentguard_evals-{version}/LICENSE", "MIT License\n")
 
     return wheel, sdist
 
@@ -204,7 +212,74 @@ def test_package_version_sources_agree() -> None:
 def test_current_version_metadata_release_state_is_accepted(tmp_path: Path) -> None:
     wheel, sdist = _write_release_artifacts(tmp_path, _valid_long_description())
 
-    validate_artifacts(wheel, sdist)
+    validate_artifacts(wheel, sdist, "0.3.0")
+
+
+def test_expected_version_defaults_to_pyproject_and_rejects_stale_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("EXPECTED_VERSION", raising=False)
+    assert expected_version(ROOT) == _load_pyproject()["project"]["version"]
+
+    monkeypatch.setenv("EXPECTED_VERSION", "0.2.0")
+    with pytest.raises(AssertionError, match="EXPECTED_VERSION disagrees"):
+        expected_version(ROOT)
+
+
+def test_artifact_directory_resolution_rejects_missing_or_ambiguous_candidates(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(AssertionError, match="Expected exactly one wheel"):
+        resolve_artifact_pair(tmp_path)
+
+    wheel, sdist = _write_release_artifacts(tmp_path, _valid_long_description())
+    assert resolve_artifact_pair(tmp_path) == (wheel, sdist)
+
+    shutil.copy2(wheel, tmp_path / "agentguard_evals-0.3.1-py3-none-any.whl")
+    with pytest.raises(AssertionError, match="Expected exactly one wheel"):
+        resolve_artifact_pair(tmp_path)
+
+
+def test_artifact_validation_rejects_metadata_not_matching_expected_version(
+    tmp_path: Path,
+) -> None:
+    wheel, sdist = _write_release_artifacts(tmp_path, _valid_long_description())
+
+    with pytest.raises(AssertionError, match="unexpected Version metadata"):
+        validate_artifacts(wheel, sdist, "0.3.1")
+
+
+def test_artifact_validation_rejects_filename_metadata_mismatch(
+    tmp_path: Path,
+) -> None:
+    wheel, sdist = _write_release_artifacts(tmp_path, _valid_long_description())
+    renamed_wheel = tmp_path / "agentguard_evals-0.3.1-py3-none-any.whl"
+    wheel.rename(renamed_wheel)
+
+    with pytest.raises(AssertionError, match="unexpected filename"):
+        validate_artifacts(renamed_wheel, sdist, "0.3.0")
+
+
+def test_artifact_validation_rejects_different_build_payloads(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    wheel, _ = _write_release_artifacts(
+        first,
+        _valid_long_description(),
+        package_file_text="first build\n",
+    )
+    _, sdist = _write_release_artifacts(
+        second,
+        _valid_long_description(),
+        package_file_text="second build\n",
+    )
+
+    with pytest.raises(AssertionError, match="different builds"):
+        validate_artifacts(wheel, sdist, "0.3.0")
 
 
 def test_packaged_metadata_rejects_older_version_as_current(
@@ -216,7 +291,7 @@ def test_packaged_metadata_rejects_older_version_as_current(
     )
 
     with pytest.raises(AssertionError, match="older release 0.2.2 current"):
-        validate_artifacts(wheel, sdist)
+        validate_artifacts(wheel, sdist, "0.3.0")
 
 
 def test_packaged_metadata_rejects_current_version_as_unpublished(
@@ -228,7 +303,7 @@ def test_packaged_metadata_rejects_current_version_as_unpublished(
     )
 
     with pytest.raises(AssertionError, match="0.3.0 unpublished"):
-        validate_artifacts(wheel, sdist)
+        validate_artifacts(wheel, sdist, "0.3.0")
 
 
 def test_packaged_metadata_rejects_shipped_feature_as_release_candidate(
@@ -240,7 +315,7 @@ def test_packaged_metadata_rejects_shipped_feature_as_release_candidate(
     )
 
     with pytest.raises(AssertionError, match="shipped feature"):
-        validate_artifacts(wheel, sdist)
+        validate_artifacts(wheel, sdist, "0.3.0")
 
 
 def test_packaged_metadata_rejects_stale_current_release_evidence(
@@ -259,7 +334,7 @@ See docs/results/release-candidate-v0.2.0.md for current release evidence.
     )
 
     with pytest.raises(AssertionError, match="stale version 0.2.0"):
-        validate_artifacts(wheel, sdist)
+        validate_artifacts(wheel, sdist, "0.3.0")
 
 
 def test_packaged_metadata_checks_wheel_and_sdist_descriptions(
@@ -272,7 +347,7 @@ def test_packaged_metadata_checks_wheel_and_sdist_descriptions(
     )
 
     with pytest.raises(AssertionError, match="sdist long description"):
-        validate_artifacts(wheel, sdist)
+        validate_artifacts(wheel, sdist, "0.3.0")
 
 
 def test_packaged_metadata_ignores_changelog_history_and_historical_sections(
@@ -297,7 +372,7 @@ docs/results/release-candidate-v0.2.0.md remains useful historical evidence.
 """,
     )
 
-    validate_artifacts(wheel, sdist)
+    validate_artifacts(wheel, sdist, "0.3.0")
 
 
 def test_ordinary_development_documentation_remains_usable() -> None:
@@ -692,17 +767,13 @@ def test_release_readiness_artifacts_are_sanitized() -> None:
         assert not re.search(pattern, combined)
 
 
-def test_validate_release_artifacts_no_args_checks_v0_2_readiness() -> None:
-    result = subprocess.run(
-        [sys.executable, str(VALIDATION_SCRIPT)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+def test_validate_release_artifacts_no_args_is_current_dist_validation() -> None:
+    script = VALIDATION_SCRIPT.read_text(encoding="utf-8")
 
-    assert result.returncode == 0
-    assert "Release readiness artifacts validated." in result.stdout
+    assert "root / \"dist\"" in script
+    assert "Release artifacts validated for" in script
+    assert "release-readiness-v0.2.json" not in script
+    assert "Release readiness artifacts validated." not in script
 
 
 def test_release_readiness_referenced_paths_exist() -> None:

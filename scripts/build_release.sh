@@ -69,15 +69,12 @@ section "Build wheel and source distribution"
   --outdir "$OUTPUT_DIR" \
   "$ROOT_DIR"
 
-WHEEL_PATH=$(find "$OUTPUT_DIR" -maxdepth 1 -name 'agentguard_evals-*.whl' -print -quit)
-SDIST_PATH=$(find "$OUTPUT_DIR" -maxdepth 1 -name 'agentguard_evals-*.tar.gz' -print -quit)
-test -n "$WHEEL_PATH"
-test -n "$SDIST_PATH"
-
 section "Validate release artifacts"
 "$PYTHON_BIN" "$ROOT_DIR/scripts/validate_release_artifacts.py" \
-  "$WHEEL_PATH" \
-  "$SDIST_PATH"
+  "$OUTPUT_DIR"
+
+WHEEL_PATH=$(find "$OUTPUT_DIR" -maxdepth 1 -name 'agentguard_evals-*.whl' -print -quit)
+SDIST_PATH=$(find "$OUTPUT_DIR" -maxdepth 1 -name 'agentguard_evals-*.tar.gz' -print -quit)
 
 section "Release artifacts"
 printf 'Wheel: %s\n' "$WHEEL_PATH"
