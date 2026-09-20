@@ -14,9 +14,9 @@ modifying forbidden files, running unsafe commands, or making suspiciously large
 diffs. AgentGuard treats agents as untrusted contributors and scores observable
 evidence instead of trusting the agent's explanation.
 
-Current release: [AgentGuard v0.3.1](https://github.com/richinmrudul/agentguard/releases/tag/v0.3.1),
+Current release: [AgentGuard v0.4.0](https://github.com/richinmrudul/agentguard/releases/tag/v0.4.0),
 published to production PyPI as
-[`agentguard-evals==0.3.1`](https://pypi.org/project/agentguard-evals/0.3.1/).
+[`agentguard-evals==0.4.0`](https://pypi.org/project/agentguard-evals/0.4.0/).
 
 ```bash
 python -m pip install agentguard-evals
@@ -39,8 +39,8 @@ agentguard --help
 | Python import | `agentguard` |
 | Terminal command | `agentguard` |
 
-See the [release process](docs/release.md), current
-[v0.3.1 validation evidence](docs/results/release-v0.3.1.md), and
+See the [release process](docs/release.md),
+[release notes](docs/release-notes-v0.4.0.md), and
 [release history](https://github.com/richinmrudul/agentguard/releases).
 
 The [hosted documentation](https://richinmrudul.github.io/agentguard/) is live
@@ -70,14 +70,22 @@ After this documentation change is deployed, watch the
 
 ## Current Proof
 
-- The current `v0.3.1` GitHub and production PyPI release uses the
+- The current `v0.4.0` GitHub and production PyPI release uses the
   `agentguard-evals` distribution name.
-- The release used secretless GitHub OIDC Trusted Publishing with digital
-  attestations; the retained workflow wheel and sdist were byte-identical to
-  the public PyPI files.
-- Local release validation recorded 1,839 passing tests and 16 Docker skips;
-  the exact commit's GitHub full-integration job passed with Docker available.
-  A clean public installation and network-free smoke evaluation also passed.
+- `agentguard contained-run` is available as an opt-in Docker-backed
+  application-level containment path with Docker capability preflight,
+  least-privilege execution spec rendering, isolated workspace lifecycle,
+  explicit environment allowlisting, cleanup/liveness verification, and
+  containment evidence in reports, manifests, traces, history, and static
+  report sites.
+- The maintained contained-run GitHub Actions adoption path targets hosted
+  Linux Docker runners with read-only repository permission, immutable Action
+  pins, credential-disabled checkout, digest-pinned image configuration,
+  narrow contained evidence upload, and no ambient token or secret forwarding.
+- Docker is application-level containment, not an absolute hostile-code
+  sandbox. Linux Docker Engine is authoritative for full contained-run claims;
+  Docker Desktop is reduced and experimental; the Docker daemon and host kernel
+  remain trusted computing base components.
 - Dated, commit-scoped test and coverage results are recorded in the
   [validation summary](docs/results/validation-summary.md).
 - The curated showcase detects 5/5 unsafe scenarios, allows 1/1 safe scenario,
@@ -89,8 +97,8 @@ After this documentation change is deployed, watch the
 - Static report sites include run reports, guard incident pages, docs/results
   summaries, and trend analytics.
 
-See the evidence artifacts:
-[`docs/results/release-v0.3.1.md`](docs/results/release-v0.3.1.md),
+See the evidence artifacts and notes:
+[`docs/release-notes-v0.4.0.md`](docs/release-notes-v0.4.0.md),
 [`docs/results/showcase-metrics.md`](docs/results/showcase-metrics.md),
 [`docs/results/adversarial-metrics.md`](docs/results/adversarial-metrics.md),
 and [`CHANGELOG.md`](CHANGELOG.md).
@@ -127,16 +135,14 @@ overwrite, CI security, and customization details. The
 [`minimal`, `recommended`, and `strict` CI policy presets](docs/policy-presets.md)
 configure only settings consumed by post-execution `agentguard ci` validation;
 they do not contain agent or test execution. These stable presets are the ones
-available in the published `agentguard-evals==0.3.1` package. Inspect them with
+available in the published `agentguard-evals==0.4.0` package. Inspect them with
 `agentguard presets list` and `agentguard presets show PRESET`.
 
-Current source after issue #261 also contains an experimental `untrusted-agent`
-preset for `agentguard contained-run`, intended for v0.4.0 after release. It is
-not available in the current published `agentguard-evals==0.3.1` package.
-Ordinary CI and uncontained agent modes reject its generated contained config
-before running tests or agents.
+The published package also contains an experimental `untrusted-agent` preset
+for `agentguard contained-run`. Ordinary CI and uncontained agent modes reject
+its generated contained config before running tests or agents.
 
-Generated workflows from this source pin `agentguard-evals==0.3.1`.
+Generated workflows from this source pin `agentguard-evals==0.4.0`.
 
 The package contains the `agentguard` import and CLI, but not the repository
 examples. Clone the repository to run the showcase, benchmark fixtures, or

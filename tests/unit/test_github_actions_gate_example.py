@@ -593,11 +593,11 @@ def test_contained_actions_docs_keep_version_strategy_truthful() -> None:
     )
     workflow = _text("agentguard-contained-run.yml")
 
-    assert "source tree currently remains version `0.3.1`" in docs
-    assert "v0.4.0 has not been published yet" in docs
-    assert "after the v0.4.0 package is published" in docs
+    assert "copyable package-install step uses\n`agentguard-evals==0.4.0`" in docs
+    assert "earlier production releases" in docs
+    assert "when adopting the v0.4.0 contained-run path" in docs
     assert "agentguard-evals==0.4.0" in docs
-    assert "do not replace it with\n`agentguard-evals==0.3.1`" in docs
+    assert "older release" in docs
     assert "mutable branch" in docs
     assert "source checkout" in docs
     assert "agentguard-evals==0.4.0" in workflow

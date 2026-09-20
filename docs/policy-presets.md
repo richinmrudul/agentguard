@@ -1,17 +1,15 @@
 # CI Policy Presets
 
-AgentGuard's current source includes three stable CI policy presets for
-post-execution validation by `agentguard ci` and one experimental contained-run
-preset intended for v0.4.0. The stable CI presets do not launch or contain a
+AgentGuard includes three stable CI policy presets for post-execution
+validation by `agentguard ci` and one experimental contained-run preset in
+v0.4.0. The stable CI presets do not launch or contain a
 coding agent, do not sandbox the configured test command, and do not make
 hostile code safe to execute on the host.
 
-The published production `agentguard-evals==0.3.1` package includes the stable
-`minimal`, `recommended`, and `strict` preset commands and ordinary
-`agentguard init` / `agentguard ci` workflows. It does not include the
-experimental `untrusted-agent` preset. `agentguard init --preset
-untrusted-agent` is available in this source after issue #261 and is intended
-for a future v0.4.0 release after release preparation.
+The published production `agentguard-evals==0.4.0` package includes the stable
+`minimal`, `recommended`, and `strict` preset commands, ordinary
+`agentguard init` / `agentguard ci` workflows, and the experimental
+`untrusted-agent` contained-run preset.
 
 ## Compare Stable CI Presets
 
@@ -86,9 +84,9 @@ assumptions. It is not a broad safety guarantee. Ordinary `agentguard ci`,
 `local-command`, `agent-command`, and other uncontained execution paths reject
 configs with `contained_execution` before running tests or agents.
 
-Version truthfulness matters: this section describes the current source after
-issue #261. Do not read it as a claim that published
-`agentguard-evals==0.3.1` contains `untrusted-agent`.
+Version truthfulness matters: this section describes the published
+`agentguard-evals==0.4.0` package. Earlier production releases do not contain
+`untrusted-agent`.
 
 Linux Docker Engine is the supported platform for full contained-run claims.
 Docker Desktop is accepted only as `docker-desktop-experimental` with reduced

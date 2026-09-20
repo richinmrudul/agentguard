@@ -2,7 +2,7 @@
 
 ## Preset Execution Boundary
 
-The v0.3.1 `minimal`, `recommended`, and `strict` initialization presets
+The v0.4.0 `minimal`, `recommended`, and `strict` initialization presets
 configure settings that `agentguard ci` consumes: test-command time/output
 bounds, diff and expected-file thresholds, policy severities, path checks, and
 optional built-in secret-content detectors. They perform post-execution
@@ -36,13 +36,13 @@ Copyable workflow examples live under
   compares a suite against an approved baseline.
 - [`agentguard-contained-run.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-contained-run.yml):
   opt-in contained execution smoke for supported Linux Docker pull-request
-  runners. This example is for the upcoming v0.4.0 package after publication;
-  do not substitute `agentguard-evals==0.3.1` for it.
+  runners. This example uses `agentguard-evals==0.4.0`; do not substitute an
+  older release for it.
 
-The v0.3.1 `agentguard init --ci github` command can
+The v0.4.0 `agentguard init --ci github` command can
 generate a maintained starter workflow at `.github/workflows/agentguard.yml`.
 The production PyPI package contains the initializer, and the generated
-`agentguard-evals==0.3.1` pin resolves publicly after release. See
+`agentguard-evals==0.4.0` pin resolves publicly. See
 [safe project initialization](project-initialization.md) for its dry-run,
 overwrite, detection, and workflow security model.
 
@@ -96,13 +96,10 @@ deterministic `/bin/true` command instead of a third-party coding agent, and
 uploads only `.agentguard/contained-runs/*/contained-run.json` with
 `if: always()`, hidden-file upload enabled, and bounded retention.
 
-Version strategy: the source tree currently remains version `0.3.1`.
-`contained-run` is documented here as a maintained adoption path for the next
-release line, and the copyable package-install step uses
-`agentguard-evals==0.4.0` intentionally. Replace that pin only after v0.4.0 is
-published to production PyPI. Do not install from `main`, do not use a mutable
-source checkout as the trusted adoption path, and do not claim that the
-published `agentguard-evals==0.3.1` package contains this workflow.
+Version strategy: the copyable package-install step uses
+`agentguard-evals==0.4.0` intentionally. Do not install from `main`, do not use
+a mutable source checkout as the trusted adoption path, and do not claim that
+earlier production releases contain this workflow.
 
 The contained runner constructs Docker arguments from validated structured
 configuration. The workflow must not add raw Docker flags, host networking,

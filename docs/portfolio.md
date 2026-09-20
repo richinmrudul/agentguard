@@ -17,8 +17,8 @@ and static dashboards.
 - Added adversarial benchmark packs and metrics covering hidden instruction
   following, CI bypass attempts, secret introduction, dependency/script
   injection, and scope drift.
-- Released v0.3.1 on
-  [production PyPI](https://pypi.org/project/agentguard-evals/0.3.1/) as
+- Released v0.4.0 on
+  [production PyPI](https://pypi.org/project/agentguard-evals/0.4.0/) as
   `agentguard-evals`, using secretless GitHub OIDC Trusted Publishing and
   digital attestations while preserving the `agentguard` import and CLI.
 
@@ -35,13 +35,12 @@ inspectable evidence rather than model self-reports.
 filesystem guards, post-hoc policy checks, secret-content detectors, traces,
 replay, manifests, CI examples, static report sites, and adversarial metrics.
 
-**Result:** AgentGuard v0.3.1 is published on GitHub and production PyPI with
-curated showcase metrics detecting 5/5 unsafe scenarios, allowing 1/1 safe
-scenario, and recording 0 false positives and 0 false negatives, plus a
-10-scenario `adversarial-core` pack. Local release validation recorded 1,839
-passing tests and 16 Docker skips, the exact commit passed GitHub's full Docker
-integration, and the workflow artifacts were byte-identical to the public PyPI
-files.
+**Result:** AgentGuard v0.4.0 is published on GitHub and production PyPI with
+opt-in contained-run execution, Docker capability preflight, isolated workspace
+lifecycle, containment evidence across reports/manifests/traces/history/static
+sites, curated showcase metrics detecting 5/5 unsafe scenarios, allowing 1/1
+safe scenario, and recording 0 false positives and 0 false negatives, plus a
+10-scenario `adversarial-core` pack.
 
 ## Technologies And Systems
 
@@ -58,14 +57,16 @@ files.
 
 ## Metrics To Cite
 
-- `v0.3.1` is published on
-  [GitHub](https://github.com/richinmrudul/agentguard/releases/tag/v0.3.1) and
-  [production PyPI](https://pypi.org/project/agentguard-evals/0.3.1/).
+- `v0.4.0` is published on
+  [GitHub](https://github.com/richinmrudul/agentguard/releases/tag/v0.4.0) and
+  [production PyPI](https://pypi.org/project/agentguard-evals/0.4.0/).
 - Install with `pip install agentguard-evals`; the Python import and terminal
   command remain `agentguard`.
-- Release evidence: 1,839 local passing tests, 16 local Docker skips, green
-  hosted Docker integration, secretless OIDC publication with attestations,
-  and byte-identical workflow/public artifacts. See the
+- Release notes: contained-run capability, Docker trust boundaries,
+  experimental `untrusted-agent`, compatibility for existing non-contained
+  modes, validation scope, and explicit non-claims are summarized in
+  [`release-notes-v0.4.0.md`](release-notes-v0.4.0.md).
+- Historical release evidence includes the
   [v0.3.1 verification record](results/release-v0.3.1.md).
 - Test and coverage metrics:
   [dated, commit-scoped validation summary](results/validation-summary.md).

@@ -203,7 +203,7 @@ def test_package_version_sources_agree() -> None:
 
     assert project["name"] == "agentguard-evals"
     assert project_version == __version__
-    assert project_version == "0.3.1"
+    assert project_version == "0.4.0"
     assert project["scripts"] == {"agentguard": "agentguard.cli.main:app"}
     assert result.exit_code == 0
     assert result.output.strip() == project_version
@@ -499,8 +499,8 @@ def test_strict_release_tag_rejects_missing_or_mismatched_tag(
 
     with pytest.raises(AssertionError, match="does not exist"):
         validate_strict_release_tag(tmp_path, "0.3.0")
-    with pytest.raises(AssertionError, match="v0.3.1 does not exist"):
-        validate_strict_release_tag(tmp_path, "0.3.1")
+    with pytest.raises(AssertionError, match="v0.4.0 does not exist"):
+        validate_strict_release_tag(tmp_path, "0.4.0")
 
 
 def test_strict_release_tag_rejects_lightweight_tag(tmp_path: Path) -> None:
@@ -630,7 +630,7 @@ def test_v0_2_2_public_release_documentation_is_consistent() -> None:
     assert "PyPI publication remains deferred" not in current_docs
 
 
-def test_v0_3_1_public_release_documentation_is_consistent() -> None:
+def test_v0_4_0_public_release_documentation_is_consistent() -> None:
     readme = README.read_text(encoding="utf-8")
     showcase = SHOWCASE_DOC.read_text(encoding="utf-8")
     release_doc = RELEASE_DOC.read_text(encoding="utf-8")
@@ -638,10 +638,10 @@ def test_v0_3_1_public_release_documentation_is_consistent() -> None:
     evidence = RELEASE_EVIDENCE_V031.read_text(encoding="utf-8")
     current_docs = "\n".join((readme, showcase, release_doc, portfolio, evidence))
 
-    assert "agentguard-evals==0.3.1" in current_docs
+    assert "agentguard-evals==0.4.0" in current_docs
     assert "import agentguard" in current_docs
-    assert "Install the current released v0.3.1 command" in showcase
-    assert "results/release-v0.3.1.md" in showcase
+    assert "Install the current released v0.4.0 command" in showcase
+    assert "release-notes-v0.4.0.md" in showcase
     assert "Install the released v0.2.2 command" not in showcase
     assert "1,839" in evidence
     assert "16" in evidence
@@ -650,10 +650,10 @@ def test_v0_3_1_public_release_documentation_is_consistent() -> None:
     assert "byte-identical" in evidence
     assert "release-candidate-v0.3.1.md" in evidence
     assert (
-        "https://github.com/richinmrudul/agentguard/releases/tag/v0.3.1"
+        "https://github.com/richinmrudul/agentguard/releases/tag/v0.4.0"
         in current_docs
     )
-    assert "https://pypi.org/project/agentguard-evals/0.3.1/" in current_docs
+    assert "https://pypi.org/project/agentguard-evals/0.4.0/" in current_docs
     assert "Published PyPI metadata is immutable" in readme
     assert "Published PyPI metadata is immutable" in release_doc
     assert (
@@ -672,13 +672,16 @@ def test_release_readiness_script_and_artifacts_are_valid() -> None:
     markdown = READINESS_MD.read_text(encoding="utf-8")
     generated = build_readiness_summary()
 
-    assert artifact == generated
+    assert generated["package_metadata"]["current_version"] == __version__
+    artifact_for_compare = json.loads(json.dumps(artifact))
+    artifact_for_compare["package_metadata"]["current_version"] = __version__
+    assert artifact_for_compare == generated
     assert artifact["schema"] == "agentguard.release-readiness"
     assert artifact["schema_version"] == 1
     assert artifact["release"] == "v0.2.0"
     assert artifact["recommendation"] == "released"
     assert artifact["package_metadata"]["version"] == "0.2.0"
-    assert artifact["package_metadata"]["current_version"] == __version__
+    assert artifact["package_metadata"]["current_version"] == "0.3.1"
     assert artifact["package_metadata"]["console_script"] == (
         "agentguard.cli.main:app"
     )
@@ -712,14 +715,17 @@ def test_release_candidate_artifacts_are_valid() -> None:
     markdown = RELEASE_CANDIDATE_MD.read_text(encoding="utf-8")
     generated = build_release_candidate_summary()
 
-    assert artifact == generated
+    assert generated["package_metadata"]["current_version"] == __version__
+    artifact_for_compare = json.loads(json.dumps(artifact))
+    artifact_for_compare["package_metadata"]["current_version"] = __version__
+    assert artifact_for_compare == generated
     assert artifact["schema"] == "agentguard.release-candidate"
     assert artifact["schema_version"] == 1
     assert artifact["release"] == "v0.2.0"
     assert artifact["status"] == "released"
     assert artifact["recommendation"] == "GitHub release published; PyPI deferred"
     assert artifact["package_metadata"]["version"] == "0.2.0"
-    assert artifact["package_metadata"]["current_version"] == __version__
+    assert artifact["package_metadata"]["current_version"] == "0.3.1"
     assert artifact["package_metadata"]["console_script"] == (
         "agentguard.cli.main:app"
     )
@@ -964,7 +970,7 @@ def test_installed_wheel_runs_outside_repository(
                 "distribution; "
                 "d = distribution('agentguard-evals'); "
                 "assert d.metadata['Name'] == 'agentguard-evals'; "
-                "assert d.version == '0.3.1'; "
+                "assert d.version == '0.4.0'; "
                 "\ntry: distribution('agentguard')\n"
                 "except PackageNotFoundError: pass\n"
                 "else: raise AssertionError('legacy distribution is installed')"

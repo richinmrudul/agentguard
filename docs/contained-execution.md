@@ -280,12 +280,10 @@ It uploads the hidden evidence path
 retention. The artifact path is deliberately narrow and does not upload the
 prepared workspace or broader `.agentguard/` tree.
 
-Version wording matters for this adoption path. This source tree remains
-`0.3.1`, and v0.4.0 has not been published yet. The copyable workflow uses
-`agentguard-evals==0.4.0` as a release-time substitution placeholder for the
-future package that contains `contained-run`; do not replace it with
-`agentguard-evals==0.3.1`, a mutable branch, or a source checkout when adopting
-the maintained workflow.
+Version wording matters for this adoption path. The copyable workflow uses
+`agentguard-evals==0.4.0`, the package version that contains `contained-run`;
+do not replace it with an older release, a mutable branch, or a source checkout
+when adopting the maintained workflow.
 
 ## Containment Evidence
 
@@ -444,7 +442,7 @@ Existing `sandbox.type: local` and `sandbox.type: docker` execution modes are
 posture declarations for the current runner only; they are not upgraded into
 contained-agent application-level boundaries by this contract.
 
-The v1 JSON Schema remains additive and keeps package version `0.3.1`.
+The v1 JSON Schema remains additive and ships with package version `0.4.0`.
 
 ## Explicit Non-Goals And Non-Claims
 

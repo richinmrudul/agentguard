@@ -123,5 +123,6 @@ nav:
       - Testing and Quality: testing.md
       - Release Process: release.md
       - Release Checklist: release-checklist.md
+      - v0.4.0 Release Notes: release-notes-v0.4.0.md
       - Portfolio Summary: portfolio.md
       - Changelog: https://github.com/richinmrudul/agentguard/blob/main/CHANGELOG.md

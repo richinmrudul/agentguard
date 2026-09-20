@@ -18,7 +18,7 @@ agent's explanation.
 
 </div>
 
-Current release: [AgentGuard v0.3.1][release], published to production PyPI as
+Current release: [AgentGuard v0.4.0][release], published to production PyPI as
 [`agentguard-evals`][pypi]. AgentGuard supports Python 3.9–3.12.
 
 ```bash
@@ -78,8 +78,14 @@ load the video.
 
 ## Current evidence
 
-- 1,839 tests passed locally with 16 documented Docker skips; the exact
-  v0.3.1 commit also passed the full Docker-backed GitHub integration job.
+- v0.4.0 adds opt-in contained-run execution with Docker capability preflight,
+  least-privilege Docker spec rendering, isolated workspace lifecycle, explicit
+  environment allowlisting, cleanup/liveness verification, and containment
+  evidence across reports, manifests, traces, history, and static-site run
+  details.
+- Linux Docker Engine is authoritative for full contained-run claims. Docker
+  Desktop remains reduced and experimental, and Docker is application-level
+  containment rather than an absolute hostile-code sandbox.
 - The curated [showcase](showcase.md) detects 5/5 unsafe scenarios, allows 1/1
   safe scenario, and records zero false positives and false negatives for that
   deliberately small demo corpus.
@@ -88,8 +94,9 @@ load the video.
 - AgentGuard emits JSON and Markdown reports, SARIF and JUnit exports, execution
   manifests, portable hash-chained traces, offline replay results, and optional
   static report sites.
-- The retained workflow artifacts and public v0.3.1 PyPI artifacts were
-  [verified byte-identical](results/release-v0.3.1.md).
+- Release notes are prepared in
+  [release-notes-v0.4.0.md](release-notes-v0.4.0.md), and historical
+  release verification records remain under `docs/results/`.
 
 These are scoped validation results, not claims about universal production
 effectiveness. See [detection quality](detection-quality.md),
@@ -137,6 +144,6 @@ exports a sanitized snapshot of local evaluation artifacts.
 - [Release process](release.md) — build-once validation and protected OIDC publication.
 - [GitHub repository][repo] — source, examples, issues, and contribution history.
 
-[pypi]: https://pypi.org/project/agentguard-evals/0.3.1/
-[release]: https://github.com/richinmrudul/agentguard/releases/tag/v0.3.1
+[pypi]: https://pypi.org/project/agentguard-evals/0.4.0/
+[release]: https://github.com/richinmrudul/agentguard/releases/tag/v0.4.0
 [repo]: https://github.com/richinmrudul/agentguard

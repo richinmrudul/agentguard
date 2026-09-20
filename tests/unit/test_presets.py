@@ -226,11 +226,10 @@ def test_documented_comparison_matches_registry_and_rejects_containment_claims()
     assert "`untrusted-agent`" in page
     assert "experimental for v0.4.0" in combined
     assert (
-        "published production `agentguard-evals==0.3.1` package includes the stable"
+        "published production `agentguard-evals==0.4.0` package includes the stable"
         in page_flat
     )
-    assert "does not include the experimental `untrusted-agent` preset" in page_flat
-    assert "available in this source after issue #261" in page_flat
+    assert "experimental `untrusted-agent` contained-run preset" in page_flat
     for unsupported_claim in (
         "fully sandboxed",
         "maximum security",
