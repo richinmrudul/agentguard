@@ -307,7 +307,7 @@ UNTRUSTED_AGENT_PRESET = ContainedAgentPreset(
         "Explicit contained_execution.environment allowlist; no ambient host env or token forwarding.",
     ),
     limitations=(
-        "Experimental for v0.4.0 and not available in the published 0.3.1 package.",
+        "Experimental for v0.4.0 contained-run adoption.",
         "Does not claim broad safety guarantees, hardware virtualization, or host-kernel isolation.",
         "Requires Docker daemon and host kernel trust; unsupported platforms fail before launch.",
         "Generated placeholders intentionally fail until a maintainer supplies reviewed project values.",

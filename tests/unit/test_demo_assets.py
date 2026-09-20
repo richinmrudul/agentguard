@@ -95,9 +95,11 @@ def test_readme_portfolio_first_screen_references_existing_proof() -> None:
         "Architecture At A Glance",
         "Screenshots And Demo Assets",
         "Current release:",
-        "v0.3.1 validation evidence",
+        "release notes",
+        "agentguard contained-run",
+        "Docker is application-level containment",
         "pip install agentguard-evals",
-        "docs/results/release-v0.3.1.md",
+        "docs/release-notes-v0.4.0.md",
     ]
     for text in required_text:
         assert text in readme
@@ -109,6 +111,7 @@ def test_readme_portfolio_first_screen_references_existing_proof() -> None:
         "examples/suites/adversarial_core.yaml",
         "docs/results/showcase-metrics.md",
         "docs/results/adversarial-metrics.md",
+        "docs/release-notes-v0.4.0.md",
         "docs/results/release-candidate-v0.2.0.md",
         "docs/results/validation-summary.md",
         "examples/github-actions/",
@@ -121,11 +124,12 @@ def test_portfolio_summary_references_existing_artifacts() -> None:
     portfolio = _read("docs/portfolio.md")
 
     for text in [
-        "v0.3.1",
+        "v0.4.0",
         "production PyPI",
         "pip install agentguard-evals",
-        "1,839",
-        "byte-identical",
+        "release-notes-v0.4.0.md",
+        "Docker trust boundaries",
+        "v0.3.1 verification record",
         "results/validation-summary.md",
         "5/5 unsafe scenarios",
         "1/1 safe scenario",
@@ -141,7 +145,8 @@ def test_portfolio_summary_references_existing_artifacts() -> None:
         "examples/github-actions/agentguard-showcase.yml",
         "docs/results/validation-summary.json",
         "docs/results/validation-summary.md",
-        "docs/results/release-v0.2.2.md",
+        "docs/release-notes-v0.4.0.md",
+        "docs/results/release-v0.3.1.md",
     ]:
         assert Path(path).exists()
 

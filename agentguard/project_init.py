@@ -582,7 +582,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install AgentGuard
-        run: python -m pip install agentguard-evals==0.3.1
+        run: python -m pip install agentguard-evals==0.4.0
 """
     if python_setup_commands:
         workflow += """

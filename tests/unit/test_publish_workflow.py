@@ -111,7 +111,7 @@ def test_publish_workflow_enforces_release_version_and_protected_oidc() -> None:
         assert "github.event_name == 'release'" in condition
         assert "github.event.action == 'published'" in condition
         assert "github.event.release.prerelease == false" in condition
-        assert "github.event.release.tag_name == 'v0.3.1'" in condition
+        assert "github.event.release.tag_name == 'v0.4.0'" in condition
 
     for required_check in (
         'test "$GITHUB_REF_TYPE" = "tag"',
@@ -124,9 +124,9 @@ def test_publish_workflow_enforces_release_version_and_protected_oidc() -> None:
         "names != {expected_name}",
         "wheel_metadata.get(\"Version\")",
         "sdist_metadata.get(\"Version\")",
-        'test "$RELEASE_TAG" = "v0.3.1"',
-        "agentguard_evals-0.3.1-py3-none-any.whl",
-        "agentguard_evals-0.3.1.tar.gz",
+        'test "$RELEASE_TAG" = "v0.4.0"',
+        "agentguard_evals-0.4.0-py3-none-any.whl",
+        "agentguard_evals-0.4.0.tar.gz",
         "release-build-toolchain.json",
     ):
         assert required_check in source
@@ -183,7 +183,7 @@ def test_release_docs_record_active_publisher_and_recovery() -> None:
         "cannot be\noverwritten",
         "new package version",
         "selected-tag deployment rule",
-        "allows only `v0.3.1`",
+        "allows only `v0.4.0`",
         "byte-identical",
         "release-build-toolchain.txt",
         "release-build-toolchain.json",
@@ -192,8 +192,8 @@ def test_release_docs_record_active_publisher_and_recovery() -> None:
         assert required in combined
 
     assert "pipx install" in release_doc
-    assert 'pip install "agentguard-evals==0.3.1"' in release_doc
-    assert 'pipx install "agentguard-evals==0.3.1"' in release_doc
+    assert 'pip install "agentguard-evals==0.4.0"' in release_doc
+    assert 'pipx install "agentguard-evals==0.4.0"' in release_doc
     assert "--index-url https://pypi.org/simple" in release_doc
     assert "RELEASE_TAG" in release_doc
     assert "unzip -l" in release_doc
@@ -204,17 +204,17 @@ def test_readme_documents_current_release_without_false_publication() -> None:
     readme = README.read_text(encoding="utf-8")
 
     assert "Current release:" in readme
-    assert "AgentGuard v0.3.1" in readme
+    assert "AgentGuard v0.4.0" in readme
     assert "production PyPI" in readme
     assert "pip install agentguard-evals" in readme
     assert "pipx install agentguard-evals" in readme
     assert "Python import | `agentguard`" in readme
     assert "Terminal command | `agentguard`" in readme
-    assert "https://pypi.org/project/agentguard-evals/0.3.1/" in readme
-    assert "https://github.com/richinmrudul/agentguard/releases/tag/v0.3.1" in readme
-    assert "docs/results/release-v0.3.1.md" in readme
+    assert "https://pypi.org/project/agentguard-evals/0.4.0/" in readme
+    assert "https://github.com/richinmrudul/agentguard/releases/tag/v0.4.0" in readme
+    assert "docs/release-notes-v0.4.0.md" in readme
     assert "PyPI publication remains deferred" not in readme
-    assert "v0.3.1 source candidate" not in readme
+    assert "v0.4.0 source candidate" not in readme
     assert "pip install agentguard\n" not in readme
     assert "pipx install agentguard\n" not in readme
     assert "test.pypi.org" not in readme.lower()

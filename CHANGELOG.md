@@ -7,6 +7,71 @@ and uses semantic versioning.
 
 ## Unreleased
 
+## v0.4.0 - 2026-09-20
+
+### Added
+
+- Added first-class `agentguard contained-run` execution for a single explicit
+  argv behind the required `--` boundary, with validated structured Docker
+  arguments instead of shell interpolation or raw user-controlled Docker flags.
+- Added deterministic Docker capability preflight for the v1 contained
+  execution contract, including Linux Docker Engine verification, Docker
+  Desktop experimental classification, digest-pinned image checks, resource and
+  namespace inspection, controlled probe cleanup, and sanitized bounded
+  diagnostics.
+- Added a least-privilege Docker execution spec for contained runs: non-root
+  UID/GID, `no-new-privileges`, dropped capabilities, PID, CPU, and memory
+  bounds, read-only root filesystem, bounded tmpfs, default `network: none`,
+  and explicit rejection of privileged mode, host networking, host namespaces,
+  host devices, Docker socket mounts, mutable tag-only image provenance, and
+  arbitrary Docker flags.
+- Added an isolated contained workspace lifecycle that copies the evaluated
+  repository into a lifecycle-owned workspace, stores baseline and evidence
+  outside the agent-visible repository, captures mutations without trusting
+  live Git metadata, rejects escaping links and reserved path spoofing, and
+  cleans up only recorded lifecycle-owned paths.
+- Added an explicit contained-run environment policy with fixed runtime
+  defaults, bounded allowlisted literal or host-sourced entries, reserved
+  Docker/client/daemon/config and host-control names, sensitive-value
+  redaction, and no ambient host environment forwarding.
+- Added contained-run timeout, cleanup, and liveness verification that binds
+  cleanup to immutable Docker container identity, distinguishes cleanup states,
+  fails runs on cleanup or liveness verification failure, and records compact
+  sanitized contained-run JSON evidence.
+- Added canonical containment evidence across JSON and Markdown reports, run
+  manifests, execution traces and replay evidence, JSON history exports, and
+  static-site run details, while keeping SARIF and JUnit focused on findings
+  and testcases.
+- Added a maintained opt-in GitHub Actions adoption path for contained-run on
+  hosted Linux Docker runners with immutable Action pins, read-only contents
+  permission, credential-disabled checkout, digest-pinned image configuration,
+  narrow hidden evidence upload, and no ambient token or secret forwarding.
+- Added an experimental `untrusted-agent` preset that generates a contained-run
+  starter configuration for the explicit contained execution path only.
+
+### Security
+
+- Documented and enforced the v0.4 contained-execution non-claims: Docker is
+  application-level containment, not an absolute hostile-code sandbox; Linux
+  Docker Engine is authoritative for full contained-run claims; Docker Desktop
+  remains reduced and experimental; and the Docker daemon plus host kernel
+  remain trusted computing base components.
+- Hardened audit remediation and release validation around stale release-state
+  claims, package metadata consistency, artifact identity, contained evidence
+  sanitization, cleanup verification, and unchanged publishing boundaries.
+
+### Compatibility
+
+- Existing non-contained `run`, `ci`, `benchmark`, `suite`, `matrix`,
+  `local-command`, `agent-command`, and existing Docker test-runner behavior
+  remain compatible when configs omit `contained_execution`.
+- The distribution remains `agentguard-evals`, the import and CLI remain
+  `agentguard`, and supported Python versions remain 3.9 through 3.12.
+- Passing contained-run checks does not claim all vulnerabilities are
+  eliminated or that an agent is safe, trustworthy, or unable to leak secrets;
+  AgentGuard reports the configured evidence and policy observations within
+  the documented boundary.
+
 ## v0.3.1 - 2026-09-04
 
 ### Fixed

@@ -2,11 +2,11 @@
 
 `agentguard init [PATH]` prepares an existing repository for AgentGuard without
 running repository code, installing dependencies, or changing Git state. The
-published `agentguard-evals==0.3.1` package includes ordinary initialization
+published `agentguard-evals==0.4.0` package includes ordinary initialization
 for the stable `minimal`, `recommended`, and `strict` CI presets:
 
 ```bash
-python -m pip install "agentguard-evals==0.3.1"
+python -m pip install "agentguard-evals==0.4.0"
 agentguard --version
 ```
 
@@ -50,9 +50,8 @@ commands. `--preset` defaults to `recommended`; omitting it preserves the
 Phase 44A generated configuration. See [CI policy presets](policy-presets.md)
 for the exact effective settings and tradeoffs.
 
-The experimental `untrusted-agent` value is available in this source after
-issue #261 for contained-run development and is intended for v0.4.0. It is not
-available in the current published `agentguard-evals==0.3.1` package.
+The experimental `untrusted-agent` value is available in v0.4.0 for
+contained-run development and adoption.
 
 ## Generated Files
 
@@ -229,10 +228,9 @@ The stable CI presets do not contain coding-agent or test-command execution.
 They omit Docker, command-policy, and filesystem-watcher settings because the
 ordinary CI path does not enforce those controls.
 
-`untrusted-agent` is an experimental v0.4.0 contained-run preset available in
-this source after issue #261, not in the current published
-`agentguard-evals==0.3.1` package. It is inspectable with `agentguard presets
-show untrusted-agent` in this source and generates a contained-run config with
+`untrusted-agent` is an experimental v0.4.0 contained-run preset. It is
+inspectable with `agentguard presets show untrusted-agent` and generates a
+contained-run config with
 Docker-backed application-level containment settings, Linux Docker Engine
 support, reduced/experimental Docker Desktop status, digest-pinned image
 requirements, network `none` by default, and an explicit environment allowlist.
@@ -249,7 +247,7 @@ untrusted-agent --ci github` is rejected because it would create an ordinary
 uncontained CI workflow. For the separate, explicit GitHub Actions contained-run
 adoption path, copy and review
 [`examples/github-actions/agentguard-contained-run.yml`](https://github.com/richinmrudul/agentguard/blob/main/examples/github-actions/agentguard-contained-run.yml)
-after the v0.4.0 package is published.
+when adopting the v0.4.0 contained-run path.
 
 ## Overwrite And Idempotency Model
 
@@ -289,7 +287,7 @@ The optional workflow:
 
 - runs for `pull_request`, not `pull_request_target`;
 - grants only `contents: read`;
-- installs `agentguard-evals==0.3.1` for a reproducible gate;
+- installs `agentguard-evals==0.4.0` for a reproducible gate;
 - for a safely auto-detected pytest root, installs allowlisted requirements,
   installs an identified project editably when applicable, and explicitly
   installs pytest;
@@ -306,7 +304,7 @@ The optional workflow:
   its failing exit status.
 
 Review the workflow, commit it on your branch, and open a pull request to run
-the first CI evaluation. The exact `agentguard-evals==0.3.1` pin is available
+the first CI evaluation. The exact `agentguard-evals==0.4.0` pin is available
 from production PyPI.
 
 The generated workflow does not install Node.js dependencies. Dependency-free

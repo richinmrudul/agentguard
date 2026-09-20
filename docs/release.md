@@ -13,12 +13,13 @@ available from [PyPI](https://pypi.org/project/agentguard-evals/0.2.2/) and
 [GitHub](https://github.com/richinmrudul/agentguard/releases/tag/v0.2.2).
 AgentGuard v0.2.0 and v0.2.1 remain unchanged historical GitHub releases.
 
-AgentGuard v0.3.1 is the current production release. It is available from
-[PyPI](https://pypi.org/project/agentguard-evals/0.3.1/) and
-[GitHub](https://github.com/richinmrudul/agentguard/releases/tag/v0.3.1).
-The reviewed source-candidate record remains preserved as historical pre-release
-evidence; the completed publication is documented in
-[`results/release-v0.3.1.md`](results/release-v0.3.1.md).
+AgentGuard v0.4.0 is the current production release. It is available from
+[PyPI](https://pypi.org/project/agentguard-evals/0.4.0/) and
+[GitHub](https://github.com/richinmrudul/agentguard/releases/tag/v0.4.0).
+The release notes are prepared in
+[`release-notes-v0.4.0.md`](release-notes-v0.4.0.md). Historical
+pre-release and publication evidence for earlier releases remains preserved in
+`results/`.
 
 ## Release Stages
 
@@ -51,7 +52,7 @@ Users install the distribution but continue to import and run AgentGuard under
 its product identity:
 
 ```bash
-python -m pip install "agentguard-evals==0.3.1"
+python -m pip install "agentguard-evals==0.4.0"
 python -c "import agentguard; print(agentguard.__version__)"
 agentguard --version
 agentguard --help
@@ -60,7 +61,7 @@ agentguard --help
 For an isolated command installation:
 
 ```bash
-pipx install "agentguard-evals==0.3.1"
+pipx install "agentguard-evals==0.4.0"
 agentguard --version
 agentguard --help
 ```
@@ -93,7 +94,7 @@ uses GitHub OIDC exclusively.
 ### Production PyPI publisher
 
 The pending publisher configured before v0.2.2 was converted by that successful
-first upload into the active production project publisher used by v0.3.1 with
+first upload into the active production project publisher used by v0.4.0 with
 this identity:
 
 | Field | Value |
@@ -111,8 +112,8 @@ publisher.
 ### GitHub environment
 
 The GitHub environment must be named `pypi` and require manual approval for
-production publication. Version 0.3.1 uses a selected-tag deployment rule that
-allows only `v0.3.1`. Before each future release, change that rule through a
+production publication. Version 0.4.0 uses a selected-tag deployment rule that
+allows only `v0.4.0`. Before each future release, change that rule through a
 separately reviewed administrative step to allow only the exact new release
 tag. Do not broaden it to arbitrary tags, branches, or repository
 administrators, and do not add a PyPI token or password as an environment or
@@ -251,9 +252,9 @@ are not distribution payload.
     production PyPI.
 
 The workflow fails before publication unless the event is a published,
-non-prerelease GitHub release, the tag is exactly `v0.3.1`, the checkout is
+non-prerelease GitHub release, the tag is exactly `v0.4.0`, the checkout is
 exactly at that tag, the metadata name is exactly `agentguard-evals`, and all
-package versions are exactly `0.3.1`. Pull requests, ordinary pushes, forks,
+package versions are exactly `0.4.0`. Pull requests, ordinary pushes, forks,
 other tags, workflow dispatches, arbitrary commits, and other releases cannot
 enter the publication path.
 
@@ -316,12 +317,12 @@ test, installation, filename, and SHA-256 evidence.
 Compare the release tag with both installed metadata and the CLI:
 
 ```bash
-RELEASE_TAG=$(gh release view v0.3.1 --json tagName --jq .tagName)
+RELEASE_TAG=$(gh release view v0.4.0 --json tagName --jq .tagName)
 python -m venv /tmp/agentguard-release-verify
 /tmp/agentguard-release-verify/bin/python -m pip install \
   --no-cache-dir \
   --index-url https://pypi.org/simple \
-  "agentguard-evals==0.3.1"
+  "agentguard-evals==0.4.0"
 INSTALLED_VERSION=$(
   /tmp/agentguard-release-verify/bin/python -c \
     'from importlib.metadata import version; print(version("agentguard-evals"))'
@@ -336,7 +337,7 @@ test "$RELEASE_TAG" = "v${INSTALLED_VERSION}"
 For pipx:
 
 ```bash
-pipx install --index-url https://pypi.org/simple "agentguard-evals==0.3.1"
+pipx install --index-url https://pypi.org/simple "agentguard-evals==0.4.0"
 agentguard --version
 agentguard --help
 ```
@@ -345,8 +346,8 @@ To compare public files with the exact retained workflow artifacts, download
 both into separate empty directories and hash each filename:
 
 ```bash
-gh run download 33899362820 \
-  --name agentguard-evals-v0.3.1-validated-distributions \
+gh run download PUBLISH_WORKFLOW_RUN_ID \
+  --name agentguard-evals-v0.4.0-validated-distributions \
   --dir /tmp/agentguard-workflow
 python - <<'PY'
 import hashlib
@@ -357,7 +358,7 @@ from pathlib import Path
 public_dir = Path("/tmp/agentguard-public")
 public_dir.mkdir()
 with urllib.request.urlopen(
-    "https://pypi.org/pypi/agentguard-evals/0.3.1/json"
+    "https://pypi.org/pypi/agentguard-evals/0.4.0/json"
 ) as response:
     release = json.load(response)
 for file_info in release["urls"]:

@@ -98,14 +98,14 @@ def test_homepage_contains_current_identity_evidence_and_trust_boundary() -> Non
     for required in (
         "local-first",
         "observable evidence",
-        "AgentGuard v0.3.1",
+        "AgentGuard v0.4.0",
         "agentguard-evals",
         "python -m pip install agentguard-evals",
         "agentguard --version",
         "agentguard --help",
         "Python 3.9–3.12",
-        "1,839",
-        "16 documented",
+        "contained-run execution",
+        "Docker capability preflight",
         "5/5 unsafe",
         "1/1",
         "10 deterministic",
@@ -125,7 +125,7 @@ def test_homepage_contains_current_identity_evidence_and_trust_boundary() -> Non
         "traces.md",
         "replay.md",
         "release.md",
-        "https://pypi.org/project/agentguard-evals/0.3.1/",
+        "https://pypi.org/project/agentguard-evals/0.4.0/",
         "https://github.com/richinmrudul/agentguard",
     ):
         assert target in homepage
