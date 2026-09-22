@@ -4,6 +4,11 @@ AgentGuard can prepare and run a real non-interactive coding-agent CLI through
 the existing `agent-command` adapter. The harness is provider-neutral: it uses
 profile YAML and argv rendering, not provider SDKs.
 
+The preregistered v0.5 contained study boundary is separate from this current
+workflow. See the [v0.5 real-agent evaluation protocol](real-agent-evaluation.md)
+for the future `contained-run` study objective, denominators, claim limits, and
+decisions that still require maintainer approval before any live trial.
+
 Real-agent evaluation is planned, but no external-agent benchmark results are
 published with v0.1.0. The checked-in examples exercise the evaluation harness
 deterministically and must not be interpreted as measurements of a commercial,
