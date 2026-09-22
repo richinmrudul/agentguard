@@ -214,6 +214,25 @@ AgentGuard checks, optional evaluator projections, and replay tools are
 evidence systems. They support descriptive reporting, but they do not become
 production policy or external verifier authority for v0.5.
 
+## Contained Profile Contract
+
+The experimental contained-agent profile contract for v0.5 planning uses
+`schema: agentguard.contained-agent-profile` and `schema_version: 1`. It is a
+study input contract only; it is not a stable provider/plugin API.
+
+Profiles record a stable portable profile `id`, display label, digest-pinned
+Docker image reference, structured non-interactive `argv`, required
+environment variable names, explicit unset environment variable names, network
+mode, timeout, CPU, memory, PID, and output bounds, optional cost/token ceilings
+as metadata, supported fixture capabilities, and profile-declared agent/version
+identity when deterministic evidence is available.
+
+Profiles must not contain credential values, inline sensitive values, arbitrary
+Docker flags, shell command strings, provider SDK configuration, host
+environment inheritance, mutable image tags, host networking, or unsupported
+security-sensitive fields. Serialized diagnostics may include environment
+names, never values.
+
 ## Live Authorization And Stop Conditions
 
 This protocol does not authorize live trials. Before live trials, maintainers
