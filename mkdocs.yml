@@ -96,6 +96,7 @@ nav:
       - Contained Execution Contract: contained-execution.md
       - Benchmarks and Suites: benchmarks.md
       - Real-Agent Evaluations: evaluation.md
+      - v0.5 Study Protocol: real-agent-evaluation.md
       - Online Guard: online-guard.md
   - Evaluation and Evidence:
       - Detection Quality: detection-quality.md
