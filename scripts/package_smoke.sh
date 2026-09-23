@@ -58,7 +58,7 @@ section "Validate wheel and source distribution"
 WHEEL_PATH=$(find "$DIST_DIR" -maxdepth 1 -name 'agentguard_evals-*.whl' -print -quit)
 
 section "Install wheel"
-"$PYTHON" -m pip install "$WHEEL_PATH"
+"$PYTHON" -m pip install --no-compile "$WHEEL_PATH"
 
 section "Verify installed distribution metadata"
 "$PYTHON" - "$ROOT_DIR/pyproject.toml" <<'PY'
@@ -122,6 +122,39 @@ section "Run installed CLI smoke checks"
   "$AGENTGUARD" presets show recommended --format json
   "$AGENTGUARD" benchmarks list
   "$AGENTGUARD" reports list
+  cat > contained-profile.yaml <<'YAML'
+schema: agentguard.contained-agent-profile
+schema_version: 1
+id: smoke-contained-profile
+display_label: Smoke Contained Profile
+image: ghcr.io/example/smoke-agent@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+argv:
+  - /usr/local/bin/smoke-agent
+  - --task-file
+  - /workspace/TASK.md
+capabilities:
+  - read-only
+YAML
+  "$AGENTGUARD" evaluation study-plan \
+    --profile contained-profile.yaml \
+    --fixture read-only-control \
+    --trials 1 \
+    --output contained-study-plan.json
+  "$PYTHON" - <<'PY'
+import json
+from pathlib import Path
+
+plan = json.loads(Path("contained-study-plan.json").read_text(encoding="utf-8"))
+serialized = json.dumps(plan, sort_keys=True)
+if plan["schema"] != "agentguard.contained-study-plan":
+    raise SystemExit("installed study-plan smoke wrote the wrong schema")
+if plan["total_planned_trial_count"] != 1:
+    raise SystemExit("installed study-plan smoke wrote the wrong trial count")
+if "/usr/local/bin/smoke-agent" in serialized or "/workspace/TASK.md" in serialized:
+    raise SystemExit("installed study-plan smoke disclosed raw argv")
+if not plan["plan_digest"]:
+    raise SystemExit("installed study-plan smoke omitted the plan digest")
+PY
   "$AGENTGUARD" run \
     examples/configs/fix_auth_bug_local_command_safe.yaml \
     --agent local-command
