@@ -111,6 +111,11 @@ from agentguard.evaluation.report import (
     EvaluationReportOptions,
     generate_evaluation_report,
 )
+from agentguard.evaluation.study_plan import (
+    ContainedStudyPlanOptions,
+    build_contained_study_plan,
+    serialize_contained_study_plan,
+)
 from agentguard.provenance.manifest import (
     load_manifest,
     manifest_trusted_roots,
@@ -1464,6 +1469,56 @@ def evaluate_dry_run(
     ]
     if missing:
         raise typer.Exit(2)
+
+
+@evaluate_app.command("study-plan")
+def evaluation_study_plan(
+    profile: Optional[list[Path]] = typer.Option(
+        None,
+        "--profile",
+        help="Contained agent profile YAML. Repeat to select multiple profiles.",
+    ),
+    fixture_set: Optional[Path] = typer.Option(
+        None,
+        "--fixture-set",
+        help="Contained study fixture manifest. Defaults to the packaged reviewed set.",
+    ),
+    fixture: Optional[list[str]] = typer.Option(
+        None,
+        "--fixture",
+        help="Fixture id to include. Repeat to select multiple fixtures; defaults to all.",
+    ),
+    trials: int = typer.Option(
+        3,
+        "--trials",
+        help="Trial repetitions per selected profile/fixture unit.",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        help="Write canonical JSON plan to this path instead of stdout.",
+    ),
+) -> None:
+    """Render an experimental contained-study dry-run plan without execution."""
+    try:
+        plan = build_contained_study_plan(
+            ContainedStudyPlanOptions(
+                profile_paths=profile or [],
+                fixture_set_path=fixture_set,
+                fixture_ids=fixture or [],
+                trials=trials,
+            )
+        )
+        serialized = serialize_contained_study_plan(plan)
+        if output is not None:
+            atomic_write_text(output, serialized)
+            safe_echo(f"Contained study plan: {output}")
+            safe_echo(f"Plan digest: {plan.digest}")
+        else:
+            safe_echo(serialized, nl=False)
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
 
 
 @evaluate_app.command("run")

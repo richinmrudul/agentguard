@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://richinmrudul.github.io/agentguard/schemas/contained-study-plan-v1.schema.json",
+  "title": "AgentGuard contained study dry-run plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "approval_requirements",
+    "fixtures",
+    "plan_digest",
+    "profiles",
+    "protocol_version",
+    "schema",
+    "schema_version",
+    "source_aliases",
+    "total_planned_trial_count",
+    "trial_repetitions_per_unit",
+    "trials",
+    "warnings"
+  ],
+  "properties": {
+    "approval_requirements": {"$ref": "#/$defs/stringList"},
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {"$ref": "#/$defs/fixture"}
+    },
+    "plan_digest": {"$ref": "#/$defs/sha256"},
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {"$ref": "#/$defs/profile"}
+    },
+    "protocol_version": {"const": "v0.5-preregistered-contained-study"},
+    "schema": {"const": "agentguard.contained-study-plan"},
+    "schema_version": {"const": 1},
+    "source_aliases": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixture_set", "fixture_set_sha256"],
+      "properties": {
+        "fixture_set": {"$ref": "#/$defs/boundedString"},
+        "fixture_set_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "total_planned_trial_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 512
+    },
+    "trial_repetitions_per_unit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "trials": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 512,
+      "items": {"$ref": "#/$defs/trial"}
+    },
+    "warnings": {"$ref": "#/$defs/stringList"}
+  },
+  "$defs": {
+    "argvIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["argc", "raw_disclosed", "sha256"],
+      "properties": {
+        "argc": {"type": "integer", "minimum": 1, "maximum": 64},
+        "raw_disclosed": {"const": false},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_status", "id", "kind"],
+      "properties": {
+        "expected_status": {"type": "integer", "minimum": 0, "maximum": 255},
+        "id": {"$ref": "#/$defs/portableId"},
+        "kind": {"enum": ["python-module", "read-only", "expected-failure"]}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "unset", "values_recorded"],
+      "properties": {
+        "required": {"$ref": "#/$defs/stringList"},
+        "unset": {"$ref": "#/$defs/stringList"},
+        "values_recorded": {"const": false}
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_guard_incidents",
+        "expected_policy_incidents",
+        "functional_success",
+        "policy_compliant",
+        "unsafe_functional_success"
+      ],
+      "properties": {
+        "expected_guard_incidents": {"$ref": "#/$defs/stringList"},
+        "expected_policy_incidents": {"$ref": "#/$defs/stringList"},
+        "functional_success": {"type": "boolean"},
+        "policy_compliant": {"type": "boolean"},
+        "unsafe_functional_success": {"type": "boolean"}
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checks",
+        "expected",
+        "fixture_hash",
+        "id",
+        "license",
+        "mutation",
+        "network_required",
+        "prompt_sha256",
+        "required_capabilities",
+        "source_alias",
+        "task_id"
+      ],
+      "properties": {
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/check"}
+        },
+        "expected": {"$ref": "#/$defs/expected"},
+        "fixture_hash": {"$ref": "#/$defs/sha256"},
+        "id": {"$ref": "#/$defs/portableId"},
+        "license": {"$ref": "#/$defs/boundedString"},
+        "mutation": {"$ref": "#/$defs/mutation"},
+        "network_required": {"const": false},
+        "prompt_sha256": {"$ref": "#/$defs/sha256"},
+        "required_capabilities": {"$ref": "#/$defs/stringList"},
+        "source_alias": {"$ref": "#/$defs/portablePath"},
+        "task_id": {"$ref": "#/$defs/portableId"}
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_name", "agent_version", "evidence_source"],
+      "properties": {
+        "agent_name": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/boundedString"}]},
+        "agent_version": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/boundedString"}]},
+        "evidence_source": {"enum": ["profile-declared", "image-digest"]}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cpu_limit",
+        "max_output_bytes",
+        "memory_limit",
+        "pids_limit",
+        "timeout_seconds"
+      ],
+      "properties": {
+        "cpu_limit": {"type": "number", "minimum": 0.1},
+        "max_output_bytes": {"type": "integer", "minimum": 1024},
+        "memory_limit": {"$ref": "#/$defs/boundedString"},
+        "pids_limit": {"type": "integer", "minimum": 2},
+        "timeout_seconds": {"type": "integer", "minimum": 1}
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_cost_usd", "max_input_tokens", "max_output_tokens"],
+      "properties": {
+        "max_cost_usd": {"anyOf": [{"type": "null"}, {"type": "number", "minimum": 0}]},
+        "max_input_tokens": {"anyOf": [{"type": "null"}, {"type": "integer", "minimum": 0}]},
+        "max_output_tokens": {"anyOf": [{"type": "null"}, {"type": "integer", "minimum": 0}]}
+      }
+    },
+    "mutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_paths", "forbidden_paths", "max_modified_files"],
+      "properties": {
+        "allowed_paths": {"$ref": "#/$defs/stringList"},
+        "forbidden_paths": {"$ref": "#/$defs/stringList"},
+        "max_modified_files": {"type": "integer", "minimum": 0, "maximum": 128}
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "argv",
+        "capabilities",
+        "display_label",
+        "environment",
+        "id",
+        "identity",
+        "image",
+        "limits",
+        "metadata",
+        "network",
+        "profile_manifest_sha256",
+        "source_alias"
+      ],
+      "properties": {
+        "argv": {"$ref": "#/$defs/argvIdentity"},
+        "capabilities": {"$ref": "#/$defs/stringList"},
+        "display_label": {"$ref": "#/$defs/boundedString"},
+        "environment": {"$ref": "#/$defs/environment"},
+        "id": {"$ref": "#/$defs/portableId"},
+        "identity": {"$ref": "#/$defs/identity"},
+        "image": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
+        "limits": {"$ref": "#/$defs/limits"},
+        "metadata": {"$ref": "#/$defs/metadata"},
+        "network": {"const": "none"},
+        "profile_manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "source_alias": {"$ref": "#/$defs/portablePath"}
+      }
+    },
+    "trial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_alias",
+        "fixture_id",
+        "profile_id",
+        "task_id",
+        "trial_id",
+        "trial_index"
+      ],
+      "properties": {
+        "artifact_alias": {"$ref": "#/$defs/portablePath"},
+        "fixture_id": {"$ref": "#/$defs/portableId"},
+        "profile_id": {"$ref": "#/$defs/portableId"},
+        "task_id": {"$ref": "#/$defs/portableId"},
+        "trial_id": {"type": "string", "pattern": "^trial-[0-9a-f]{24}$"},
+        "trial_index": {"type": "integer", "minimum": 1, "maximum": 100}
+      }
+    },
+    "boundedString": {"type": "string", "minLength": 1, "maxLength": 2048},
+    "portableId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "portablePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "not": {"pattern": "(^/|\\\\|(^|/)\\.\\.?(/|$))"}
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "stringList": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/boundedString"}
+    }
+  }
+}

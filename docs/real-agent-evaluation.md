@@ -249,6 +249,24 @@ symlinks, hardlinks, traversal, reserved paths, dirty generated artifacts, and
 network-required fixtures. Fixture preparation copies reviewed source bytes into
 a destination and does not mutate the source fixture tree.
 
+## Dry-Run Study Planner
+
+The experimental contained-study dry-run planner uses
+`schema: agentguard.contained-study-plan` and `schema_version: 1`. It renders a
+canonical JSON plan from selected contained profiles, reviewed fixtures, and a
+trial repetition count. The plan records the protocol version, selected profile
+and fixture identities, digest-pinned images, structured argv hashes rather than
+raw command lines, environment variable names without values, network mode,
+resource and output limits, optional cost/token ceilings, fixture and prompt
+hashes, portable artifact aliases, approval requirements, warnings, total trial
+count, stable trial ids, and a deterministic plan digest.
+
+The planner is a dry-run surface only. It does not execute agents, start
+containers, call providers, inspect credential values, invoke subprocesses, or
+access the network. Offline plans reject profile-required credential
+environment values and network modes other than `none`; live/network planning
+remains blocked until later approval metadata exists.
+
 ## Live Authorization And Stop Conditions
 
 This protocol does not authorize live trials. Before live trials, maintainers
