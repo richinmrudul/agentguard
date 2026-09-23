@@ -233,6 +233,22 @@ environment inheritance, mutable image tags, host networking, or unsupported
 security-sensitive fields. Serialized diagnostics may include environment
 names, never values.
 
+## Reviewed Fixture Set
+
+The experimental contained-study fixture set for v0.5 planning uses
+`schema: agentguard.contained-study-fixture-set` and `schema_version: 1`.
+Fixtures are fixed local repository-owned inputs with recorded license,
+provenance, prompt hashes, source-file hashes, aggregate source hashes, expected
+mutation boundaries, expected checks, required profile capabilities, explicit
+exclusions, and limitations. The v1 fixture set includes a safe bounded edit, a
+read-only no-change control, a mutation-boundary case, and a deterministic
+failing functional-check control.
+
+Fixture validation rejects source drift, unexpected files, missing files,
+symlinks, hardlinks, traversal, reserved paths, dirty generated artifacts, and
+network-required fixtures. Fixture preparation copies reviewed source bytes into
+a destination and does not mutate the source fixture tree.
+
 ## Live Authorization And Stop Conditions
 
 This protocol does not authorize live trials. Before live trials, maintainers

@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://richinmrudul.github.io/agentguard/schemas/contained-study-fixture-set-v1.schema.json",
+  "title": "AgentGuard contained study fixture set v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "fixtures"],
+  "properties": {
+    "schema": {"const": "agentguard.contained-study-fixture-set"},
+    "schema_version": {"const": 1},
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {"$ref": "#/$defs/fixture"}
+    }
+  },
+  "$defs": {
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "task_id",
+        "license",
+        "provenance",
+        "source",
+        "prompt",
+        "mutation",
+        "checks",
+        "expected",
+        "required_capabilities",
+        "exclusions",
+        "limitations",
+        "network_required"
+      ],
+      "properties": {
+        "id": {"$ref": "#/$defs/portableId"},
+        "task_id": {"$ref": "#/$defs/portableId"},
+        "license": {"$ref": "#/$defs/boundedString"},
+        "provenance": {"$ref": "#/$defs/boundedString"},
+        "source": {"$ref": "#/$defs/source"},
+        "prompt": {"$ref": "#/$defs/prompt"},
+        "mutation": {"$ref": "#/$defs/mutation"},
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/check"}
+        },
+        "expected": {"$ref": "#/$defs/expected"},
+        "required_capabilities": {"$ref": "#/$defs/stringList"},
+        "exclusions": {"$ref": "#/$defs/stringList"},
+        "limitations": {"$ref": "#/$defs/stringList"},
+        "network_required": {"const": false}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "hash", "files"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "hash": {"$ref": "#/$defs/sha256"},
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": {"$ref": "#/$defs/sourceFile"}
+        }
+      }
+    },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relativePath"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size": {"type": "integer", "minimum": 0, "maximum": 1048576}
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "sha256"],
+      "properties": {
+        "text": {"$ref": "#/$defs/boundedString"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "mutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_paths", "forbidden_paths", "max_modified_files"],
+      "properties": {
+        "allowed_paths": {"$ref": "#/$defs/stringList"},
+        "forbidden_paths": {"$ref": "#/$defs/stringList"},
+        "max_modified_files": {"type": "integer", "minimum": 0, "maximum": 128}
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "command", "expected_status"],
+      "properties": {
+        "id": {"$ref": "#/$defs/portableId"},
+        "kind": {"enum": ["python-module", "read-only", "expected-failure"]},
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/boundedString"}
+        },
+        "expected_status": {"type": "integer", "minimum": 0, "maximum": 255}
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "functional_success",
+        "policy_compliant",
+        "unsafe_functional_success",
+        "expected_guard_incidents",
+        "expected_policy_incidents"
+      ],
+      "properties": {
+        "functional_success": {"type": "boolean"},
+        "policy_compliant": {"type": "boolean"},
+        "unsafe_functional_success": {"type": "boolean"},
+        "expected_guard_incidents": {"$ref": "#/$defs/stringList"},
+        "expected_policy_incidents": {"$ref": "#/$defs/stringList"}
+      }
+    },
+    "portableId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "not": {"pattern": "(^/|\\\\|(^|/)\\.\\.?(/|$))"}
+    },
+    "boundedString": {"type": "string", "minLength": 1, "maxLength": 2048},
+    "stringList": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/boundedString"}
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
