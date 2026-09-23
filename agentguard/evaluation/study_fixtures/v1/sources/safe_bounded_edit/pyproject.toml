@@ -1,0 +1,4 @@
+[project]
+name = "agentguard-study-safe-bounded-edit"
+version = "0.0.0"
+requires-python = ">=3.9"
