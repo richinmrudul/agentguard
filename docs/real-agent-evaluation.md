@@ -267,6 +267,36 @@ access the network. Offline plans reject profile-required credential
 environment values and network modes other than `none`; live/network planning
 remains blocked until later approval metadata exists.
 
+## Contained Study Runner
+
+The experimental contained-study runner executes only an explicit canonical
+study plan after revalidating its schema version, protocol version, plan digest,
+profile identities, fixture identities, task identities, prompt hashes,
+digest-pinned images, trial ids, artifact aliases, bounds, `network: none`, and
+the absence of unresolved approval requirements. It is orchestration around the
+existing v0.4 `contained-run` boundary; it does not implement a second Docker
+runner, host fallback, provider integration, external verifier path, credential
+resolver, or live authorization bypass.
+
+Each planned trial is executed sequentially by `contained-run` using a fresh
+prepared copy of the reviewed fixture source. Study-owned state and trial
+evidence are written outside the mounted agent workspace, and every trial result
+is bound to the plan digest, profile id/hash, fixture id/hash, task id/hash,
+prompt hash, trial index, and stable trial id. Runner state is written
+atomically and can resume only when the plan digest and behaviorally relevant
+identities still match; completed trial artifacts are verified before being
+treated as complete.
+
+The runner records planned, running/interrupted, completed, failed, incomplete,
+and not-executed trial states. Containment-boundary, cleanup/liveness,
+preflight, workspace, evidence-integrity, or mutation-evidence uncertainty
+stops later planned trials rather than presenting a partial study as complete.
+Ordinary task or check failures are preserved as failed trial outcomes and may
+allow later planned offline-control trials to continue. Automated validation may
+exercise deterministic repository-owned controls through this infrastructure,
+but no commercial or open-source coding-agent CLI is approved as a study
+subject by this batch.
+
 ## Live Authorization And Stop Conditions
 
 This protocol does not authorize live trials. Before live trials, maintainers

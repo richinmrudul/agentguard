@@ -116,6 +116,12 @@ from agentguard.evaluation.study_plan import (
     build_contained_study_plan,
     serialize_contained_study_plan,
 )
+from agentguard.evaluation.study_runner import (
+    ContainedStudyRunnerError,
+    ContainedStudyRunnerOptions,
+    run_contained_study_plan,
+    validate_contained_study_plan_for_execution,
+)
 from agentguard.provenance.manifest import (
     load_manifest,
     manifest_trusted_roots,
@@ -1519,6 +1525,75 @@ def evaluation_study_plan(
     except (OSError, ValueError, yaml.YAMLError) as error:
         safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
+
+
+@evaluate_app.command("study-run")
+def evaluation_study_run(
+    plan: Path = typer.Option(
+        ...,
+        "--plan",
+        help="Canonical contained study plan JSON produced by study-plan.",
+    ),
+    profile: Optional[list[Path]] = typer.Option(
+        None,
+        "--profile",
+        help="Contained agent profile YAML matching the plan. Repeat for matrices.",
+    ),
+    fixture_set: Optional[Path] = typer.Option(
+        None,
+        "--fixture-set",
+        help="Contained study fixture manifest. Defaults to the packaged reviewed set.",
+    ),
+    output_dir: Path = typer.Option(
+        Path(".agentguard/contained-studies"),
+        "--output-dir",
+        help="Directory for study-owned runtime state and evidence.",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Resume a matching interrupted contained study run.",
+    ),
+) -> None:
+    """Execute an experimental contained study plan through contained-run only."""
+    try:
+        confirmation = validate_contained_study_plan_for_execution(
+            plan,
+            profile or [],
+            fixture_set_path=fixture_set,
+        )
+        safe_echo("Experimental contained study runner")
+        safe_echo("Execution boundary: contained-run")
+        safe_echo("Network mode: none")
+        safe_echo(f"Plan digest: {confirmation['plan_digest']}")
+        safe_echo(f"Profiles: {', '.join(confirmation['profiles'])}")
+        safe_echo(f"Fixtures: {', '.join(confirmation['fixtures'])}")
+        safe_echo(f"Planned trials: {confirmation['trials']}")
+        result = run_contained_study_plan(
+            ContainedStudyRunnerOptions(
+                plan_path=plan,
+                profile_paths=profile or [],
+                fixture_set_path=fixture_set,
+                output_dir=output_dir,
+                resume=resume,
+            )
+        )
+    except (ContainedStudyRunnerError, OSError, ValueError, yaml.YAMLError) as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    try:
+        state_display = str(result.state_path.relative_to(Path.cwd().resolve()))
+    except ValueError:
+        state_display = f"[REDACTED]/{result.state_path.name}"
+    safe_echo(f"Study state: {state_display}")
+    safe_echo(
+        "Summary: "
+        f"completed={result.completed}, failed={result.failed}, "
+        f"incomplete={result.incomplete}, not_executed={result.not_executed}"
+    )
+    if result.stop_reason is not None:
+        safe_echo(f"Stop condition: {result.stop_reason}")
+        raise typer.Exit(1)
 
 
 @evaluate_app.command("run")

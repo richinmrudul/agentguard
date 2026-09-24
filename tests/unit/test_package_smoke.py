@@ -43,6 +43,7 @@ def test_package_smoke_script_covers_installed_cli_workflow() -> None:
         '"$AGENTGUARD" reports list',
         "contained-profile.yaml",
         '"$AGENTGUARD" evaluation study-plan',
+        '"$AGENTGUARD" evaluation study-run --help',
         "--fixture read-only-control",
         "contained-study-plan.json",
         "installed study-plan smoke disclosed raw argv",
