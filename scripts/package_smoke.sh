@@ -141,6 +141,7 @@ YAML
     --trials 1 \
     --output contained-study-plan.json
   "$AGENTGUARD" evaluation study-run --help >/dev/null
+  "$AGENTGUARD" evaluation study-report --help >/dev/null
   "$PYTHON" - <<'PY'
 import json
 from pathlib import Path

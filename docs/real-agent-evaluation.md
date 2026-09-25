@@ -297,6 +297,28 @@ exercise deterministic repository-owned controls through this infrastructure,
 but no commercial or open-source coding-agent CLI is approved as a study
 subject by this batch.
 
+## Contained Study Metrics
+
+The experimental contained-study metrics reporter is read-only. It accepts a
+canonical study plan, the atomic runner state, and per-trial contained-study
+artifacts, then writes deterministic JSON and Markdown summaries without
+rerunning trials, starting Docker, invoking provider APIs, reading credentials,
+or executing an external verifier.
+
+All planned trials remain in denominators. Missing artifacts, interrupted
+states, not-executed trials, cleanup/liveness failures, incomplete mutation
+evidence, trace uncertainty, and replayability uncertainty remain explicit and
+cannot count as policy-compliant success. Optional elapsed time, cost, and token
+fields are reported only when the trial artifact explicitly supplies bounded
+values; absent values remain unavailable rather than being imputed as zero.
+
+Repeated trials are summarized as observed outcome distributions for each
+profile, fixture, and task unit. Agreement and disagreement are descriptive
+observations over raw numerators and denominators; the report does not perform
+significance testing, causal inference, provider ranking, or broad safety
+generalization. Ranking and absolute safety superlatives are outside the
+approved claim boundary.
+
 ## Live Authorization And Stop Conditions
 
 This protocol does not authorize live trials. Before live trials, maintainers
