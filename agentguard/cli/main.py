@@ -116,6 +116,11 @@ from agentguard.evaluation.study_plan import (
     build_contained_study_plan,
     serialize_contained_study_plan,
 )
+from agentguard.evaluation.study_metrics import (
+    ContainedStudyMetricsError,
+    ContainedStudyMetricsOptions,
+    generate_contained_study_metrics,
+)
 from agentguard.evaluation.study_runner import (
     ContainedStudyRunnerError,
     ContainedStudyRunnerOptions,
@@ -1594,6 +1599,64 @@ def evaluation_study_run(
     if result.stop_reason is not None:
         safe_echo(f"Stop condition: {result.stop_reason}")
         raise typer.Exit(1)
+
+
+@evaluate_app.command("study-report")
+def evaluation_study_report(
+    plan: Path = typer.Option(
+        ...,
+        "--plan",
+        help="Canonical contained study plan JSON.",
+    ),
+    state: Path = typer.Option(
+        ...,
+        "--state",
+        help="Atomic contained study runner state JSON.",
+    ),
+    output_json: Optional[Path] = typer.Option(
+        None,
+        "--output-json",
+        help="Write canonical contained study metrics JSON outside the run directory.",
+    ),
+    output_markdown: Optional[Path] = typer.Option(
+        None,
+        "--output-markdown",
+        help="Write human-readable contained study metrics Markdown outside the run directory.",
+    ),
+) -> None:
+    """Aggregate experimental contained-study metrics without execution."""
+    try:
+        result = generate_contained_study_metrics(
+            ContainedStudyMetricsOptions(
+                plan_path=plan,
+                state_path=state,
+                output_json=output_json,
+                output_markdown=output_markdown,
+            )
+        )
+    except (ContainedStudyMetricsError, OSError, ValueError, yaml.YAMLError) as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    metrics = result.report["metrics"]["study"]  # type: ignore[index]
+    completion = result.report["completion"]  # type: ignore[index]
+    safe_echo("Experimental contained study metrics report")
+    safe_echo("Execution: none")
+    safe_echo("Comparisons: descriptive only")
+    safe_echo(f"Plan digest: {result.report['plan_digest']}")
+    safe_echo(f"Report digest: {result.report_digest}")
+    safe_echo(f"Planned trials: {metrics['planned_trials']}")  # type: ignore[index]
+    safe_echo(f"Completion: {completion['status']}")  # type: ignore[index]
+    if result.json_path is not None:
+        safe_echo(f"JSON report: {_display_path(result.json_path)}")
+    if result.markdown_path is not None:
+        safe_echo(f"Markdown report: {_display_path(result.markdown_path)}")
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return f"[REDACTED]/{path.name}"
 
 
 @evaluate_app.command("run")

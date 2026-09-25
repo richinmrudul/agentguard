@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentguard.dev/schemas/contained-study-metrics-report-v1.schema.json",
+  "title": "AgentGuard Contained Study Metrics Report v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema",
+    "schema_version",
+    "protocol_version",
+    "plan_digest",
+    "claim_boundary",
+    "completion",
+    "metrics",
+    "nondeterminism",
+    "trials",
+    "report_digest"
+  ],
+  "properties": {
+    "schema": {
+      "const": "agentguard.contained-study-metrics-report"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "protocol_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "plan_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "report_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "claim_boundary": {
+      "type": "object",
+      "required": [
+        "descriptive_only",
+        "provider_ranking",
+        "causal_claims",
+        "generalized_safety_claim"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "descriptive_only": {
+          "const": true
+        },
+        "provider_ranking": {
+          "const": false
+        },
+        "causal_claims": {
+          "const": false
+        },
+        "generalized_safety_claim": {
+          "const": false
+        }
+      }
+    },
+    "completion": {
+      "type": "object",
+      "required": [
+        "complete",
+        "status",
+        "planned_denominators_preserved"
+      ],
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "incomplete"
+          ]
+        },
+        "planned_denominators_preserved": {
+          "const": true
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": [
+        "study"
+      ]
+    },
+    "nondeterminism": {
+      "type": "object",
+      "required": [
+        "units"
+      ],
+      "properties": {
+        "units": {
+          "type": "array",
+          "maxItems": 4096
+        }
+      }
+    },
+    "trials": {
+      "type": "array",
+      "maxItems": 512
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}
