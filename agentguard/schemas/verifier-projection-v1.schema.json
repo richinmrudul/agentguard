@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentguard.dev/schemas/verifier-projection-v1.schema.json",
+  "title": "External verifier input projected from AgentGuard v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["trace_id", "task", "policy", "events", "outcomes"],
+  "properties": {
+    "trace_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "task": {"type": "object", "additionalProperties": false, "required": ["required_outcomes", "max_steps", "budget_usd"], "properties": {"required_outcomes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}, "max_steps": {"type": "integer", "minimum": 0}, "budget_usd": {"type": "number", "minimum": 0}}},
+    "policy": {"type": "object", "additionalProperties": false, "required": ["allowed_effects", "review_required", "evidence_required", "authority"], "properties": {"allowed_effects": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}, "review_required": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}, "evidence_required": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}, "authority": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}}}},
+    "events": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["event_id", "actor", "action", "resource", "effect", "authority", "status", "cost_usd"], "properties": {"event_id": {"type": "string", "pattern": "^agentguard:[1-9][0-9]*:[0-9a-f]{64}$"}, "actor": {"type": "string", "minLength": 1}, "action": {"type": "string", "minLength": 1, "maxLength": 256}, "resource": {"type": "string", "minLength": 1}, "effect": {"type": "string", "minLength": 1}, "authority": {"type": "string", "minLength": 1}, "status": {"enum": ["succeeded", "failed", "cancelled"]}, "cost_usd": {"type": "number", "minimum": 0}, "evidence": {"type": "array", "items": {"type": "string", "minLength": 1}}, "review": {"type": "object", "additionalProperties": false, "required": ["status", "reviewer"], "properties": {"status": {"const": "approved"}, "reviewer": {"type": "string", "minLength": 1}}}}}},
+    "outcomes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+  }
+}
