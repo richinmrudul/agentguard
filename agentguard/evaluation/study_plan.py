@@ -12,6 +12,11 @@ from agentguard.evaluation.contained_profile import (
     contained_agent_profile_to_dict,
     load_contained_agent_profile,
 )
+from agentguard.evaluation.live_egress_contract import (
+    LIVE_STUDY_EGRESS_NETWORK_MODE,
+    classify_live_study_network,
+    validate_live_study_restricted_egress_network,
+)
 from agentguard.evaluation.study_fixtures import (
     DEFAULT_STUDY_FIXTURE_MANIFEST,
     StudyFixture,
@@ -96,10 +101,15 @@ def _validate_profiles(profiles: list[ContainedAgentProfile]) -> None:
     if len(set(profile_ids)) != len(profile_ids):
         raise ValueError("Contained study plan profile ids must be unique.")
     for profile in profiles:
-        if profile.network != "none":
+        network_classification = classify_live_study_network(profile.network)
+        if network_classification == "not-restricted-egress":
+            validate_live_study_restricted_egress_network(profile.network)
+        if network_classification != "offline":
             raise ValueError(
                 "Contained study dry-run plans are offline-only; profile "
-                f"{profile.id} requests network mode {profile.network!r}."
+                f"{profile.id} requests future live egress network mode "
+                f"{profile.network!r}. Restricted live-study egress will require "
+                f"{LIVE_STUDY_EGRESS_NETWORK_MODE!r} plus explicit authorization."
             )
         if profile.environment.required:
             raise ValueError(

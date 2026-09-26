@@ -171,7 +171,7 @@ def test_no_network_docker_subprocess_or_credential_reads(
 @pytest.mark.parametrize(
     "overrides,match",
     [
-        ({"network": "bridge"}, "offline-only"),
+        ({"network": "bridge"}, "bridge networking is not restricted"),
         ({"environment": {"required": ["AGENT_API_TOKEN"]}}, "must not require"),
         ({"capabilities": ["read-only"]}, "missing capabilities"),
     ],

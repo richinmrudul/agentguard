@@ -12,7 +12,9 @@ timelines, and reports.
 
 For the future contained-agent application-level boundary, see the authoritative
 [contained execution contract](contained-execution.md). Existing execution modes
-remain unchanged and do not inherit that contract.
+remain unchanged and do not inherit that contract. Ordinary Docker `bridge`
+networking is not restricted live-study egress; any future live network study
+requires the isolated-network plus controlled-gateway boundary described there.
 
 For a portfolio-oriented summary of the system, see
 [docs/portfolio.md](portfolio.md). The short version: AgentGuard turns

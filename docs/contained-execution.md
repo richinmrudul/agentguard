@@ -86,9 +86,75 @@ The default network mode is `none`. Bridge networking is accepted only as an
 explicit v1 opt-in and carries the same prohibition on host namespace sharing,
 Docker socket mounts, device exposure, privileged mode, arbitrary Docker flags,
 and mutable image identity. Host networking is never allowed.
+Ordinary Docker `bridge` networking is not restricted egress and must not be
+described as a live-study network boundary.
 
 Images must have validated provenance with immutable digest identity. A mutable
 tag alone is not enough for a contained-execution claim.
+
+## Live-Study Egress Contract
+
+The v0.5 live-study egress contract is a design boundary only. It authorizes no
+provider-specific destination, no live provider call, no package registry, no
+update endpoint, no telemetry endpoint, and no arbitrary HTTPS destination.
+Docker remains application-level containment, not an absolute hostile-code
+sandbox. Linux Docker Engine is authoritative for any full live-study egress
+claim.
+
+A future live-study network implementation must stop before running a proposed
+trial if it cannot technically prevent direct outbound access from the agent
+container. Docker `bridge`, proxy environment variables, and application
+conventions are insufficient by themselves.
+
+The required topology is:
+
+- the agent container has no direct route to the public internet;
+- the agent container joins only an isolated internal Docker network;
+- a separately owned egress gateway joins both the isolated study network and a
+  controlled outbound network;
+- agent traffic can leave only through the gateway;
+- clients that ignore proxy configuration cannot reach the internet; and
+- DNS resolution occurs only through the controlled gateway path.
+
+The gateway path must block direct IP access, alternate DNS, UDP, QUIC, host
+gateway access, cloud or container metadata services, private destinations,
+loopback destinations, multicast destinations, link-local destinations,
+Docker-internal destinations, proxy bypass routes, Unix-socket egress, and
+non-approved ports. IP literals are rejected unless explicitly approved.
+Private, loopback, multicast, link-local, Docker-internal, metadata, and
+Unix-socket destinations are rejected. Package registries, update endpoints,
+telemetry endpoints, and arbitrary HTTPS are blocked unless explicitly listed.
+
+Every redirected or newly discovered destination is independently authorized.
+Validation must account for DNS rebinding or address changes between validation
+and connection, multiple A and AAAA records, IPv4 and IPv6, HTTP, HTTPS,
+CONNECT, WebSockets, streaming responses, and TLS validation ownership.
+CDN-backed or shared-address services carry explicit limitations: approval of a
+hostname, certificate, or address does not by itself authorize unrelated
+tenants that share infrastructure.
+
+Network evidence must be bounded, sanitized, and tied to the trial. Each
+decision record includes the exact destination host, destination port, resolved
+address, allow/deny decision, byte counts, timestamps, trial ID, policy digest,
+and redirect destination when present. Evidence loss, ambiguous resolution, an
+unexpected destination, gateway failure, or cleanup failure stops the affected
+study scope rather than becoming a pass.
+
+The gateway image must be digest-pinned and separately owned from the agent
+image. The gateway runs non-root with Linux capabilities dropped,
+`no-new-privileges`, read-only root filesystem, bounded CPU/memory/PID/storage
+resources, and no Docker socket. Agent containers, gateway containers, and
+AgentGuard-owned networks are terminated and checked for liveness on every exit
+path.
+
+The threat model explicitly includes proxy environment variables ignored by
+clients, direct TCP, DNS rebinding or DNS changes between validation and
+connection, redirects, multiple A/AAAA records, IPv4 and IPv6, CONNECT, HTTP vs
+HTTPS behavior, WebSockets and streaming, TLS validation ownership,
+CDN/shared-address limitations, telemetry and update endpoints,
+container-to-host access, gateway compromise, and Docker daemon/kernel trust.
+Gateway compromise is a study failure, not evidence that the agent stayed
+within policy.
 
 ## Preconditions And Failure
 

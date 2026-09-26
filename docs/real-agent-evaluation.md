@@ -207,12 +207,73 @@ authorization decision.
 Docker, the host kernel, the Docker daemon, host filesystem permissions,
 AgentGuard's host-side orchestration, and fixture construction are trusted
 computing base components. Container escape, malicious Docker daemon behavior,
-host-kernel compromise, and host administrator compromise are outside the
-study's containment claim.
+host-kernel compromise, gateway compromise, and host administrator compromise
+are outside the study's containment claim.
 
 AgentGuard checks, optional evaluator projections, and replay tools are
 evidence systems. They support descriptive reporting, but they do not become
 production policy or external verifier authority for v0.5.
+
+## Live-Study Egress Contract
+
+No provider-specific destination is approved by this contract. The contract
+defines only the architecture and evidence requirements that a later
+destination-controlled gateway implementation must satisfy before #294 can run
+any live-agent pilot.
+
+Docker `network: none` remains the default study profile network. Ordinary
+Docker `bridge` is not restricted egress and must not be described as blocking
+public internet access. A future live-study profile that needs network access
+must use a distinct experimental study-egress mode with all of the following
+properties:
+
+- the agent container has no direct route to the public internet;
+- the agent container joins an isolated internal Docker network;
+- a separately owned egress gateway joins both the isolated study network and a
+  controlled outbound network;
+- agent traffic can leave only through the gateway;
+- clients that ignore proxy environment variables cannot reach the internet;
+- direct IP, alternate DNS, UDP, QUIC, host gateway, metadata services,
+  private and link-local destinations, and proxy-bypass routes are blocked;
+- DNS resolution occurs only through the controlled gateway path;
+- every CONNECT request, HTTP request, HTTPS request, WebSocket or streaming
+  connection, redirect, and new destination is independently authorized;
+- IP literals are rejected unless explicitly approved;
+- private, loopback, multicast, link-local, Docker-internal, metadata,
+  Unix-socket, and non-approved ports are rejected;
+- package registries, update endpoints, telemetry endpoints, and arbitrary
+  HTTPS remain blocked unless explicitly listed;
+- the gateway image is digest-pinned;
+- the gateway runs non-root, with dropped capabilities, `no-new-privileges`, a
+  read-only root filesystem, resource bounds, and no Docker socket;
+- owned agent containers, gateway containers, and Docker networks are
+  terminated and checked for liveness on every exit path; and
+- unexpected destinations, ambiguous resolution, evidence loss, gateway
+  failure, cleanup failure, or liveness uncertainty stops the study.
+
+The gateway implementation must technically prevent direct outbound access by
+the agent container. The design is not acceptable if the client process must be
+trusted to honor proxy settings, if DNS or IPv6 creates an unclosed bypass, if
+evidence can omit an attempted destination, or if cleanup uncertainty can be
+reported as success.
+
+The egress threat model explicitly covers ignored proxy environment variables,
+direct TCP attempts, DNS rebinding or resolution changes between validation and
+connection, redirects, multiple A and AAAA records, IPv4 and IPv6, CONNECT
+requests, HTTP versus HTTPS, WebSockets and streaming, TLS validation
+ownership, CDN and shared-address limitations, telemetry and update endpoints,
+container-to-host access, gateway compromise, and Docker daemon and kernel
+trust. Docker remains application-level containment, not an absolute
+hostile-code sandbox. Reports must not claim that Docker is an absolute
+hostile-code sandbox. Linux Docker Engine is authoritative.
+
+Per-trial egress evidence must be bounded, sanitized, and canonical. It records
+at minimum the trial ID, policy digest, exact destination host, destination
+port, resolved addresses, decision, byte counts, timestamps, and redirect
+destination. It must not record URL query strings, authorization headers,
+cookies, request bodies, credential values, raw prompts, or model output. Any
+missing, truncated, contradictory, or dropped required egress evidence makes the
+trial incomplete or failed rather than successful.
 
 ## Contained Profile Contract
 
@@ -264,8 +325,10 @@ count, stable trial ids, and a deterministic plan digest.
 The planner is a dry-run surface only. It does not execute agents, start
 containers, call providers, inspect credential values, invoke subprocesses, or
 access the network. Offline plans reject profile-required credential
-environment values and network modes other than `none`; live/network planning
-remains blocked until later approval metadata exists.
+environment values and network modes other than `none`. Ordinary Docker
+`bridge` networking is not restricted live-study egress; live/network planning
+remains blocked until the contained-execution live-study egress contract,
+approval metadata, and stop conditions exist.
 
 ## Contained Study Runner
 
@@ -326,10 +389,25 @@ must approve selected profiles, selected fixtures, network exceptions,
 credential variable names, per-agent budgets, public evidence/redaction policy,
 and stop limits.
 
+No provider-specific destination is approved by this protocol. A live network
+exception must be implemented through the contained-execution live-study egress
+contract, not through ordinary Docker `bridge`, host networking, proxy
+environment variables alone, or provider-specific agent code. The live-study
+contract requires an isolated internal study network, a separately owned
+controlled egress gateway, no direct public-internet route from the agent
+container, controlled DNS through the gateway path, independent authorization
+of redirects and new destinations, rejection of unapproved IP literals,
+private/link-local/metadata/Docker-internal/Unix-socket destinations and
+non-approved ports, bounded sanitized network evidence, digest-pinned hardened
+gateway execution, cleanup/liveness checks for owned containers and networks on
+every exit path, and fail-closed handling for unexpected destinations,
+ambiguous resolution, evidence loss, gateway failure, or cleanup failure.
+
 Live execution must stop for the affected scope when any of the following occur:
 
 - a profile, fixture, plan, or runner can contain or persist a credential value;
-- live network access occurs without approved metadata;
+- live network access occurs without approved metadata and the approved
+  live-study egress gateway boundary;
 - a mutable image tag is used instead of an immutable digest reference;
 - containment preflight is unsafe, unavailable for a required full-claim run, or
   materially different from the frozen plan;
@@ -351,7 +429,7 @@ The following decisions are intentionally not approved by this issue:
 | --- | --- | --- |
 | Candidate agent list | Not selected | Maintainer-approved profile identities and rationale |
 | Final fixture list | Not selected | Reviewed fixture manifest, hashes, licenses, and expected outcomes |
-| Network exceptions | None approved | Explicit exception, scope, risk, and stop limits |
+| Network exceptions | None approved | Explicit destination allowlist, gateway policy digest, evidence policy, scope, risk, and stop limits |
 | Credential variable names | None approved | Environment-name allowlist and redaction policy |
 | Per-agent budgets | None approved | Monetary, token, rate-limit, and timeout ceilings |
 | Public evidence/redaction policy | Not finalized | Publication, withholding, and denominator rules |
