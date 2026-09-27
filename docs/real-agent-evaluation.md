@@ -220,8 +220,8 @@ No provider-specific destination is approved by this contract. The contract
 defines only the architecture and evidence requirements for the experimental
 evaluation-only `study-egress` helpers. Those helpers can validate exact
 destination policy, canonical sanitized egress manifests, and safe gateway
-Docker argv plans, but #294 still needs a separate authorization before any
-live-agent pilot.
+Docker argv plans. The boundary authorizes no provider-specific destination,
+and #294 still needs a separate authorization before any live-agent pilot.
 
 Docker `network: none` remains the default study profile network. Ordinary
 Docker `bridge` is not restricted egress and must not be described as blocking

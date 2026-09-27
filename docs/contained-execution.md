@@ -97,7 +97,7 @@ tag alone is not enough for a contained-execution claim.
 The v0.5 live-study egress contract is an experimental evaluation boundary
 only. AgentGuard's `study-egress` helpers are separate from ordinary
 `contained-run`: they validate exact destination policy, canonical sanitized
-egress manifests, and safe gateway Docker argv plans, but they authorize no
+egress manifests, and safe gateway Docker argv plans. The boundary authorizes no
 provider-specific destination, no live provider call, no package registry, no
 update endpoint, no telemetry endpoint, and no arbitrary HTTPS destination.
 Docker remains application-level containment, not an absolute hostile-code
