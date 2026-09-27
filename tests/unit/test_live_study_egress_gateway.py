@@ -29,6 +29,15 @@ GATEWAY_IMAGE = "example.com/agentguard/gateway@sha256:" + "b" * 64
 PLAN_DIGEST = "1" * 64
 PROFILE_HASH = "2" * 64
 FIXTURE_HASH = "3" * 64
+GATEWAY_IDENTITY = {
+    "configured_reference": "example.com/agentguard/gateway@sha256:" + "b" * 64,
+    "local_image_id": "sha256:" + "c" * 64,
+    "executed_image_id": "sha256:" + "c" * 64,
+    "registry_digest": "example.com/agentguard/gateway@sha256:" + "b" * 64,
+    "platform": "linux/amd64",
+    "pull_policy": "docker-default",
+    "cache_status": "present",
+}
 
 
 def _policy() -> LiveStudyEgressPolicy:
@@ -238,7 +247,7 @@ def test_manifest_is_canonical_bounded_sanitized_and_success_requires_complete_e
         fixture_hash=FIXTURE_HASH,
         trial_id="trial-0123456789abcdef01234567",
         policy=policy,
-        gateway_image=None,
+        gateway_image=GATEWAY_IDENTITY,
         approved_host="mock-approved.test?secret=AGENTGUARD_SECRET_CANARY_1",
         approved_port=443,
         events=[event],

@@ -15,6 +15,7 @@ from agentguard.config.docker_image import validate_docker_image_reference
 from agentguard.instrumentation.output_limits import limit_output
 from agentguard.redaction import redact_credentials
 from agentguard.sandbox.docker_identity import (
+    IMAGE_ID_PATTERN,
     DockerImageIdentity,
     parse_docker_image_identity,
 )
@@ -41,6 +42,16 @@ MAX_EGRESS_NESTING = 8
 MAX_EGRESS_OBJECT_ITEMS = 96
 MAX_EGRESS_LIST_ITEMS = 256
 MAX_DOCKER_NAME = 63
+GATEWAY_POLICY_CONTAINER_PATH = "/agentguard-egress/policy.json"
+GATEWAY_EVIDENCE_CONTAINER_PATH = "/agentguard-egress/gateway-evidence.json"
+GATEWAY_EVIDENCE_HOST_NAME = "gateway-evidence.json"
+DEFAULT_GATEWAY_COMMAND = (
+    "/agentguard-live-egress-gateway",
+    "--policy",
+    GATEWAY_POLICY_CONTAINER_PATH,
+    "--evidence",
+    GATEWAY_EVIDENCE_CONTAINER_PATH,
+)
 
 _CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 _HOST_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -141,6 +152,12 @@ class LiveStudyEgressTrialRequest:
     policy: LiveStudyEgressPolicy
     gateway_image: str
     platform: str
+    gateway_command: tuple[str, ...] = DEFAULT_GATEWAY_COMMAND
+    gateway_resources: LiveStudyGatewayResources = LiveStudyGatewayResources()
+    agent_uid: int = 1000
+    agent_gid: int = 1000
+    timeout_seconds: int = 30
+    allow_local_image_id: bool = False
 
 
 @dataclass(frozen=True)
@@ -173,49 +190,116 @@ def run_live_study_egress_trial(
     request: LiveStudyEgressTrialRequest,
 ) -> LiveStudyEgressTrialResult:
     validate_live_study_egress_policy(request.policy)
-    validate_docker_image_reference(request.gateway_image)
-    if "@sha256:" not in request.gateway_image:
-        raise LiveStudyEgressError("Gateway image must be digest-pinned.")
+    _validate_execution_image(
+        request.gateway_image,
+        allow_local_image_id=request.allow_local_image_id,
+        label="Gateway image",
+    )
+    _validate_execution_image(
+        request.agent_image,
+        allow_local_image_id=request.allow_local_image_id,
+        label="Agent image",
+    )
     manifest_path = request.evidence_dir / "live-study-egress-manifest.json"
+    request.evidence_dir.mkdir(parents=True, exist_ok=True)
+    policy_path = request.evidence_dir / "live-study-egress-policy.json"
+    policy_path.write_text(
+        json.dumps(
+            live_study_egress_policy_to_dict(request.policy),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    gateway_evidence_path = request.evidence_dir / GATEWAY_EVIDENCE_HOST_NAME
+    aliases = tuple(
+        _normalize_rule_host(rule)
+        for rule in request.policy.destinations
+        if rule.test_only and not rule.test_only_ip_literal
+    )
+    try:
+        gateway_identity = inspect_docker_image_identity(
+            request.gateway_image,
+            allow_local_image_id=request.allow_local_image_id,
+        )
+    except LiveStudyEgressError:
+        gateway_identity = None
+    plan = build_live_study_egress_docker_plan(
+        trial_id=request.trial_id,
+        agent_image=request.agent_image,
+        gateway_image=request.gateway_image,
+        workspace_host_path=request.workspace,
+        agent_command=list(request.agent_command),
+        gateway_command=list(request.gateway_command),
+        uid=request.agent_uid,
+        gid=request.agent_gid,
+        gateway_mounts=[
+            (
+                "type=bind,"
+                f"source={request.evidence_dir.expanduser().resolve()},"
+                "target=/agentguard-egress"
+            )
+        ],
+        gateway_outbound_aliases=aliases,
+        resources=request.gateway_resources,
+        allow_local_image_id=request.allow_local_image_id,
+    )
+    docker_result = run_live_study_egress_docker_plan(
+        plan,
+        timeout_seconds=request.timeout_seconds,
+    )
+    gateway_evidence = load_gateway_evidence(gateway_evidence_path)
+    events = gateway_evidence["events"] if isinstance(gateway_evidence["events"], list) else []
+    destination = _single_policy_destination(request.policy)
+    gateway_status = _combined_gateway_status(
+        docker_result=docker_result,
+        gateway_evidence=gateway_evidence,
+    )
     manifest = build_live_study_egress_manifest(
         plan_digest=request.plan_digest,
         profile_hash=request.profile_hash,
         fixture_hash=request.fixture_hash,
         trial_id=request.trial_id,
         policy=request.policy,
-        gateway_image=None,
-        approved_host=None,
-        approved_port=None,
-        events=[],
-        gateway_status={
-            "status": "not_started",
-            "evidence_complete": False,
-            "reason": (
-                "live study-egress requires a gateway executor to provide "
-                "complete sanitized gateway evidence"
-            ),
-        },
-        cleanup_status={
-            "overall_complete": False,
-            "status": "not_started",
-        },
-        liveness_status={
-            "verified": False,
-            "status": "not_started",
-        },
+        gateway_image=gateway_identity,
+        approved_host=destination[0],
+        approved_port=destination[1],
+        events=events,
+        gateway_status=gateway_status,
+        cleanup_status=_cleanup_status_from_docker_result(docker_result),
+        liveness_status=_liveness_status_from_docker_result(docker_result),
     )
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(
         canonical_live_study_egress_manifest(manifest) + "\n",
         encoding="utf-8",
     )
+    completion = manifest["completion"]
+    status = str(completion.get("status"))
+    if status == "complete":
+        return LiveStudyEgressTrialResult(
+            manifest=manifest,
+            manifest_path=manifest_path,
+            status="completed",
+            outcome="completed",
+        )
+    if status == "failed":
+        return LiveStudyEgressTrialResult(
+            manifest=manifest,
+            manifest_path=manifest_path,
+            status="failed",
+            outcome="egress_policy_failed",
+            stop_condition=str(completion.get("reason") or "study-egress failure"),
+            message=str(completion.get("reason") or "Study-egress trial failed."),
+        )
     return LiveStudyEgressTrialResult(
         manifest=manifest,
         manifest_path=manifest_path,
         status="incomplete",
         outcome="egress_gateway_evidence_incomplete",
-        stop_condition="gateway evidence incomplete",
-        message="Live study-egress gateway evidence is incomplete.",
+        stop_condition=str(completion.get("reason") or "gateway evidence incomplete"),
+        message=str(completion.get("reason") or "Live study-egress gateway evidence is incomplete."),
     )
 
 
@@ -265,6 +349,155 @@ def live_study_egress_policy_from_dict(data: object) -> LiveStudyEgressPolicy:
     policy = LiveStudyEgressPolicy(destinations=tuple(rules))
     validate_live_study_egress_policy(policy)
     return policy
+
+
+def inspect_docker_image_identity(
+    image: str,
+    *,
+    allow_local_image_id: bool = False,
+) -> Optional[DockerImageIdentity | dict[str, object]]:
+    _validate_execution_image(
+        image,
+        allow_local_image_id=allow_local_image_id,
+        label="Docker image",
+    )
+    completed = _run_docker_control(
+        ["docker", "image", "inspect", "--format", "{{json .}}", image],
+        timeout_seconds=10,
+    )
+    if completed.returncode != 0 or completed.timed_out:
+        raise LiveStudyEgressError("Docker image identity inspection failed.")
+    try:
+        raw = json.loads(limit_output(completed.stdout, MAX_EGRESS_SERIALIZED_BYTES).text)
+    except json.JSONDecodeError:
+        raise LiveStudyEgressError("Docker image identity inspection returned malformed JSON.") from None
+    if isinstance(raw, list) and len(raw) == 1:
+        raw = raw[0]
+    if not isinstance(raw, dict):
+        raise LiveStudyEgressError("Docker image identity inspection returned an unsupported shape.")
+    local_id = _image_id(raw.get("Id"))
+    if local_id is None:
+        raise LiveStudyEgressError("Docker image identity is missing local image ID.")
+    os_name = raw.get("Os")
+    architecture = raw.get("Architecture")
+    variant = raw.get("Variant")
+    platform = None
+    if isinstance(os_name, str) and isinstance(architecture, str):
+        platform = f"{os_name}/{architecture}"
+        if isinstance(variant, str) and variant:
+            platform += f"/{variant}"
+    if _is_local_image_id(image):
+        if not allow_local_image_id:
+            raise LiveStudyEgressError("Local image IDs are allowed only for local mock tests.")
+        if image != local_id:
+            raise LiveStudyEgressError("Configured local image ID does not match inspected image.")
+        return {
+            "configured_reference": "local-image-id",
+            "local_image_id": local_id,
+            "executed_image_id": local_id,
+            "registry_digest": None,
+            "platform": platform,
+            "pull_policy": "local-test-image-id",
+            "cache_status": "present",
+        }
+    repo_digests = raw.get("RepoDigests")
+    registry_digest = None
+    if isinstance(repo_digests, list) and image in repo_digests:
+        registry_digest = image
+    try:
+        return parse_docker_image_identity(
+            {
+                "configured_reference": image,
+                "local_image_id": local_id,
+                "executed_image_id": local_id,
+                "registry_digest": registry_digest,
+                "platform": platform,
+                "pull_policy": "docker-default",
+                "cache_status": "present",
+            }
+        )
+    except ValueError as error:
+        raise LiveStudyEgressError("Docker image identity is not immutable or consistent.") from error
+
+
+def load_gateway_evidence(path: Path) -> dict[str, object]:
+    if not path.is_file():
+        return {
+            "status": "missing",
+            "events": [],
+            "gateway_status": {
+                "status": "unknown",
+                "evidence_complete": False,
+                "reason": "gateway evidence file missing",
+            },
+        }
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {
+            "status": "unavailable",
+            "events": [],
+            "gateway_status": {
+                "status": "unknown",
+                "evidence_complete": False,
+                "reason": "gateway evidence file unavailable",
+            },
+        }
+    bounded = limit_output(text, MAX_EGRESS_SERIALIZED_BYTES)
+    if bounded.truncated:
+        return {
+            "status": "truncated",
+            "events": [],
+            "gateway_status": {
+                "status": "unknown",
+                "evidence_complete": False,
+                "reason": "gateway evidence file truncated",
+            },
+        }
+    try:
+        raw = json.loads(bounded.text)
+    except json.JSONDecodeError:
+        return {
+            "status": "malformed",
+            "events": [],
+            "gateway_status": {
+                "status": "unknown",
+                "evidence_complete": False,
+                "reason": "gateway evidence file malformed",
+            },
+        }
+    if not isinstance(raw, dict):
+        return {
+            "status": "malformed",
+            "events": [],
+            "gateway_status": {
+                "status": "unknown",
+                "evidence_complete": False,
+                "reason": "gateway evidence file has unsupported shape",
+            },
+        }
+    events = raw.get("events")
+    if not isinstance(events, list) or len(events) > MAX_EGRESS_EVENTS:
+        return {
+            "status": "malformed",
+            "events": [],
+            "gateway_status": {
+                "status": "unknown",
+                "evidence_complete": False,
+                "reason": "gateway evidence events are missing or out of bounds",
+            },
+        }
+    gateway_status = raw.get("gateway_status")
+    if not isinstance(gateway_status, dict):
+        gateway_status = {
+            "status": "running",
+            "evidence_complete": True,
+        }
+    return {
+        "status": "recorded",
+        "events": _sanitize_value(events, depth=0),
+        "gateway_status": _sanitize_value(gateway_status, depth=0),
+    }
 
 
 def live_study_egress_policy_to_dict(
@@ -522,7 +755,7 @@ def build_live_study_egress_manifest(
     fixture_hash: str,
     trial_id: str,
     policy: LiveStudyEgressPolicy,
-    gateway_image: Optional[DockerImageIdentity],
+    gateway_image: Optional[DockerImageIdentity | dict[str, object]],
     approved_host: Optional[str],
     approved_port: Optional[int],
     events: list[dict[str, object]],
@@ -563,13 +796,15 @@ def classify_live_study_egress_manifest(
     events = manifest.get("events", [])
     if not isinstance(events, list):
         return _completion("incomplete", "egress event evidence is missing")
+    if not isinstance(manifest.get("gateway_image_identity"), dict):
+        return _completion("incomplete", "gateway image identity evidence is missing")
     gateway = manifest.get("gateway_status", {})
     cleanup = manifest.get("cleanup_status", {})
     liveness = manifest.get("liveness_status", {})
-    if not isinstance(gateway, dict) or gateway.get("status") != "running":
-        return _completion("incomplete", "gateway liveness was not established")
     if gateway.get("crashed") is True:
         return _completion("failed", "gateway crashed")
+    if not isinstance(gateway, dict) or gateway.get("status") != "running":
+        return _completion("incomplete", "gateway liveness was not established")
     if gateway.get("evidence_complete") is not True:
         return _completion("incomplete", "gateway evidence is incomplete")
     if not isinstance(cleanup, dict) or cleanup.get("overall_complete") is not True:
@@ -629,13 +864,21 @@ def build_live_study_egress_docker_plan(
     gid: int,
     resources: LiveStudyGatewayResources = LiveStudyGatewayResources(),
     run_token: Optional[str] = None,
+    gateway_mounts: Optional[list[str]] = None,
+    gateway_environment: Optional[dict[str, str]] = None,
+    gateway_outbound_aliases: tuple[str, ...] = (),
+    allow_local_image_id: bool = False,
 ) -> LiveStudyEgressDockerPlan:
-    validate_docker_image_reference(agent_image)
-    validate_docker_image_reference(gateway_image)
-    if "@sha256:" not in agent_image:
-        raise LiveStudyEgressError("Agent image must be digest-pinned.")
-    if "@sha256:" not in gateway_image:
-        raise LiveStudyEgressError("Gateway image must be digest-pinned.")
+    _validate_execution_image(
+        agent_image,
+        allow_local_image_id=allow_local_image_id,
+        label="Agent image",
+    )
+    _validate_execution_image(
+        gateway_image,
+        allow_local_image_id=allow_local_image_id,
+        label="Gateway image",
+    )
     if not agent_command or not all(isinstance(item, str) and item for item in agent_command):
         raise LiveStudyEgressError("Agent command must be a non-empty argv.")
     if not gateway_command or not all(
@@ -658,11 +901,18 @@ def build_live_study_egress_docker_plan(
     for name in [agent_container, gateway_container]:
         _validate_container_name(name)
     workspace = workspace_host_path.expanduser().resolve()
+    gateway_mounts = list(gateway_mounts or [])
+    gateway_environment = dict(gateway_environment or {})
+    outbound_aliases = _docker_network_aliases(gateway_outbound_aliases)
     labels = {
         "agentguard.owner": "study-egress",
         "agentguard.study-egress.trial": _sanitize_text(trial_id),
         "agentguard.study-egress.token": token,
     }
+    connect_gateway_outbound = ["docker", "network", "connect"]
+    for alias in outbound_aliases:
+        connect_gateway_outbound.extend(["--alias", alias])
+    connect_gateway_outbound.extend([outbound_network, gateway_container])
     commands = {
         "create_internal_network": [
             "docker",
@@ -705,16 +955,11 @@ def build_live_study_egress_docker_plan(
                 "agentguard.study-egress.role": "gateway",
             },
             network_alias=LIVE_STUDY_GATEWAY_ALIAS,
-            mounts=[],
-            environment={},
+            mounts=gateway_mounts,
+            environment=gateway_environment,
+            workdir="/tmp",
         ),
-        "connect_gateway_outbound": [
-            "docker",
-            "network",
-            "connect",
-            outbound_network,
-            gateway_container,
-        ],
+        "connect_gateway_outbound": connect_gateway_outbound,
         "create_agent": _container_create_argv(
             container_name=agent_container,
             network=internal_network,
@@ -747,6 +992,7 @@ def build_live_study_egress_docker_plan(
                 ),
                 "NO_PROXY": "",
             },
+            workdir="/workspace",
         ),
         "start_gateway": ["docker", "start", gateway_container],
         "inspect_gateway": [
@@ -847,10 +1093,13 @@ def run_live_study_egress_docker_plan(
                 statuses["failure_step"] = step
                 statuses["status"] = "failed"
                 break
-            if step == "inspect_gateway" and not _gateway_inspect_running(result.stdout):
-                statuses["failure_step"] = "gateway_liveness"
-                statuses["status"] = "failed"
-                break
+            if step == "inspect_gateway":
+                running = _gateway_inspect_running(result.stdout)
+                statuses["gateway_liveness_verified"] = running
+                if not running:
+                    statuses["failure_step"] = "gateway_liveness"
+                    statuses["status"] = "failed"
+                    break
         else:
             statuses["status"] = "completed"
     finally:
@@ -908,7 +1157,10 @@ def _container_create_argv(
     network_alias: Optional[str],
     mounts: list[str],
     environment: dict[str, str],
+    workdir: str,
 ) -> list[str]:
+    if not isinstance(workdir, str) or not workdir.startswith("/") or _CONTROL_CHARACTER.search(workdir):
+        raise LiveStudyEgressError("Unsafe Docker working directory.")
     argv = [
         "docker",
         "create",
@@ -939,7 +1191,7 @@ def _container_create_argv(
                 f"uid={uid},gid={gid},mode=700"
             ),
             "--workdir",
-            "/workspace",
+            workdir,
             "--user",
             f"{uid}:{gid}",
         ]
@@ -1168,9 +1420,13 @@ def _split_authority(authority: str) -> tuple[str, int]:
     return host, _port(port, "port")
 
 
-def _gateway_image_identity(image: Optional[DockerImageIdentity]) -> Optional[dict[str, object]]:
+def _gateway_image_identity(
+    image: Optional[DockerImageIdentity | dict[str, object]],
+) -> Optional[dict[str, object]]:
     if image is None:
         return None
+    if isinstance(image, dict):
+        return _sanitize_value(image, depth=0)  # type: ignore[return-value]
     return {
         "configured_reference": image.configured_reference,
         "local_image_id": image.local_image_id,
@@ -1184,6 +1440,118 @@ def _gateway_image_identity(image: Optional[DockerImageIdentity]) -> Optional[di
 
 def parse_gateway_image_identity(value: object) -> DockerImageIdentity:
     return parse_docker_image_identity(value)
+
+
+def _validate_execution_image(
+    image: str,
+    *,
+    allow_local_image_id: bool,
+    label: str,
+) -> None:
+    if _is_local_image_id(image):
+        if allow_local_image_id:
+            return
+        raise LiveStudyEgressError(f"{label} must be digest-pinned.")
+    try:
+        validate_docker_image_reference(image)
+    except ValueError as error:
+        raise LiveStudyEgressError(str(error)) from None
+    if "@sha256:" not in image:
+        raise LiveStudyEgressError(f"{label} must be digest-pinned.")
+
+
+def _is_local_image_id(image: object) -> bool:
+    return isinstance(image, str) and IMAGE_ID_PATTERN.fullmatch(image) is not None
+
+
+def _image_id(value: object) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    return text if IMAGE_ID_PATTERN.fullmatch(text) is not None else None
+
+
+def _docker_network_aliases(aliases: tuple[str, ...]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        host = _normalize_destination_host(alias)
+        if _is_ip_literal(host):
+            raise LiveStudyEgressError("Docker outbound aliases must be hostnames.")
+        if host not in seen:
+            seen.add(host)
+            normalized.append(host)
+    return tuple(sorted(normalized))
+
+
+def _single_policy_destination(
+    policy: LiveStudyEgressPolicy,
+) -> tuple[Optional[str], Optional[int]]:
+    if len(policy.destinations) != 1:
+        return None, None
+    rule = policy.destinations[0]
+    return _normalize_rule_host(rule), rule.port
+
+
+def _combined_gateway_status(
+    *,
+    docker_result: dict[str, object],
+    gateway_evidence: dict[str, object],
+) -> dict[str, object]:
+    failure_step = docker_result.get("failure_step")
+    evidence_status = gateway_evidence.get("status")
+    raw_gateway_status = gateway_evidence.get("gateway_status")
+    gateway_status = raw_gateway_status if isinstance(raw_gateway_status, dict) else {}
+    evidence_complete = (
+        evidence_status == "recorded"
+        and gateway_status.get("evidence_complete") is True
+    )
+    liveness_established = docker_result.get("gateway_liveness_verified") is True
+    gateway_failure_steps = {
+        "start_gateway",
+        "inspect_gateway",
+        "gateway_liveness",
+    }
+    if failure_step in gateway_failure_steps:
+        return {
+            "status": "crashed",
+            "crashed": True,
+            "evidence_complete": evidence_complete,
+            "reason": "gateway crashed or failed liveness",
+        }
+    status = "running" if liveness_established else str(gateway_status.get("status") or "unknown")
+    result = {
+        "status": status,
+        "crashed": gateway_status.get("crashed") is True,
+        "evidence_complete": evidence_complete,
+    }
+    reason = gateway_status.get("reason")
+    if isinstance(reason, str) and reason:
+        result["reason"] = _sanitize_text(reason)
+    if evidence_status != "recorded":
+        result["reason"] = _sanitize_text(
+            str(gateway_status.get("reason") or "gateway evidence incomplete")
+        )
+    return result
+
+
+def _cleanup_status_from_docker_result(docker_result: dict[str, object]) -> dict[str, object]:
+    cleanup = docker_result.get("cleanup")
+    if isinstance(cleanup, dict):
+        return _sanitize_value(cleanup, depth=0)  # type: ignore[return-value]
+    return {
+        "overall_complete": False,
+        "reason": "cleanup evidence missing",
+    }
+
+
+def _liveness_status_from_docker_result(docker_result: dict[str, object]) -> dict[str, object]:
+    cleanup = docker_result.get("cleanup")
+    verified = isinstance(cleanup, dict) and cleanup.get("liveness_verified") is True
+    return {
+        "verified": verified,
+        "reason": None if verified else "post-cleanup liveness verification failed",
+    }
 
 
 def _completion(status: str, reason: Optional[str]) -> dict[str, object]:

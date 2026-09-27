@@ -46,6 +46,15 @@ from agentguard.sandbox.docker_preflight import DockerPreflightResult, DockerPre
 
 IMAGE = "ghcr.io/example/offline-agent@sha256:" + "c" * 64
 GATEWAY_IMAGE = "ghcr.io/example/study-egress-gateway@sha256:" + "d" * 64
+GATEWAY_IDENTITY = {
+    "configured_reference": GATEWAY_IMAGE,
+    "local_image_id": "sha256:" + "e" * 64,
+    "executed_image_id": "sha256:" + "e" * 64,
+    "registry_digest": GATEWAY_IMAGE,
+    "platform": "linux/amd64",
+    "pull_policy": "docker-default",
+    "cache_status": "present",
+}
 runner = CliRunner()
 
 
@@ -257,7 +266,7 @@ def test_study_egress_mode_requires_explicit_options_and_records_live_boundary(
             fixture_hash=request.fixture_hash,
             trial_id=request.trial_id,
             policy=request.policy,
-            gateway_image=None,
+            gateway_image=GATEWAY_IDENTITY,
             approved_host="mock-approved.test",
             approved_port=443,
             events=[event],
@@ -310,7 +319,7 @@ def test_study_egress_gateway_failure_stops_later_trials(tmp_path: Path) -> None
             fixture_hash=request.fixture_hash,
             trial_id=request.trial_id,
             policy=request.policy,
-            gateway_image=None,
+            gateway_image=GATEWAY_IDENTITY,
             approved_host=None,
             approved_port=None,
             events=[],
