@@ -1,8 +1,10 @@
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
+import agentguard.evaluation.live_egress_gateway as gateway
 from agentguard.evaluation.live_egress_gateway import (
     DockerControlResult,
     EgressDestinationRule,
@@ -16,11 +18,17 @@ from agentguard.evaluation.live_egress_gateway import (
     canonical_live_study_egress_manifest,
     classify_live_study_egress_manifest,
     evaluate_live_study_egress_destination,
+    inspect_docker_image_identity,
+    live_study_egress_policy_from_dict,
     live_study_egress_policy_digest,
+    load_gateway_evidence,
+    parse_gateway_image_identity,
     record_blocked_route,
+    run_live_study_egress_trial,
     run_live_study_egress_docker_plan,
     validate_live_study_egress_docker_plan,
     validate_live_study_egress_policy,
+    LiveStudyEgressTrialRequest,
 )
 
 
@@ -349,3 +357,311 @@ def test_docker_plan_cleanup_reports_liveness_uncertainty_as_incomplete(tmp_path
     assert result["cleanup"]["gateway_container"] == "incomplete"
     assert result["cleanup"]["overall_complete"] is False
     assert any(call[:2] == ["docker", "network"] for call in calls)
+
+
+def test_policy_loader_rejects_malformed_duplicate_and_unknown_rules() -> None:
+    payload = {
+        "schema": "agentguard.live-study-egress-policy",
+        "schema_version": 1,
+        "destinations": [
+            {"host": "mock-approved.test", "port": 443, "purpose": "one", "test_only": True}
+        ],
+    }
+    assert live_study_egress_policy_from_dict(payload).destinations[0].host == (
+        "mock-approved.test"
+    )
+
+    for bad in [
+        None,
+        {"schema": "wrong", "schema_version": 1, "destinations": []},
+        {"schema": payload["schema"], "schema_version": 99, "destinations": []},
+        {**payload, "destinations": [{"host": "mock.test", "port": 443, "extra": True}]},
+        {
+            **payload,
+            "destinations": [
+                {"host": "mock.test", "port": 443},
+                {"host": "MOCK.TEST", "port": 443},
+            ],
+        },
+    ]:
+        with pytest.raises(LiveStudyEgressError):
+            live_study_egress_policy_from_dict(bad)
+
+
+def test_gateway_evidence_loader_bounds_and_sanitizes(tmp_path: Path) -> None:
+    missing = load_gateway_evidence(tmp_path / "missing.json")
+    assert missing["status"] == "missing"
+    assert missing["gateway_status"]["evidence_complete"] is False
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text("[1, 2]\n", encoding="utf-8")
+    assert load_gateway_evidence(malformed)["status"] == "malformed"
+
+    truncated = tmp_path / "truncated.json"
+    truncated.write_text("x" * (gateway.MAX_EGRESS_SERIALIZED_BYTES + 1), encoding="utf-8")
+    assert load_gateway_evidence(truncated)["status"] == "truncated"
+
+    recorded = tmp_path / "recorded.json"
+    recorded.write_text(
+        json.dumps(
+            {
+                "events": [
+                    evaluate_live_study_egress_destination(
+                        _policy(),
+                        host="mock-approved.test",
+                        port=443,
+                        resolved_addresses=["203.0.113.10"],
+                    )
+                ],
+                "gateway_status": {
+                    "status": "running",
+                    "evidence_complete": True,
+                    "reason": "ok?token=secret",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_gateway_evidence(recorded)
+    assert loaded["status"] == "recorded"
+    assert "token=secret" not in json.dumps(loaded, sort_keys=True)
+
+
+def test_manifest_completion_fails_closed_for_missing_identity_gateway_cleanup_and_liveness() -> None:
+    policy = _policy()
+    event = evaluate_live_study_egress_destination(
+        policy,
+        host="mock-approved.test",
+        port=443,
+        resolved_addresses=["203.0.113.10"],
+    )
+    base = {
+        "schema": "agentguard.live-study-egress-manifest",
+        "schema_version": 1,
+        "plan_digest": PLAN_DIGEST,
+        "profile_hash": PROFILE_HASH,
+        "fixture_hash": FIXTURE_HASH,
+        "trial_id": "trial-0123456789abcdef01234567",
+        "egress_policy_digest": live_study_egress_policy_digest(policy),
+        "approved_destination": {"host": "mock-approved.test", "port": 443},
+        "gateway_image_identity": GATEWAY_IDENTITY,
+        "events": [event],
+        "gateway_status": {"status": "running", "evidence_complete": True},
+        "cleanup_status": {"overall_complete": True},
+        "liveness_status": {"verified": True},
+    }
+    for mutation, reason in [
+        ({"gateway_image_identity": None}, "gateway image identity"),
+        ({"gateway_status": {"status": "crashed", "crashed": True}}, "gateway crashed"),
+        ({"gateway_status": {"status": "running", "evidence_complete": False}}, "gateway evidence"),
+        ({"cleanup_status": {"overall_complete": False}}, "cleanup"),
+        ({"liveness_status": {"verified": False}}, "liveness"),
+        ({"events": [{"decision": "mystery"}]}, "evidence"),
+    ]:
+        candidate = {**base, **mutation}
+        completion = classify_live_study_egress_manifest(candidate)
+        assert completion["success_eligible"] is False
+        assert reason in str(completion["reason"])
+
+
+def test_docker_image_identity_inspection_and_local_image_id_gating(monkeypatch) -> None:
+    image_id = "sha256:" + "d" * 64
+    digest = "example.com/agentguard/gateway@sha256:" + "e" * 64
+
+    def fake_control(argv, timeout_seconds):
+        assert argv[:3] == ["docker", "image", "inspect"]
+        return DockerControlResult(
+            argv,
+            0,
+            stdout=json.dumps(
+                {
+                    "Id": image_id,
+                    "Os": "linux",
+                    "Architecture": "amd64",
+                    "RepoDigests": [digest],
+                }
+            ),
+        )
+
+    monkeypatch.setattr(gateway, "_run_docker_control", fake_control)
+    identity = inspect_docker_image_identity(digest)
+    assert identity.local_image_id == image_id
+    assert identity.registry_digest == digest
+
+    with pytest.raises(LiveStudyEgressError, match="digest-pinned"):
+        inspect_docker_image_identity(image_id)
+
+    local = inspect_docker_image_identity(image_id, allow_local_image_id=True)
+    assert local["executed_image_id"] == image_id
+    assert parse_gateway_image_identity(
+        {
+            "configured_reference": digest,
+            "local_image_id": image_id,
+            "executed_image_id": image_id,
+            "registry_digest": digest,
+            "platform": "linux/amd64",
+            "pull_policy": "docker-default",
+            "cache_status": "present",
+        }
+    ).configured_reference == digest
+
+
+def test_run_live_study_egress_trial_uses_gateway_evidence_and_fails_when_incomplete(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    evidence_dir = tmp_path / "evidence"
+    workspace.mkdir()
+
+    def fake_identity(image, *, allow_local_image_id=False):
+        return GATEWAY_IDENTITY
+
+    def fake_plan(*args, **kwargs):
+        return build_live_study_egress_docker_plan(
+            trial_id="trial-0123456789abcdef01234567",
+            agent_image=IMAGE,
+            gateway_image=GATEWAY_IMAGE,
+            workspace_host_path=workspace,
+            agent_command=["agent"],
+            gateway_command=["gateway"],
+            uid=1000,
+            gid=1000,
+            run_token="fedcba654321",
+        )
+
+    def fake_run(plan, *, command_runner=None, timeout_seconds=30):
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        (evidence_dir / "gateway-evidence.json").write_text(
+            json.dumps(
+                {
+                    "events": [
+                        evaluate_live_study_egress_destination(
+                            _policy(),
+                            host="mock-approved.test",
+                            port=443,
+                            protocol="https",
+                            resolved_addresses=["203.0.113.10"],
+                        )
+                    ],
+                    "gateway_status": {"status": "running", "evidence_complete": True},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "status": "completed",
+            "gateway_liveness_verified": True,
+            "cleanup": {"overall_complete": True, "liveness_verified": True},
+        }
+
+    monkeypatch.setattr(gateway, "inspect_docker_image_identity", fake_identity)
+    monkeypatch.setattr(gateway, "build_live_study_egress_docker_plan", fake_plan)
+    monkeypatch.setattr(gateway, "run_live_study_egress_docker_plan", fake_run)
+
+    request = LiveStudyEgressTrialRequest(
+        plan_digest=PLAN_DIGEST,
+        profile_hash=PROFILE_HASH,
+        fixture_hash=FIXTURE_HASH,
+        trial_id="trial-0123456789abcdef01234567",
+        profile_id="profile",
+        fixture_id="fixture",
+        workspace=workspace,
+        evidence_dir=evidence_dir,
+        prompt_path=evidence_dir / "prompt.txt",
+        agent_image=IMAGE,
+        agent_command=["agent"],
+        policy=_policy(),
+        gateway_image=GATEWAY_IMAGE,
+        platform="linux-docker-engine",
+    )
+    result = run_live_study_egress_trial(request)
+    assert result.status == "completed"
+    assert result.manifest["completion"]["success_eligible"] is True
+
+    def fake_incomplete(plan, *, command_runner=None, timeout_seconds=30):
+        return {
+            "status": "failed",
+            "failure_step": "gateway_liveness",
+            "cleanup": {"overall_complete": False, "liveness_verified": False},
+        }
+
+    (evidence_dir / "gateway-evidence.json").unlink()
+    monkeypatch.setattr(gateway, "run_live_study_egress_docker_plan", fake_incomplete)
+    failed = run_live_study_egress_trial(request)
+    assert failed.status in {"failed", "incomplete"}
+    assert failed.stop_condition
+
+
+def test_fail_closed_private_bounds_and_sanitizers_cover_edge_cases(tmp_path: Path) -> None:
+    assert gateway._image_id(123) is None
+    assert gateway._docker_network_aliases(("mock-approved.test", "MOCK-APPROVED.TEST")) == (
+        "mock-approved.test",
+    )
+    with pytest.raises(LiveStudyEgressError):
+        gateway._docker_network_aliases(("203.0.113.9",))
+    assert gateway._single_policy_destination(LiveStudyEgressPolicy(destinations=())) == (
+        None,
+        None,
+    )
+    crashed = gateway._combined_gateway_status(
+        docker_result={"failure_step": "gateway_liveness"},
+        gateway_evidence={"status": "recorded", "gateway_status": {"evidence_complete": True}},
+    )
+    assert crashed["crashed"] is True
+    missing = gateway._combined_gateway_status(
+        docker_result={},
+        gateway_evidence={"status": "missing", "gateway_status": {"reason": "lost?token=x"}},
+    )
+    assert missing["evidence_complete"] is False
+    assert "token=x" not in json.dumps(missing, sort_keys=True)
+    assert gateway._cleanup_status_from_docker_result({})["overall_complete"] is False
+    assert gateway._liveness_status_from_docker_result({})["verified"] is False
+    assert gateway._gateway_inspect_running(json.dumps([{"State": {"Running": True}}])) is True
+    assert gateway._gateway_inspect_running("not-json") is False
+    assert gateway._sanitize_value(Path("/Users/test/secret.txt"), depth=0) == "[REDACTED_PATH]"
+    for value in [
+        10**13,
+        -1.0,
+        ["x"] * (gateway.MAX_EGRESS_LIST_ITEMS + 1),
+        {str(index): index for index in range(gateway.MAX_EGRESS_OBJECT_ITEMS + 1)},
+        {"": "bad"},
+    ]:
+        with pytest.raises(LiveStudyEgressError):
+            gateway._sanitize_value(value, depth=0)
+    for function, args in [
+        (gateway._bounded_string, ("", "field")),
+        (gateway._sha256_string, ("bad", "hash")),
+        (gateway._port, (0, "port")),
+        (gateway._bool, ("true", "flag")),
+        (gateway._optional_bounded_nonnegative_int, (-1, "count")),
+        (gateway._optional_timestamp, (-1,)),
+        (gateway._non_root, (0, "uid")),
+        (gateway._bounded_positive_int, (0, "pids")),
+        (gateway._bounded_size, ("0m", "memory")),
+        (gateway._format_cpu, (99.0,)),
+        (gateway._validate_network_name, ("bad",)),
+        (gateway._validate_container_name, ("bad",)),
+        (gateway._label_value, ("bad,value",)),
+    ]:
+        with pytest.raises(LiveStudyEgressError):
+            function(*args)
+    assert gateway._option_values(["docker", "--network", "none"], "--network") == ["none"]
+
+
+def test_docker_control_timeout_and_oserror_paths(monkeypatch) -> None:
+    def timeout_run(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired("docker", 1, output="out", stderr="err")
+
+    monkeypatch.setattr(gateway.subprocess, "run", timeout_run)
+    timed_out = gateway._run_docker_control(["docker", "info"], 1)
+    assert timed_out.timed_out is True
+    assert timed_out.returncode == 124
+
+    def os_error_run(*_args, **_kwargs):
+        raise FileNotFoundError("docker")
+
+    monkeypatch.setattr(gateway.subprocess, "run", os_error_run)
+    missing = gateway._run_docker_control(["docker", "info"], 1)
+    assert missing.returncode == 125
+    assert "FileNotFoundError" in missing.stderr
