@@ -6,6 +6,7 @@ from typing import Literal
 LIVE_STUDY_EGRESS_CONTRACT_SCHEMA = "agentguard.live-study-egress-contract"
 LIVE_STUDY_EGRESS_CONTRACT_VERSION = 1
 LIVE_STUDY_EGRESS_NETWORK_MODE = "controlled-egress-gateway"
+LIVE_STUDY_EGRESS_EXECUTION_MODE = "study-egress"
 
 LiveStudyNetworkClassification = Literal[
     "offline",
@@ -40,15 +41,24 @@ LIVE_STUDY_EGRESS_BLOCKED_ROUTES = (
 )
 
 LIVE_STUDY_EGRESS_EVIDENCE_FIELDS = (
+    "schema",
+    "schema_version",
+    "plan_digest",
+    "profile_hash",
+    "fixture_hash",
     "trial_id",
-    "policy_digest",
+    "egress_policy_digest",
+    "gateway_image_identity",
     "destination_host",
     "destination_port",
-    "resolved_address",
+    "resolved_addresses",
     "decision",
-    "bytes",
+    "byte_counts",
     "timestamps",
     "redirect_destination",
+    "gateway_status",
+    "cleanup_status",
+    "liveness_status",
 )
 
 LIVE_STUDY_EGRESS_AUTHORIZATION_RULES = (
@@ -151,6 +161,7 @@ def live_study_egress_contract_summary() -> dict[str, object]:
         "schema": LIVE_STUDY_EGRESS_CONTRACT_SCHEMA,
         "schema_version": LIVE_STUDY_EGRESS_CONTRACT_VERSION,
         "network_mode": LIVE_STUDY_EGRESS_NETWORK_MODE,
+        "execution_mode": LIVE_STUDY_EGRESS_EXECUTION_MODE,
         "required_invariants": list(LIVE_STUDY_EGRESS_REQUIRED_INVARIANTS),
         "threat_model": list(LIVE_STUDY_EGRESS_THREAT_MODEL),
         "evidence_fields": list(LIVE_STUDY_EGRESS_EVIDENCE_FIELDS),

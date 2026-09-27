@@ -217,14 +217,16 @@ production policy or external verifier authority for v0.5.
 ## Live-Study Egress Contract
 
 No provider-specific destination is approved by this contract. The contract
-defines only the architecture and evidence requirements that a later
-destination-controlled gateway implementation must satisfy before #294 can run
-any live-agent pilot.
+defines only the architecture and evidence requirements for the experimental
+evaluation-only `study-egress` helpers. Those helpers can validate exact
+destination policy, canonical sanitized egress manifests, and safe gateway
+Docker argv plans, but #294 still needs a separate authorization before any
+live-agent pilot.
 
 Docker `network: none` remains the default study profile network. Ordinary
 Docker `bridge` is not restricted egress and must not be described as blocking
-public internet access. A future live-study profile that needs network access
-must use a distinct experimental study-egress mode with all of the following
+public internet access. A live-study profile that needs network access must use
+the distinct experimental `study-egress` mode with all of the following
 properties:
 
 - the agent container has no direct route to the public internet;
@@ -268,12 +270,15 @@ hostile-code sandbox. Reports must not claim that Docker is an absolute
 hostile-code sandbox. Linux Docker Engine is authoritative.
 
 Per-trial egress evidence must be bounded, sanitized, and canonical. It records
-at minimum the trial ID, policy digest, exact destination host, destination
-port, resolved addresses, decision, byte counts, timestamps, and redirect
-destination. It must not record URL query strings, authorization headers,
-cookies, request bodies, credential values, raw prompts, or model output. Any
-missing, truncated, contradictory, or dropped required egress evidence makes the
-trial incomplete or failed rather than successful.
+at minimum schema/version, plan digest, profile hash, fixture hash, trial ID,
+egress policy digest, gateway image identity, exact destination host,
+destination port, resolved addresses, decision, byte counts, timestamps,
+redirect destination, other new-destination decisions, and gateway, cleanup,
+and liveness status. It must not record URL query strings, authorization
+headers, cookies, request bodies, credential values, raw prompts, raw model
+output, private local paths, or unbounded gateway logs. Any missing, truncated,
+contradictory, or dropped required egress evidence makes the trial incomplete
+or failed rather than successful.
 
 ## Contained Profile Contract
 
