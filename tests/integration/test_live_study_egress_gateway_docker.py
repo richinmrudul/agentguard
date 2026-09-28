@@ -170,6 +170,11 @@ def _agent_source() -> str:
 
     int main(int argc, char **argv) {
       const char *mode = argc > 1 ? argv[1] : "proxy-success";
+      const char *credential = getenv("AGENTGUARD_FAKE_API_KEY");
+      if (strcmp(mode, "proxy-success") == 0 &&
+          (!credential || strcmp(credential, "AGENTGUARD_FAKE_CREDENTIAL_CANARY_302") != 0)) {
+        return 25;
+      }
       int direct = connect_host("mock-approved.test", "443");
       if (direct >= 0) {
         close(direct);
@@ -247,6 +252,7 @@ def test_live_study_egress_gateway_executes_local_mock_success_bypass_crash_and_
             prompt_path=evidence / "prompt.txt",
             agent_image=agent_image,
             agent_command=["proxy-success"],
+            agent_environment={"AGENTGUARD_FAKE_API_KEY": CANARY},
             policy=policy,
             gateway_image=gateway_image,
             platform="linux-docker-engine",

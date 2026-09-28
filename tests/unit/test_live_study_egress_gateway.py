@@ -295,6 +295,7 @@ def test_docker_plan_builds_internal_gateway_topology_without_widening_exec_spec
         uid=1000,
         gid=1000,
         resources=LiveStudyGatewayResources(cpu_limit=0.5, memory_limit="128m"),
+        agent_environment_names=("AGENTGUARD_FAKE_API_KEY",),
         run_token="abc123abc123",
     )
 
@@ -306,6 +307,9 @@ def test_docker_plan_builds_internal_gateway_topology_without_widening_exec_spec
     assert gateway[gateway.index("--network") + 1] == plan.internal_network
     assert agent[agent.index("--network") + 1] == plan.internal_network
     assert plan.outbound_network not in agent
+    assert "--env" in agent
+    assert "AGENTGUARD_FAKE_API_KEY" in agent
+    assert not any("fake-canary" in item for item in agent)
     for argv in [gateway, agent]:
         assert "--security-opt" in argv
         assert "no-new-privileges" in argv
@@ -594,6 +598,102 @@ def test_run_live_study_egress_trial_uses_gateway_evidence_and_fails_when_incomp
     assert failed.stop_condition
 
 
+def test_credential_resolver_is_not_called_when_gateway_preflight_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    evidence_dir = tmp_path / "evidence"
+    workspace.mkdir()
+    resolver_called = False
+
+    def resolver():
+        nonlocal resolver_called
+        resolver_called = True
+        return {"AGENTGUARD_FAKE_API_KEY": "fake-canary"}
+
+    def fake_identity(image, *, allow_local_image_id=False):
+        raise LiveStudyEgressError("identity unavailable")
+
+    def fake_run(*_args, **_kwargs):
+        raise AssertionError("docker execution should not start")
+
+    monkeypatch.setattr(gateway, "inspect_docker_image_identity", fake_identity)
+    monkeypatch.setattr(gateway, "run_live_study_egress_docker_plan", fake_run)
+
+    with pytest.raises(LiveStudyEgressError, match="preflight"):
+        run_live_study_egress_trial(
+            LiveStudyEgressTrialRequest(
+                plan_digest=PLAN_DIGEST,
+                profile_hash=PROFILE_HASH,
+                fixture_hash=FIXTURE_HASH,
+                trial_id="trial-0123456789abcdef01234567",
+                profile_id="profile",
+                fixture_id="fixture",
+                workspace=workspace,
+                evidence_dir=evidence_dir,
+                prompt_path=evidence_dir / "prompt.txt",
+                agent_image=IMAGE,
+                agent_command=["agent"],
+                agent_environment_names=("AGENTGUARD_FAKE_API_KEY",),
+                agent_environment_resolver=resolver,
+                policy=_policy(),
+                gateway_image=GATEWAY_IMAGE,
+                platform="linux-docker-engine",
+            )
+        )
+    assert resolver_called is False
+
+
+def test_credential_resolver_is_not_called_when_destination_policy_not_exact(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    evidence_dir = tmp_path / "evidence"
+    workspace.mkdir()
+    resolver_called = False
+    policy = LiveStudyEgressPolicy(
+        destinations=(
+            EgressDestinationRule("mock-approved.test", 443, test_only=True),
+            EgressDestinationRule("mock-other.test", 443, test_only=True),
+        )
+    )
+
+    def resolver():
+        nonlocal resolver_called
+        resolver_called = True
+        return {"AGENTGUARD_FAKE_API_KEY": "fake-canary"}
+
+    def fake_identity(image, *, allow_local_image_id=False):
+        return GATEWAY_IDENTITY
+
+    monkeypatch.setattr(gateway, "inspect_docker_image_identity", fake_identity)
+
+    with pytest.raises(LiveStudyEgressError, match="preflight"):
+        run_live_study_egress_trial(
+            LiveStudyEgressTrialRequest(
+                plan_digest=PLAN_DIGEST,
+                profile_hash=PROFILE_HASH,
+                fixture_hash=FIXTURE_HASH,
+                trial_id="trial-0123456789abcdef01234567",
+                profile_id="profile",
+                fixture_id="fixture",
+                workspace=workspace,
+                evidence_dir=evidence_dir,
+                prompt_path=evidence_dir / "prompt.txt",
+                agent_image=IMAGE,
+                agent_command=["agent"],
+                agent_environment_names=("AGENTGUARD_FAKE_API_KEY",),
+                agent_environment_resolver=resolver,
+                policy=policy,
+                gateway_image=GATEWAY_IMAGE,
+                platform="linux-docker-engine",
+            )
+        )
+    assert resolver_called is False
+
+
 def test_run_live_study_egress_trial_prepares_evidence_dir_for_gateway_uid(
     tmp_path: Path,
     monkeypatch,
@@ -743,3 +843,14 @@ def test_docker_control_timeout_and_oserror_paths(monkeypatch) -> None:
     missing = gateway._run_docker_control(["docker", "info"], 1)
     assert missing.returncode == 125
     assert "FileNotFoundError" in missing.stderr
+
+
+def test_secret_bearing_docker_control_environment_uses_fixed_path(monkeypatch) -> None:
+    monkeypatch.setenv("PATH", "/tmp/untrusted")
+
+    environment = gateway._docker_control_environment({"AGENTGUARD_FAKE_API_KEY": "fake"})
+
+    assert environment == {
+        "AGENTGUARD_FAKE_API_KEY": "fake",
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+    }
