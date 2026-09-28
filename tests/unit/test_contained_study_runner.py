@@ -1,5 +1,6 @@
 import json
 import copy
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -34,6 +35,10 @@ from agentguard.evaluation.live_egress_gateway import (
     LiveStudyEgressTrialResult,
     build_live_study_egress_manifest,
     evaluate_live_study_egress_destination,
+    live_study_egress_policy_digest,
+)
+from agentguard.evaluation.live_study_authorization import (
+    canonical_live_study_authorization,
 )
 from agentguard.evaluation.study_runner import (
     ContainedStudyRunnerError,
@@ -156,6 +161,55 @@ def _egress_policy() -> LiveStudyEgressPolicy:
     )
 
 
+def _authorization_file(tmp_path: Path, plan_path: Path, policy: LiveStudyEgressPolicy) -> Path:
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    profile = plan["profiles"][0]
+    fixtures = [
+        {"hash": item["fixture_hash"], "id": item["id"], "task_id": item["task_id"]}
+        for item in plan["fixtures"]
+    ]
+    now = datetime.now(timezone.utc)
+    artifact = {
+        "authorization_id": "auth-contained-runner",
+        "credential_env_names": [],
+        "destinations": [{"host": "mock-approved.test", "port": 443}],
+        "egress_policy_digest": live_study_egress_policy_digest(policy),
+        "evidence_bounds": {"max_output_bytes": 4096},
+        "expires_at": (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "fixtures": fixtures,
+        "images": {"agent": profile["image"], "gateway": GATEWAY_IMAGE},
+        "issued_at": (now - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "issuer": "unit-test",
+        "limits": {
+            "max_turns": 1,
+            "per_trial_cost_usd": 0.0,
+            "per_trial_input_tokens": 0,
+            "per_trial_output_tokens": 0,
+            "per_trial_timeout_seconds": 30,
+            "total_cost_usd": 0.0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+        },
+        "max_trial_count": len(plan["trials"]),
+        "not_before": (now - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "plan_digest": plan["plan_digest"],
+        "profile": {
+            "hash": profile["profile_manifest_sha256"],
+            "id": profile["id"],
+        },
+        "protocol_version": plan["protocol_version"],
+        "provider": {"model_id": "mock-model", "provider_id": "mock-provider"},
+        "publication_redaction_policy_digest": "5" * 64,
+        "schema": "agentguard.live-study-authorization",
+        "schema_version": 1,
+        "stop_thresholds": {"max_failures": 1},
+        "trials": [trial["trial_id"] for trial in plan["trials"]],
+    }
+    path = tmp_path / "live-study-authorization.json"
+    path.write_text(canonical_live_study_authorization(artifact) + "\n", encoding="utf-8")
+    return path
+
+
 def _fake_result(tmp_path: Path, *, cleanup: bool = True, result: str = "PASS") -> ContainedRunResult:
     report = tmp_path / "contained-run.json"
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -249,6 +303,8 @@ def test_study_egress_mode_requires_explicit_options_and_records_live_boundary(
 ) -> None:
     profile = _write_profile(tmp_path)
     plan = _live_plan_file(tmp_path, profile)
+    policy = _egress_policy()
+    authorization = _authorization_file(tmp_path, plan, policy)
     calls = []
 
     def fake_egress(request):
@@ -289,8 +345,9 @@ def test_study_egress_mode_requires_explicit_options_and_records_live_boundary(
             [profile],
             output_dir=tmp_path / "runs",
             execution_mode=LIVE_STUDY_EGRESS_EXECUTION_MODE,
-            egress_policy=_egress_policy(),
+            egress_policy=policy,
             gateway_image=GATEWAY_IMAGE,
+            authorization_path=authorization,
         ),
         run_contained_command=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("contained-run executed")),
         run_study_egress_command=fake_egress,
@@ -308,6 +365,8 @@ def test_study_egress_mode_requires_explicit_options_and_records_live_boundary(
 def test_study_egress_gateway_failure_stops_later_trials(tmp_path: Path) -> None:
     profile = _write_profile(tmp_path)
     plan = _live_plan_file(tmp_path, profile, trials=2)
+    policy = _egress_policy()
+    authorization = _authorization_file(tmp_path, plan, policy)
     calls = 0
 
     def fake_crash(request):
@@ -347,8 +406,9 @@ def test_study_egress_gateway_failure_stops_later_trials(tmp_path: Path) -> None
             [profile],
             output_dir=tmp_path / "runs",
             execution_mode=LIVE_STUDY_EGRESS_EXECUTION_MODE,
-            egress_policy=_egress_policy(),
+            egress_policy=policy,
             gateway_image=GATEWAY_IMAGE,
+            authorization_path=authorization,
         ),
         run_study_egress_command=fake_crash,
     )

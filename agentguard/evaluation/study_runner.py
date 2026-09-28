@@ -25,9 +25,21 @@ from agentguard.evaluation.live_egress_contract import (
 )
 from agentguard.evaluation.live_egress_gateway import (
     LiveStudyEgressPolicy,
+    LiveStudyEgressError,
     LiveStudyEgressTrialRequest,
     LiveStudyEgressTrialResult,
+    live_study_egress_policy_digest,
     run_live_study_egress_trial,
+)
+from agentguard.evaluation.live_study_authorization import (
+    LiveStudyAuthorization,
+    LiveStudyAuthorizationError,
+    commit_live_study_authorization_use,
+    invalidate_live_study_authorization,
+    load_live_study_authorization,
+    reserve_live_study_authorization_use,
+    resolve_authorized_credentials,
+    validate_live_study_authorization_scope,
 )
 from agentguard.evaluation.study_fixtures import (
     DEFAULT_STUDY_FIXTURE_MANIFEST,
@@ -69,6 +81,8 @@ class ContainedStudyRunnerOptions:
     execution_mode: str = "contained-run"
     egress_policy: Optional[LiveStudyEgressPolicy] = None
     gateway_image: Optional[str] = None
+    authorization_path: Optional[Path] = None
+    authorization_ledger_path: Optional[Path] = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +119,8 @@ def _validate_execution_mode(options: ContainedStudyRunnerOptions) -> None:
         raise ContainedStudyRunnerError("Study-egress execution requires an egress policy.")
     if not options.gateway_image:
         raise ContainedStudyRunnerError("Study-egress execution requires a gateway image.")
+    if options.authorization_path is None:
+        raise ContainedStudyRunnerError("Study-egress execution requires a live-study authorization.")
 
 
 def run_contained_study_plan(
@@ -124,6 +140,16 @@ def run_contained_study_plan(
     )
     _verify_profile_identities(plan, profiles, execution_mode=options.execution_mode)
     _verify_fixture_identities(plan, fixture_set)
+    authorization = None
+    if options.execution_mode == LIVE_STUDY_EGRESS_EXECUTION_MODE:
+        if options.authorization_path is None:
+            raise ContainedStudyRunnerError(
+                "Study-egress execution requires a live-study authorization."
+            )
+        try:
+            authorization = load_live_study_authorization(options.authorization_path)
+        except LiveStudyAuthorizationError as error:
+            raise ContainedStudyRunnerError(str(error)) from error
 
     run_dir = output_dir / plan_digest
     _reject_output_inside_fixtures(run_dir, fixture_set)
@@ -174,6 +200,11 @@ def run_contained_study_plan(
                     execution_mode=options.execution_mode,
                     egress_policy=options.egress_policy,
                     gateway_image=options.gateway_image,
+                    authorization=authorization,
+                    authorization_ledger_path=(
+                        options.authorization_ledger_path
+                        or run_dir / "live-study-authorization-ledger.json"
+                    ),
                     run_contained_command=run_contained_command,
                     run_study_egress_command=run_study_egress_command,
                 )
@@ -369,7 +400,7 @@ def _validate_plan_profiles(
             f"profiles[{index}].environment",
         )
         required = _string_list(environment.get("required"), "environment.required")
-        if required:
+        if required and execution_mode != LIVE_STUDY_EGRESS_EXECUTION_MODE:
             raise ContainedStudyRunnerError(
                 "Contained study execution cannot require credentials or environment values."
             )
@@ -617,6 +648,8 @@ def _execute_trial(
     execution_mode: str,
     egress_policy: Optional[LiveStudyEgressPolicy],
     gateway_image: Optional[str],
+    authorization: Optional[LiveStudyAuthorization],
+    authorization_ledger_path: Path,
     run_contained_command: RunContainedCommand,
     run_study_egress_command: RunStudyEgressCommand,
 ) -> dict[str, object]:
@@ -653,6 +686,8 @@ def _execute_trial(
             platform=platform,
             egress_policy=egress_policy,
             gateway_image=gateway_image,
+            authorization=authorization,
+            authorization_ledger_path=authorization_ledger_path,
             run_study_egress_command=run_study_egress_command,
         )
     config = _contained_config_for_trial(
@@ -754,17 +789,55 @@ def _execute_study_egress_trial(
     platform: str,
     egress_policy: Optional[LiveStudyEgressPolicy],
     gateway_image: Optional[str],
+    authorization: Optional[LiveStudyAuthorization],
+    authorization_ledger_path: Path,
     run_study_egress_command: RunStudyEgressCommand,
 ) -> dict[str, object]:
     if egress_policy is None or gateway_image is None:
         raise ContainedStudyRunnerError(
             "Study-egress execution requires an egress policy and gateway image."
         )
+    if authorization is None:
+        raise ContainedStudyRunnerError("Study-egress execution requires authorization.")
+    credential_names = list(profile.environment.required)
+    trial_id = _string(trial.get("trial_id"), "trial_id")
+    plan_digest = _string(plan.get("plan_digest"), "plan_digest")
+    try:
+        validate_live_study_authorization_scope(
+            authorization,
+            protocol_version=_string(plan.get("protocol_version"), "protocol_version"),
+            plan_digest=plan_digest,
+            profile_id=profile.id,
+            profile_hash=_string(plan_profile.get("profile_manifest_sha256"), "profile_hash"),
+            fixture_id=fixture.id,
+            fixture_hash=_string(plan_fixture.get("fixture_hash"), "fixture_hash"),
+            task_id=fixture.task_id,
+            trial_id=trial_id,
+            agent_image=profile.image,
+            gateway_image=gateway_image,
+            egress_policy_digest=live_study_egress_policy_digest(egress_policy),
+            destinations=_authorization_destinations(egress_policy),
+            credential_env_names=credential_names,
+        )
+        reserve_live_study_authorization_use(
+            authorization_ledger_path,
+            authorization,
+            plan_digest=plan_digest,
+            trial_id=trial_id,
+        )
+    except LiveStudyAuthorizationError as error:
+        raise ContainedStudyRunnerError(str(error)) from error
+
+    def credential_resolver() -> dict[str, str]:
+        return resolve_authorized_credentials(
+            authorization,
+            profile_required_env=credential_names,
+        )
     request = LiveStudyEgressTrialRequest(
-        plan_digest=_string(plan.get("plan_digest"), "plan_digest"),
+        plan_digest=plan_digest,
         profile_hash=_string(plan_profile.get("profile_manifest_sha256"), "profile_hash"),
         fixture_hash=_string(plan_fixture.get("fixture_hash"), "fixture_hash"),
-        trial_id=_string(trial.get("trial_id"), "trial_id"),
+        trial_id=trial_id,
         profile_id=profile.id,
         fixture_id=fixture.id,
         workspace=workspace,
@@ -772,11 +845,26 @@ def _execute_study_egress_trial(
         prompt_path=prompt_path,
         agent_image=profile.image,
         agent_command=list(profile.argv),
+        agent_environment_resolver=credential_resolver,
+        authorization_id=str(authorization.data["authorization_id"]),
         policy=egress_policy,
         gateway_image=gateway_image,
         platform=platform,
     )
-    result = run_study_egress_command(request)
+    try:
+        result = run_study_egress_command(request)
+    except (LiveStudyAuthorizationError, LiveStudyEgressError) as error:
+        try:
+            invalidate_live_study_authorization(
+                authorization_ledger_path,
+                authorization,
+                plan_digest=plan_digest,
+                trial_id=trial_id,
+                reason=str(error),
+            )
+        except LiveStudyAuthorizationError:
+            pass
+        raise ContainedStudyRunnerError(str(error)) from error
     status = _study_egress_status(result.status)
     outcome = _string(result.outcome, "study_egress.outcome")
     completion = result.manifest.get("completion") if isinstance(result.manifest, dict) else None
@@ -788,6 +876,24 @@ def _execute_study_egress_trial(
     if status == "completed" and not success_eligible:
         status = "incomplete"
         outcome = "egress_evidence_incomplete"
+    try:
+        if status == "completed":
+            commit_live_study_authorization_use(
+                authorization_ledger_path,
+                authorization,
+                plan_digest=plan_digest,
+                trial_id=trial_id,
+            )
+        else:
+            invalidate_live_study_authorization(
+                authorization_ledger_path,
+                authorization,
+                plan_digest=plan_digest,
+                trial_id=trial_id,
+                reason=outcome,
+            )
+    except LiveStudyAuthorizationError as error:
+        raise ContainedStudyRunnerError(str(error)) from error
     result_path = evidence_dir / "live-study-trial-result.json"
     trial_result = {
         "schema": CONTAINED_STUDY_TRIAL_RESULT_SCHEMA,
@@ -812,6 +918,7 @@ def _execute_study_egress_trial(
         "study_egress": {
             "execution_boundary": LIVE_STUDY_EGRESS_EXECUTION_MODE,
             "gateway_image": gateway_image,
+            "authorization_id": authorization.data["authorization_id"],
             "manifest_alias": _portable_under(evidence_dir, result.manifest_path),
             "outcome": outcome,
             "status": status,
@@ -935,6 +1042,14 @@ def _study_egress_status(value: object) -> str:
     if status not in {"completed", "failed", "incomplete"}:
         raise ContainedStudyRunnerError("Study-egress trial returned an invalid status.")
     return status
+
+
+def _authorization_destinations(policy: LiveStudyEgressPolicy) -> list[dict[str, object]]:
+    destinations = []
+    for rule in policy.destinations:
+        host = str(rule.host).strip().lower()
+        destinations.append({"host": host, "port": rule.port})
+    return sorted(destinations, key=lambda item: (str(item["host"]), int(item["port"])))
 
 
 def _load_or_initialize_state(

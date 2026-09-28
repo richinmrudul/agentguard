@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import os
 import re
 import subprocess
 import time
@@ -152,6 +153,9 @@ class LiveStudyEgressTrialRequest:
     policy: LiveStudyEgressPolicy
     gateway_image: str
     platform: str
+    agent_environment: Optional[dict[str, str]] = None
+    agent_environment_resolver: Optional[Callable[[], dict[str, str]]] = None
+    authorization_id: Optional[str] = None
     gateway_command: tuple[str, ...] = DEFAULT_GATEWAY_COMMAND
     gateway_resources: LiveStudyGatewayResources = LiveStudyGatewayResources()
     agent_uid: int = 1000
@@ -227,6 +231,12 @@ def run_live_study_egress_trial(
         )
     except LiveStudyEgressError:
         gateway_identity = None
+    agent_environment = dict(request.agent_environment or {})
+    if request.agent_environment_resolver is not None:
+        try:
+            agent_environment = request.agent_environment_resolver()
+        except Exception as error:
+            raise LiveStudyEgressError("Authorized credential resolution failed.") from error
     plan = build_live_study_egress_docker_plan(
         trial_id=request.trial_id,
         agent_image=request.agent_image,
@@ -243,14 +253,22 @@ def run_live_study_egress_trial(
                 "target=/agentguard-egress"
             )
         ],
+        agent_environment_names=tuple(sorted(agent_environment.keys())),
         gateway_outbound_aliases=aliases,
         resources=request.gateway_resources,
         allow_local_image_id=request.allow_local_image_id,
     )
-    docker_result = run_live_study_egress_docker_plan(
-        plan,
-        timeout_seconds=request.timeout_seconds,
-    )
+    if agent_environment:
+        docker_result = run_live_study_egress_docker_plan(
+            plan,
+            command_environments={"create_agent": dict(agent_environment)},
+            timeout_seconds=request.timeout_seconds,
+        )
+    else:
+        docker_result = run_live_study_egress_docker_plan(
+            plan,
+            timeout_seconds=request.timeout_seconds,
+        )
     gateway_evidence = load_gateway_evidence(gateway_evidence_path)
     events = gateway_evidence["events"] if isinstance(gateway_evidence["events"], list) else []
     destination = _single_policy_destination(request.policy)
@@ -265,6 +283,7 @@ def run_live_study_egress_trial(
         trial_id=request.trial_id,
         policy=request.policy,
         gateway_image=gateway_identity,
+        authorization_id=request.authorization_id,
         approved_host=destination[0],
         approved_port=destination[1],
         events=events,
@@ -773,6 +792,7 @@ def build_live_study_egress_manifest(
     gateway_status: dict[str, object],
     cleanup_status: dict[str, object],
     liveness_status: dict[str, object],
+    authorization_id: Optional[str] = None,
 ) -> dict[str, object]:
     manifest = {
         "schema": LIVE_STUDY_EGRESS_MANIFEST_SCHEMA,
@@ -781,6 +801,9 @@ def build_live_study_egress_manifest(
         "profile_hash": _sha256_string(profile_hash, "profile_hash"),
         "fixture_hash": _sha256_string(fixture_hash, "fixture_hash"),
         "trial_id": _bounded_string(trial_id, "trial_id"),
+        "authorization_id": (
+            None if authorization_id is None else _bounded_string(authorization_id, "authorization_id")
+        ),
         "egress_policy_digest": live_study_egress_policy_digest(policy),
         "approved_destination": {
             "host": _sanitize_text(approved_host or ""),
@@ -877,6 +900,7 @@ def build_live_study_egress_docker_plan(
     run_token: Optional[str] = None,
     gateway_mounts: Optional[list[str]] = None,
     gateway_environment: Optional[dict[str, str]] = None,
+    agent_environment_names: tuple[str, ...] = (),
     gateway_outbound_aliases: tuple[str, ...] = (),
     allow_local_image_id: bool = False,
 ) -> LiveStudyEgressDockerPlan:
@@ -914,6 +938,9 @@ def build_live_study_egress_docker_plan(
     workspace = workspace_host_path.expanduser().resolve()
     gateway_mounts = list(gateway_mounts or [])
     gateway_environment = dict(gateway_environment or {})
+    agent_environment = {
+        name: None for name in _docker_environment_names(agent_environment_names)
+    }
     outbound_aliases = _docker_network_aliases(gateway_outbound_aliases)
     labels = {
         "agentguard.owner": "study-egress",
@@ -1002,6 +1029,7 @@ def build_live_study_egress_docker_plan(
                     f"{LIVE_STUDY_GATEWAY_PROXY_PORT}"
                 ),
                 "NO_PROXY": "",
+                **agent_environment,
             },
             workdir="/workspace",
         ),
@@ -1075,10 +1103,12 @@ def run_live_study_egress_docker_plan(
     plan: LiveStudyEgressDockerPlan,
     *,
     command_runner: Optional[DockerControl] = None,
+    command_environments: Optional[dict[str, dict[str, str]]] = None,
     timeout_seconds: int = 30,
 ) -> dict[str, object]:
     validate_live_study_egress_docker_plan(plan)
     runner = command_runner or _run_docker_control
+    command_environments = command_environments or {}
     statuses: dict[str, object] = {}
     cleanup: dict[str, object] = {
         "agent_container": "not_created",
@@ -1098,7 +1128,15 @@ def run_live_study_egress_docker_plan(
             "inspect_gateway",
             "start_agent",
         ]:
-            result = runner(plan.commands[step], timeout_seconds)
+            environment = command_environments.get(step)
+            if environment and command_runner is None:
+                result = _run_docker_control_with_environment(
+                    plan.commands[step],
+                    timeout_seconds,
+                    environment=environment,
+                )
+            else:
+                result = runner(plan.commands[step], timeout_seconds)
             statuses[step] = _docker_step_evidence(result)
             if result.returncode != 0 or result.timed_out:
                 statuses["failure_step"] = step
@@ -1167,7 +1205,7 @@ def _container_create_argv(
     labels: dict[str, str],
     network_alias: Optional[str],
     mounts: list[str],
-    environment: dict[str, str],
+    environment: dict[str, Optional[str]],
     workdir: str,
 ) -> list[str]:
     if not isinstance(workdir, str) or not workdir.startswith("/") or _CONTROL_CHARACTER.search(workdir):
@@ -1216,6 +1254,9 @@ def _container_create_argv(
     for key, value in sorted(environment.items()):
         if not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,63}", key):
             raise LiveStudyEgressError("Unsafe Docker environment name.")
+        if value is None:
+            argv.extend(["--env", key])
+            continue
         if _CONTROL_CHARACTER.search(value) is not None or len(value) > 4096:
             raise LiveStudyEgressError("Unsafe Docker environment value.")
         argv.extend(["--env", f"{key}={value}"])
@@ -1596,6 +1637,15 @@ def _gateway_inspect_running(stdout: str) -> bool:
 
 
 def _run_docker_control(argv: list[str], timeout_seconds: int) -> DockerControlResult:
+    return _run_docker_control_with_environment(argv, timeout_seconds, environment=None)
+
+
+def _run_docker_control_with_environment(
+    argv: list[str],
+    timeout_seconds: int,
+    *,
+    environment: Optional[dict[str, str]],
+) -> DockerControlResult:
     started = time.monotonic()
     try:
         completed = subprocess.run(
@@ -1604,6 +1654,7 @@ def _run_docker_control(argv: list[str], timeout_seconds: int) -> DockerControlR
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
+            env=_docker_control_environment(environment),
         )
         return DockerControlResult(
             argv=argv,
@@ -1629,6 +1680,31 @@ def _run_docker_control(argv: list[str], timeout_seconds: int) -> DockerControlR
         )
     finally:
         _ = time.monotonic() - started
+
+
+def _docker_control_environment(environment: Optional[dict[str, str]]) -> Optional[dict[str, str]]:
+    if environment is None:
+        return None
+    base = {"PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")}
+    for key, value in environment.items():
+        if not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,63}", key):
+            raise LiveStudyEgressError("Unsafe Docker environment name.")
+        if _CONTROL_CHARACTER.search(value) is not None or len(value) > 4096:
+            raise LiveStudyEgressError("Unsafe Docker environment value.")
+        base[key] = value
+    return base
+
+
+def _docker_environment_names(names: tuple[str, ...]) -> tuple[str, ...]:
+    normalized = []
+    seen = set()
+    for name in names:
+        if not isinstance(name, str) or re.fullmatch(r"[A-Z_][A-Z0-9_]{0,63}", name) is None:
+            raise LiveStudyEgressError("Unsafe Docker environment name.")
+        if name not in seen:
+            seen.add(name)
+            normalized.append(name)
+    return tuple(sorted(normalized))
 
 
 def _sanitize_value(value: object, *, depth: int) -> object:

@@ -295,6 +295,7 @@ def test_docker_plan_builds_internal_gateway_topology_without_widening_exec_spec
         uid=1000,
         gid=1000,
         resources=LiveStudyGatewayResources(cpu_limit=0.5, memory_limit="128m"),
+        agent_environment_names=("AGENTGUARD_FAKE_API_KEY",),
         run_token="abc123abc123",
     )
 
@@ -306,6 +307,9 @@ def test_docker_plan_builds_internal_gateway_topology_without_widening_exec_spec
     assert gateway[gateway.index("--network") + 1] == plan.internal_network
     assert agent[agent.index("--network") + 1] == plan.internal_network
     assert plan.outbound_network not in agent
+    assert "--env" in agent
+    assert "AGENTGUARD_FAKE_API_KEY" in agent
+    assert not any("fake-canary" in item for item in agent)
     for argv in [gateway, agent]:
         assert "--security-opt" in argv
         assert "no-new-privileges" in argv

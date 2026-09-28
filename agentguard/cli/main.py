@@ -127,6 +127,15 @@ from agentguard.evaluation.study_runner import (
     run_contained_study_plan,
     validate_contained_study_plan_for_execution,
 )
+from agentguard.evaluation.live_study_authorization import (
+    LiveStudyAuthorizationError,
+    commit_live_study_authorization_use,
+    invalidate_live_study_authorization,
+    live_study_authorization_status,
+    load_live_study_authorization,
+    reserve_live_study_authorization_use,
+    resolve_authorized_credentials,
+)
 from agentguard.provenance.manifest import (
     load_manifest,
     manifest_trusted_roots,
@@ -220,6 +229,8 @@ app.add_typer(trace_app, name="trace")
 evaluate_app = typer.Typer(help="Validate and run external coding-agent profiles.")
 app.add_typer(evaluate_app, name="evaluate")
 app.add_typer(evaluate_app, name="evaluation")
+study_auth_app = typer.Typer(help="Inspect and rehearse live-study authorization artifacts.")
+evaluate_app.add_typer(study_auth_app, name="study-auth")
 diagnostics_app = typer.Typer(help="Run deterministic AgentGuard diagnostics.")
 app.add_typer(diagnostics_app, name="diagnostics")
 guard_app = typer.Typer(help="Inspect online guard incident reports.")
@@ -1599,6 +1610,120 @@ def evaluation_study_run(
     if result.stop_reason is not None:
         safe_echo(f"Stop condition: {result.stop_reason}")
         raise typer.Exit(1)
+
+
+@study_auth_app.command("inspect")
+def evaluation_study_auth_inspect(
+    authorization: Path = typer.Argument(..., help="Canonical live-study authorization JSON."),
+) -> None:
+    """Inspect a live-study authorization without resolving credentials."""
+    try:
+        loaded = load_live_study_authorization(authorization)
+    except (LiveStudyAuthorizationError, OSError, ValueError) as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    data = loaded.data
+    safe_echo("Live-study authorization")
+    safe_echo(f"Authorization ID: {data['authorization_id']}")
+    safe_echo(f"Digest: {loaded.digest}")
+    safe_echo(f"Plan digest: {data['plan_digest']}")
+    safe_echo(f"Trials: {len(data['trials'])}")
+    safe_echo(f"Credential env names: {', '.join(data['credential_env_names']) or 'none'}")
+    safe_echo("Credential values: not inspected")
+    safe_echo("Real live execution: unapproved")
+
+
+@study_auth_app.command("validate")
+def evaluation_study_auth_validate(
+    authorization: Path = typer.Argument(..., help="Canonical live-study authorization JSON."),
+) -> None:
+    """Validate a live-study authorization artifact without credential lookup."""
+    try:
+        loaded = load_live_study_authorization(authorization)
+    except (LiveStudyAuthorizationError, OSError, ValueError) as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    safe_echo("Live-study authorization valid")
+    safe_echo(f"Authorization ID: {loaded.data['authorization_id']}")
+    safe_echo(f"Digest: {loaded.digest}")
+    safe_echo("Credential lookup: not performed")
+    safe_echo("Real live execution: unapproved")
+
+
+@study_auth_app.command("status")
+def evaluation_study_auth_status(
+    authorization: Path = typer.Argument(..., help="Canonical live-study authorization JSON."),
+    ledger: Path = typer.Option(
+        Path(".agentguard/live-study-authorization-ledger.json"),
+        "--ledger",
+        help="Local authorization use ledger.",
+    ),
+) -> None:
+    """Show local authorization use status without resolving credentials."""
+    try:
+        loaded = load_live_study_authorization(authorization)
+        status = live_study_authorization_status(ledger, loaded)
+    except (LiveStudyAuthorizationError, OSError, ValueError) as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    safe_echo(json.dumps(status, sort_keys=True))
+
+
+@study_auth_app.command("rehearse-local")
+def evaluation_study_auth_rehearse_local(
+    authorization: Path = typer.Argument(..., help="Canonical live-study authorization JSON."),
+    ledger: Path = typer.Option(
+        Path(".agentguard/live-study-authorization-rehearsal-ledger.json"),
+        "--ledger",
+        help="Local rehearsal ledger.",
+    ),
+) -> None:
+    """Exercise authorization and fake credential ordering without real providers."""
+    try:
+        loaded = load_live_study_authorization(authorization)
+        trials = list(loaded.data["trials"])  # type: ignore[arg-type]
+        trial_id = str(trials[0])
+        plan_digest = str(loaded.data["plan_digest"])
+        reserve_live_study_authorization_use(
+            ledger,
+            loaded,
+            plan_digest=plan_digest,
+            trial_id=trial_id,
+        )
+        fake_environment = {
+            name: f"AGENTGUARD_FAKE_CREDENTIAL_CANARY_{index}"
+            for index, name in enumerate(loaded.data["credential_env_names"], start=1)  # type: ignore[arg-type]
+        }
+        resolve_authorized_credentials(
+            loaded,
+            profile_required_env=list(loaded.data["credential_env_names"]),  # type: ignore[arg-type]
+            environ=fake_environment,
+        )
+        commit_live_study_authorization_use(
+            ledger,
+            loaded,
+            plan_digest=plan_digest,
+            trial_id=trial_id,
+        )
+    except LiveStudyAuthorizationError as error:
+        try:
+            if "loaded" in locals():
+                invalidate_live_study_authorization(
+                    ledger,
+                    loaded,  # type: ignore[name-defined]
+                    plan_digest=str(loaded.data["plan_digest"]),  # type: ignore[name-defined]
+                    trial_id=str(list(loaded.data["trials"])[0]),  # type: ignore[name-defined,call-overload]
+                    reason=str(error),
+                )
+        except LiveStudyAuthorizationError:
+            pass
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    safe_echo("Local fake-credential authorization rehearsal complete")
+    safe_echo(f"Authorization ID: {loaded.data['authorization_id']}")
+    safe_echo(f"Trial reserved and committed: {trial_id}")
+    safe_echo("Credential values: fake canaries only, not displayed")
+    safe_echo("Real live execution: unapproved")
 
 
 @evaluate_app.command("study-report")
