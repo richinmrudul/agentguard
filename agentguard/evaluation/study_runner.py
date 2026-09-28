@@ -19,6 +19,16 @@ from agentguard.evaluation.contained_profile import (
     contained_agent_profile_to_dict,
     load_contained_agent_profile,
 )
+from agentguard.evaluation.live_egress_contract import (
+    LIVE_STUDY_EGRESS_EXECUTION_MODE,
+    LIVE_STUDY_EGRESS_NETWORK_MODE,
+)
+from agentguard.evaluation.live_egress_gateway import (
+    LiveStudyEgressPolicy,
+    LiveStudyEgressTrialRequest,
+    LiveStudyEgressTrialResult,
+    run_live_study_egress_trial,
+)
 from agentguard.evaluation.study_fixtures import (
     DEFAULT_STUDY_FIXTURE_MANIFEST,
     StudyFixture,
@@ -56,6 +66,9 @@ class ContainedStudyRunnerOptions:
     output_dir: Path = Path(".agentguard/contained-studies")
     resume: bool = False
     platform: str = "linux-docker-engine"
+    execution_mode: str = "contained-run"
+    egress_policy: Optional[LiveStudyEgressPolicy] = None
+    gateway_image: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -76,22 +89,40 @@ class ContainedStudyRunnerError(ValueError):
 
 
 RunContainedCommand = Callable[..., ContainedRunResult]
+RunStudyEgressCommand = Callable[[LiveStudyEgressTrialRequest], LiveStudyEgressTrialResult]
+
+
+def _validate_execution_mode(options: ContainedStudyRunnerOptions) -> None:
+    if options.execution_mode == "contained-run":
+        if options.egress_policy is not None or options.gateway_image is not None:
+            raise ContainedStudyRunnerError(
+                "Study-egress options are only valid with execution_mode='study-egress'."
+            )
+        return
+    if options.execution_mode != LIVE_STUDY_EGRESS_EXECUTION_MODE:
+        raise ContainedStudyRunnerError("Unsupported contained study execution mode.")
+    if options.egress_policy is None:
+        raise ContainedStudyRunnerError("Study-egress execution requires an egress policy.")
+    if not options.gateway_image:
+        raise ContainedStudyRunnerError("Study-egress execution requires a gateway image.")
 
 
 def run_contained_study_plan(
     options: ContainedStudyRunnerOptions,
     *,
     run_contained_command: RunContainedCommand = run_contained_agent_command,
+    run_study_egress_command: RunStudyEgressCommand = run_live_study_egress_trial,
 ) -> ContainedStudyRunnerResult:
     plan_path = options.plan_path.expanduser().resolve()
     output_dir = options.output_dir.expanduser().resolve()
+    _validate_execution_mode(options)
     plan = _load_plan(plan_path)
-    plan_digest = _validate_plan_contract(plan)
+    plan_digest = _validate_plan_contract(plan, execution_mode=options.execution_mode)
     profiles = _load_profiles(options.profile_paths)
     fixture_set = load_study_fixture_set(
         options.fixture_set_path or DEFAULT_STUDY_FIXTURE_MANIFEST
     )
-    _verify_profile_identities(plan, profiles)
+    _verify_profile_identities(plan, profiles, execution_mode=options.execution_mode)
     _verify_fixture_identities(plan, fixture_set)
 
     run_dir = output_dir / plan_digest
@@ -108,6 +139,7 @@ def run_contained_study_plan(
             profile_paths=options.profile_paths,
             fixture_set=fixture_set,
             resume=options.resume,
+            execution_mode=options.execution_mode,
         )
         _write_state(state_path, state)
         stop_reason = None
@@ -139,7 +171,11 @@ def run_contained_study_plan(
                     profiles=profiles,
                     fixture_set=fixture_set,
                     platform=options.platform,
+                    execution_mode=options.execution_mode,
+                    egress_policy=options.egress_policy,
+                    gateway_image=options.gateway_image,
                     run_contained_command=run_contained_command,
+                    run_study_egress_command=run_study_egress_command,
                 )
             except ContainedStudyRunnerError as error:
                 current.update(
@@ -191,7 +227,7 @@ def validate_contained_study_plan_for_execution(
     fixture_set_path: Optional[Path] = None,
 ) -> dict[str, object]:
     plan = _load_plan(plan_path.expanduser().resolve())
-    digest = _validate_plan_contract(plan)
+    digest = _validate_plan_contract(plan, execution_mode="contained-run")
     profiles = _load_profiles(profile_paths)
     fixture_set = load_study_fixture_set(fixture_set_path or DEFAULT_STUDY_FIXTURE_MANIFEST)
     _verify_profile_identities(plan, profiles)
@@ -217,7 +253,11 @@ def _load_plan(path: Path) -> dict[str, object]:
     return data
 
 
-def _validate_plan_contract(plan: dict[str, object]) -> str:
+def _validate_plan_contract(
+    plan: dict[str, object],
+    *,
+    execution_mode: str = "contained-run",
+) -> str:
     _reject_unknown_keys(
         plan,
         {
@@ -271,13 +311,17 @@ def _validate_plan_contract(plan: dict[str, object]) -> str:
     repetitions = _positive_int(plan.get("trial_repetitions_per_unit"), "trial_repetitions_per_unit")
     if repetitions > 100:
         raise ContainedStudyRunnerError("Contained study trial repetition bound exceeded.")
-    _validate_plan_profiles(profiles)
+    _validate_plan_profiles(profiles, execution_mode=execution_mode)
     _validate_plan_fixtures(fixtures)
     _validate_plan_trials(trials, profiles, fixtures)
     return plan_digest
 
 
-def _validate_plan_profiles(profiles: list[object]) -> None:
+def _validate_plan_profiles(
+    profiles: list[object],
+    *,
+    execution_mode: str,
+) -> None:
     seen: set[str] = set()
     for index, raw in enumerate(profiles):
         profile = _mapping(raw, f"profiles[{index}]")
@@ -307,7 +351,16 @@ def _validate_plan_profiles(profiles: list[object]) -> None:
         validate_docker_image_reference(image)
         if "@sha256:" not in image:
             raise ContainedStudyRunnerError("Contained study profile image is mutable.")
-        if profile.get("network") != "none":
+        expected_network = (
+            LIVE_STUDY_EGRESS_NETWORK_MODE
+            if execution_mode == LIVE_STUDY_EGRESS_EXECUTION_MODE
+            else "none"
+        )
+        if profile.get("network") != expected_network:
+            if execution_mode == LIVE_STUDY_EGRESS_EXECUTION_MODE:
+                raise ContainedStudyRunnerError(
+                    "Study-egress execution requires the controlled egress gateway network mode."
+                )
             raise ContainedStudyRunnerError("Contained study execution requires network: none.")
         environment = _mapping(profile.get("environment"), f"profiles[{index}].environment")
         _reject_unknown_keys(
@@ -483,6 +536,8 @@ def _load_profiles(paths: list[Path]) -> dict[str, ContainedAgentProfile]:
 def _verify_profile_identities(
     plan: dict[str, object],
     profiles: dict[str, ContainedAgentProfile],
+    *,
+    execution_mode: str = "contained-run",
 ) -> None:
     plan_profiles = _ordered_profiles(plan)
     if set(profiles) != {_string(profile.get("id"), "profile.id") for profile in plan_profiles}:
@@ -493,7 +548,12 @@ def _verify_profile_identities(
         diagnostics = contained_agent_profile_diagnostics(profile)
         if plan_profile.get("image") != profile.image:
             raise ContainedStudyRunnerError(f"Profile {profile_id} image identity mismatch.")
-        if plan_profile.get("network") != profile.network or profile.network != "none":
+        expected_network = (
+            LIVE_STUDY_EGRESS_NETWORK_MODE
+            if execution_mode == LIVE_STUDY_EGRESS_EXECUTION_MODE
+            else "none"
+        )
+        if plan_profile.get("network") != profile.network or profile.network != expected_network:
             raise ContainedStudyRunnerError(f"Profile {profile_id} network identity mismatch.")
         if plan_profile.get("profile_manifest_sha256") != _stable_sha256(
             contained_agent_profile_to_dict(profile)
@@ -554,7 +614,11 @@ def _execute_trial(
     profiles: dict[str, ContainedAgentProfile],
     fixture_set: StudyFixtureSet,
     platform: str,
+    execution_mode: str,
+    egress_policy: Optional[LiveStudyEgressPolicy],
+    gateway_image: Optional[str],
     run_contained_command: RunContainedCommand,
+    run_study_egress_command: RunStudyEgressCommand,
 ) -> dict[str, object]:
     trial_id = _string(trial.get("trial_id"), "trial_id")
     profile_id = _string(trial.get("profile_id"), "profile_id")
@@ -574,6 +638,23 @@ def _execute_trial(
     materialize_study_fixture(fixture, workspace)
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(prompt_path, fixture.prompt.text + "\n")
+    if execution_mode == LIVE_STUDY_EGRESS_EXECUTION_MODE:
+        return _execute_study_egress_trial(
+            run_dir=run_dir,
+            plan=plan,
+            trial=trial,
+            profile=profile,
+            fixture=fixture,
+            plan_profile=plan_profile,
+            plan_fixture=plan_fixture,
+            workspace=workspace,
+            evidence_dir=evidence_dir,
+            prompt_path=prompt_path,
+            platform=platform,
+            egress_policy=egress_policy,
+            gateway_image=gateway_image,
+            run_study_egress_command=run_study_egress_command,
+        )
     config = _contained_config_for_trial(
         profile=profile,
         fixture=fixture,
@@ -655,6 +736,106 @@ def _contained_config_for_trial(
             "tmpfs_size": "64m",
             "environment": [],
         },
+    }
+
+
+def _execute_study_egress_trial(
+    *,
+    run_dir: Path,
+    plan: dict[str, object],
+    trial: dict[str, object],
+    profile: ContainedAgentProfile,
+    fixture: StudyFixture,
+    plan_profile: dict[str, object],
+    plan_fixture: dict[str, object],
+    workspace: Path,
+    evidence_dir: Path,
+    prompt_path: Path,
+    platform: str,
+    egress_policy: Optional[LiveStudyEgressPolicy],
+    gateway_image: Optional[str],
+    run_study_egress_command: RunStudyEgressCommand,
+) -> dict[str, object]:
+    if egress_policy is None or gateway_image is None:
+        raise ContainedStudyRunnerError(
+            "Study-egress execution requires an egress policy and gateway image."
+        )
+    request = LiveStudyEgressTrialRequest(
+        plan_digest=_string(plan.get("plan_digest"), "plan_digest"),
+        profile_hash=_string(plan_profile.get("profile_manifest_sha256"), "profile_hash"),
+        fixture_hash=_string(plan_fixture.get("fixture_hash"), "fixture_hash"),
+        trial_id=_string(trial.get("trial_id"), "trial_id"),
+        profile_id=profile.id,
+        fixture_id=fixture.id,
+        workspace=workspace,
+        evidence_dir=evidence_dir,
+        prompt_path=prompt_path,
+        agent_image=profile.image,
+        agent_command=list(profile.argv),
+        policy=egress_policy,
+        gateway_image=gateway_image,
+        platform=platform,
+    )
+    result = run_study_egress_command(request)
+    status = _study_egress_status(result.status)
+    outcome = _string(result.outcome, "study_egress.outcome")
+    completion = result.manifest.get("completion") if isinstance(result.manifest, dict) else None
+    success_eligible = (
+        isinstance(completion, dict)
+        and completion.get("success_eligible") is True
+        and completion.get("status") == "complete"
+    )
+    if status == "completed" and not success_eligible:
+        status = "incomplete"
+        outcome = "egress_evidence_incomplete"
+    result_path = evidence_dir / "live-study-trial-result.json"
+    trial_result = {
+        "schema": CONTAINED_STUDY_TRIAL_RESULT_SCHEMA,
+        "schema_version": CONTAINED_STUDY_TRIAL_RESULT_SCHEMA_VERSION,
+        "plan_digest": plan["plan_digest"],
+        "profile": {
+            "id": plan_profile["id"],
+            "hash": plan_profile["profile_manifest_sha256"],
+            "image": plan_profile["image"],
+        },
+        "fixture": {
+            "id": plan_fixture["id"],
+            "hash": plan_fixture["fixture_hash"],
+            "prompt_sha256": plan_fixture["prompt_sha256"],
+            "task_id": plan_fixture["task_id"],
+        },
+        "trial": {
+            "artifact_alias": trial["artifact_alias"],
+            "id": trial["trial_id"],
+            "index": trial["trial_index"],
+        },
+        "study_egress": {
+            "execution_boundary": LIVE_STUDY_EGRESS_EXECUTION_MODE,
+            "gateway_image": gateway_image,
+            "manifest_alias": _portable_under(evidence_dir, result.manifest_path),
+            "outcome": outcome,
+            "status": status,
+        },
+        "evidence": {
+            "egress_manifest_alias": _portable_under(evidence_dir, result.manifest_path),
+            "prompt_alias": prompt_path.name,
+            "workspace_alias": workspace.name,
+        },
+    }
+    atomic_write_json(result_path, trial_result, sort_keys=True)
+    state_update = {
+        "artifact_alias": trial["artifact_alias"],
+        "completed_at": _stable_timestamp(),
+        "egress_manifest": _portable_under(run_dir, result.manifest_path),
+        "outcome": outcome,
+        "result_path": _portable_under(run_dir, result_path),
+        "status": status,
+    }
+    if result.message:
+        state_update["message"] = _sanitize(result.message)
+    return {
+        "state_update": state_update,
+        "stop_condition": result.stop_condition,
     }
 
 
@@ -749,6 +930,13 @@ def _classify_contained_result(result: ContainedRunResult) -> tuple[str, str, Op
     return "failed", "agent_or_check_failure", None
 
 
+def _study_egress_status(value: object) -> str:
+    status = _string(value, "study_egress.status")
+    if status not in {"completed", "failed", "incomplete"}:
+        raise ContainedStudyRunnerError("Study-egress trial returned an invalid status.")
+    return status
+
+
 def _load_or_initialize_state(
     state_path: Path,
     *,
@@ -757,6 +945,7 @@ def _load_or_initialize_state(
     profile_paths: list[Path],
     fixture_set: StudyFixtureSet,
     resume: bool,
+    execution_mode: str = "contained-run",
 ) -> dict[str, Any]:
     if state_path.exists():
         if not resume:
@@ -764,10 +953,20 @@ def _load_or_initialize_state(
                 "Contained study run state already exists; use resume to continue."
             )
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        _validate_state_for_resume(state, plan)
+        _validate_state_for_resume(state, plan, execution_mode=execution_mode)
         return state
     if resume:
         raise ContainedStudyRunnerError("Cannot resume; contained study run state is missing.")
+    network = (
+        LIVE_STUDY_EGRESS_NETWORK_MODE
+        if execution_mode == LIVE_STUDY_EGRESS_EXECUTION_MODE
+        else "none"
+    )
+    boundary = (
+        LIVE_STUDY_EGRESS_EXECUTION_MODE
+        if execution_mode == LIVE_STUDY_EGRESS_EXECUTION_MODE
+        else "contained-run"
+    )
     trials = {}
     for trial in _ordered_trials(plan):
         trial_id = _string(trial.get("trial_id"), "trial_id")
@@ -791,8 +990,8 @@ def _load_or_initialize_state(
             for path in profile_paths
         },
         "fixture_set_sha256": sha256_file(fixture_set.path),
-        "execution_boundary": "contained-run",
-        "network": "none",
+        "execution_boundary": boundary,
+        "network": network,
         "values_recorded": False,
         "trials": trials,
         "summary": {
@@ -806,13 +1005,32 @@ def _load_or_initialize_state(
     }
 
 
-def _validate_state_for_resume(state: dict[str, object], plan: dict[str, object]) -> None:
+def _validate_state_for_resume(
+    state: dict[str, object],
+    plan: dict[str, object],
+    *,
+    execution_mode: str = "contained-run",
+) -> None:
     if state.get("schema") != CONTAINED_STUDY_RUN_STATE_SCHEMA:
         raise ContainedStudyRunnerError("Contained study run state schema mismatch.")
     if state.get("schema_version") != CONTAINED_STUDY_RUN_STATE_SCHEMA_VERSION:
         raise ContainedStudyRunnerError("Contained study run state version mismatch.")
     if state.get("plan_digest") != plan.get("plan_digest"):
         raise ContainedStudyRunnerError("Contained study run state plan digest mismatch.")
+    expected_boundary = (
+        LIVE_STUDY_EGRESS_EXECUTION_MODE
+        if execution_mode == LIVE_STUDY_EGRESS_EXECUTION_MODE
+        else "contained-run"
+    )
+    expected_network = (
+        LIVE_STUDY_EGRESS_NETWORK_MODE
+        if execution_mode == LIVE_STUDY_EGRESS_EXECUTION_MODE
+        else "none"
+    )
+    if state.get("execution_boundary") != expected_boundary:
+        raise ContainedStudyRunnerError("Contained study run state boundary mismatch.")
+    if state.get("network") != expected_network:
+        raise ContainedStudyRunnerError("Contained study run state network mismatch.")
     state_trials = _mapping(state.get("trials"), "state.trials")
     plan_trial_ids = {_string(trial.get("trial_id"), "trial_id") for trial in _ordered_trials(plan)}
     if set(state_trials) != plan_trial_ids:

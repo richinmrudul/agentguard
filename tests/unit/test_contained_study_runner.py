@@ -20,6 +20,21 @@ from agentguard.evaluation.study_plan import (
     build_contained_study_plan,
     serialize_contained_study_plan,
 )
+from agentguard.evaluation.contained_profile import (
+    contained_agent_profile_to_dict,
+    load_contained_agent_profile,
+)
+from agentguard.evaluation.live_egress_contract import (
+    LIVE_STUDY_EGRESS_EXECUTION_MODE,
+    LIVE_STUDY_EGRESS_NETWORK_MODE,
+)
+from agentguard.evaluation.live_egress_gateway import (
+    EgressDestinationRule,
+    LiveStudyEgressPolicy,
+    LiveStudyEgressTrialResult,
+    build_live_study_egress_manifest,
+    evaluate_live_study_egress_destination,
+)
 from agentguard.evaluation.study_runner import (
     ContainedStudyRunnerError,
     ContainedStudyRunnerOptions,
@@ -30,6 +45,16 @@ from agentguard.sandbox.docker_preflight import DockerPreflightResult, DockerPre
 
 
 IMAGE = "ghcr.io/example/offline-agent@sha256:" + "c" * 64
+GATEWAY_IMAGE = "ghcr.io/example/study-egress-gateway@sha256:" + "d" * 64
+GATEWAY_IDENTITY = {
+    "configured_reference": GATEWAY_IMAGE,
+    "local_image_id": "sha256:" + "e" * 64,
+    "executed_image_id": "sha256:" + "e" * 64,
+    "registry_digest": GATEWAY_IMAGE,
+    "platform": "linux/amd64",
+    "pull_policy": "docker-default",
+    "cache_status": "present",
+}
 runner = CliRunner()
 
 
@@ -93,6 +118,42 @@ def _digest(data: dict[str, object]) -> str:
     return __import__("hashlib").sha256(
         json.dumps(cloned, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
     ).hexdigest()
+
+
+def _live_plan_file(tmp_path: Path, profile: Path, *, trials: int = 1) -> Path:
+    plan_path = _plan_file(tmp_path, profile, approvals=[], trials=trials)
+    profile_data = yaml.safe_load(profile.read_text(encoding="utf-8"))
+    profile_data["network"] = LIVE_STUDY_EGRESS_NETWORK_MODE
+    profile.write_text(yaml.safe_dump(profile_data, sort_keys=False), encoding="utf-8")
+    data = json.loads(plan_path.read_text(encoding="utf-8"))
+    live_profile = load_contained_agent_profile(profile)
+    data["profiles"][0]["network"] = LIVE_STUDY_EGRESS_NETWORK_MODE
+    data["profiles"][0]["profile_manifest_sha256"] = _digest_profile(live_profile)
+    data["plan_digest"] = _digest(data)
+    plan_path.write_text(
+        json.dumps(data, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return plan_path
+
+
+def _digest_profile(profile) -> str:
+    return __import__("hashlib").sha256(
+        json.dumps(
+            contained_agent_profile_to_dict(profile),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _egress_policy() -> LiveStudyEgressPolicy:
+    return LiveStudyEgressPolicy(
+        destinations=(
+            EgressDestinationRule("mock-approved.test", 443, test_only=True),
+        )
+    )
 
 
 def _fake_result(tmp_path: Path, *, cleanup: bool = True, result: str = "PASS") -> ContainedRunResult:
@@ -181,6 +242,121 @@ def test_valid_plan_validation_summary_is_sanitized(tmp_path: Path) -> None:
         "trials": 1,
     }
     assert str(tmp_path) not in json.dumps(summary, sort_keys=True)
+
+
+def test_study_egress_mode_requires_explicit_options_and_records_live_boundary(
+    tmp_path: Path,
+) -> None:
+    profile = _write_profile(tmp_path)
+    plan = _live_plan_file(tmp_path, profile)
+    calls = []
+
+    def fake_egress(request):
+        calls.append(request)
+        event = evaluate_live_study_egress_destination(
+            request.policy,
+            host="mock-approved.test",
+            port=443,
+            protocol="https",
+            resolved_addresses=["203.0.113.10"],
+        )
+        manifest = build_live_study_egress_manifest(
+            plan_digest=request.plan_digest,
+            profile_hash=request.profile_hash,
+            fixture_hash=request.fixture_hash,
+            trial_id=request.trial_id,
+            policy=request.policy,
+            gateway_image=GATEWAY_IDENTITY,
+            approved_host="mock-approved.test",
+            approved_port=443,
+            events=[event],
+            gateway_status={"status": "running", "evidence_complete": True},
+            cleanup_status={"overall_complete": True},
+            liveness_status={"verified": True},
+        )
+        manifest_path = request.evidence_dir / "live-study-egress-manifest.json"
+        manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+        return LiveStudyEgressTrialResult(
+            manifest=manifest,
+            manifest_path=manifest_path,
+            status="completed",
+            outcome="completed",
+        )
+
+    result = run_contained_study_plan(
+        ContainedStudyRunnerOptions(
+            plan,
+            [profile],
+            output_dir=tmp_path / "runs",
+            execution_mode=LIVE_STUDY_EGRESS_EXECUTION_MODE,
+            egress_policy=_egress_policy(),
+            gateway_image=GATEWAY_IMAGE,
+        ),
+        run_contained_command=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("contained-run executed")),
+        run_study_egress_command=fake_egress,
+    )
+
+    assert len(calls) == 1
+    assert result.completed == 1
+    state = json.loads(result.state_path.read_text(encoding="utf-8"))
+    assert state["execution_boundary"] == LIVE_STUDY_EGRESS_EXECUTION_MODE
+    assert state["network"] == LIVE_STUDY_EGRESS_NETWORK_MODE
+    trial_state = next(iter(state["trials"].values()))
+    assert trial_state["egress_manifest"].endswith("live-study-egress-manifest.json")
+
+
+def test_study_egress_gateway_failure_stops_later_trials(tmp_path: Path) -> None:
+    profile = _write_profile(tmp_path)
+    plan = _live_plan_file(tmp_path, profile, trials=2)
+    calls = 0
+
+    def fake_crash(request):
+        nonlocal calls
+        calls += 1
+        manifest = build_live_study_egress_manifest(
+            plan_digest=request.plan_digest,
+            profile_hash=request.profile_hash,
+            fixture_hash=request.fixture_hash,
+            trial_id=request.trial_id,
+            policy=request.policy,
+            gateway_image=GATEWAY_IDENTITY,
+            approved_host=None,
+            approved_port=None,
+            events=[],
+            gateway_status={
+                "status": "running",
+                "crashed": True,
+                "evidence_complete": True,
+            },
+            cleanup_status={"overall_complete": True},
+            liveness_status={"verified": True},
+        )
+        manifest_path = request.evidence_dir / "live-study-egress-manifest.json"
+        manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+        return LiveStudyEgressTrialResult(
+            manifest=manifest,
+            manifest_path=manifest_path,
+            status="failed",
+            outcome="gateway_crash",
+            stop_condition="gateway failure",
+        )
+
+    result = run_contained_study_plan(
+        ContainedStudyRunnerOptions(
+            plan,
+            [profile],
+            output_dir=tmp_path / "runs",
+            execution_mode=LIVE_STUDY_EGRESS_EXECUTION_MODE,
+            egress_policy=_egress_policy(),
+            gateway_image=GATEWAY_IMAGE,
+        ),
+        run_study_egress_command=fake_crash,
+    )
+
+    assert calls == 1
+    assert result.failed == 1
+    assert result.not_executed == 1
+    assert result.stop_reason == "gateway failure"
 
 
 def test_python_fixture_checks_use_source_layout_path(tmp_path: Path) -> None:

@@ -17,6 +17,7 @@ from agentguard.config.loader import (
     _contained_pids_limit,
 )
 from agentguard.config.yaml import load_yaml, reject_unknown_keys
+from agentguard.evaluation.live_egress_contract import LIVE_STUDY_EGRESS_NETWORK_MODE
 from agentguard.redaction import SECRET_KEY_PATTERN
 
 
@@ -31,7 +32,7 @@ MAX_PROFILE_METADATA_ITEMS = 32
 MAX_PROFILE_TIMEOUT_SECONDS = 86400
 MIN_PROFILE_OUTPUT_BYTES = 1024
 MAX_PROFILE_OUTPUT_BYTES = 50 * 1024 * 1024
-VALID_PROFILE_NETWORKS = {"bridge", "none"}
+VALID_PROFILE_NETWORKS = {"bridge", "none", LIVE_STUDY_EGRESS_NETWORK_MODE}
 PROFILE_UNSAFE_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 PROFILE_CAPABILITY = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 PROFILE_SECRET_VALUE = re.compile(

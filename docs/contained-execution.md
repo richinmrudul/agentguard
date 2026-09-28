@@ -94,7 +94,10 @@ tag alone is not enough for a contained-execution claim.
 
 ## Live-Study Egress Contract
 
-The v0.5 live-study egress contract is a design boundary only. It authorizes no
+The v0.5 live-study egress contract is an experimental evaluation boundary
+only. AgentGuard's `study-egress` helpers are separate from ordinary
+`contained-run`: they validate exact destination policy, canonical sanitized
+egress manifests, and safe gateway Docker argv plans. The boundary authorizes no
 provider-specific destination, no live provider call, no package registry, no
 update endpoint, no telemetry endpoint, and no arbitrary HTTPS destination.
 Docker remains application-level containment, not an absolute hostile-code
@@ -133,12 +136,14 @@ CDN-backed or shared-address services carry explicit limitations: approval of a
 hostname, certificate, or address does not by itself authorize unrelated
 tenants that share infrastructure.
 
-Network evidence must be bounded, sanitized, and tied to the trial. Each
-decision record includes the exact destination host, destination port, resolved
-address, allow/deny decision, byte counts, timestamps, trial ID, policy digest,
-and redirect destination when present. Evidence loss, ambiguous resolution, an
-unexpected destination, gateway failure, or cleanup failure stops the affected
-study scope rather than becoming a pass.
+Network evidence must be bounded, sanitized, canonical, and tied to the trial.
+Each manifest records schema/version, plan digest, profile hash, fixture hash,
+trial ID, egress policy digest, gateway image identity, exact destination host,
+destination port, bounded resolved addresses, allow/deny decision, byte counts,
+timestamps, redirect or new-destination decisions when present, and gateway,
+cleanup, and liveness status. Evidence loss, ambiguous resolution, truncated or
+contradictory gateway evidence, an unexpected destination, gateway failure, or
+cleanup failure stops the affected study scope rather than becoming a pass.
 
 The gateway image must be digest-pinned and separately owned from the agent
 image. The gateway runs non-root with Linux capabilities dropped,
