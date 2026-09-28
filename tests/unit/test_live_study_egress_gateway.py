@@ -1,4 +1,5 @@
 import json
+import stat
 import subprocess
 from pathlib import Path
 
@@ -591,6 +592,83 @@ def test_run_live_study_egress_trial_uses_gateway_evidence_and_fails_when_incomp
     failed = run_live_study_egress_trial(request)
     assert failed.status in {"failed", "incomplete"}
     assert failed.stop_condition
+
+
+def test_run_live_study_egress_trial_prepares_evidence_dir_for_gateway_uid(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    evidence_dir = tmp_path / "evidence"
+    workspace.mkdir()
+    evidence_dir.mkdir(mode=0o700)
+
+    def fake_identity(image, *, allow_local_image_id=False):
+        return GATEWAY_IDENTITY
+
+    def fake_plan(*args, **kwargs):
+        return build_live_study_egress_docker_plan(
+            trial_id="trial-0123456789abcdef01234567",
+            agent_image=IMAGE,
+            gateway_image=GATEWAY_IMAGE,
+            workspace_host_path=workspace,
+            agent_command=["agent"],
+            gateway_command=["gateway"],
+            uid=1000,
+            gid=1000,
+            run_token="fedcba654321",
+        )
+
+    def fake_run(plan, *, command_runner=None, timeout_seconds=30):
+        prepared_mode = stat.S_IMODE(evidence_dir.stat().st_mode)
+        assert prepared_mode & 0o033 == 0o033
+        (evidence_dir / "gateway-evidence.json").write_text(
+            json.dumps(
+                {
+                    "events": [
+                        evaluate_live_study_egress_destination(
+                            _policy(),
+                            host="mock-approved.test",
+                            port=443,
+                            protocol="https",
+                            resolved_addresses=["203.0.113.10"],
+                        )
+                    ],
+                    "gateway_status": {"status": "running", "evidence_complete": True},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "status": "completed",
+            "gateway_liveness_verified": True,
+            "cleanup": {"overall_complete": True, "liveness_verified": True},
+        }
+
+    monkeypatch.setattr(gateway, "inspect_docker_image_identity", fake_identity)
+    monkeypatch.setattr(gateway, "build_live_study_egress_docker_plan", fake_plan)
+    monkeypatch.setattr(gateway, "run_live_study_egress_docker_plan", fake_run)
+
+    result = run_live_study_egress_trial(
+        LiveStudyEgressTrialRequest(
+            plan_digest=PLAN_DIGEST,
+            profile_hash=PROFILE_HASH,
+            fixture_hash=FIXTURE_HASH,
+            trial_id="trial-0123456789abcdef01234567",
+            profile_id="profile",
+            fixture_id="fixture",
+            workspace=workspace,
+            evidence_dir=evidence_dir,
+            prompt_path=evidence_dir / "prompt.txt",
+            agent_image=IMAGE,
+            agent_command=["agent"],
+            policy=_policy(),
+            gateway_image=GATEWAY_IMAGE,
+            platform="linux-docker-engine",
+        )
+    )
+
+    assert result.status == "completed"
 
 
 def test_fail_closed_private_bounds_and_sanitizers_cover_edge_cases(tmp_path: Path) -> None:

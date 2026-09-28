@@ -202,6 +202,7 @@ def run_live_study_egress_trial(
     )
     manifest_path = request.evidence_dir / "live-study-egress-manifest.json"
     request.evidence_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_gateway_evidence_dir(request.evidence_dir)
     policy_path = request.evidence_dir / "live-study-egress-policy.json"
     policy_path.write_text(
         json.dumps(
@@ -301,6 +302,16 @@ def run_live_study_egress_trial(
         stop_condition=str(completion.get("reason") or "gateway evidence incomplete"),
         message=str(completion.get("reason") or "Live study-egress gateway evidence is incomplete."),
     )
+
+
+def _prepare_gateway_evidence_dir(path: Path) -> None:
+    try:
+        current_mode = path.stat().st_mode
+        path.chmod(current_mode | 0o033)
+    except OSError as error:
+        raise LiveStudyEgressError(
+            "Live-study egress evidence directory must be writable by the gateway."
+        ) from error
 
 
 def live_study_egress_policy_from_dict(data: object) -> LiveStudyEgressPolicy:

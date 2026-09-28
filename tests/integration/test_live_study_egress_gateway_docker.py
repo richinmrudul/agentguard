@@ -254,7 +254,7 @@ def test_live_study_egress_gateway_executes_local_mock_success_bypass_crash_and_
         )
     )
 
-    assert result.status == "completed"
+    assert result.status == "completed", json.dumps(result.manifest, sort_keys=True)
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["completion"]["success_eligible"] is True
     assert manifest["gateway_status"]["evidence_complete"] is True
