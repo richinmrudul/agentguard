@@ -804,11 +804,9 @@ def _as_dict(value: object, label: str) -> dict[str, object]:
 
 
 def _reject_unknown(value: dict[str, object], allowed: set[str], label: str) -> None:
-    unknown = sorted(set(value) - allowed)
-    if unknown:
+    if set(value) - allowed:
         raise LiveStudyAuthorizationError(
-            f"Live-study authorization {label} contains unknown field(s): "
-            + ", ".join(unknown)
+            f"Live-study authorization {label} contains unknown field(s)."
         )
 
 

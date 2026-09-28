@@ -171,6 +171,19 @@ def test_authorization_rejects_non_object_and_invalid_schema() -> None:
         parse_live_study_authorization(artifact)
 
 
+def test_authorization_unknown_field_diagnostic_is_sanitized() -> None:
+    artifact = _artifact()
+    artifact["sk-hostile\nfield"] = True
+
+    with pytest.raises(LiveStudyAuthorizationError) as error:
+        parse_live_study_authorization(artifact)
+
+    message = str(error.value)
+    assert "unknown field(s)" in message
+    assert "sk-hostile" not in message
+    assert "\n" not in message
+
+
 def test_authorization_loader_rejects_unavailable_oversized_and_malformed_files(
     tmp_path: Path,
 ) -> None:
