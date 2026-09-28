@@ -23,6 +23,7 @@ from agentguard.evaluation.live_study_authorization import (
     LiveStudyLocalRehearsalResult,
     canonical_live_study_authorization,
     commit_live_study_authorization_use,
+    invalidate_live_study_authorization,
     live_study_authorization_digest,
     live_study_authorization_status,
     load_live_study_authorization,
@@ -160,6 +161,93 @@ def test_authorization_rejects_malformed_or_unsafe_artifacts(mutation, message) 
         parse_live_study_authorization(artifact)
 
 
+def test_authorization_rejects_non_object_and_invalid_schema() -> None:
+    with pytest.raises(LiveStudyAuthorizationError, match="must be an object"):
+        parse_live_study_authorization([])
+
+    artifact = _artifact()
+    artifact["schema"] = "wrong"
+    with pytest.raises(LiveStudyAuthorizationError, match="Invalid"):
+        parse_live_study_authorization(artifact)
+
+
+def test_authorization_loader_rejects_unavailable_oversized_and_malformed_files(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(LiveStudyAuthorizationError, match="unavailable"):
+        load_live_study_authorization(tmp_path / "missing.json")
+
+    oversized = tmp_path / "oversized.json"
+    oversized.write_text("x" * (64 * 1024 + 1), encoding="utf-8")
+    with pytest.raises(LiveStudyAuthorizationError, match="size bound"):
+        load_live_study_authorization(oversized)
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text("{not-json", encoding="utf-8")
+    with pytest.raises(LiveStudyAuthorizationError, match="malformed JSON"):
+        load_live_study_authorization(malformed)
+
+
+@pytest.mark.parametrize(
+    "mutation, message",
+    [
+        ({"not_before": _timestamp(3600), "expires_at": _timestamp(7200)}, "not yet valid"),
+        (
+            {
+                "expires_at": "2099-01-01T00:00:00Z",
+                "issued_at": "2098-01-01T00:00:02Z",
+                "not_before": "2098-01-01T00:00:01Z",
+            },
+            "timestamp order",
+        ),
+        ({"expires_at": _timestamp(8 * 24 * 60 * 60)}, "lifetime"),
+        ({"max_trial_count": 2}, "trial count"),
+        ({"fixtures": [_artifact()["fixtures"][0], _artifact()["fixtures"][0]]}, "Duplicate"),
+        ({"destinations": [{"host": "mock-approved.test", "port": 443}, {"host": "mock-approved.test", "port": 443}]}, "Duplicate"),
+        ({"trials": [TRIAL_ID, TRIAL_ID]}, "Duplicate"),
+        ({"credential_env_names": ["AGENTGUARD_FAKE_API_KEY", "AGENTGUARD_FAKE_API_KEY"]}, "Duplicate"),
+        ({"evidence_bounds": {}}, "empty"),
+        ({"evidence_bounds": {"bad": object()}}, "unsupported"),
+        ({"limits": {**_artifact()["limits"], "max_turns": 0}}, "out of bounds"),
+        ({"limits": {**_artifact()["limits"], "total_cost_usd": -1.0}}, "out of bounds"),
+        ({"authorization_id": "bad id"}, "invalid"),
+        ({"plan_digest": "not-a-sha"}, "sha256"),
+        ({"issuer": "bad\nissuer"}, "control characters"),
+        ({"issued_at": "2098-99-99T00:00:00Z"}, "timestamp is invalid"),
+        ({"issued_at": "2098-01-01T00:00:00+00:00"}, "must be UTC"),
+        ({"images": {"agent": AGENT_IMAGE, "gateway": "example.com/gateway:latest"}}, "immutable"),
+        ({"evidence_bounds": {"too_big": 1_000_000_001}}, "out of bounds"),
+        ({"evidence_bounds": {"bad_float": 1_000_001.0}}, "out of bounds"),
+        ({"limits": {**_artifact()["limits"], "total_input_tokens": -1}}, "out of bounds"),
+        ({"credential_env_names": "AGENTGUARD_FAKE_API_KEY"}, "bound"),
+        ({"profile": []}, "must be an object"),
+        ({"issuer": ""}, "bounded"),
+        ({"unknown": True}, "unknown field"),
+    ],
+)
+def test_authorization_rejects_conflicts_bounds_and_hostile_shapes(
+    mutation,
+    message,
+) -> None:
+    artifact = _artifact()
+    artifact.update(mutation)
+    with pytest.raises(LiveStudyAuthorizationError, match=message):
+        parse_live_study_authorization(artifact)
+
+
+def test_authorization_accepts_small_primitive_bounds() -> None:
+    artifact = _artifact()
+    artifact["evidence_bounds"] = {"flag": True, "name": "bound", "ratio": 1.25}
+
+    parsed = parse_live_study_authorization(artifact)
+
+    assert parsed["evidence_bounds"] == {
+        "flag": True,
+        "name": "bound",
+        "ratio": 1.25,
+    }
+
+
 def test_credentials_resolve_only_by_authorized_names() -> None:
     auth = LiveStudyAuthorization(
         data=parse_live_study_authorization(_artifact()),
@@ -192,6 +280,49 @@ def test_credentials_resolve_only_by_authorized_names() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"protocol_version": "wrong"}, "protocol"),
+        ({"plan_digest": "9" * 64}, "plan"),
+        ({"profile_id": "other"}, "profile"),
+        ({"profile_hash": "9" * 64}, "profile"),
+        ({"fixture_id": "other"}, "fixture"),
+        ({"fixture_hash": "9" * 64}, "fixture"),
+        ({"task_id": "other"}, "fixture"),
+        ({"trial_id": "trial-deadbeefdeadbeefdeadbeef"}, "trial"),
+        ({"agent_image": "example.com/other@sha256:" + "a" * 64}, "image"),
+        ({"gateway_image": "example.com/other@sha256:" + "b" * 64}, "image"),
+        ({"egress_policy_digest": "9" * 64}, "egress"),
+        ({"destinations": [{"host": "other.test", "port": 443}]}, "destination"),
+        ({"credential_env_names": ["OTHER_KEY"]}, "credential"),
+    ],
+)
+def test_authorization_scope_rejects_every_changed_binding(kwargs, message) -> None:
+    auth = LiveStudyAuthorization(
+        data=parse_live_study_authorization(_artifact()),
+        digest=live_study_authorization_digest(_artifact()),
+    )
+    base = {
+        "protocol_version": "v0.5-preregistered-contained-study",
+        "plan_digest": PLAN_DIGEST,
+        "profile_id": "profile",
+        "profile_hash": PROFILE_HASH,
+        "fixture_id": "fixture",
+        "fixture_hash": FIXTURE_HASH,
+        "task_id": "task",
+        "trial_id": TRIAL_ID,
+        "agent_image": AGENT_IMAGE,
+        "gateway_image": GATEWAY_IMAGE,
+        "egress_policy_digest": POLICY_DIGEST,
+        "destinations": [{"host": "mock-approved.test", "port": 443}],
+        "credential_env_names": ["AGENTGUARD_FAKE_API_KEY"],
+    }
+    base.update(kwargs)
+    with pytest.raises(LiveStudyAuthorizationError, match=message):
+        validate_live_study_authorization_scope(auth, **base)
+
+
 def test_atomic_use_commit_duplicate_and_status(tmp_path: Path) -> None:
     auth = LiveStudyAuthorization(
         data=parse_live_study_authorization(_artifact()),
@@ -221,6 +352,110 @@ def test_atomic_use_commit_duplicate_and_status(tmp_path: Path) -> None:
     status = live_study_authorization_status(ledger, auth)
     assert status["recorded_uses"] == 1
     assert status["real_live_execution"] == "unapproved"
+
+
+def test_atomic_use_rejects_commit_without_reserve_and_invalidated_reuse(
+    tmp_path: Path,
+) -> None:
+    auth = LiveStudyAuthorization(
+        data=parse_live_study_authorization(_artifact()),
+        digest=live_study_authorization_digest(_artifact()),
+    )
+    ledger = tmp_path / "ledger.json"
+
+    with pytest.raises(LiveStudyAuthorizationError, match="not reserved"):
+        commit_live_study_authorization_use(
+            ledger,
+            auth,
+            plan_digest=PLAN_DIGEST,
+            trial_id=TRIAL_ID,
+        )
+
+    reserve_live_study_authorization_use(
+        ledger,
+        auth,
+        plan_digest=PLAN_DIGEST,
+        trial_id=TRIAL_ID,
+    )
+    invalidate_live_study_authorization(
+        ledger,
+        auth,
+        plan_digest=PLAN_DIGEST,
+        trial_id=TRIAL_ID,
+        reason="cleanup uncertainty",
+    )
+    with pytest.raises(LiveStudyAuthorizationError, match="invalidated"):
+        reserve_live_study_authorization_use(
+            ledger,
+            auth,
+            plan_digest=PLAN_DIGEST,
+            trial_id="trial-deadbeefdeadbeefdeadbeef",
+        )
+
+
+def test_atomic_use_rejects_lock_identity_plan_and_malformed_ledgers(
+    tmp_path: Path,
+) -> None:
+    auth = LiveStudyAuthorization(
+        data=parse_live_study_authorization(_artifact()),
+        digest=live_study_authorization_digest(_artifact()),
+    )
+    ledger = tmp_path / "ledger.json"
+    lock = ledger.with_suffix(".json.lock")
+    lock.write_text("other", encoding="utf-8")
+    with pytest.raises(LiveStudyAuthorizationError, match="already in use"):
+        reserve_live_study_authorization_use(
+            ledger,
+            auth,
+            plan_digest=PLAN_DIGEST,
+            trial_id=TRIAL_ID,
+        )
+    lock.unlink()
+
+    ledger.write_text("[1]\n", encoding="utf-8")
+    with pytest.raises(LiveStudyAuthorizationError, match="malformed"):
+        live_study_authorization_status(ledger, auth)
+
+    ledger.write_text("{not-json", encoding="utf-8")
+    with pytest.raises(LiveStudyAuthorizationError, match="unreadable"):
+        live_study_authorization_status(ledger, auth)
+
+    ledger.write_text(
+        json.dumps(
+            {
+                "authorization_id": "other",
+                "invalidated": False,
+                "uses": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(LiveStudyAuthorizationError, match="identity"):
+        reserve_live_study_authorization_use(
+            ledger,
+            auth,
+            plan_digest=PLAN_DIGEST,
+            trial_id=TRIAL_ID,
+        )
+
+    ledger.write_text(
+        json.dumps(
+            {
+                "authorization_id": "auth-issue-303",
+                "invalidated": False,
+                "plan_digest": "9" * 64,
+                "uses": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(LiveStudyAuthorizationError, match="plan"):
+        reserve_live_study_authorization_use(
+            ledger,
+            auth,
+            plan_digest=PLAN_DIGEST,
+            trial_id=TRIAL_ID,
+        )
 
 
 def test_local_rehearsal_runs_gateway_path_and_keeps_canary_out_of_evidence(
@@ -309,6 +544,59 @@ def test_local_rehearsal_runs_gateway_path_and_keeps_canary_out_of_evidence(
     assert result.gateway_canary_absent is True
     assert canary not in result.manifest_path.read_text(encoding="utf-8")
     assert canary not in result.ledger_path.read_text(encoding="utf-8")
+
+
+def test_local_rehearsal_invalidates_on_failure_and_rejects_invalid_result(
+    tmp_path: Path,
+) -> None:
+    auth = LiveStudyAuthorization(
+        data=parse_live_study_authorization(_rehearsal_artifact()),
+        digest=live_study_authorization_digest(_rehearsal_artifact()),
+    )
+
+    def bad_result(_request):
+        return {"status": "completed"}
+
+    with pytest.raises(LiveStudyAuthorizationError, match="invalid result"):
+        rehearse_live_study_authorization_locally(
+            auth,
+            ledger_path=tmp_path / "ledger.json",
+            workspace=tmp_path / "workspace",
+            evidence_dir=tmp_path / "evidence",
+            fake_environment={"AGENTGUARD_FAKE_API_KEY": "canary"},
+            run_trial=bad_result,
+        )
+    ledger_text = (tmp_path / "ledger.json").read_text(encoding="utf-8")
+    assert "invalidated" in ledger_text
+
+
+def test_local_rehearsal_rejects_canary_leaks(tmp_path: Path) -> None:
+    auth = LiveStudyAuthorization(
+        data=parse_live_study_authorization(_rehearsal_artifact()),
+        digest=live_study_authorization_digest(_rehearsal_artifact()),
+    )
+    canary = "AGENTGUARD_FAKE_CREDENTIAL_CANARY_LEAK"
+
+    def leaky_run(request):
+        request.evidence_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = request.evidence_dir / "live-study-egress-manifest.json"
+        manifest_path.write_text(canary, encoding="utf-8")
+        return LiveStudyEgressTrialResult(
+            manifest={},
+            manifest_path=manifest_path,
+            status="completed",
+            outcome="completed",
+        )
+
+    with pytest.raises(LiveStudyAuthorizationError, match="leaked"):
+        rehearse_live_study_authorization_locally(
+            auth,
+            ledger_path=tmp_path / "ledger.json",
+            workspace=tmp_path / "workspace",
+            evidence_dir=tmp_path / "evidence",
+            fake_environment={"AGENTGUARD_FAKE_API_KEY": canary},
+            run_trial=leaky_run,
+        )
 
 
 def test_cli_rehearsal_output_does_not_display_canary(
