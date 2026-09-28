@@ -83,6 +83,7 @@ class ContainedStudyRunnerOptions:
     gateway_image: Optional[str] = None
     authorization_path: Optional[Path] = None
     authorization_ledger_path: Optional[Path] = None
+    credential_environment: Optional[dict[str, str]] = None
 
 
 @dataclass(frozen=True)
@@ -205,6 +206,7 @@ def run_contained_study_plan(
                         options.authorization_ledger_path
                         or run_dir / "live-study-authorization-ledger.json"
                     ),
+                    credential_environment=dict(options.credential_environment or {}),
                     run_contained_command=run_contained_command,
                     run_study_egress_command=run_study_egress_command,
                 )
@@ -650,6 +652,7 @@ def _execute_trial(
     gateway_image: Optional[str],
     authorization: Optional[LiveStudyAuthorization],
     authorization_ledger_path: Path,
+    credential_environment: dict[str, str],
     run_contained_command: RunContainedCommand,
     run_study_egress_command: RunStudyEgressCommand,
 ) -> dict[str, object]:
@@ -688,6 +691,7 @@ def _execute_trial(
             gateway_image=gateway_image,
             authorization=authorization,
             authorization_ledger_path=authorization_ledger_path,
+            credential_environment=credential_environment,
             run_study_egress_command=run_study_egress_command,
         )
     config = _contained_config_for_trial(
@@ -791,6 +795,7 @@ def _execute_study_egress_trial(
     gateway_image: Optional[str],
     authorization: Optional[LiveStudyAuthorization],
     authorization_ledger_path: Path,
+    credential_environment: dict[str, str],
     run_study_egress_command: RunStudyEgressCommand,
 ) -> dict[str, object]:
     if egress_policy is None or gateway_image is None:
@@ -832,6 +837,7 @@ def _execute_study_egress_trial(
         return resolve_authorized_credentials(
             authorization,
             profile_required_env=credential_names,
+            environ=dict(credential_environment),
         )
     request = LiveStudyEgressTrialRequest(
         plan_digest=plan_digest,
@@ -845,6 +851,7 @@ def _execute_study_egress_trial(
         prompt_path=prompt_path,
         agent_image=profile.image,
         agent_command=list(profile.argv),
+        agent_environment_names=tuple(credential_names),
         agent_environment_resolver=credential_resolver,
         authorization_id=str(authorization.data["authorization_id"]),
         policy=egress_policy,

@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from agentguard.io import atomic_write_json
 
@@ -35,6 +35,18 @@ class LiveStudyAuthorizationError(ValueError):
 class LiveStudyAuthorization:
     data: dict[str, object]
     digest: str
+
+
+@dataclass(frozen=True)
+class LiveStudyLocalRehearsalResult:
+    status: str
+    authorization_id: str
+    trial_id: str
+    manifest_path: Path
+    ledger_path: Path
+    canary_absent: bool
+    gateway_canary_absent: bool
+    real_live_execution: str = "unapproved"
 
 
 def canonical_live_study_authorization(value: dict[str, object]) -> str:
@@ -184,16 +196,15 @@ def resolve_authorized_credentials(
     authorization: LiveStudyAuthorization,
     *,
     profile_required_env: list[str],
-    environ: Optional[dict[str, str]] = None,
+    environ: dict[str, str],
 ) -> dict[str, str]:
     names = list(authorization.data["credential_env_names"])  # type: ignore[arg-type]
     if names != sorted(profile_required_env):
         raise LiveStudyAuthorizationError("Authorized credential names do not match profile.")
-    source = os.environ if environ is None else environ
     resolved = {}
     missing = []
     for name in names:
-        value = source.get(name)
+        value = environ.get(name)
         if value is None or value == "":
             missing.append(name)
         else:
@@ -278,6 +289,159 @@ def live_study_authorization_status(
     }
 
 
+def rehearse_live_study_authorization_locally(
+    authorization: LiveStudyAuthorization,
+    *,
+    ledger_path: Path,
+    workspace: Path,
+    evidence_dir: Path,
+    fake_environment: dict[str, str],
+    run_trial: Optional[Callable[[object], object]] = None,
+) -> LiveStudyLocalRehearsalResult:
+    from agentguard.evaluation.live_egress_gateway import (
+        EgressDestinationRule,
+        LiveStudyEgressPolicy,
+        LiveStudyEgressTrialRequest,
+        LiveStudyEgressTrialResult,
+        live_study_egress_policy_digest,
+        run_live_study_egress_trial,
+    )
+
+    data = authorization.data
+    trial_id = str(list(data["trials"])[0])  # type: ignore[arg-type]
+    plan_digest = str(data["plan_digest"])
+    profile = _as_dict(data["profile"], "profile")
+    images = _as_dict(data["images"], "images")
+    fixtures = list(data["fixtures"])  # type: ignore[arg-type]
+    fixture = _as_dict(fixtures[0], "fixture")
+    destinations = list(data["destinations"])  # type: ignore[arg-type]
+    policy = LiveStudyEgressPolicy(
+        destinations=tuple(
+            EgressDestinationRule(
+                host=str(destination["host"]),
+                port=int(destination["port"]),
+                purpose="local authorization rehearsal",
+                test_only=True,
+            )
+            for destination in destinations
+        )
+    )
+    validate_live_study_authorization_scope(
+        authorization,
+        protocol_version=str(data["protocol_version"]),
+        plan_digest=plan_digest,
+        profile_id=str(profile["id"]),
+        profile_hash=str(profile["hash"]),
+        fixture_id=str(fixture["id"]),
+        fixture_hash=str(fixture["hash"]),
+        task_id=str(fixture["task_id"]),
+        trial_id=trial_id,
+        agent_image=str(images["agent"]),
+        gateway_image=str(images["gateway"]),
+        egress_policy_digest=live_study_egress_policy_digest(policy),
+        destinations=[{"host": str(item["host"]), "port": int(item["port"])} for item in destinations],
+        credential_env_names=list(data["credential_env_names"]),  # type: ignore[arg-type]
+    )
+    reserve_live_study_authorization_use(
+        ledger_path,
+        authorization,
+        plan_digest=plan_digest,
+        trial_id=trial_id,
+    )
+
+    def credential_resolver() -> dict[str, str]:
+        return resolve_authorized_credentials(
+            authorization,
+            profile_required_env=list(data["credential_env_names"]),  # type: ignore[arg-type]
+            environ=fake_environment,
+        )
+
+    def preflight(_plan: object) -> dict[str, object]:
+        return {
+            "status": "ready",
+            "credential_free_mock_connectivity": True,
+            "destination_policy_valid": True,
+            "docker_plan_valid": True,
+            "gateway_identity_valid": True,
+            "redaction_canary_ready": True,
+        }
+
+    workspace.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    request = LiveStudyEgressTrialRequest(
+        plan_digest=plan_digest,
+        profile_hash=str(profile["hash"]),
+        fixture_hash=str(fixture["hash"]),
+        trial_id=trial_id,
+        profile_id=str(profile["id"]),
+        fixture_id=str(fixture["id"]),
+        workspace=workspace,
+        evidence_dir=evidence_dir,
+        prompt_path=evidence_dir / "local-rehearsal-prompt.txt",
+        agent_image=str(images["agent"]),
+        agent_command=["proxy-success"],
+        agent_environment_names=tuple(data["credential_env_names"]),  # type: ignore[arg-type]
+        agent_environment_resolver=credential_resolver,
+        authorization_id=str(data["authorization_id"]),
+        policy=policy,
+        gateway_image=str(images["gateway"]),
+        platform="linux-docker-engine-local-rehearsal",
+        preflight_check=preflight,
+        allow_local_image_id=str(images["agent"]).startswith("sha256:")
+        or str(images["gateway"]).startswith("sha256:"),
+    )
+    executor = run_trial or run_live_study_egress_trial
+    try:
+        raw_result = executor(request)
+        if not isinstance(raw_result, LiveStudyEgressTrialResult):
+            raise LiveStudyAuthorizationError("Local authorization rehearsal returned invalid result.")
+        result = raw_result
+        if result.status == "completed":
+            commit_live_study_authorization_use(
+                ledger_path,
+                authorization,
+                plan_digest=plan_digest,
+                trial_id=trial_id,
+            )
+        else:
+            invalidate_live_study_authorization(
+                ledger_path,
+                authorization,
+                plan_digest=plan_digest,
+                trial_id=trial_id,
+                reason=result.outcome,
+            )
+    except Exception as error:
+        try:
+            invalidate_live_study_authorization(
+                ledger_path,
+                authorization,
+                plan_digest=plan_digest,
+                trial_id=trial_id,
+                reason=error.__class__.__name__,
+            )
+        except LiveStudyAuthorizationError:
+            pass
+        raise
+    canaries = list(fake_environment.values())
+    canary_absent = _files_absent(evidence_dir, canaries) and _files_absent(
+        ledger_path.parent,
+        canaries,
+    )
+    gateway_canary_absent = _file_absent(evidence_dir / "gateway-evidence.json", canaries)
+    if not canary_absent or not gateway_canary_absent:
+        raise LiveStudyAuthorizationError("Local authorization rehearsal leaked fake credential canary.")
+    return LiveStudyLocalRehearsalResult(
+        status=result.status,
+        authorization_id=str(data["authorization_id"]),
+        trial_id=trial_id,
+        manifest_path=result.manifest_path,
+        ledger_path=ledger_path,
+        canary_absent=canary_absent,
+        gateway_canary_absent=gateway_canary_absent,
+    )
+
+
 def _update_ledger(
     ledger_path: Path,
     authorization: LiveStudyAuthorization,
@@ -356,6 +520,30 @@ def _load_ledger(path: Path) -> dict[str, object]:
     if not isinstance(data, dict):
         raise LiveStudyAuthorizationError("Live-study authorization ledger is malformed.")
     return data
+
+
+def _files_absent(root: Path, needles: list[str]) -> bool:
+    if not needles:
+        return True
+    if root.is_file():
+        return _file_absent(root, needles)
+    if not root.exists():
+        return True
+    try:
+        paths = [path for path in root.rglob("*") if path.is_file()]
+    except OSError:
+        return False
+    return all(_file_absent(path, needles) for path in paths)
+
+
+def _file_absent(path: Path, needles: list[str]) -> bool:
+    if not needles or not path.exists() or not path.is_file():
+        return True
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return all(needle not in text for needle in needles)
 
 
 def _validate_time_window(data: dict[str, object], *, now: Optional[datetime]) -> None:

@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Callable, Optional, TypeVar
 
@@ -129,12 +130,9 @@ from agentguard.evaluation.study_runner import (
 )
 from agentguard.evaluation.live_study_authorization import (
     LiveStudyAuthorizationError,
-    commit_live_study_authorization_use,
-    invalidate_live_study_authorization,
     live_study_authorization_status,
     load_live_study_authorization,
-    reserve_live_study_authorization_use,
-    resolve_authorized_credentials,
+    rehearse_live_study_authorization_locally,
 )
 from agentguard.provenance.manifest import (
     load_manifest,
@@ -1678,50 +1676,38 @@ def evaluation_study_auth_rehearse_local(
         help="Local rehearsal ledger.",
     ),
 ) -> None:
-    """Exercise authorization and fake credential ordering without real providers."""
+    """Run a local fake-credential rehearsal through the study-egress gateway."""
     try:
         loaded = load_live_study_authorization(authorization)
-        trials = list(loaded.data["trials"])  # type: ignore[arg-type]
-        trial_id = str(trials[0])
-        plan_digest = str(loaded.data["plan_digest"])
-        reserve_live_study_authorization_use(
-            ledger,
-            loaded,
-            plan_digest=plan_digest,
-            trial_id=trial_id,
-        )
         fake_environment = {
             name: f"AGENTGUARD_FAKE_CREDENTIAL_CANARY_{index}"
             for index, name in enumerate(loaded.data["credential_env_names"], start=1)  # type: ignore[arg-type]
         }
-        resolve_authorized_credentials(
-            loaded,
-            profile_required_env=list(loaded.data["credential_env_names"]),  # type: ignore[arg-type]
-            environ=fake_environment,
-        )
-        commit_live_study_authorization_use(
-            ledger,
-            loaded,
-            plan_digest=plan_digest,
-            trial_id=trial_id,
-        )
-    except LiveStudyAuthorizationError as error:
-        try:
-            if "loaded" in locals():
-                invalidate_live_study_authorization(
-                    ledger,
-                    loaded,  # type: ignore[name-defined]
-                    plan_digest=str(loaded.data["plan_digest"]),  # type: ignore[name-defined]
-                    trial_id=str(list(loaded.data["trials"])[0]),  # type: ignore[name-defined,call-overload]
-                    reason=str(error),
-                )
-        except LiveStudyAuthorizationError:
-            pass
+        with tempfile.TemporaryDirectory(prefix="agentguard-study-auth-") as temporary:
+            root = Path(temporary)
+            result = rehearse_live_study_authorization_locally(
+                loaded,
+                ledger_path=ledger,
+                workspace=root / "workspace",
+                evidence_dir=root / "evidence",
+                fake_environment=fake_environment,
+            )
+    except (LiveStudyAuthorizationError, OSError, ValueError) as error:
         safe_echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-    safe_echo("Local fake-credential authorization rehearsal complete")
-    safe_echo(f"Authorization ID: {loaded.data['authorization_id']}")
-    safe_echo(f"Trial reserved and committed: {trial_id}")
+    safe_echo("Local fake-credential gateway rehearsal complete")
+    safe_echo(f"Authorization ID: {result.authorization_id}")
+    safe_echo(f"Trial reserved and committed: {result.trial_id}")
+    safe_echo(f"Status: {result.status}")
+    safe_echo(
+        "Canary absent from persisted/displayed surfaces: "
+        f"{'yes' if result.canary_absent else 'no'}"
+    )
+    safe_echo(
+        "Gateway canary evidence absent: "
+        f"{'yes' if result.gateway_canary_absent else 'no'}"
+    )
+    safe_echo(f"Ledger: {_display_path(result.ledger_path)}")
     safe_echo("Credential values: fake canaries only, not displayed")
     safe_echo("Real live execution: unapproved")
 

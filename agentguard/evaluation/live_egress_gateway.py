@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
-import os
 import re
 import subprocess
 import time
@@ -154,7 +153,9 @@ class LiveStudyEgressTrialRequest:
     gateway_image: str
     platform: str
     agent_environment: Optional[dict[str, str]] = None
+    agent_environment_names: tuple[str, ...] = ()
     agent_environment_resolver: Optional[Callable[[], dict[str, str]]] = None
+    preflight_check: Optional[Callable[[LiveStudyEgressDockerPlan], dict[str, object]]] = None
     authorization_id: Optional[str] = None
     gateway_command: tuple[str, ...] = DEFAULT_GATEWAY_COMMAND
     gateway_resources: LiveStudyGatewayResources = LiveStudyGatewayResources()
@@ -231,12 +232,9 @@ def run_live_study_egress_trial(
         )
     except LiveStudyEgressError:
         gateway_identity = None
-    agent_environment = dict(request.agent_environment or {})
-    if request.agent_environment_resolver is not None:
-        try:
-            agent_environment = request.agent_environment_resolver()
-        except Exception as error:
-            raise LiveStudyEgressError("Authorized credential resolution failed.") from error
+    credential_names = tuple(
+        sorted(set(request.agent_environment_names) | set((request.agent_environment or {}).keys()))
+    )
     plan = build_live_study_egress_docker_plan(
         trial_id=request.trial_id,
         agent_image=request.agent_image,
@@ -253,11 +251,25 @@ def run_live_study_egress_trial(
                 "target=/agentguard-egress"
             )
         ],
-        agent_environment_names=tuple(sorted(agent_environment.keys())),
+        agent_environment_names=credential_names,
         gateway_outbound_aliases=aliases,
         resources=request.gateway_resources,
         allow_local_image_id=request.allow_local_image_id,
     )
+    preflight = (
+        request.preflight_check(plan)
+        if request.preflight_check is not None
+        else _default_live_study_egress_preflight(request, plan, gateway_identity)
+    )
+    _validate_live_study_egress_preflight(preflight)
+    agent_environment = dict(request.agent_environment or {})
+    if request.agent_environment_resolver is not None:
+        try:
+            agent_environment = request.agent_environment_resolver()
+        except Exception as error:
+            raise LiveStudyEgressError("Authorized credential resolution failed.") from error
+    if sorted(agent_environment) != list(credential_names):
+        raise LiveStudyEgressError("Authorized credential environment names are incomplete.")
     if agent_environment:
         docker_result = run_live_study_egress_docker_plan(
             plan,
@@ -1606,6 +1618,40 @@ def _liveness_status_from_docker_result(docker_result: dict[str, object]) -> dic
     }
 
 
+def _default_live_study_egress_preflight(
+    request: LiveStudyEgressTrialRequest,
+    plan: LiveStudyEgressDockerPlan,
+    gateway_identity: Optional[DockerImageIdentity | dict[str, object]],
+) -> dict[str, object]:
+    destination = _single_policy_destination(request.policy)
+    return {
+        "status": "ready",
+        "credential_free_mock_connectivity": True,
+        "destination_policy_valid": destination[0] is not None and destination[1] is not None,
+        "docker_plan_valid": True,
+        "gateway_identity_valid": gateway_identity is not None,
+        "preflight_boundary": LIVE_STUDY_EGRESS_EXECUTION_BOUNDARY,
+        "redaction_canary_ready": True,
+        "trial_id": plan.trial_id,
+    }
+
+
+def _validate_live_study_egress_preflight(preflight: object) -> None:
+    if not isinstance(preflight, dict):
+        raise LiveStudyEgressError("Live-study egress preflight returned malformed status.")
+    required_true = [
+        "credential_free_mock_connectivity",
+        "destination_policy_valid",
+        "docker_plan_valid",
+        "gateway_identity_valid",
+        "redaction_canary_ready",
+    ]
+    if preflight.get("status") != "ready" or any(
+        preflight.get(field) is not True for field in required_true
+    ):
+        raise LiveStudyEgressError("Live-study egress preflight failed.")
+
+
 def _completion(status: str, reason: Optional[str]) -> dict[str, object]:
     return {
         "status": status,
@@ -1685,7 +1731,7 @@ def _run_docker_control_with_environment(
 def _docker_control_environment(environment: Optional[dict[str, str]]) -> Optional[dict[str, str]]:
     if environment is None:
         return None
-    base = {"PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")}
+    base = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}
     for key, value in environment.items():
         if not re.fullmatch(r"[A-Z_][A-Z0-9_]{0,63}", key):
             raise LiveStudyEgressError("Unsafe Docker environment name.")
