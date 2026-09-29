@@ -84,6 +84,7 @@ class ContainedStudyRunnerOptions:
     authorization_path: Optional[Path] = None
     authorization_ledger_path: Optional[Path] = None
     credential_environment: Optional[dict[str, str]] = None
+    credential_environment_reader: Optional[Callable[[list[str]], dict[str, str]]] = None
 
 
 @dataclass(frozen=True)
@@ -206,7 +207,8 @@ def run_contained_study_plan(
                         options.authorization_ledger_path
                         or run_dir / "live-study-authorization-ledger.json"
                     ),
-                    credential_environment=dict(options.credential_environment or {}),
+                    credential_environment=options.credential_environment,
+                    credential_environment_reader=options.credential_environment_reader,
                     run_contained_command=run_contained_command,
                     run_study_egress_command=run_study_egress_command,
                 )
@@ -652,7 +654,8 @@ def _execute_trial(
     gateway_image: Optional[str],
     authorization: Optional[LiveStudyAuthorization],
     authorization_ledger_path: Path,
-    credential_environment: dict[str, str],
+    credential_environment: Optional[dict[str, str]],
+    credential_environment_reader: Optional[Callable[[list[str]], dict[str, str]]],
     run_contained_command: RunContainedCommand,
     run_study_egress_command: RunStudyEgressCommand,
 ) -> dict[str, object]:
@@ -692,6 +695,7 @@ def _execute_trial(
             authorization=authorization,
             authorization_ledger_path=authorization_ledger_path,
             credential_environment=credential_environment,
+            credential_environment_reader=credential_environment_reader,
             run_study_egress_command=run_study_egress_command,
         )
     config = _contained_config_for_trial(
@@ -795,7 +799,8 @@ def _execute_study_egress_trial(
     gateway_image: Optional[str],
     authorization: Optional[LiveStudyAuthorization],
     authorization_ledger_path: Path,
-    credential_environment: dict[str, str],
+    credential_environment: Optional[dict[str, str]],
+    credential_environment_reader: Optional[Callable[[list[str]], dict[str, str]]],
     run_study_egress_command: RunStudyEgressCommand,
 ) -> dict[str, object]:
     if egress_policy is None or gateway_image is None:
@@ -837,7 +842,11 @@ def _execute_study_egress_trial(
         return resolve_authorized_credentials(
             authorization,
             profile_required_env=credential_names,
-            environ=dict(credential_environment),
+            environ=_credential_environment_for_names(
+                credential_names,
+                credential_environment=credential_environment,
+                credential_environment_reader=credential_environment_reader,
+            ),
         )
     request = LiveStudyEgressTrialRequest(
         plan_digest=plan_digest,
@@ -1057,6 +1066,27 @@ def _authorization_destinations(policy: LiveStudyEgressPolicy) -> list[dict[str,
         host = str(rule.host).strip().lower()
         destinations.append({"host": host, "port": rule.port})
     return sorted(destinations, key=lambda item: (str(item["host"]), int(item["port"])))
+
+
+def _credential_environment_for_names(
+    credential_names: list[str],
+    *,
+    credential_environment: Optional[dict[str, str]],
+    credential_environment_reader: Optional[Callable[[list[str]], dict[str, str]]],
+) -> dict[str, str]:
+    if credential_environment is not None:
+        return {
+            name: value
+            for name, value in credential_environment.items()
+            if name in set(credential_names)
+        }
+    if credential_environment_reader is not None:
+        return credential_environment_reader(list(credential_names))
+    return {
+        name: value
+        for name in credential_names
+        if (value := os.environ.get(name)) is not None
+    }
 
 
 def _load_or_initialize_state(

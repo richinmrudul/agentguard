@@ -134,6 +134,15 @@ from agentguard.evaluation.live_study_authorization import (
     load_live_study_authorization,
     rehearse_live_study_authorization_locally,
 )
+from agentguard.evaluation.live_study_authorization_creation import (
+    LiveStudyAuthorizationCreateOptions,
+    create_live_study_authorization,
+)
+from agentguard.evaluation.live_egress_contract import LIVE_STUDY_EGRESS_EXECUTION_MODE
+from agentguard.evaluation.live_egress_gateway import (
+    EgressDestinationRule,
+    LiveStudyEgressPolicy,
+)
 from agentguard.provenance.manifest import (
     load_manifest,
     manifest_trusted_roots,
@@ -1610,6 +1619,144 @@ def evaluation_study_run(
         raise typer.Exit(1)
 
 
+@study_auth_app.command("create")
+def evaluation_study_auth_create(
+    plan: Path = typer.Option(
+        ...,
+        "--plan",
+        help="Canonical reviewed contained study plan JSON.",
+    ),
+    authorization_id: str = typer.Option(
+        ...,
+        "--authorization-id",
+        help="Reviewer-assigned live-study authorization id.",
+    ),
+    issuer: str = typer.Option(..., "--issuer", help="Reviewer or authority issuing the artifact."),
+    issued_at: str = typer.Option(..., "--issued-at", help="UTC timestamp: YYYY-MM-DDTHH:MM:SSZ."),
+    not_before: str = typer.Option(..., "--not-before", help="UTC timestamp: YYYY-MM-DDTHH:MM:SSZ."),
+    expires_at: str = typer.Option(..., "--expires-at", help="UTC timestamp: YYYY-MM-DDTHH:MM:SSZ."),
+    profile_id: str = typer.Option(..., "--profile-id", help="Explicit reviewed profile id."),
+    fixture: Optional[list[str]] = typer.Option(
+        None,
+        "--fixture",
+        help="Explicit reviewed fixture id. Repeat for each authorized fixture.",
+    ),
+    trial: Optional[list[str]] = typer.Option(
+        None,
+        "--trial",
+        help="Explicit reviewed trial id. Repeat for each authorized trial.",
+    ),
+    agent_image: str = typer.Option(..., "--agent-image", help="Digest-pinned agent image."),
+    gateway_image: str = typer.Option(..., "--gateway-image", help="Digest-pinned gateway image."),
+    destination: Optional[list[str]] = typer.Option(
+        None,
+        "--destination",
+        help="Explicit approved destination as host:port. Repeat for each destination.",
+    ),
+    credential_env: Optional[list[str]] = typer.Option(
+        None,
+        "--credential-env",
+        help="Credential environment variable name only. Values are never read by create.",
+    ),
+    provider_id: str = typer.Option(..., "--provider-id", help="Reviewed provider id."),
+    model_id: str = typer.Option(..., "--model-id", help="Reviewed provider model id."),
+    max_turns: int = typer.Option(..., "--max-turns", help="Per-trial maximum turns."),
+    per_trial_cost_usd: float = typer.Option(..., "--per-trial-cost-usd", help="Per-trial cost cap."),
+    per_trial_input_tokens: int = typer.Option(
+        ...,
+        "--per-trial-input-tokens",
+        help="Per-trial input token cap.",
+    ),
+    per_trial_output_tokens: int = typer.Option(
+        ...,
+        "--per-trial-output-tokens",
+        help="Per-trial output token cap.",
+    ),
+    per_trial_timeout_seconds: int = typer.Option(
+        ...,
+        "--per-trial-timeout-seconds",
+        help="Per-trial timeout cap.",
+    ),
+    total_cost_usd: float = typer.Option(..., "--total-cost-usd", help="Total cost cap."),
+    total_input_tokens: int = typer.Option(..., "--total-input-tokens", help="Total input token cap."),
+    total_output_tokens: int = typer.Option(
+        ...,
+        "--total-output-tokens",
+        help="Total output token cap.",
+    ),
+    evidence_bound: Optional[list[str]] = typer.Option(
+        None,
+        "--evidence-bound",
+        help="Evidence bound as key=JSON-scalar. Repeat for each bound.",
+    ),
+    stop_threshold: Optional[list[str]] = typer.Option(
+        None,
+        "--stop-threshold",
+        help="Stop threshold as key=JSON-scalar. Repeat for each threshold.",
+    ),
+    publication_redaction_policy_digest: str = typer.Option(
+        ...,
+        "--publication-redaction-policy-digest",
+        help="SHA-256 digest of the reviewed publication redaction policy.",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        help="Write canonical authorization JSON to this path. Defaults to stdout.",
+    ),
+) -> None:
+    """Create canonical live-study authorization JSON without credential or network access."""
+    try:
+        created = create_live_study_authorization(
+            LiveStudyAuthorizationCreateOptions(
+                plan_path=plan,
+                authorization_id=authorization_id,
+                issuer=issuer,
+                issued_at=issued_at,
+                not_before=not_before,
+                expires_at=expires_at,
+                profile_id=profile_id,
+                fixture_ids=fixture or [],
+                trial_ids=trial or [],
+                agent_image=agent_image,
+                gateway_image=gateway_image,
+                destinations=[
+                    _parse_live_study_destination(item)
+                    for item in (destination or [])
+                ],
+                credential_env_names=credential_env or [],
+                provider_id=provider_id,
+                model_id=model_id,
+                limits={
+                    "max_turns": max_turns,
+                    "per_trial_cost_usd": per_trial_cost_usd,
+                    "per_trial_input_tokens": per_trial_input_tokens,
+                    "per_trial_output_tokens": per_trial_output_tokens,
+                    "per_trial_timeout_seconds": per_trial_timeout_seconds,
+                    "total_cost_usd": total_cost_usd,
+                    "total_input_tokens": total_input_tokens,
+                    "total_output_tokens": total_output_tokens,
+                },
+                evidence_bounds=_parse_live_study_key_values(evidence_bound or []),
+                stop_thresholds=_parse_live_study_key_values(stop_threshold or []),
+                publication_redaction_policy_digest=publication_redaction_policy_digest,
+            )
+        )
+    except (LiveStudyAuthorizationError, OSError, ValueError) as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    text = created.canonical_json + "\n"
+    if output is not None:
+        atomic_write_text(output, text)
+        safe_echo(f"Live-study authorization: {_display_path(output)}")
+        safe_echo(f"Authorization ID: {created.data['authorization_id']}")
+        safe_echo(f"Digest: {created.digest}")
+        safe_echo("Credential values: not inspected")
+        safe_echo("Real live execution: unapproved")
+    else:
+        safe_echo(text, nl=False)
+
+
 @study_auth_app.command("inspect")
 def evaluation_study_auth_inspect(
     authorization: Path = typer.Argument(..., help="Canonical live-study authorization JSON."),
@@ -1712,6 +1859,125 @@ def evaluation_study_auth_rehearse_local(
     safe_echo("Real live execution: unapproved")
 
 
+@study_auth_app.command("live-run")
+def evaluation_study_auth_live_run(
+    authorization: Path = typer.Argument(..., help="Canonical live-study authorization JSON."),
+    plan: Path = typer.Option(
+        ...,
+        "--plan",
+        help="Canonical contained study plan JSON matching the authorization.",
+    ),
+    profile: Optional[list[Path]] = typer.Option(
+        None,
+        "--profile",
+        help="Contained agent profile YAML matching the plan. Repeat for matrices.",
+    ),
+    fixture_set: Optional[Path] = typer.Option(
+        None,
+        "--fixture-set",
+        help="Contained study fixture manifest. Defaults to the packaged reviewed set.",
+    ),
+    output_dir: Path = typer.Option(
+        Path(".agentguard/live-studies"),
+        "--output-dir",
+        help="Directory for live-study runtime state and evidence.",
+    ),
+    ledger: Path = typer.Option(
+        ...,
+        "--ledger",
+        help="Explicit local authorization use ledger.",
+    ),
+    gateway_image: str = typer.Option(
+        ...,
+        "--gateway-image",
+        help="Digest-pinned study egress gateway image.",
+    ),
+    destination: Optional[list[str]] = typer.Option(
+        None,
+        "--destination",
+        help="Explicit egress policy destination as host:port. Repeat for each destination.",
+    ),
+    credential_env: Optional[list[str]] = typer.Option(
+        None,
+        "--credential-env",
+        help="Explicit credential environment variable name to read. Repeat for each credential.",
+    ),
+    confirm_authorization_id: str = typer.Option(
+        ...,
+        "--confirm-authorization-id",
+        help="Must exactly equal the frozen authorization id.",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Resume a matching interrupted live study run.",
+    ),
+) -> None:
+    """Execute a frozen authorization through the explicit study-egress boundary."""
+    try:
+        loaded = load_live_study_authorization(authorization)
+        if confirm_authorization_id != loaded.data["authorization_id"]:
+            raise LiveStudyAuthorizationError(
+                "Explicit confirmation must match the live-study authorization id."
+            )
+        credential_names = credential_env or []
+        if sorted(credential_names) != loaded.data["credential_env_names"]:
+            raise LiveStudyAuthorizationError(
+                "Explicit credential env names must match the authorization."
+            )
+        if not destination:
+            raise LiveStudyAuthorizationError(
+                "Live study execution requires explicit egress policy destinations."
+            )
+        policy = LiveStudyEgressPolicy(
+            destinations=tuple(
+                EgressDestinationRule(host=host, port=port)
+                for host, port in sorted(
+                    {
+                        _parse_live_study_destination(item)
+                        for item in (destination or [])
+                    }
+                )
+            )
+        )
+        result = run_contained_study_plan(
+            ContainedStudyRunnerOptions(
+                plan_path=plan,
+                profile_paths=profile or [],
+                fixture_set_path=fixture_set,
+                output_dir=output_dir,
+                resume=resume,
+                execution_mode=LIVE_STUDY_EGRESS_EXECUTION_MODE,
+                egress_policy=policy,
+                gateway_image=gateway_image,
+                authorization_path=authorization,
+                authorization_ledger_path=ledger,
+            )
+        )
+    except (
+        ContainedStudyRunnerError,
+        LiveStudyAuthorizationError,
+        OSError,
+        ValueError,
+        yaml.YAMLError,
+    ) as error:
+        safe_echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
+    safe_echo("Live study run complete")
+    safe_echo("Execution boundary: study-egress")
+    safe_echo(f"Authorization ID: {loaded.data['authorization_id']}")
+    safe_echo(f"Authorization digest: {loaded.digest}")
+    safe_echo(f"Study state: {_display_path(result.state_path)}")
+    safe_echo(
+        "Summary: "
+        f"completed={result.completed}, failed={result.failed}, "
+        f"incomplete={result.incomplete}, not_executed={result.not_executed}"
+    )
+    if result.stop_reason is not None:
+        safe_echo(f"Stop condition: {result.stop_reason}")
+        raise typer.Exit(1)
+
+
 @evaluate_app.command("study-report")
 def evaluation_study_report(
     plan: Path = typer.Option(
@@ -1768,6 +2034,41 @@ def _display_path(path: Path) -> str:
         return str(path.relative_to(Path.cwd().resolve()))
     except ValueError:
         return f"[REDACTED]/{path.name}"
+
+
+def _parse_live_study_destination(value: str) -> tuple[str, int]:
+    if "*" in value:
+        raise ValueError("Live-study destination wildcards are not allowed.")
+    host, separator, raw_port = value.rpartition(":")
+    if not separator or not host or not raw_port:
+        raise ValueError("Live-study destination must use host:port.")
+    try:
+        port = int(raw_port)
+    except ValueError as error:
+        raise ValueError("Live-study destination port must be an integer.") from error
+    if port <= 0 or port > 65535:
+        raise ValueError("Live-study destination port is out of bounds.")
+    return (host.lower(), port)
+
+
+def _parse_live_study_key_values(values: list[str]) -> dict[str, object]:
+    parsed: dict[str, object] = {}
+    for value in values:
+        key, separator, raw = value.partition("=")
+        if not separator or not key:
+            raise ValueError("Live-study bounds must use key=JSON-scalar.")
+        if "*" in key or "*" in raw:
+            raise ValueError("Live-study bound wildcards are not allowed.")
+        if key in parsed:
+            raise ValueError(f"Duplicate live-study bound: {key}")
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError:
+            item = raw
+        if isinstance(item, (dict, list)):
+            raise ValueError("Live-study bounds must be JSON scalars.")
+        parsed[key] = item
+    return parsed
 
 
 @evaluate_app.command("run")
