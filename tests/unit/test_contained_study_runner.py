@@ -1,5 +1,6 @@
 import json
 import copy
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -8,6 +9,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+import agentguard.cli.main as cli_main
 import agentguard.evaluation.study_runner as study_runner
 from agentguard.cli.main import app
 from agentguard.core.contained_run import (
@@ -38,13 +40,19 @@ from agentguard.evaluation.live_egress_gateway import (
     live_study_egress_policy_digest,
 )
 from agentguard.evaluation.live_study_authorization import (
+    LiveStudyAuthorizationError,
     canonical_live_study_authorization,
 )
 from agentguard.evaluation.study_runner import (
     ContainedStudyRunnerError,
     ContainedStudyRunnerOptions,
+    ContainedStudyRunnerResult,
     run_contained_study_plan,
     validate_contained_study_plan_for_execution,
+)
+from agentguard.evaluation.live_study_authorization_creation import (
+    LiveStudyAuthorizationCreateOptions,
+    create_live_study_authorization,
 )
 from agentguard.sandbox.docker_preflight import DockerPreflightResult, DockerPreflightStatus
 
@@ -142,6 +150,35 @@ def _live_plan_file(tmp_path: Path, profile: Path, *, trials: int = 1) -> Path:
     return plan_path
 
 
+def _credential_live_plan_file(
+    tmp_path: Path,
+    profile: Path,
+    *,
+    credential_names: list[str],
+) -> Path:
+    plan_path = _live_plan_file(tmp_path, profile)
+    profile_data = yaml.safe_load(profile.read_text(encoding="utf-8"))
+    profile_data["environment"] = {
+        "required": list(credential_names),
+        "unset": [],
+    }
+    profile.write_text(yaml.safe_dump(profile_data, sort_keys=False), encoding="utf-8")
+    live_profile = load_contained_agent_profile(profile)
+    data = json.loads(plan_path.read_text(encoding="utf-8"))
+    data["profiles"][0]["environment"] = {
+        "required": list(credential_names),
+        "unset": [],
+        "values_recorded": False,
+    }
+    data["profiles"][0]["profile_manifest_sha256"] = _digest_profile(live_profile)
+    data["plan_digest"] = _digest(data)
+    plan_path.write_text(
+        json.dumps(data, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return plan_path
+
+
 def _digest_profile(profile) -> str:
     return __import__("hashlib").sha256(
         json.dumps(
@@ -161,7 +198,13 @@ def _egress_policy() -> LiveStudyEgressPolicy:
     )
 
 
-def _authorization_file(tmp_path: Path, plan_path: Path, policy: LiveStudyEgressPolicy) -> Path:
+def _authorization_file(
+    tmp_path: Path,
+    plan_path: Path,
+    policy: LiveStudyEgressPolicy,
+    *,
+    credential_env_names: Optional[list[str]] = None,
+) -> Path:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     profile = plan["profiles"][0]
     fixtures = [
@@ -171,7 +214,7 @@ def _authorization_file(tmp_path: Path, plan_path: Path, policy: LiveStudyEgress
     now = datetime.now(timezone.utc)
     artifact = {
         "authorization_id": "auth-contained-runner",
-        "credential_env_names": [],
+        "credential_env_names": credential_env_names or [],
         "destinations": [{"host": "mock-approved.test", "port": 443}],
         "egress_policy_digest": live_study_egress_policy_digest(policy),
         "evidence_bounds": {"max_output_bytes": 4096},
@@ -208,6 +251,204 @@ def _authorization_file(tmp_path: Path, plan_path: Path, policy: LiveStudyEgress
     path = tmp_path / "live-study-authorization.json"
     path.write_text(canonical_live_study_authorization(artifact) + "\n", encoding="utf-8")
     return path
+
+
+def _create_options(
+    tmp_path: Path,
+    plan_path: Path,
+    *,
+    model_id: str = "mock-model",
+) -> LiveStudyAuthorizationCreateOptions:
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    profile = plan["profiles"][0]
+    fixture = plan["fixtures"][0]
+    now = datetime.now(timezone.utc)
+    return LiveStudyAuthorizationCreateOptions(
+        plan_path=plan_path,
+        authorization_id="auth-created-offline",
+        issuer="unit-test-reviewer",
+        issued_at=(now - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        not_before=(now - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        expires_at=(now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        profile_id=profile["id"],
+        fixture_ids=[fixture["id"]],
+        trial_ids=[trial["trial_id"] for trial in plan["trials"]],
+        agent_image=profile["image"],
+        gateway_image=GATEWAY_IMAGE,
+        destinations=[("mock-approved.test", 443)],
+        credential_env_names=[],
+        provider_id="mock-provider",
+        model_id=model_id,
+        limits={
+            "max_turns": 1,
+            "per_trial_cost_usd": 0.0,
+            "per_trial_input_tokens": 0,
+            "per_trial_output_tokens": 0,
+            "per_trial_timeout_seconds": 30,
+            "total_cost_usd": 0.0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+        },
+        evidence_bounds={"max_output_bytes": 4096},
+        stop_thresholds={"max_failures": 1},
+        publication_redaction_policy_digest="5" * 64,
+    )
+
+
+def test_live_study_authorization_create_binds_reviewed_inputs(tmp_path: Path) -> None:
+    profile = _write_profile(tmp_path)
+    plan = _live_plan_file(tmp_path, profile)
+
+    created = create_live_study_authorization(_create_options(tmp_path, plan))
+    data = json.loads(created.canonical_json)
+
+    assert data["schema"] == "agentguard.live-study-authorization"
+    assert data["authorization_id"] == "auth-created-offline"
+    assert data["plan_digest"] == created.plan_digest
+    assert data["images"] == {"agent": IMAGE, "gateway": GATEWAY_IMAGE}
+    assert data["destinations"] == [{"host": "mock-approved.test", "port": 443}]
+    assert data["trials"] == [json.loads(plan.read_text(encoding="utf-8"))["trials"][0]["trial_id"]]
+    assert data["max_trial_count"] == 1
+    assert created.digest
+
+
+def test_live_study_authorization_create_rejects_wildcards(tmp_path: Path) -> None:
+    profile = _write_profile(tmp_path)
+    plan = _live_plan_file(tmp_path, profile)
+
+    with pytest.raises(ValueError, match="wildcards"):
+        create_live_study_authorization(
+            _create_options(tmp_path, plan, model_id="mock-*")
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate,match",
+    [
+        (
+            lambda options, _plan: replace(
+                options,
+                agent_image="ghcr.io/example/offline-agent@sha256:" + "0" * 64,
+            ),
+            "agent image mismatch",
+        ),
+        (
+            lambda options, _plan: replace(options, credential_env_names=["API_KEY"]),
+            "credential names",
+        ),
+        (
+            lambda options, _plan: replace(options, profile_id="missing-profile"),
+            "profile must be explicit",
+        ),
+        (
+            lambda options, _plan: replace(options, trial_ids=[]),
+            "explicit trials",
+        ),
+        (
+            lambda options, _plan: replace(
+                options,
+                trial_ids=[options.trial_ids[0], options.trial_ids[0]],
+            ),
+            "Duplicate live-study authorization trial",
+        ),
+        (
+            lambda options, _plan: replace(options, trial_ids=["missing-trial"]),
+            "Unknown live-study authorization trial",
+        ),
+        (
+            lambda options, _plan: replace(options, fixture_ids=[]),
+            "explicit fixtures",
+        ),
+        (
+            lambda options, _plan: replace(
+                options,
+                fixture_ids=[options.fixture_ids[0], options.fixture_ids[0]],
+            ),
+            "Duplicate live-study authorization fixture",
+        ),
+        (
+            lambda options, _plan: replace(options, fixture_ids=["safe-bounded-edit"]),
+            "fixtures must exactly match",
+        ),
+        (
+            lambda options, _plan: replace(
+                options,
+                destinations=[("mock-approved.test", 443)],
+                egress_policy=LiveStudyEgressPolicy(
+                    destinations=(
+                        EgressDestinationRule("other-approved.test", 443, test_only=True),
+                    )
+                ),
+            ),
+            "egress policy destination mismatch",
+        ),
+    ],
+)
+def test_live_study_authorization_create_rejects_unreviewed_inputs(
+    tmp_path: Path,
+    mutate,
+    match: str,
+) -> None:
+    profile = _write_profile(tmp_path)
+    plan = _live_plan_file(tmp_path, profile)
+    options = mutate(_create_options(tmp_path, plan), plan)
+
+    with pytest.raises(LiveStudyAuthorizationError, match=match):
+        create_live_study_authorization(options)
+
+
+@pytest.mark.parametrize(
+    "mutate,match",
+    [
+        (
+            lambda data: data.update({"profiles": "not-a-list"}),
+            "profiles must contain",
+        ),
+        (
+            lambda data: data["profiles"].__setitem__(0, "not-an-object"),
+            "profiles\\[0\\] must be an object",
+        ),
+        (
+            lambda data: data["profiles"][0].update({"environment": []}),
+            "profiles\\[0\\].environment must be an object",
+        ),
+        (
+            lambda data: data["profiles"][0].update({"environment": {"required": "API_KEY"}}),
+            "environment.required must contain",
+        ),
+        (
+            lambda data: data.update({"trials": "not-a-list"}),
+            "trials must contain",
+        ),
+        (
+            lambda data: data["trials"].__setitem__(0, "not-an-object"),
+            "trials\\[0\\] must be an object",
+        ),
+        (
+            lambda data: data.update({"fixtures": "not-a-list"}),
+            "fixtures must contain",
+        ),
+        (
+            lambda data: data["fixtures"].__setitem__(0, "not-an-object"),
+            "fixtures\\[0\\] must be an object",
+        ),
+    ],
+)
+def test_live_study_authorization_create_rejects_malformed_plan_parts(
+    tmp_path: Path,
+    mutate,
+    match: str,
+) -> None:
+    profile = _write_profile(tmp_path)
+    plan = _live_plan_file(tmp_path, profile)
+    options = _create_options(tmp_path, plan)
+    data = json.loads(plan.read_text(encoding="utf-8"))
+    mutate(data)
+    data["plan_digest"] = _digest(data)
+    plan.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+
+    with pytest.raises(LiveStudyAuthorizationError, match=match):
+        create_live_study_authorization(options)
 
 
 def _fake_result(tmp_path: Path, *, cleanup: bool = True, result: str = "PASS") -> ContainedRunResult:
@@ -704,6 +945,323 @@ def test_cli_help_and_controlled_error(tmp_path: Path) -> None:
     result = runner.invoke(app, ["evaluation", "study-run", "--plan", str(tmp_path / "missing.json")])
     assert result.exit_code == 2
     assert "Error:" in result.output
+
+
+def test_study_auth_create_cli_writes_canonical_authorization(tmp_path: Path) -> None:
+    profile = _write_profile(tmp_path)
+    plan = _live_plan_file(tmp_path, profile)
+    output = tmp_path / "created-authorization.json"
+    now = datetime.now(timezone.utc)
+    trial_id = json.loads(plan.read_text(encoding="utf-8"))["trials"][0]["trial_id"]
+
+    result = runner.invoke(
+        app,
+        [
+            "evaluation",
+            "study-auth",
+            "create",
+            "--plan",
+            str(plan),
+            "--authorization-id",
+            "auth-created-cli",
+            "--issuer",
+            "unit-test-reviewer",
+            "--issued-at",
+            (now - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "--not-before",
+            (now - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "--expires-at",
+            (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "--profile-id",
+            "offline-profile",
+            "--fixture",
+            "read-only-control",
+            "--trial",
+            trial_id,
+            "--agent-image",
+            IMAGE,
+            "--gateway-image",
+            GATEWAY_IMAGE,
+            "--destination",
+            "mock-approved.test:443",
+            "--provider-id",
+            "mock-provider",
+            "--model-id",
+            "mock-model",
+            "--max-turns",
+            "1",
+            "--per-trial-cost-usd",
+            "0",
+            "--per-trial-input-tokens",
+            "0",
+            "--per-trial-output-tokens",
+            "0",
+            "--per-trial-timeout-seconds",
+            "30",
+            "--total-cost-usd",
+            "0",
+            "--total-input-tokens",
+            "0",
+            "--total-output-tokens",
+            "0",
+            "--evidence-bound",
+            "max_output_bytes=4096",
+            "--stop-threshold",
+            "max_failures=1",
+            "--publication-redaction-policy-digest",
+            "5" * 64,
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert data["authorization_id"] == "auth-created-cli"
+    assert data["trials"] == [trial_id]
+    assert "Credential values: not inspected" in result.output
+
+
+def test_study_auth_live_run_cli_requires_confirmation(tmp_path: Path) -> None:
+    profile = _write_profile(tmp_path)
+    plan = _live_plan_file(tmp_path, profile)
+    authorization = _authorization_file(tmp_path, plan, _egress_policy())
+
+    result = runner.invoke(
+        app,
+        [
+            "evaluation",
+            "study-auth",
+            "live-run",
+            str(authorization),
+            "--plan",
+            str(plan),
+            "--profile",
+            str(profile),
+            "--ledger",
+            str(tmp_path / "ledger.json"),
+            "--gateway-image",
+            GATEWAY_IMAGE,
+            "--destination",
+            "mock-approved.test:443",
+            "--confirm-authorization-id",
+            "wrong-auth",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "confirmation" in result.output
+
+
+def test_study_auth_live_run_cli_wraps_study_egress_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = _write_profile(tmp_path)
+    plan = _live_plan_file(tmp_path, profile)
+    authorization = _authorization_file(tmp_path, plan, _egress_policy())
+    ledger = tmp_path / "ledger.json"
+    captured = {}
+
+    def fake_run(options: ContainedStudyRunnerOptions) -> ContainedStudyRunnerResult:
+        captured["options"] = options
+        state_path = tmp_path / "state.json"
+        state_path.write_text("{}", encoding="utf-8")
+        return ContainedStudyRunnerResult(
+            run_dir=tmp_path,
+            state_path=state_path,
+            plan_digest="1" * 64,
+            total_planned=1,
+            completed=1,
+            failed=0,
+            incomplete=0,
+            not_executed=0,
+            stop_reason=None,
+        )
+
+    monkeypatch.setattr(cli_main, "run_contained_study_plan", fake_run)
+    result = runner.invoke(
+        app,
+        [
+            "evaluation",
+            "study-auth",
+            "live-run",
+            str(authorization),
+            "--plan",
+            str(plan),
+            "--profile",
+            str(profile),
+            "--ledger",
+            str(ledger),
+            "--gateway-image",
+            GATEWAY_IMAGE,
+            "--destination",
+            "mock-approved.test:443",
+            "--confirm-authorization-id",
+            "auth-contained-runner",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    options = captured["options"]
+    assert options.execution_mode == LIVE_STUDY_EGRESS_EXECUTION_MODE
+    assert options.authorization_path == authorization
+    assert options.authorization_ledger_path == ledger
+    assert options.gateway_image == GATEWAY_IMAGE
+    assert options.credential_environment is None
+
+
+def test_study_auth_live_run_cli_does_not_read_credentials_before_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    credential_name = "AGENTGUARD_FAKE_API_KEY"
+    profile = _write_profile(tmp_path)
+    plan = _credential_live_plan_file(
+        tmp_path,
+        profile,
+        credential_names=[credential_name],
+    )
+    authorization = _authorization_file(
+        tmp_path,
+        plan,
+        _egress_policy(),
+        credential_env_names=[credential_name],
+    )
+    monkeypatch.delenv(credential_name, raising=False)
+    called = False
+
+    def fake_run(options: ContainedStudyRunnerOptions) -> ContainedStudyRunnerResult:
+        nonlocal called
+        called = True
+        assert options.credential_environment is None
+        state_path = tmp_path / "state.json"
+        state_path.write_text("{}", encoding="utf-8")
+        return ContainedStudyRunnerResult(
+            run_dir=tmp_path,
+            state_path=state_path,
+            plan_digest="1" * 64,
+            total_planned=1,
+            completed=1,
+            failed=0,
+            incomplete=0,
+            not_executed=0,
+            stop_reason=None,
+        )
+
+    monkeypatch.setattr(cli_main, "run_contained_study_plan", fake_run)
+    result = runner.invoke(
+        app,
+        [
+            "evaluation",
+            "study-auth",
+            "live-run",
+            str(authorization),
+            "--plan",
+            str(plan),
+            "--profile",
+            str(profile),
+            "--ledger",
+            str(tmp_path / "ledger.json"),
+            "--gateway-image",
+            GATEWAY_IMAGE,
+            "--destination",
+            "mock-approved.test:443",
+            "--credential-env",
+            credential_name,
+            "--confirm-authorization-id",
+            "auth-contained-runner",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called is True
+
+
+def test_study_egress_credentials_resolve_only_when_request_resolver_invoked(
+    tmp_path: Path,
+) -> None:
+    credential_name = "AGENTGUARD_FAKE_API_KEY"
+    profile = _write_profile(tmp_path)
+    plan = _credential_live_plan_file(
+        tmp_path,
+        profile,
+        credential_names=[credential_name],
+    )
+    policy = _egress_policy()
+    authorization = _authorization_file(
+        tmp_path,
+        plan,
+        policy,
+        credential_env_names=[credential_name],
+    )
+    ledger = tmp_path / "authorization-ledger.json"
+    lookups = []
+
+    def credential_reader(names: list[str]) -> dict[str, str]:
+        lookups.append(list(names))
+        return {credential_name: "fake-secret-value"}
+
+    def fake_egress(request):
+        assert lookups == []
+        ledger_data = json.loads(ledger.read_text(encoding="utf-8"))
+        uses = list(ledger_data["uses"].values())
+        assert uses and uses[0]["status"] == "reserved"
+        assert request.agent_environment_names == (credential_name,)
+        assert request.agent_environment_resolver is not None
+        assert request.agent_environment_resolver() == {
+            credential_name: "fake-secret-value"
+        }
+        assert lookups == [[credential_name]]
+        manifest = build_live_study_egress_manifest(
+            plan_digest=request.plan_digest,
+            profile_hash=request.profile_hash,
+            fixture_hash=request.fixture_hash,
+            trial_id=request.trial_id,
+            policy=request.policy,
+            gateway_image=GATEWAY_IDENTITY,
+            approved_host="mock-approved.test",
+            approved_port=443,
+            events=[
+                evaluate_live_study_egress_destination(
+                    request.policy,
+                    host="mock-approved.test",
+                    port=443,
+                    protocol="https",
+                    resolved_addresses=["203.0.113.10"],
+                    resolution_status="stable",
+                )
+            ],
+            gateway_status={"status": "running", "evidence_complete": True},
+            cleanup_status={"overall_complete": True},
+            liveness_status={"verified": True},
+        )
+        manifest_path = request.evidence_dir / "live-study-egress-manifest.json"
+        manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+        return LiveStudyEgressTrialResult(
+            manifest=manifest,
+            manifest_path=manifest_path,
+            status="completed",
+            outcome="completed",
+        )
+
+    result = run_contained_study_plan(
+        ContainedStudyRunnerOptions(
+            plan,
+            [profile],
+            output_dir=tmp_path / "runs",
+            execution_mode=LIVE_STUDY_EGRESS_EXECUTION_MODE,
+            egress_policy=policy,
+            gateway_image=GATEWAY_IMAGE,
+            authorization_path=authorization,
+            authorization_ledger_path=ledger,
+            credential_environment_reader=credential_reader,
+        ),
+        run_study_egress_command=fake_egress,
+    )
+
+    assert result.completed == 1
+    assert lookups == [[credential_name]]
 
 
 def test_malformed_plan_and_output_path_rejections(tmp_path: Path) -> None:
