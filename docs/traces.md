@@ -160,6 +160,28 @@ and replays transformed traces. Preserving transforms should keep outcomes
 stable; changing transforms should produce expected policy deltas; invalid
 transforms should be rejected.
 
+## Optional Offline Verifier Projection
+
+Trace schema v3 can be deterministically projected into the checked-in
+`bonfyre.agent_trace.v1` research contract. Projection is optional, offline,
+and read-only: it does not import or invoke an external verifier, access the
+network, alter AgentGuard scoring, or create a policy effect.
+
+The projector consumes the same bounded, sanitized execution-trace loader used
+by the trace commands. Version 3 `containment_evidence` is optional. When
+present, it is projected only when the adapter policy contains an explicit rule;
+there is deliberately no derived containment success status. A policy may map
+the evidence occurrence as an observation with an explicit status, while the
+underlying containment payload remains source evidence rather than a new
+AgentGuard claim. If a present v3 event has no projection rule, the conversion
+report is deterministically incomplete and names the controlled event type as
+unsupported.
+
+Repository resources remain repository-relative. Host-local roots and raw
+command output, stdout/stderr, file content, and diffs are not copied into the
+projection. Projection reports bind the source trace, adapter policy, projected
+bytes, and source event hashes with SHA-256 identities.
+
 ## Portability And Limitations
 
 Traces capture policy-relevant evidence, not repository snapshots. They omit
