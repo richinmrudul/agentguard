@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "dependencies": {
+    "@openai/codex": "0.159.2",
+    "@openai/codex-linux-x64": "npm:@openai/codex@0.159.2-linux-x64"
+  },
+  "scripts": {
+    "verify-integrity": "node verify-integrity.mjs"
+  }
+}
