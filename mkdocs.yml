@@ -97,6 +97,7 @@ nav:
       - Benchmarks and Suites: benchmarks.md
       - Real-Agent Evaluations: evaluation.md
       - v0.5 Study Protocol: real-agent-evaluation.md
+      - Stage 1 Runtime Images: stage1-runtime-images.md
       - Online Guard: online-guard.md
   - Evaluation and Evidence:
       - Detection Quality: detection-quality.md

@@ -1,0 +1,85 @@
+name: Publish Stage 1 Runtime Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      required_source_commit:
+        description: Exact reviewed source commit to publish
+        required: true
+        type: string
+      approval_phrase:
+        description: Type APPROVE_STAGE1_RUNTIME_IMAGE_PUBLICATION
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish exact reviewed Stage 1 runtime images
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.inputs.approval_phrase == 'APPROVE_STAGE1_RUNTIME_IMAGE_PUBLICATION' &&
+      github.event.inputs.required_source_commit == github.sha
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out exact reviewed commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.inputs.required_source_commit }}
+
+      - name: Validate publication gate
+        env:
+          REQUIRED_SOURCE_COMMIT: ${{ github.event.inputs.required_source_commit }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$REQUIRED_SOURCE_COMMIT" = "$(git rev-parse HEAD)"
+          python scripts/validate_runtime_images.py
+
+      - name: Log in to GHCR with GitHub token
+        run: |
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build local OCI artifacts
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 \
+            --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
+            -t ghcr.io/richinmrudul/agentguard/stage1-gateway:"$GITHUB_SHA" \
+            runtime-images/gateway
+          docker build --platform linux/amd64 \
+            --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
+            -t ghcr.io/richinmrudul/agentguard/stage1-codex-agent:"$GITHUB_SHA" \
+            runtime-images/codex-agent
+
+      - name: Publish to repository-controlled GHCR namespace
+        run: |
+          set -euo pipefail
+          docker push ghcr.io/richinmrudul/agentguard/stage1-gateway:"$GITHUB_SHA"
+          docker push ghcr.io/richinmrudul/agentguard/stage1-codex-agent:"$GITHUB_SHA"
+
+      - name: Verify pull by digest and emit publication manifest
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage1-runtime-images-publication
+          docker buildx imagetools inspect ghcr.io/richinmrudul/agentguard/stage1-gateway:"$GITHUB_SHA" \
+            > dist/stage1-runtime-images-publication/gateway-imagetools.txt
+          docker buildx imagetools inspect ghcr.io/richinmrudul/agentguard/stage1-codex-agent:"$GITHUB_SHA" \
+            > dist/stage1-runtime-images-publication/agent-imagetools.txt
+
+      - name: Upload publication evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: stage1-runtime-image-publication
+          path: dist/stage1-runtime-images-publication/
+          if-no-files-found: error
+          retention-days: 30

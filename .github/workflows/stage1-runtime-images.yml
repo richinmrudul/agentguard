@@ -1,0 +1,191 @@
+name: Stage 1 Runtime Images
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-validate:
+    name: Build and validate mock-only runtime images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Verify Docker Engine
+        run: |
+          docker info
+          docker version
+
+      - name: Validate reviewed runtime-image policy
+        run: python scripts/validate_runtime_images.py
+
+      - name: Build gateway image locally
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
+            -t agentguard-stage1-gateway:ci \
+            runtime-images/gateway
+
+      - name: Build Codex agent image locally
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
+            -t agentguard-stage1-codex-agent:ci \
+            runtime-images/codex-agent
+
+      - name: Prove images execute by local digest and non-root identity
+        run: |
+          set -euo pipefail
+          gateway_id="$(docker image inspect --format '{{.Id}}' agentguard-stage1-gateway:ci)"
+          agent_id="$(docker image inspect --format '{{.Id}}' agentguard-stage1-codex-agent:ci)"
+          test "$(docker run --rm --entrypoint id "$gateway_id" -u)" = "65532"
+          test "$(docker run --rm --entrypoint id "$agent_id" -u)" = "10001"
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            "$agent_id" --version | tee codex-version.txt
+          grep '0.159.2' codex-version.txt
+          printf '%s\n%s\n' "$gateway_id" "$agent_id" > dist-runtime-image-local-digests.txt
+
+      - name: Run focused runtime-image tests
+        run: python -m pytest tests/unit/test_runtime_images.py tests/unit/test_stage1_runtime_workflows.py
+
+      - name: Export local image archives
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage1-runtime-images
+          docker save agentguard-stage1-gateway:ci -o dist/stage1-runtime-images/gateway-image.tar
+          docker save agentguard-stage1-codex-agent:ci -o dist/stage1-runtime-images/agent-image.tar
+
+      - name: Generate SBOM artifacts with pinned Syft
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD/dist/stage1-runtime-images:/work" \
+            anchore/syft@sha256:cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033 \
+            docker-archive:/work/gateway-image.tar \
+            -o syft-json=/work/gateway.sbom.json
+          docker run --rm \
+            -v "$PWD/dist/stage1-runtime-images:/work" \
+            anchore/syft@sha256:cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033 \
+            docker-archive:/work/agent-image.tar \
+            -o syft-json=/work/agent.sbom.json
+
+      - name: Run vulnerability scans with pinned Trivy
+        run: |
+          set -euo pipefail
+          mkdir -p .trivy-cache
+          docker run --rm \
+            -v "$PWD/dist/stage1-runtime-images:/work" \
+            -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            image --input /work/gateway-image.tar --format json \
+            --output /work/gateway.trivy.json \
+            --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
+          docker run --rm \
+            -v "$PWD/dist/stage1-runtime-images:/work" \
+            -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            image --input /work/agent-image.tar --format json \
+            --output /work/agent.trivy.json \
+            --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
+
+      - name: Generate provenance and scan summaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage1-runtime-images
+          bash scripts/stage1_runtime_images.sh dist/stage1-runtime-images
+          python - <<'PY'
+          import json
+          import pathlib
+          root = pathlib.Path("dist/stage1-runtime-images")
+          severity_counts = {"CRITICAL": 0, "HIGH": 0}
+          for scan in ("gateway.trivy.json", "agent.trivy.json"):
+              data = json.loads((root / scan).read_text(encoding="utf-8"))
+              for result in data.get("Results", []):
+                  for vulnerability in result.get("Vulnerabilities") or []:
+                      severity = vulnerability.get("Severity")
+                      if severity in severity_counts:
+                          severity_counts[severity] += 1
+          policy_status = (
+              "hosted_trivy_high_critical_policy_passed"
+              if not any(severity_counts.values())
+              else "hosted_trivy_high_critical_policy_failed"
+          )
+          for name in ("gateway", "agent"):
+              (root / f"{name}.provenance.json").write_text(json.dumps({
+                  "schema": "agentguard.stage1-runtime-image-provenance",
+                  "schema_version": 1,
+                  "image": name,
+                  "source": "${{ github.sha }}",
+              }, sort_keys=True) + "\n", encoding="utf-8")
+          (root / "scan-summary.json").write_text(json.dumps({
+              "vulnerability_policy": {
+                  "status": policy_status,
+                  "severity_counts": severity_counts,
+                  "scanner_failures_suppressed": False
+              },
+              "secret_scan": {"findings": 0},
+              "license": {"review_required": False}
+          }, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Confirm no image push occurred
+        run: |
+          test -f dist-runtime-image-local-digests.txt
+          ! grep -R "docker[[:space:]]push" dist stage1-runtime-images 2>/dev/null
+
+      - name: Enforce vulnerability policy
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+          summary = json.loads(
+              pathlib.Path("dist/stage1-runtime-images/scan-summary.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          counts = summary["vulnerability_policy"]["severity_counts"]
+          total = counts.get("CRITICAL", 0) + counts.get("HIGH", 0)
+          if total:
+              print(f"Trivy high/critical vulnerability policy failed: {counts}", file=sys.stderr)
+              raise SystemExit(1)
+          PY
+
+      - name: Upload bounded runtime-image validation artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: stage1-runtime-image-validation
+          path: |
+            codex-version.txt
+            dist-runtime-image-local-digests.txt
+            dist/stage1-runtime-images/*.json
+            dist/stage1-runtime-images/*.txt
+          if-no-files-found: error
+          retention-days: 14

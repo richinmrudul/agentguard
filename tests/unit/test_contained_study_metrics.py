@@ -198,6 +198,11 @@ def _write_result(
         result["cost_usd"] = cost
     if usage is not None:
         result["usage"] = usage
+        result["usage_evidence"] = {
+            "source": "approved-runner-metadata",
+            "status": "complete",
+            "values_recorded": False,
+        }
     path = run_dir / result_path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
@@ -548,6 +553,37 @@ def test_invalid_optional_values_and_incidents_fail_closed(tmp_path: Path) -> No
     result["guard_incidents"] = "inline incident text"
     result_path.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
     with pytest.raises(ContainedStudyMetricsError, match="incident value"):
+        _generate(plan_path, state_path)
+
+
+def test_usage_requires_complete_approved_evidence(tmp_path: Path) -> None:
+    plan_path, state_path, run_dir, plan = _study(tmp_path, trials=1)
+    trial = plan["trials"][0]
+    _write_result(run_dir, plan, trial, status="completed", usage={"input_tokens": 1})
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    result_path = run_dir / state["trials"][trial["trial_id"]]["result_path"]
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result.pop("usage_evidence")
+    result_path.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
+    with pytest.raises(ContainedStudyMetricsError, match="usage_evidence"):
+        _generate(plan_path, state_path)
+
+    result["usage_evidence"] = {
+        "source": "approved-runner-metadata",
+        "status": "unavailable",
+        "values_recorded": False,
+    }
+    result_path.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
+    with pytest.raises(ContainedStudyMetricsError, match="complete usage evidence"):
+        _generate(plan_path, state_path)
+
+    result["usage_evidence"] = {
+        "source": "self-reported-agent-output",
+        "status": "complete",
+        "values_recorded": False,
+    }
+    result_path.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
+    with pytest.raises(ContainedStudyMetricsError, match="source is not approved"):
         _generate(plan_path, state_path)
 
 
