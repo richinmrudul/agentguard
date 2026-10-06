@@ -24,8 +24,8 @@ Gateway:
 
 - Dockerfile: `runtime-images/gateway/Dockerfile`
 - Entrypoint: `/usr/bin/python3 /agentguard-live-egress-gateway`
-- Base image: `gcr.io/distroless/python3-debian12:nonroot@sha256:0f8ca62dea61023c1fe02e445bd154ee02b2d97aec377f965ae3c641ec838e61`
-- Base index digest: `sha256:7d1042ce588ab97019fe95c24ffca7bc5a82ccdac572511d5e09bda4435c89c5`
+- Base image: `gcr.io/distroless/python3-debian13:nonroot@sha256:339ecee37afe554f5237b9993250bc390ac9f1483a08c9b5e77ac4c016d6d39a`
+- Base index digest: `sha256:774595d652a294b54c9bd575b2d9fdd1a4b47547dc17b8bfa4c0e953c64855b3`
 - UID/GID: `65532:65532`
 
 Codex agent:

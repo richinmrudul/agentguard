@@ -138,7 +138,7 @@ jobs:
             -v "$PWD/dist/stage1-runtime-images:/work" \
             -v "$PWD/.trivy-cache:/root/.cache/" \
             aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
-            image gcr.io/distroless/python3-debian12:nonroot@sha256:0f8ca62dea61023c1fe02e445bd154ee02b2d97aec377f965ae3c641ec838e61 \
+            image gcr.io/distroless/python3-debian13:nonroot@sha256:339ecee37afe554f5237b9993250bc390ac9f1483a08c9b5e77ac4c016d6d39a \
             --format json --output /work/gateway-base.trivy.json \
             --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
           docker run --rm \
