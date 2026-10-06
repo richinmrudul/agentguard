@@ -160,8 +160,9 @@ published images, live authorizations, provider approvals, or study results.
 The gateway image input is owned by this repository under
 `runtime-images/gateway/`. It is validated first because the gateway is the
 study boundary that records allow/deny decisions and fail-closed evidence. The
-gateway Dockerfile is pinned to a reviewed linux/amd64 base-image digest, runs
-as UID/GID `65532`, and exposes only `/agentguard-live-egress-gateway`.
+gateway Dockerfile is pinned to the reviewed linux/amd64 distroless Python
+base-image digest, runs as UID/GID `65532`, and exposes only the standard
+library gateway source through `/usr/bin/python3 /agentguard-live-egress-gateway`.
 
 The Codex CLI agent image input is owned by this repository under
 `runtime-images/codex-agent/`. The reviewed package candidates are
@@ -171,9 +172,12 @@ and linux-x64 integrity
 `sha512-RrCZ1X52wpa1lOsXtCtSyhjOFdQPh7LH5Ccv8HsKmd/2UXbUwxXFqWXFK3JzatquUNGtW/TLox5Y7qVOGkV0/Q==`.
 Those candidates remain untrusted until a reviewer supplies official package
 metadata and the local validator confirms the exact version and integrity
-values. The entrypoint fails closed unless `CODEX_API_KEY` and `CODEX_MODEL`
-are supplied by a later live-study authorization; it also unsets ambient
-`OPENAI_API_KEY`, `NPM_TOKEN`, `GH_TOKEN`, and `GITHUB_TOKEN`.
+values. The final runtime image extracts the verified Linux x64 musl Codex
+binary and helper binaries into a distroless static base, without Node, npm,
+package-manager caches, shells, debug tools, or the optional voice library
+tree. The compiled entrypoint fails closed unless `CODEX_API_KEY` and
+`CODEX_MODEL` are supplied by a later live-study authorization; it also unsets
+ambient `OPENAI_API_KEY`, `NPM_TOKEN`, `GH_TOKEN`, and `GITHUB_TOKEN`.
 
 Runtime-image freeze manifests use schema
 `agentguard.stage1-runtime-image-freeze` version 1. They record the source

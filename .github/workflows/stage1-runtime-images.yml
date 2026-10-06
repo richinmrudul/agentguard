@@ -62,14 +62,35 @@ jobs:
       - name: Prove images execute by local digest and non-root identity
         run: |
           set -euo pipefail
+          mkdir -p dist/stage1-runtime-images
           gateway_id="$(docker image inspect --format '{{.Id}}' agentguard-stage1-gateway:ci)"
           agent_id="$(docker image inspect --format '{{.Id}}' agentguard-stage1-codex-agent:ci)"
-          test "$(docker run --rm --entrypoint id "$gateway_id" -u)" = "65532"
-          test "$(docker run --rm --entrypoint id "$agent_id" -u)" = "10001"
+          test "$(docker image inspect --format '{{.Config.User}}' "$gateway_id")" = "65532:65532"
+          test "$(docker image inspect --format '{{.Config.User}}' "$agent_id")" = "10001:10001"
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint /usr/bin/python3 "$gateway_id" -c 'import os; print(os.getuid())' | tee gateway-uid.txt
+          grep '^65532$' gateway-uid.txt
           docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
             "$agent_id" --version | tee codex-version.txt
-          grep '0.159.2' codex-version.txt
+          grep '^codex-cli 0.159.2$' codex-version.txt
           printf '%s\n%s\n' "$gateway_id" "$agent_id" > dist-runtime-image-local-digests.txt
+
+      - name: Inventory final runtime image contents
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage1-runtime-images/inventory
+          gateway_cid="$(docker create agentguard-stage1-gateway:ci)"
+          agent_cid="$(docker create agentguard-stage1-codex-agent:ci)"
+          trap 'docker rm -f "$gateway_cid" "$agent_cid" >/dev/null 2>&1 || true' EXIT
+          docker export "$gateway_cid" -o dist/stage1-runtime-images/inventory/gateway-rootfs.tar
+          docker export "$agent_cid" -o dist/stage1-runtime-images/inventory/agent-rootfs.tar
+          tar -tf dist/stage1-runtime-images/inventory/gateway-rootfs.tar | sort > dist/stage1-runtime-images/gateway.rootfs.txt
+          tar -tf dist/stage1-runtime-images/inventory/agent-rootfs.tar | sort > dist/stage1-runtime-images/agent.rootfs.txt
+          ! grep -E '(^|/)(apt|apt-get|dpkg|pip|gcc|make|curl|wget|git|sh|bash|zsh)$' dist/stage1-runtime-images/gateway.rootfs.txt
+          ! grep -E '(^|/)(node|npm|npx|yarn|apt|apt-get|dpkg|gcc|make|curl|wget|git|sh|bash|zsh)$' dist/stage1-runtime-images/agent.rootfs.txt
+          ! grep -E 'node_modules|codex-resources/voice|npm-cache|\\.npm' dist/stage1-runtime-images/agent.rootfs.txt
+          grep '^opt/codex/bin/codex$' dist/stage1-runtime-images/agent.rootfs.txt
+          grep '^opt/codex/codex-path/rg$' dist/stage1-runtime-images/agent.rootfs.txt
 
       - name: Run focused runtime-image tests
         run: python -m pytest tests/unit/test_runtime_images.py tests/unit/test_stage1_runtime_workflows.py
@@ -113,6 +134,20 @@ jobs:
             image --input /work/agent-image.tar --format json \
             --output /work/agent.trivy.json \
             --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
+          docker run --rm \
+            -v "$PWD/dist/stage1-runtime-images:/work" \
+            -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            image gcr.io/distroless/python3-debian12:nonroot@sha256:0f8ca62dea61023c1fe02e445bd154ee02b2d97aec377f965ae3c641ec838e61 \
+            --format json --output /work/gateway-base.trivy.json \
+            --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
+          docker run --rm \
+            -v "$PWD/dist/stage1-runtime-images:/work" \
+            -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            image gcr.io/distroless/static-debian12:nonroot@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d \
+            --format json --output /work/agent-base.trivy.json \
+            --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
 
       - name: Generate provenance and scan summaries
         run: |
@@ -122,19 +157,12 @@ jobs:
           python - <<'PY'
           import json
           import pathlib
+          import sys
+          sys.path.insert(0, str(pathlib.Path.cwd()))
+          from agentguard.evaluation.runtime_images import summarize_trivy_high_critical
           root = pathlib.Path("dist/stage1-runtime-images")
-          severity_counts = {"CRITICAL": 0, "HIGH": 0}
-          for scan in ("gateway.trivy.json", "agent.trivy.json"):
-              data = json.loads((root / scan).read_text(encoding="utf-8"))
-              for result in data.get("Results", []):
-                  for vulnerability in result.get("Vulnerabilities") or []:
-                      severity = vulnerability.get("Severity")
-                      if severity in severity_counts:
-                          severity_counts[severity] += 1
-          policy_status = (
-              "hosted_trivy_high_critical_policy_passed"
-              if not any(severity_counts.values())
-              else "hosted_trivy_high_critical_policy_failed"
+          vulnerability_policy = summarize_trivy_high_critical(
+              [root / "gateway.trivy.json", root / "agent.trivy.json"]
           )
           for name in ("gateway", "agent"):
               (root / f"{name}.provenance.json").write_text(json.dumps({
@@ -144,15 +172,14 @@ jobs:
                   "source": "${{ github.sha }}",
               }, sort_keys=True) + "\n", encoding="utf-8")
           (root / "scan-summary.json").write_text(json.dumps({
-              "vulnerability_policy": {
-                  "status": policy_status,
-                  "severity_counts": severity_counts,
-                  "scanner_failures_suppressed": False
-              },
+              "vulnerability_policy": vulnerability_policy,
               "secret_scan": {"findings": 0},
               "license": {"review_required": False}
           }, sort_keys=True) + "\n", encoding="utf-8")
           PY
+          python scripts/validate_runtime_images.py \
+            --trivy-json dist/stage1-runtime-images/gateway.trivy.json \
+            --trivy-json dist/stage1-runtime-images/agent.trivy.json
 
       - name: Confirm no image push occurred
         run: |
@@ -170,8 +197,13 @@ jobs:
                   encoding="utf-8"
               )
           )
-          counts = summary["vulnerability_policy"]["severity_counts"]
+          policy = summary["vulnerability_policy"]
+          counts = policy["severity_counts"]
+          fixed = policy["fixability_counts"]["fixed"]
           total = counts.get("CRITICAL", 0) + counts.get("HIGH", 0)
+          if fixed.get("CRITICAL", 0) or fixed.get("HIGH", 0):
+              print(f"Trivy fixable high/critical vulnerability policy failed: {fixed}", file=sys.stderr)
+              raise SystemExit(1)
           if total:
               print(f"Trivy high/critical vulnerability policy failed: {counts}", file=sys.stderr)
               raise SystemExit(1)

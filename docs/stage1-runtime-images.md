@@ -23,17 +23,19 @@ sockets, avoid host namespaces, and avoid devices.
 Gateway:
 
 - Dockerfile: `runtime-images/gateway/Dockerfile`
-- Entrypoint: `/agentguard-live-egress-gateway`
-- Base image: `python:3.12.12-slim-bookworm@sha256:2986c55feb36e6cae00fa1fefb454283e4b33f35e75ff8bdd123b134130be301`
-- Base index digest: `sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c`
+- Entrypoint: `/usr/bin/python3 /agentguard-live-egress-gateway`
+- Base image: `gcr.io/distroless/python3-debian12:nonroot@sha256:0f8ca62dea61023c1fe02e445bd154ee02b2d97aec377f965ae3c641ec838e61`
+- Base index digest: `sha256:7d1042ce588ab97019fe95c24ffca7bc5a82ccdac572511d5e09bda4435c89c5`
 - UID/GID: `65532:65532`
 
 Codex agent:
 
 - Dockerfile: `runtime-images/codex-agent/Dockerfile`
 - Entrypoint: `/usr/local/bin/agentguard-codex-entrypoint`
-- Base image: `node:22.20.0-bookworm-slim@sha256:c385ec44d77c785e2364ac0c9b150809a0fdc17fde3dbf061e3dad07242c6a85`
-- Base index digest: `sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e`
+- Final base image: `gcr.io/distroless/static-debian12:nonroot@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d`
+- Final base index digest: `sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab`
+- Builder base image: `node:22.20.0-bookworm-slim@sha256:c385ec44d77c785e2364ac0c9b150809a0fdc17fde3dbf061e3dad07242c6a85`
+- Builder base index digest: `sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e`
 - UID/GID: `10001:10001`
 - Package: `@openai/codex`
 - Version: `0.159.2`
@@ -44,7 +46,10 @@ Codex agent:
 
 The official npm metadata for the package and Linux x64 alias must be
 re-verified during build review. Runtime npm/package installation and runtime
-update checks are not allowed.
+update checks are not allowed. The final agent image must carry the verified
+Linux x64 Codex musl binary and required Codex helper binaries only; Node, npm,
+npm caches, the optional voice library tree, package managers, shells, and
+debug utilities are excluded from the final runtime image.
 
 ## Mock-Only Validation
 

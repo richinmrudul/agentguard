@@ -7,6 +7,7 @@ import pytest
 
 from agentguard.evaluation.runtime_images import (
     AGENT_BASE_IMAGE,
+    AGENT_BUILDER_BASE_IMAGE,
     CODEX_INTEGRITY,
     CODEX_LINUX_X64_INTEGRITY,
     CODEX_VERSION,
@@ -17,6 +18,7 @@ from agentguard.evaluation.runtime_images import (
     parse_codex_usage,
     runtime_image_context_digest,
     runtime_manifest_digest,
+    summarize_trivy_high_critical,
     validate_runtime_manifest,
 )
 
@@ -53,6 +55,7 @@ def test_runtime_manifest_is_canonical_and_phase1_unpublished() -> None:
     assert validate_runtime_manifest(manifest) == manifest
     assert manifest["gateway"]["base_image"] == GATEWAY_BASE_IMAGE
     assert manifest["agent"]["base_image"] == AGENT_BASE_IMAGE
+    assert manifest["agent"]["builder_base_image"] == AGENT_BUILDER_BASE_IMAGE
     assert manifest["agent"]["codex"]["version"] == CODEX_VERSION
     assert manifest["agent"]["codex"]["integrity"] == CODEX_INTEGRITY
     assert manifest["agent"]["codex"]["linux_x64_integrity"] == CODEX_LINUX_X64_INTEGRITY
@@ -251,3 +254,86 @@ def test_codex_agent_lock_uses_exact_verified_official_integrities() -> None:
     assert codex["integrity"] == CODEX_INTEGRITY
     assert linux["version"] == "0.159.2-linux-x64"
     assert linux["integrity"] == CODEX_LINUX_X64_INTEGRITY
+
+
+def test_final_runtime_dockerfiles_do_not_carry_package_managers_or_node_runtime() -> None:
+    gateway = (ROOT / "runtime-images/gateway/Dockerfile").read_text(encoding="utf-8")
+    agent = (ROOT / "runtime-images/codex-agent/Dockerfile").read_text(encoding="utf-8")
+    agent_final = agent[agent.rfind("\nFROM ") + 1 :]
+
+    assert GATEWAY_BASE_IMAGE in gateway
+    assert AGENT_BASE_IMAGE in agent_final
+    assert AGENT_BUILDER_BASE_IMAGE in agent
+    assert "python:3.12" not in gateway
+    assert "node:22" not in agent_final
+    assert "node_modules" not in agent_final
+    assert "npm" not in agent_final
+    assert "apt-get" not in agent_final
+    assert "codex-resources/voice" not in agent
+    assert "COPY --from=codex-download /opt/codex-runtime /opt/codex" in agent_final
+
+
+def test_agent_entrypoint_is_compiled_wrapper_not_shell_script() -> None:
+    entrypoint = (ROOT / "runtime-images/codex-agent/entrypoint.c").read_text(encoding="utf-8")
+    legacy_shell = (ROOT / "runtime-images/codex-agent/entrypoint.sh").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "runtime-images/codex-agent/Dockerfile").read_text(encoding="utf-8")
+
+    assert "CODEX_API_KEY" in entrypoint
+    assert "CODEX_MODEL" in entrypoint
+    assert "OPENAI_API_KEY" in entrypoint
+    assert "execv(\"/opt/codex/bin/codex\"" in entrypoint
+    assert "entrypoint.sh" not in dockerfile
+    assert "#!/bin/sh" in legacy_shell
+
+
+def test_trivy_summary_rejects_invalid_or_incomplete_json(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.trivy.json"
+    empty.write_text('{"Results":[]}\n', encoding="utf-8")
+
+    with pytest.raises(RuntimeImageError, match="no results"):
+        summarize_trivy_high_critical([empty])
+
+    malformed = tmp_path / "malformed.trivy.json"
+    malformed.write_text("{", encoding="utf-8")
+    with pytest.raises(RuntimeImageError, match="invalid Trivy JSON"):
+        summarize_trivy_high_critical([malformed])
+
+
+def test_trivy_summary_tracks_fixable_and_unfixed_high_critical(tmp_path: Path) -> None:
+    scan = tmp_path / "agent.trivy.json"
+    scan.write_text(
+        json.dumps(
+            {
+                "Results": [
+                    {
+                        "Target": "agent",
+                        "Type": "debian",
+                        "Vulnerabilities": [
+                            {
+                                "VulnerabilityID": "CVE-fixed",
+                                "PkgName": "libssl3",
+                                "InstalledVersion": "1",
+                                "Severity": "HIGH",
+                                "FixedVersion": "2",
+                            },
+                            {
+                                "VulnerabilityID": "CVE-unfixed",
+                                "PkgName": "zlib1g",
+                                "InstalledVersion": "1",
+                                "Severity": "CRITICAL",
+                            },
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summary = summarize_trivy_high_critical([scan])
+
+    assert summary["status"] == "hosted_trivy_high_critical_policy_failed"
+    assert summary["severity_counts"] == {"CRITICAL": 1, "HIGH": 1}
+    assert summary["fixability_counts"]["fixed"] == {"CRITICAL": 0, "HIGH": 1}
+    assert summary["fixability_counts"]["unfixed"] == {"CRITICAL": 1, "HIGH": 0}
+    assert summary["findings"][0]["fix_available"] is True

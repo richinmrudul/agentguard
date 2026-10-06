@@ -11,17 +11,24 @@ RUNTIME_IMAGE_MANIFEST_SCHEMA = "agentguard.stage1-runtime-image-freeze"
 RUNTIME_IMAGE_MANIFEST_SCHEMA_VERSION = 1
 PLATFORM = "linux/amd64"
 GATEWAY_BASE_IMAGE = (
-    "python:3.12.12-slim-bookworm@"
-    "sha256:2986c55feb36e6cae00fa1fefb454283e4b33f35e75ff8bdd123b134130be301"
+    "gcr.io/distroless/python3-debian12:nonroot@"
+    "sha256:0f8ca62dea61023c1fe02e445bd154ee02b2d97aec377f965ae3c641ec838e61"
 )
 GATEWAY_BASE_INDEX_DIGEST = (
-    "sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c"
+    "sha256:7d1042ce588ab97019fe95c24ffca7bc5a82ccdac572511d5e09bda4435c89c5"
 )
 AGENT_BASE_IMAGE = (
+    "gcr.io/distroless/static-debian12:nonroot@"
+    "sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d"
+)
+AGENT_BASE_INDEX_DIGEST = (
+    "sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab"
+)
+AGENT_BUILDER_BASE_IMAGE = (
     "node:22.20.0-bookworm-slim@"
     "sha256:c385ec44d77c785e2364ac0c9b150809a0fdc17fde3dbf061e3dad07242c6a85"
 )
-AGENT_BASE_INDEX_DIGEST = (
+AGENT_BUILDER_BASE_INDEX_DIGEST = (
     "sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e"
 )
 CODEX_PACKAGE = "@openai/codex"
@@ -100,6 +107,8 @@ def build_runtime_manifest(
             "oci_digest": _oci_digest(agent_image_digest, "agent image digest"),
             "base_image": AGENT_BASE_IMAGE,
             "base_index_digest": AGENT_BASE_INDEX_DIGEST,
+            "builder_base_image": AGENT_BUILDER_BASE_IMAGE,
+            "builder_base_index_digest": AGENT_BUILDER_BASE_INDEX_DIGEST,
             "build_context_digest": _sha256(agent_context_digest, "agent context digest"),
             "entrypoint": ["/usr/local/bin/agentguard-codex-entrypoint"],
             "uid": FIXED_AGENT_UID,
@@ -155,6 +164,7 @@ def validate_runtime_manifest(data: object) -> dict[str, Any]:
     agent = _mapping(data.get("agent"), "agent")
     _image_ref(gateway.get("base_image"), "gateway base image")
     _image_ref(agent.get("base_image"), "agent base image")
+    _image_ref(agent.get("builder_base_image"), "agent builder base image")
     _oci_digest(gateway.get("oci_digest"), "gateway oci digest")
     _oci_digest(agent.get("oci_digest"), "agent oci digest")
     if gateway.get("uid") != FIXED_GATEWAY_UID or gateway.get("gid") != FIXED_GATEWAY_UID:
@@ -217,6 +227,69 @@ def parse_codex_usage(payload: object, *, trial_id: str) -> dict[str, int]:
     if payload.get("complete") is not True:
         raise RuntimeImageError("usage evidence is incomplete")
     return result
+
+
+def summarize_trivy_high_critical(paths: list[Path]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "status": "hosted_trivy_high_critical_policy_passed",
+        "severity_counts": {"CRITICAL": 0, "HIGH": 0},
+        "fixability_counts": {
+            "fixed": {"CRITICAL": 0, "HIGH": 0},
+            "unfixed": {"CRITICAL": 0, "HIGH": 0},
+        },
+        "scanner_failures_suppressed": False,
+        "findings": [],
+    }
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeImageError(f"invalid Trivy JSON: {path}: {error}") from error
+        results = data.get("Results")
+        if not isinstance(results, list) or not results:
+            raise RuntimeImageError(f"Trivy JSON has no results: {path}")
+        saw_vulnerability_field = False
+        image = path.name.removesuffix(".trivy.json")
+        for result in results:
+            if not isinstance(result, dict):
+                raise RuntimeImageError(f"Trivy result must be an object: {path}")
+            vulnerabilities = result.get("Vulnerabilities")
+            if vulnerabilities is None:
+                continue
+            if not isinstance(vulnerabilities, list):
+                raise RuntimeImageError(f"Trivy vulnerabilities must be a list: {path}")
+            saw_vulnerability_field = True
+            for vulnerability in vulnerabilities:
+                if not isinstance(vulnerability, dict):
+                    raise RuntimeImageError(f"Trivy vulnerability must be an object: {path}")
+                severity = vulnerability.get("Severity")
+                if severity not in {"HIGH", "CRITICAL"}:
+                    continue
+                fixed_version = vulnerability.get("FixedVersion") or ""
+                fixability = "fixed" if fixed_version else "unfixed"
+                summary["severity_counts"][severity] += 1
+                summary["fixability_counts"][fixability][severity] += 1
+                summary["findings"].append(
+                    {
+                        "image": image,
+                        "target": result.get("Target", ""),
+                        "package_type": result.get("Type", ""),
+                        "package_name": vulnerability.get("PkgName", ""),
+                        "installed_version": vulnerability.get("InstalledVersion", ""),
+                        "vulnerability_id": vulnerability.get("VulnerabilityID", ""),
+                        "severity": severity,
+                        "fixed_version": fixed_version,
+                        "fix_available": bool(fixed_version),
+                        "package_path": vulnerability.get("PkgPath", ""),
+                        "layer_digest": (vulnerability.get("Layer") or {}).get("Digest", ""),
+                    }
+                )
+        if not saw_vulnerability_field:
+            raise RuntimeImageError(f"Trivy JSON has no vulnerability sections: {path}")
+    counts = summary["severity_counts"]
+    if counts["CRITICAL"] or counts["HIGH"]:
+        summary["status"] = "hosted_trivy_high_critical_policy_failed"
+    return summary
 
 
 def _mapping(value: object, label: str) -> dict[str, Any]:

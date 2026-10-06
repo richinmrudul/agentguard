@@ -22,6 +22,7 @@ from agentguard.evaluation.runtime_images import (  # noqa: E402
     build_runtime_manifest,
     runtime_image_context_digest,
     runtime_manifest_digest,
+    summarize_trivy_high_critical,
     validate_runtime_manifest,
 )
 
@@ -42,6 +43,19 @@ FORBIDDEN_RUNTIME = (
     "--privileged",
     "network: host",
 )
+FORBIDDEN_FINAL_AGENT = (
+    "/usr/local/bin/node",
+    "/usr/local/bin/npm",
+    "node_modules",
+    "YARN_VERSION",
+    "docker-entrypoint.sh",
+)
+FORBIDDEN_FINAL_GATEWAY = (
+    "pip",
+    "apt-get",
+    "dpkg",
+    "/bin/sh -c",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -50,9 +64,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-commit", default="0" * 40)
     parser.add_argument("--gateway-digest", default="sha256:" + "1" * 64)
     parser.add_argument("--agent-digest", default="sha256:" + "2" * 64)
+    parser.add_argument("--trivy-json", type=Path, action="append", default=[])
     args = parser.parse_args(argv)
     try:
-        validate_policy()
+        validate_policy(args.trivy_json)
         if args.emit_manifest:
             manifest = build_runtime_manifest(
                 source_commit=args.source_commit,
@@ -84,11 +99,13 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def validate_policy() -> None:
+def validate_policy(trivy_json: list[Path] | None = None) -> None:
     gateway_dockerfile = (GATEWAY_CONTEXT / "Dockerfile").read_text(encoding="utf-8")
     agent_dockerfile = (AGENT_CONTEXT / "Dockerfile").read_text(encoding="utf-8")
+    gateway_final = final_stage(gateway_dockerfile)
+    agent_final = final_stage(agent_dockerfile)
     lock = (AGENT_CONTEXT / "package-lock.json").read_text(encoding="utf-8")
-    entrypoint = (AGENT_CONTEXT / "entrypoint.sh").read_text(encoding="utf-8")
+    entrypoint = (AGENT_CONTEXT / "entrypoint.c").read_text(encoding="utf-8")
     workflows = "\n".join(
         path.read_text(encoding="utf-8")
         for path in sorted((ROOT / ".github/workflows").glob("*.yml"))
@@ -101,13 +118,21 @@ def validate_policy() -> None:
     assert "USER 10001:10001" in agent_dockerfile
     assert "CODEX_API_KEY" in entrypoint
     assert EXPECTED_CREDENTIAL_ENV == "CODEX_API_KEY"
+    assert "execv(\"/opt/codex/bin/codex\"" in entrypoint
     assert f'"version": "{CODEX_VERSION}"' in lock
     assert CODEX_INTEGRITY in lock
     assert CODEX_LINUX_X64_INTEGRITY in lock
     assert MUTABLE_NPM.search((AGENT_CONTEXT / "package.json").read_text(encoding="utf-8")) is None
     for forbidden in FORBIDDEN_RUNTIME:
-        runtime_text = gateway_dockerfile + "\n" + agent_dockerfile + "\n" + entrypoint
+        runtime_text = gateway_final + "\n" + agent_final + "\n" + entrypoint
         assert forbidden not in runtime_text, f"forbidden runtime pattern present: {forbidden}"
+    for forbidden in FORBIDDEN_FINAL_AGENT:
+        assert forbidden not in agent_final, f"forbidden final agent content present: {forbidden}"
+    for forbidden in FORBIDDEN_FINAL_GATEWAY:
+        assert forbidden not in gateway_final, f"forbidden final gateway content present: {forbidden}"
+    assert "COPY --from=codex-download /opt/codex-runtime /opt/codex" in agent_final
+    assert "COPY --from=codex-download /opt/codex-build/node_modules" not in agent_dockerfile
+    assert "codex-resources/voice" not in agent_dockerfile
     assert FLOATING_ACTION.search(workflows) is None
     publication = (ROOT / ".github/workflows/stage1-runtime-images-publish.yml").read_text(
         encoding="utf-8"
@@ -116,6 +141,19 @@ def validate_policy() -> None:
     assert "pull_request:" not in publication
     assert "push:" not in publication
     assert "packages: write" in publication
+    if trivy_json:
+        summary = summarize_trivy_high_critical(trivy_json)
+        fixed = summary["fixability_counts"]["fixed"]
+        assert fixed["CRITICAL"] == 0, "fixable critical vulnerabilities present"
+        assert fixed["HIGH"] == 0, "fixable high vulnerabilities present"
+
+
+def final_stage(dockerfile: str) -> str:
+    marker = "\nFROM "
+    index = dockerfile.rfind(marker)
+    if index == -1:
+        return dockerfile
+    return dockerfile[index + 1 :]
 
 
 if __name__ == "__main__":
