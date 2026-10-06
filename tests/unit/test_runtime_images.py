@@ -337,3 +337,17 @@ def test_trivy_summary_tracks_fixable_and_unfixed_high_critical(tmp_path: Path) 
     assert summary["fixability_counts"]["fixed"] == {"CRITICAL": 0, "HIGH": 1}
     assert summary["fixability_counts"]["unfixed"] == {"CRITICAL": 1, "HIGH": 0}
     assert summary["findings"][0]["fix_available"] is True
+
+
+def test_trivy_summary_accepts_zero_finding_results(tmp_path: Path) -> None:
+    scan = tmp_path / "agent.trivy.json"
+    scan.write_text(
+        json.dumps({"Results": [{"Target": "agent", "Type": "debian"}]}),
+        encoding="utf-8",
+    )
+
+    summary = summarize_trivy_high_critical([scan])
+
+    assert summary["status"] == "hosted_trivy_high_critical_policy_passed"
+    assert summary["severity_counts"] == {"CRITICAL": 0, "HIGH": 0}
+    assert summary["findings"] == []

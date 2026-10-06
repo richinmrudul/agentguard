@@ -248,7 +248,6 @@ def summarize_trivy_high_critical(paths: list[Path]) -> dict[str, Any]:
         results = data.get("Results")
         if not isinstance(results, list) or not results:
             raise RuntimeImageError(f"Trivy JSON has no results: {path}")
-        saw_vulnerability_field = False
         image = path.name.removesuffix(".trivy.json")
         for result in results:
             if not isinstance(result, dict):
@@ -258,7 +257,6 @@ def summarize_trivy_high_critical(paths: list[Path]) -> dict[str, Any]:
                 continue
             if not isinstance(vulnerabilities, list):
                 raise RuntimeImageError(f"Trivy vulnerabilities must be a list: {path}")
-            saw_vulnerability_field = True
             for vulnerability in vulnerabilities:
                 if not isinstance(vulnerability, dict):
                     raise RuntimeImageError(f"Trivy vulnerability must be an object: {path}")
@@ -284,8 +282,6 @@ def summarize_trivy_high_critical(paths: list[Path]) -> dict[str, Any]:
                         "layer_digest": (vulnerability.get("Layer") or {}).get("Digest", ""),
                     }
                 )
-        if not saw_vulnerability_field:
-            raise RuntimeImageError(f"Trivy JSON has no vulnerability sections: {path}")
     counts = summary["severity_counts"]
     if counts["CRITICAL"] or counts["HIGH"]:
         summary["status"] = "hosted_trivy_high_critical_policy_failed"
