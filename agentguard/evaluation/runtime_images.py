@@ -112,7 +112,6 @@ def canonical_runtime_config(inspect_data: object) -> dict[str, Any]:
         "working_dir": config.get("WorkingDir", ""),
         "exposed_ports": sorted((_mapping(config.get("ExposedPorts") or {}, "ExposedPorts")).keys()),
         "rootfs_type": rootfs.get("Type", ""),
-        "rootfs_layers": rootfs.get("Layers") or [],
     }
 
 

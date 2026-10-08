@@ -368,7 +368,7 @@ def test_canonical_runtime_identity_is_stable_for_identical_inputs(tmp_path: Pat
 
 @pytest.mark.parametrize(
     "change",
-    ["content", "mode", "owner", "base", "user", "entrypoint", "env", "layer"],
+    ["content", "mode", "owner", "base", "user", "entrypoint", "env"],
 )
 def test_canonical_runtime_identity_changes_for_security_relevant_inputs(
     tmp_path: Path, change: str
@@ -391,7 +391,6 @@ def test_canonical_runtime_identity_changes_for_security_relevant_inputs(
         user="1001:1001" if change == "user" else "1000:1000",
         entrypoint=["/other"] if change == "entrypoint" else None,
         env=["PATH=/usr/bin", "EXTRA=1"] if change == "env" else None,
-        layers=["sha256:" + "b" * 64] if change == "layer" else None,
     )
     baseline_identity = canonical_runtime_identity(
         image_role="gateway",
@@ -407,6 +406,29 @@ def test_canonical_runtime_identity_changes_for_security_relevant_inputs(
     )
 
     assert changed_identity["identity"] != baseline_identity["identity"]
+
+
+def test_canonical_runtime_identity_ignores_layer_serialization_when_rootfs_matches(
+    tmp_path: Path,
+) -> None:
+    rootfs = tmp_path / "rootfs.tar"
+    _write_rootfs_tar(rootfs)
+    first = canonical_runtime_identity(
+        image_role="agent",
+        base_image=AGENT_BASE_IMAGE,
+        rootfs_digest=canonical_rootfs_digest(rootfs),
+        runtime_config=canonical_runtime_config(_inspect_config()),
+    )
+    second = canonical_runtime_identity(
+        image_role="agent",
+        base_image=AGENT_BASE_IMAGE,
+        rootfs_digest=canonical_rootfs_digest(rootfs),
+        runtime_config=canonical_runtime_config(
+            _inspect_config(layers=["sha256:" + "b" * 64, "sha256:" + "c" * 64])
+        ),
+    )
+
+    assert first["identity"] == second["identity"]
 
 
 def test_canonical_runtime_identity_rejects_missing_or_wrong_evidence(tmp_path: Path) -> None:
