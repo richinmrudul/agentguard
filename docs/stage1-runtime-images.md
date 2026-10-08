@@ -94,6 +94,32 @@ Phase 1 tooling records or validates:
 Scanner failures must not be suppressed. Raw machine-readable scan artifacts
 are retained as bounded CI artifacts.
 
+
+## Temporary Gateway Vulnerability Exceptions
+
+The reviewed Phase 1 gateway image carries 26 HIGH Trivy occurrences that
+deduplicate to 13 CVEs. The Codex agent image remains at zero HIGH and zero
+CRITICAL findings. The gateway findings are inherited from the reviewed
+`gcr.io/distroless/python3-debian13:nonroot` base image, and the reviewed
+Debian package records did not report fixed package versions for those
+findings at approval time.
+
+The only accepted exceptions are recorded in
+`runtime-images/vulnerability-exceptions.json`. They are temporary, exact
+digest-bound records for gateway image
+`sha256:3b4973229f7644c840fa9dee12c291bff2cf9997bcb4d320e29ce10ee5e72852`
+and expire on 2026-11-06. They do not apply to the agent image, any other
+gateway image digest, any other base-image digest, fixable findings, CRITICAL
+findings, new CVEs, changed package versions, or stale findings that no longer
+appear in raw Trivy JSON. Any image, base, import, dependency, or runtime
+behavior change requires reevaluation.
+
+A narrower Python runtime or a compiled gateway remains the preferred
+longer-term remediation. Docker containment, even with non-root execution,
+read-only-root compatibility, dropped capabilities, and no-new-privileges, is
+application-level containment and must not be treated as an absolute hostile-code
+sandbox.
+
 ## Freeze Manifest
 
 `agentguard.evaluation.runtime_images` defines the strict versioned

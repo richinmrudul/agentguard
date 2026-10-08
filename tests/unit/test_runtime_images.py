@@ -1,4 +1,6 @@
+import copy
 import json
+from datetime import date
 import subprocess
 import sys
 from pathlib import Path
@@ -13,11 +15,15 @@ from agentguard.evaluation.runtime_images import (
     CODEX_VERSION,
     EXPECTED_CREDENTIAL_ENV,
     GATEWAY_BASE_IMAGE,
+    GATEWAY_REVIEWED_IMAGE_DIGEST,
+    AGENT_REVIEWED_IMAGE_DIGEST,
     RuntimeImageError,
     build_runtime_manifest,
     parse_codex_usage,
     runtime_image_context_digest,
     runtime_manifest_digest,
+    evaluate_trivy_high_critical_policy,
+    load_vulnerability_exceptions,
     summarize_trivy_high_critical,
     validate_runtime_manifest,
 )
@@ -351,3 +357,268 @@ def test_trivy_summary_accepts_zero_finding_results(tmp_path: Path) -> None:
     assert summary["status"] == "hosted_trivy_high_critical_policy_passed"
     assert summary["severity_counts"] == {"CRITICAL": 0, "HIGH": 0}
     assert summary["findings"] == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"Results": ["not-object"]}, "result must be an object"),
+        (
+            {"Results": [{"Target": "gateway", "Vulnerabilities": "not-list"}]},
+            "vulnerabilities must be a list",
+        ),
+        (
+            {"Results": [{"Target": "gateway", "Vulnerabilities": ["not-object"]}]},
+            "vulnerability must be an object",
+        ),
+    ],
+)
+def test_trivy_summary_rejects_malformed_result_shapes(
+    tmp_path: Path, payload, message
+) -> None:
+    scan = tmp_path / "gateway.trivy.json"
+    scan.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(RuntimeImageError, match=message):
+        summarize_trivy_high_critical([scan])
+
+
+def test_trivy_summary_ignores_non_high_critical_findings(tmp_path: Path) -> None:
+    scan = tmp_path / "gateway.trivy.json"
+    _write_scan(
+        scan,
+        "gateway",
+        [_finding("CVE-low", "libsafe", "1", severity="LOW")],
+    )
+
+    summary = summarize_trivy_high_critical([scan])
+
+    assert summary["status"] == "hosted_trivy_high_critical_policy_passed"
+    assert summary["findings"] == []
+
+
+
+def _finding(cve: str, package: str, installed: str, *, severity: str = "HIGH", fixed: str = "") -> dict[str, str]:
+    item = {
+        "VulnerabilityID": cve,
+        "PkgName": package,
+        "InstalledVersion": installed,
+        "Severity": severity,
+    }
+    if fixed:
+        item["FixedVersion"] = fixed
+    return item
+
+
+def _write_scan(path: Path, target: str, findings: list[dict[str, str]]) -> None:
+    result = {"Target": target, "Type": "debian"}
+    if findings:
+        result["Vulnerabilities"] = findings
+    path.write_text(json.dumps({"Results": [result]}), encoding="utf-8")
+
+
+def _exception_manifest(tmp_path: Path, *, mutate=None) -> Path:
+    source = json.loads((ROOT / "runtime-images/vulnerability-exceptions.json").read_text(encoding="utf-8"))
+    data = copy.deepcopy(source)
+    if mutate is not None:
+        mutate(data)
+    path = tmp_path / "vulnerability-exceptions.json"
+    path.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def _reviewed_gateway_findings() -> list[dict[str, str]]:
+    manifest = json.loads((ROOT / "runtime-images/vulnerability-exceptions.json").read_text(encoding="utf-8"))
+    findings = []
+    for exception in manifest["exceptions"]:
+        for package in exception["affected_packages"]:
+            findings.append(
+                _finding(
+                    exception["cve"],
+                    package["name"],
+                    package["installed_version"],
+                )
+            )
+    return findings
+
+
+def _evaluate_policy(tmp_path: Path, gateway_findings: list[dict[str, str]], *, manifest_mutate=None, agent_findings=None, gateway_digest=GATEWAY_REVIEWED_IMAGE_DIGEST):
+    gateway = tmp_path / "gateway.trivy.json"
+    agent = tmp_path / "agent.trivy.json"
+    _write_scan(gateway, "gateway", gateway_findings)
+    _write_scan(agent, "agent", agent_findings or [])
+    return evaluate_trivy_high_critical_policy(
+        [gateway, agent],
+        exception_manifest=_exception_manifest(tmp_path, mutate=manifest_mutate),
+        gateway_image_digest=gateway_digest,
+        agent_image_digest=AGENT_REVIEWED_IMAGE_DIGEST,
+        as_of=date(2026, 10, 7),
+    )
+
+
+def test_reviewed_exception_set_passes_exact_digest_policy(tmp_path: Path) -> None:
+    policy = _evaluate_policy(tmp_path, _reviewed_gateway_findings())
+
+    assert policy["status"] == "hosted_trivy_high_critical_policy_passed"
+    assert policy["severity_counts"] == {"CRITICAL": 0, "HIGH": 26}
+    assert policy["fixability_counts"]["fixed"] == {"CRITICAL": 0, "HIGH": 0}
+    assert policy["exception_count"] == 13
+    assert policy["accepted_exception_count"] == 26
+    assert policy["rejected_findings"] == []
+
+
+@pytest.mark.parametrize(
+    ("finding", "reason"),
+    [
+        (_finding("CVE-2099-0001", "libnew", "1"), "unmatched gateway high vulnerability"),
+        (_finding("CVE-2025-69720", "libncursesw6", "6.5+20250216-2", severity="CRITICAL"), "critical vulnerabilities are forbidden"),
+        (_finding("CVE-2025-69720", "libncursesw6", "6.5+20250216-2", fixed="6.6"), "fixable high vulnerabilities require remediation"),
+        (_finding("CVE-2025-69720", "libncursesw6", "wrong"), "unmatched gateway high vulnerability"),
+        (_finding("CVE-2025-69720", "wrong", "6.5+20250216-2"), "unmatched gateway high vulnerability"),
+    ],
+)
+def test_exception_policy_rejects_unmatched_critical_or_fixable_findings(tmp_path: Path, finding, reason) -> None:
+    policy = _evaluate_policy(tmp_path, _reviewed_gateway_findings() + [finding])
+
+    assert policy["status"] == "hosted_trivy_high_critical_policy_failed"
+    assert any(item["reason"] == reason for item in policy["rejected_findings"])
+
+
+def test_exception_policy_rejects_wrong_gateway_digest(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeImageError, match="gateway image digest does not match"):
+        _evaluate_policy(tmp_path, _reviewed_gateway_findings(), gateway_digest="sha256:" + "9" * 64)
+
+
+def test_exception_policy_rejects_wrong_base_digest(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeImageError, match="gateway base image does not match"):
+        _evaluate_policy(
+            tmp_path,
+            _reviewed_gateway_findings(),
+            manifest_mutate=lambda data: data.__setitem__("gateway_base_image", "gcr.io/distroless/python3-debian13:nonroot@sha256:" + "9" * 64),
+        )
+
+
+def test_exception_policy_rejects_expired_exception(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeImageError, match="exception expired"):
+        load_vulnerability_exceptions(
+            _exception_manifest(tmp_path),
+            gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
+            as_of=date(2026, 11, 7),
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda data: data["exceptions"][0].pop("owner"), "owner mismatch"),
+        (lambda data: data["exceptions"][0].__setitem__("evidence", ""), "evidence is required"),
+        (lambda data: data["exceptions"][0].__setitem__("advisory_references", []), "advisory references are required"),
+        (lambda data: data["exceptions"][0].__setitem__("cve", "CVE-*"), "exact CVE"),
+        (lambda data: data["exceptions"][0].__setitem__("image_role", "agent"), "gateway image"),
+    ],
+)
+def test_exception_manifest_rejects_malformed_wildcard_or_agent_exceptions(tmp_path: Path, mutate, message) -> None:
+    with pytest.raises(RuntimeImageError, match=message):
+        load_vulnerability_exceptions(
+            _exception_manifest(tmp_path, mutate=mutate),
+            gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
+            as_of=date(2026, 10, 7),
+        )
+
+
+def test_exception_policy_rejects_agent_high_even_if_cve_is_listed(tmp_path: Path) -> None:
+    policy = _evaluate_policy(
+        tmp_path,
+        _reviewed_gateway_findings(),
+        agent_findings=[_finding("CVE-2025-69720", "libncursesw6", "6.5+20250216-2")],
+    )
+
+    assert policy["status"] == "hosted_trivy_high_critical_policy_failed"
+    assert any(item["reason"] == "agent exceptions are forbidden" for item in policy["rejected_findings"])
+
+
+def test_exception_policy_rejects_unknown_image_role(tmp_path: Path) -> None:
+    gateway = tmp_path / "other.trivy.json"
+    agent = tmp_path / "agent.trivy.json"
+    _write_scan(gateway, "other", [_finding("CVE-2099-0001", "libnew", "1")])
+    _write_scan(agent, "agent", [])
+
+    policy = evaluate_trivy_high_critical_policy(
+        [gateway, agent],
+        exception_manifest=_exception_manifest(tmp_path),
+        gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
+        agent_image_digest=AGENT_REVIEWED_IMAGE_DIGEST,
+        as_of=date(2026, 10, 7),
+    )
+
+    assert policy["status"] == "hosted_trivy_high_critical_policy_failed"
+    assert any(item["reason"] == "unknown image role" for item in policy["rejected_findings"])
+
+
+def test_exception_policy_rejects_stale_exception_entries(tmp_path: Path) -> None:
+    findings = _reviewed_gateway_findings()[1:]
+    policy = _evaluate_policy(tmp_path, findings)
+
+    assert policy["status"] == "hosted_trivy_high_critical_policy_failed"
+    assert any(item["reason"] == "stale exception does not match a current scan finding" for item in policy["rejected_findings"])
+
+
+def test_exception_policy_rejects_missing_or_malformed_scan_evidence(tmp_path: Path) -> None:
+    manifest = _exception_manifest(tmp_path)
+    malformed = tmp_path / "gateway.trivy.json"
+    malformed.write_text("{", encoding="utf-8")
+    agent = tmp_path / "agent.trivy.json"
+    _write_scan(agent, "agent", [])
+
+    with pytest.raises(RuntimeImageError, match="invalid Trivy JSON"):
+        evaluate_trivy_high_critical_policy(
+            [malformed, agent],
+            exception_manifest=manifest,
+            gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
+            agent_image_digest=AGENT_REVIEWED_IMAGE_DIGEST,
+            as_of=date(2026, 10, 7),
+        )
+
+
+def test_exception_policy_rejects_artifact_image_identity_mismatch(tmp_path: Path) -> None:
+    def mutate(data):
+        data["gateway_image_digest"] = "sha256:" + "8" * 64
+        for exception in data["exceptions"]:
+            exception["gateway_image_digest"] = data["gateway_image_digest"]
+
+    with pytest.raises(RuntimeImageError, match="gateway image digest does not match"):
+        _evaluate_policy(tmp_path, _reviewed_gateway_findings(), manifest_mutate=mutate)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda data: data.__setitem__("schema", "wrong"), "invalid vulnerability"),
+        (lambda data: data.__setitem__("schema_version", 2), "unsupported"),
+        (lambda data: data.__setitem__("exceptions", []), "exceptions are required"),
+        (lambda data: data.__setitem__("agent_image_digest", GATEWAY_REVIEWED_IMAGE_DIGEST), "ambiguous"),
+        (lambda data: data["exceptions"].__setitem__(0, "not-object"), "must be an object"),
+        (lambda data: data["exceptions"][0].__setitem__("cve", data["exceptions"][1]["cve"]), "duplicate"),
+        (lambda data: data["exceptions"][0].__setitem__("severity", "CRITICAL"), "severity must be HIGH"),
+        (lambda data: data["exceptions"][0].__setitem__("approval_date", "2099-01-01"), "future"),
+        (lambda data: data["exceptions"][0].__setitem__("approval_date", "bad"), "YYYY-MM-DD"),
+        (lambda data: data["exceptions"][0].__setitem__("reachability", "probably"), "classification"),
+        (lambda data: data["exceptions"][0].__setitem__("advisory_references", ["http://example.test"]), "HTTPS"),
+        (lambda data: data["exceptions"][0].__setitem__("reevaluation_triggers", []), "triggers"),
+        (lambda data: data["exceptions"][0].__setitem__("affected_packages", []), "affected packages"),
+        (lambda data: data["exceptions"][0]["affected_packages"].__setitem__(0, "not-object"), "package must be"),
+        (
+            lambda data: data["exceptions"][0]["affected_packages"][0].__setitem__("name", "lib*"),
+            "must be exact",
+        ),
+    ],
+)
+def test_exception_manifest_rejects_additional_malformed_shapes(
+    tmp_path: Path, mutate, message
+) -> None:
+    with pytest.raises(RuntimeImageError, match=message):
+        load_vulnerability_exceptions(
+            _exception_manifest(tmp_path, mutate=mutate),
+            gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
+            as_of=date(2026, 10, 7),
+        )

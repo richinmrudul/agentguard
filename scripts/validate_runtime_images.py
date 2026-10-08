@@ -18,11 +18,14 @@ from agentguard.evaluation.runtime_images import (  # noqa: E402
     CODEX_VERSION,
     EXPECTED_CREDENTIAL_ENV,
     GATEWAY_BASE_IMAGE,
+    GATEWAY_REVIEWED_IMAGE_DIGEST,
+    AGENT_REVIEWED_IMAGE_DIGEST,
     RuntimeImageError,
     build_runtime_manifest,
     runtime_image_context_digest,
     runtime_manifest_digest,
-    summarize_trivy_high_critical,
+    evaluate_trivy_high_critical_policy,
+    load_vulnerability_exceptions,
     validate_runtime_manifest,
 )
 
@@ -65,9 +68,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gateway-digest", default="sha256:" + "1" * 64)
     parser.add_argument("--agent-digest", default="sha256:" + "2" * 64)
     parser.add_argument("--trivy-json", type=Path, action="append", default=[])
+    parser.add_argument("--exception-manifest", type=Path, default=ROOT / "runtime-images/vulnerability-exceptions.json")
     args = parser.parse_args(argv)
     try:
-        validate_policy(args.trivy_json)
+        validate_policy(args.trivy_json, exception_manifest=args.exception_manifest, gateway_digest=args.gateway_digest, agent_digest=args.agent_digest)
         if args.emit_manifest:
             manifest = build_runtime_manifest(
                 source_commit=args.source_commit,
@@ -99,7 +103,13 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def validate_policy(trivy_json: list[Path] | None = None) -> None:
+def validate_policy(
+    trivy_json: list[Path] | None = None,
+    *,
+    exception_manifest: Path = ROOT / "runtime-images/vulnerability-exceptions.json",
+    gateway_digest: str = GATEWAY_REVIEWED_IMAGE_DIGEST,
+    agent_digest: str = AGENT_REVIEWED_IMAGE_DIGEST,
+) -> None:
     gateway_dockerfile = (GATEWAY_CONTEXT / "Dockerfile").read_text(encoding="utf-8")
     agent_dockerfile = (AGENT_CONTEXT / "Dockerfile").read_text(encoding="utf-8")
     gateway_final = final_stage(gateway_dockerfile)
@@ -109,6 +119,11 @@ def validate_policy(trivy_json: list[Path] | None = None) -> None:
     workflows = "\n".join(
         path.read_text(encoding="utf-8")
         for path in sorted((ROOT / ".github/workflows").glob("*.yml"))
+    )
+    load_vulnerability_exceptions(
+        exception_manifest,
+        gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
+        as_of=__import__("datetime").date(2026, 10, 7),
     )
     assert GATEWAY_BASE_IMAGE in gateway_dockerfile
     assert AGENT_BASE_IMAGE in agent_dockerfile
@@ -142,10 +157,15 @@ def validate_policy(trivy_json: list[Path] | None = None) -> None:
     assert "push:" not in publication
     assert "packages: write" in publication
     if trivy_json:
-        summary = summarize_trivy_high_critical(trivy_json)
-        fixed = summary["fixability_counts"]["fixed"]
-        assert fixed["CRITICAL"] == 0, "fixable critical vulnerabilities present"
-        assert fixed["HIGH"] == 0, "fixable high vulnerabilities present"
+        summary = evaluate_trivy_high_critical_policy(
+            trivy_json,
+            exception_manifest=exception_manifest,
+            gateway_image_digest=gateway_digest,
+            agent_image_digest=agent_digest,
+        )
+        assert summary["status"] == "hosted_trivy_high_critical_policy_passed", (
+            "high/critical vulnerability policy failed"
+        )
 
 
 def final_stage(dockerfile: str) -> str:

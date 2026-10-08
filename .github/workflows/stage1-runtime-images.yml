@@ -159,10 +159,16 @@ jobs:
           import pathlib
           import sys
           sys.path.insert(0, str(pathlib.Path.cwd()))
-          from agentguard.evaluation.runtime_images import summarize_trivy_high_critical
+          from agentguard.evaluation.runtime_images import evaluate_trivy_high_critical_policy
           root = pathlib.Path("dist/stage1-runtime-images")
-          vulnerability_policy = summarize_trivy_high_critical(
-              [root / "gateway.trivy.json", root / "agent.trivy.json"]
+          digests = pathlib.Path("dist-runtime-image-local-digests.txt").read_text(encoding="utf-8").splitlines()
+          if len(digests) != 2:
+              raise SystemExit("expected gateway and agent image digests")
+          vulnerability_policy = evaluate_trivy_high_critical_policy(
+              [root / "gateway.trivy.json", root / "agent.trivy.json"],
+              exception_manifest=pathlib.Path("runtime-images/vulnerability-exceptions.json"),
+              gateway_image_digest=digests[0],
+              agent_image_digest=digests[1],
           )
           for name in ("gateway", "agent"):
               (root / f"{name}.provenance.json").write_text(json.dumps({
@@ -178,6 +184,8 @@ jobs:
           }, sort_keys=True) + "\n", encoding="utf-8")
           PY
           python scripts/validate_runtime_images.py \
+            --gateway-digest "$(sed -n '1p' dist-runtime-image-local-digests.txt)" \
+            --agent-digest "$(sed -n '2p' dist-runtime-image-local-digests.txt)" \
             --trivy-json dist/stage1-runtime-images/gateway.trivy.json \
             --trivy-json dist/stage1-runtime-images/agent.trivy.json
 
@@ -198,14 +206,11 @@ jobs:
               )
           )
           policy = summary["vulnerability_policy"]
-          counts = policy["severity_counts"]
-          fixed = policy["fixability_counts"]["fixed"]
-          total = counts.get("CRITICAL", 0) + counts.get("HIGH", 0)
-          if fixed.get("CRITICAL", 0) or fixed.get("HIGH", 0):
-              print(f"Trivy fixable high/critical vulnerability policy failed: {fixed}", file=sys.stderr)
+          if policy.get("status") != "hosted_trivy_high_critical_policy_passed":
+              print(json.dumps(policy.get("rejected_findings", []), indent=2), file=sys.stderr)
               raise SystemExit(1)
-          if total:
-              print(f"Trivy high/critical vulnerability policy failed: {counts}", file=sys.stderr)
+          if policy.get("exception_count") != 13:
+              print("expected exactly 13 reviewed vulnerability exception records", file=sys.stderr)
               raise SystemExit(1)
           PY
 

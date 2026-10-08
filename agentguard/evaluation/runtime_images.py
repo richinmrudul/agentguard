@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,9 @@ CODEX_LINUX_X64_INTEGRITY = (
     "sha512-RrCZ1X52wpa1lOsXtCtSyhjOFdQPh7LH5Ccv8HsKmd/2UXbUwxXFqWXFK3JzatquUNGtW/TLox5Y7qVOGkV0/Q=="
 )
 EXPECTED_CREDENTIAL_ENV = "CODEX_API_KEY"
+GATEWAY_REVIEWED_IMAGE_DIGEST = "sha256:3b4973229f7644c840fa9dee12c291bff2cf9997bcb4d320e29ce10ee5e72852"
+AGENT_REVIEWED_IMAGE_DIGEST = "sha256:068b58c810869c5db4b044a9a816466dbee0a0f54902a90da83285692f0a7e0f"
+VULNERABILITY_EXCEPTION_MANIFEST = Path("runtime-images/vulnerability-exceptions.json")
 FIXED_GATEWAY_UID = 65532
 FIXED_AGENT_UID = 10001
 PLACEHOLDER_REPOSITORY = "ghcr.io/richinmrudul/agentguard"
@@ -287,6 +291,196 @@ def summarize_trivy_high_critical(paths: list[Path]) -> dict[str, Any]:
         summary["status"] = "hosted_trivy_high_critical_policy_failed"
     return summary
 
+
+
+def evaluate_trivy_high_critical_policy(
+    paths: list[Path],
+    *,
+    exception_manifest: Path,
+    gateway_image_digest: str,
+    agent_image_digest: str,
+    as_of: date | None = None,
+) -> dict[str, Any]:
+    summary = summarize_trivy_high_critical(paths)
+    _oci_digest(gateway_image_digest, "gateway image digest")
+    _oci_digest(agent_image_digest, "agent image digest")
+    exceptions = load_vulnerability_exceptions(
+        exception_manifest,
+        gateway_image_digest=gateway_image_digest,
+        as_of=as_of or date.today(),
+    )
+    allowed = {key: item for item in exceptions for key in item["keys"]}
+    matched: set[tuple[str, str, str]] = set()
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for finding in summary["findings"]:
+        image = finding["image"]
+        severity = finding["severity"]
+        if image == "agent":
+            rejected.append(dict(finding, reason="agent exceptions are forbidden"))
+            continue
+        if image != "gateway":
+            rejected.append(dict(finding, reason="unknown image role"))
+            continue
+        if severity == "CRITICAL":
+            rejected.append(dict(finding, reason="critical vulnerabilities are forbidden"))
+            continue
+        if finding["fix_available"]:
+            rejected.append(dict(finding, reason="fixable high vulnerabilities require remediation"))
+            continue
+        key = (
+            finding["vulnerability_id"],
+            finding["package_name"],
+            finding["installed_version"],
+        )
+        if key not in allowed:
+            rejected.append(dict(finding, reason="unmatched gateway high vulnerability"))
+            continue
+        accepted.append(
+            dict(
+                finding,
+                exception_id=allowed[key]["id"],
+                gateway_image_digest=gateway_image_digest,
+                gateway_base_image=GATEWAY_BASE_IMAGE,
+            )
+        )
+        matched.add(key)
+    stale = sorted(set(allowed) - matched)
+    if stale:
+        for cve, package, installed in stale:
+            rejected.append(
+                {
+                    "image": "gateway",
+                    "vulnerability_id": cve,
+                    "package_name": package,
+                    "installed_version": installed,
+                    "severity": "HIGH",
+                    "reason": "stale exception does not match a current scan finding",
+                }
+            )
+    policy = dict(summary)
+    policy["accepted_exceptions"] = accepted
+    policy["rejected_findings"] = rejected
+    policy["exception_manifest"] = str(exception_manifest)
+    policy["exception_count"] = len(exceptions)
+    policy["accepted_exception_count"] = len(accepted)
+    policy["gateway_image_digest"] = gateway_image_digest
+    policy["agent_image_digest"] = agent_image_digest
+    policy["gateway_base_image"] = GATEWAY_BASE_IMAGE
+    if rejected:
+        policy["status"] = "hosted_trivy_high_critical_policy_failed"
+    else:
+        policy["status"] = "hosted_trivy_high_critical_policy_passed"
+    return policy
+
+
+def load_vulnerability_exceptions(
+    path: Path,
+    *,
+    gateway_image_digest: str,
+    as_of: date,
+) -> list[dict[str, Any]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeImageError(f"invalid vulnerability exception manifest: {path}: {error}") from error
+    if not isinstance(data, dict):
+        raise RuntimeImageError("vulnerability exception manifest must be an object")
+    if data.get("schema") != "agentguard.stage1-runtime-vulnerability-exceptions":
+        raise RuntimeImageError("invalid vulnerability exception manifest schema")
+    if data.get("schema_version") != 1:
+        raise RuntimeImageError("unsupported vulnerability exception manifest version")
+    if data.get("gateway_image_digest") != gateway_image_digest:
+        raise RuntimeImageError("gateway image digest does not match reviewed exceptions")
+    if data.get("gateway_base_image") != GATEWAY_BASE_IMAGE:
+        raise RuntimeImageError("gateway base image does not match reviewed exceptions")
+    if data.get("agent_image_digest") == gateway_image_digest:
+        raise RuntimeImageError("exception manifest image identities are ambiguous")
+    exceptions = data.get("exceptions")
+    if not isinstance(exceptions, list) or not exceptions:
+        raise RuntimeImageError("vulnerability exceptions are required")
+    result: list[dict[str, Any]] = []
+    seen_cves: set[str] = set()
+    seen_keys: set[tuple[str, str, str]] = set()
+    for index, item in enumerate(exceptions):
+        label = f"exception[{index}]"
+        if not isinstance(item, dict):
+            raise RuntimeImageError(f"{label} must be an object")
+        cve = _required_string(item, "cve", label)
+        if not cve.startswith("CVE-") or "*" in cve:
+            raise RuntimeImageError(f"{label} must use an exact CVE")
+        if cve in seen_cves:
+            raise RuntimeImageError(f"duplicate exception CVE: {cve}")
+        seen_cves.add(cve)
+        if item.get("severity") != "HIGH":
+            raise RuntimeImageError(f"{label} severity must be HIGH")
+        if item.get("image_role") != "gateway":
+            raise RuntimeImageError(f"{label} may only apply to the gateway image")
+        if item.get("gateway_image_digest") != gateway_image_digest:
+            raise RuntimeImageError(f"{label} gateway image digest mismatch")
+        if item.get("gateway_base_image") != GATEWAY_BASE_IMAGE:
+            raise RuntimeImageError(f"{label} gateway base image mismatch")
+        if item.get("owner") != "#310 maintainer":
+            raise RuntimeImageError(f"{label} owner mismatch")
+        approval = _date(_required_string(item, "approval_date", label), f"{label} approval date")
+        expiry = _date(_required_string(item, "expiry_date", label), f"{label} expiry date")
+        if approval > as_of:
+            raise RuntimeImageError(f"{label} approval date is in the future")
+        if expiry < as_of:
+            raise RuntimeImageError(f"{label} exception expired")
+        for field in ("reachability", "evidence", "compensating_controls"):
+            value = item.get(field)
+            if not isinstance(value, str) or not value.strip() or "*" in value:
+                raise RuntimeImageError(f"{label} {field} is required")
+        if item["reachability"] not in {
+            "reachable",
+            "plausibly reachable",
+            "present but demonstrably unreachable",
+            "scanner/package ambiguity",
+            "unknown",
+        }:
+            raise RuntimeImageError(f"{label} reachability classification is invalid")
+        references = item.get("advisory_references")
+        if not isinstance(references, list) or not references:
+            raise RuntimeImageError(f"{label} advisory references are required")
+        for reference in references:
+            if not isinstance(reference, str) or not reference.startswith("https://") or "*" in reference:
+                raise RuntimeImageError(f"{label} advisory references must be exact HTTPS URLs")
+        triggers = item.get("reevaluation_triggers")
+        if not isinstance(triggers, list) or not triggers:
+            raise RuntimeImageError(f"{label} reevaluation triggers are required")
+        packages = item.get("affected_packages")
+        if not isinstance(packages, list) or not packages:
+            raise RuntimeImageError(f"{label} affected packages are required")
+        keys: list[tuple[str, str, str]] = []
+        for package in packages:
+            if not isinstance(package, dict):
+                raise RuntimeImageError(f"{label} affected package must be an object")
+            name = _required_string(package, "name", label)
+            installed = _required_string(package, "installed_version", label)
+            if "*" in name or "*" in installed:
+                raise RuntimeImageError(f"{label} affected package must be exact")
+            key = (cve, name, installed)
+            if key in seen_keys:
+                raise RuntimeImageError(f"duplicate exception package key: {cve} {name} {installed}")
+            seen_keys.add(key)
+            keys.append(key)
+        result.append(dict(item, id=cve, keys=keys))
+    return result
+
+
+def _required_string(item: dict[str, Any], key: str, label: str) -> str:
+    value = item.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeImageError(f"{label} {key} is required")
+    return value
+
+
+def _date(value: str, label: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise RuntimeImageError(f"{label} must be YYYY-MM-DD") from error
 
 def _mapping(value: object, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
