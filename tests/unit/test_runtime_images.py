@@ -325,7 +325,15 @@ def _write_rootfs_tar(path: Path, *, content: bytes = b"hello", mode: int = 0o55
         archive.addfile(file_info, __import__("io").BytesIO(content))
 
 
-def _inspect_config(*, user: str = "1000:1000", entrypoint=None, env=None, layers=None):
+def _inspect_config(
+    *,
+    user: str = "1000:1000",
+    entrypoint=None,
+    env=None,
+    layers=None,
+    volumes=None,
+):
+    config_volumes = {} if volumes is None else volumes
     return [
         {
             "Architecture": "amd64",
@@ -337,6 +345,7 @@ def _inspect_config(*, user: str = "1000:1000", entrypoint=None, env=None, layer
                 "Env": env or ["PATH=/usr/bin"],
                 "WorkingDir": "/",
                 "ExposedPorts": {"8080/tcp": {}},
+                "Volumes": config_volumes,
                 "Labels": {"org.opencontainers.image.revision": "ignored"},
             },
             "RootFS": {"Type": "layers", "Layers": layers or ["sha256:" + "a" * 64]},
@@ -429,6 +438,74 @@ def test_canonical_runtime_identity_ignores_layer_serialization_when_rootfs_matc
     )
 
     assert first["identity"] == second["identity"]
+
+
+@pytest.mark.parametrize("volumes", [None, {}, {"Volumes": None}])
+def test_canonical_runtime_config_normalizes_no_declared_volumes(volumes) -> None:
+    inspect_data = _inspect_config(volumes={})
+    if volumes is None:
+        inspect_data[0]["Config"].pop("Volumes")
+    elif "Volumes" in volumes:
+        inspect_data[0]["Config"]["Volumes"] = volumes["Volumes"]
+
+    assert canonical_runtime_config(inspect_data)["volumes"] == []
+
+
+def test_canonical_runtime_config_sorts_volume_paths_and_ignores_options() -> None:
+    first = canonical_runtime_config(
+        _inspect_config(volumes={"/cache": {"ignored": "a"}, "/workspace": {}})
+    )
+    second = canonical_runtime_config(
+        _inspect_config(volumes={"/workspace": {}, "/cache": {"ignored": "b"}})
+    )
+
+    assert first["volumes"] == ["/cache", "/workspace"]
+    assert first == second
+
+
+def _runtime_identity_for_volumes(tmp_path: Path, volumes) -> str:
+    rootfs = tmp_path / "rootfs.tar"
+    _write_rootfs_tar(rootfs)
+    return canonical_runtime_identity(
+        image_role="gateway",
+        base_image=GATEWAY_BASE_IMAGE,
+        rootfs_digest=canonical_rootfs_digest(rootfs),
+        runtime_config=canonical_runtime_config(_inspect_config(volumes=volumes)),
+    )["identity"]
+
+
+def test_canonical_runtime_identity_changes_when_volume_is_added(tmp_path: Path) -> None:
+    assert _runtime_identity_for_volumes(
+        tmp_path, {"/cache": {}}
+    ) != _runtime_identity_for_volumes(tmp_path, {})
+
+
+def test_canonical_runtime_identity_changes_when_volume_is_removed(tmp_path: Path) -> None:
+    assert _runtime_identity_for_volumes(
+        tmp_path, {"/cache": {}, "/workspace": {}}
+    ) != _runtime_identity_for_volumes(tmp_path, {"/cache": {}})
+
+
+def test_canonical_runtime_identity_changes_when_volume_is_renamed(tmp_path: Path) -> None:
+    assert _runtime_identity_for_volumes(
+        tmp_path, {"/cache": {}}
+    ) != _runtime_identity_for_volumes(tmp_path, {"/workspace": {}})
+
+
+@pytest.mark.parametrize(
+    ("volumes", "message"),
+    [
+        (["/cache"], "Config.Volumes must be an object"),
+        ({"/cache": []}, "Config.Volumes options must be an object"),
+        ({"cache": {}}, "absolute normalized"),
+        ({"/cache/../workspace": {}}, "absolute normalized"),
+        ({"/cache/": {}}, "absolute normalized"),
+        ({"/bad\npath": {}}, "absolute normalized"),
+    ],
+)
+def test_canonical_runtime_config_rejects_malformed_volumes(volumes, message) -> None:
+    with pytest.raises(RuntimeImageError, match=message):
+        canonical_runtime_config(_inspect_config(volumes=volumes))
 
 
 def test_canonical_runtime_identity_rejects_missing_or_wrong_evidence(tmp_path: Path) -> None:

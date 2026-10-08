@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 import tarfile
 from datetime import date
@@ -111,6 +112,7 @@ def canonical_runtime_config(inspect_data: object) -> dict[str, Any]:
         "env": sorted(config.get("Env") or []),
         "working_dir": config.get("WorkingDir", ""),
         "exposed_ports": sorted((_mapping(config.get("ExposedPorts") or {}, "ExposedPorts")).keys()),
+        "volumes": _volume_paths(config.get("Volumes")),
         "rootfs_type": rootfs.get("Type", ""),
     }
 
@@ -592,6 +594,26 @@ def _mapping(value: object, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RuntimeImageError(f"{label} must be an object")
     return value
+
+
+def _volume_paths(value: object) -> list[str]:
+    if value is None:
+        return []
+    volumes = _mapping(value, "Config.Volumes")
+    paths = []
+    for path, options in volumes.items():
+        if not isinstance(path, str):
+            raise RuntimeImageError("Config.Volumes path must be a string")
+        if (
+            not path.startswith("/")
+            or path != posixpath.normpath(path)
+            or any(ord(character) < 32 or ord(character) == 127 for character in path)
+        ):
+            raise RuntimeImageError("Config.Volumes path must be an absolute normalized container path")
+        if not isinstance(options, dict):
+            raise RuntimeImageError("Config.Volumes options must be an object")
+        paths.append(path)
+    return sorted(set(paths))
 
 
 def _sha256(value: object, label: str) -> str:
