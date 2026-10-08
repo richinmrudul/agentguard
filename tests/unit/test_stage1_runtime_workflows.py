@@ -25,6 +25,12 @@ def test_pr_runtime_image_workflow_builds_without_push_or_secrets() -> None:
     assert "Enforce vulnerability policy" in text
     assert "evaluate_trivy_high_critical_policy" in text
     assert "runtime-images/vulnerability-exceptions.json" in text
+    assert "runtime_image_identity.py" in text
+    assert "dist-runtime-image-canonical-identities.txt" in text
+    assert "canonical runtime identity mismatch" in text
+    assert "Compare repeat-build SBOM and vulnerability evidence" in text
+    assert "repeat-build-comparison.json" in text
+    assert "repeat-build Trivy finding mismatch" in text
     assert "exception_count" in text
     assert "bash scripts/stage1_runtime_images.sh" in text
     assert "if: always()" in text

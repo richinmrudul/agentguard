@@ -120,6 +120,16 @@ read-only-root compatibility, dropped capabilities, and no-new-privileges, is
 application-level containment and must not be treated as an absolute hostile-code
 sandbox.
 
+Phase 1 hosted validation also records a canonical runtime identity for each
+image. The canonical identity hashes the normalized exported root filesystem and
+runtime configuration that affects process execution, while excluding Docker
+creation timestamps, image history serialization, and non-runtime provenance
+labels that can change across otherwise equivalent builds. Hosted validation
+builds each image twice from the same inputs and fails closed unless both
+canonical identities, root filesystem digests, runtime configuration digests,
+SBOMs, and vulnerability findings match. The Docker local image ID remains
+recorded as diagnostic evidence but is not treated as the exception identity.
+
 ## Freeze Manifest
 
 `agentguard.evaluation.runtime_images` defines the strict versioned

@@ -10,7 +10,10 @@ mkdir -p "$out_dir"
 
 gateway_digest="sha256:1111111111111111111111111111111111111111111111111111111111111111"
 agent_digest="sha256:2222222222222222222222222222222222222222222222222222222222222222"
-if [[ -f dist-runtime-image-local-digests.txt ]]; then
+if [[ -f dist-runtime-image-canonical-identities.txt ]]; then
+  gateway_digest="$(sed -n '1p' dist-runtime-image-canonical-identities.txt)"
+  agent_digest="$(sed -n '2p' dist-runtime-image-canonical-identities.txt)"
+elif [[ -f dist-runtime-image-local-digests.txt ]]; then
   gateway_digest="$(sed -n '1p' dist-runtime-image-local-digests.txt)"
   agent_digest="$(sed -n '2p' dist-runtime-image-local-digests.txt)"
 fi

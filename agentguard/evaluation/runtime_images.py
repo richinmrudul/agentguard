@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import tarfile
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,93 @@ class RuntimeImageError(ValueError):
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def canonical_json_digest(data: object) -> str:
+    payload = json.dumps(data, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    return "sha256:" + sha256_bytes(payload.encode("utf-8"))
+
+
+def canonical_rootfs_digest(rootfs_tar: Path) -> str:
+    entries: list[dict[str, Any]] = []
+    try:
+        with tarfile.open(rootfs_tar, "r:*") as archive:
+            members = sorted(archive.getmembers(), key=lambda item: item.name)
+            for member in members:
+                entry: dict[str, Any] = {
+                    "name": member.name,
+                    "type": _tar_member_type(member),
+                    "mode": member.mode,
+                    "uid": member.uid,
+                    "gid": member.gid,
+                    "linkname": member.linkname,
+                    "size": member.size if member.isfile() else 0,
+                }
+                if member.isfile():
+                    stream = archive.extractfile(member)
+                    if stream is None:
+                        raise RuntimeImageError(f"missing tar payload for {member.name}")
+                    entry["sha256"] = sha256_bytes(stream.read())
+                entries.append(entry)
+    except (OSError, tarfile.TarError) as error:
+        raise RuntimeImageError(f"invalid rootfs tar: {rootfs_tar}: {error}") from error
+    if not entries:
+        raise RuntimeImageError("rootfs tar must not be empty")
+    return canonical_json_digest({"entries": entries})
+
+
+def canonical_runtime_config(inspect_data: object) -> dict[str, Any]:
+    if not isinstance(inspect_data, list) or len(inspect_data) != 1:
+        raise RuntimeImageError("docker inspect JSON must contain exactly one image")
+    image = _mapping(inspect_data[0], "docker inspect image")
+    config = _mapping(image.get("Config"), "docker inspect Config")
+    rootfs = _mapping(image.get("RootFS"), "docker inspect RootFS")
+    return {
+        "architecture": image.get("Architecture", ""),
+        "os": image.get("Os", ""),
+        "user": config.get("User", ""),
+        "entrypoint": config.get("Entrypoint") or [],
+        "cmd": config.get("Cmd") or [],
+        "env": sorted(config.get("Env") or []),
+        "working_dir": config.get("WorkingDir", ""),
+        "exposed_ports": sorted((_mapping(config.get("ExposedPorts") or {}, "ExposedPorts")).keys()),
+        "rootfs_type": rootfs.get("Type", ""),
+        "rootfs_layers": rootfs.get("Layers") or [],
+    }
+
+
+def canonical_runtime_identity(
+    *,
+    image_role: str,
+    base_image: str,
+    rootfs_digest: str,
+    runtime_config: dict[str, Any],
+) -> dict[str, Any]:
+    if image_role not in {"gateway", "agent"}:
+        raise RuntimeImageError("runtime identity image role must be gateway or agent")
+    _image_ref(base_image, "runtime identity base image")
+    _oci_digest(rootfs_digest, "runtime identity rootfs digest")
+    config_digest = canonical_json_digest(runtime_config)
+    identity = canonical_json_digest(
+        {
+            "schema": "agentguard.stage1-runtime-canonical-image-identity",
+            "schema_version": 1,
+            "image_role": image_role,
+            "base_image": base_image,
+            "rootfs_digest": rootfs_digest,
+            "runtime_config_digest": config_digest,
+        }
+    )
+    return {
+        "schema": "agentguard.stage1-runtime-canonical-image-identity",
+        "schema_version": 1,
+        "image_role": image_role,
+        "base_image": base_image,
+        "identity": identity,
+        "rootfs_digest": rootfs_digest,
+        "runtime_config_digest": config_digest,
+        "runtime_config": runtime_config,
+    }
 
 
 def canonical_runtime_manifest(data: dict[str, Any]) -> str:
@@ -481,6 +569,25 @@ def _date(value: str, label: str) -> date:
         return date.fromisoformat(value)
     except ValueError as error:
         raise RuntimeImageError(f"{label} must be YYYY-MM-DD") from error
+
+
+def _tar_member_type(member: tarfile.TarInfo) -> str:
+    if member.isfile():
+        return "file"
+    if member.isdir():
+        return "directory"
+    if member.issym():
+        return "symlink"
+    if member.islnk():
+        return "hardlink"
+    if member.ischr():
+        return "char"
+    if member.isblk():
+        return "block"
+    if member.isfifo():
+        return "fifo"
+    return "other"
+
 
 def _mapping(value: object, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):

@@ -1,5 +1,6 @@
 import copy
 import json
+import tarfile
 from datetime import date
 import subprocess
 import sys
@@ -19,6 +20,9 @@ from agentguard.evaluation.runtime_images import (
     AGENT_REVIEWED_IMAGE_DIGEST,
     RuntimeImageError,
     build_runtime_manifest,
+    canonical_rootfs_digest,
+    canonical_runtime_config,
+    canonical_runtime_identity,
     parse_codex_usage,
     runtime_image_context_digest,
     runtime_manifest_digest,
@@ -303,6 +307,130 @@ def test_trivy_summary_rejects_invalid_or_incomplete_json(tmp_path: Path) -> Non
     malformed.write_text("{", encoding="utf-8")
     with pytest.raises(RuntimeImageError, match="invalid Trivy JSON"):
         summarize_trivy_high_critical([malformed])
+
+
+def _write_rootfs_tar(path: Path, *, content: bytes = b"hello", mode: int = 0o555, uid: int = 1000) -> None:
+    with tarfile.open(path, "w") as archive:
+        directory = tarfile.TarInfo("app")
+        directory.type = tarfile.DIRTYPE
+        directory.mode = 0o755
+        directory.uid = uid
+        directory.gid = uid
+        archive.addfile(directory)
+        file_info = tarfile.TarInfo("app/entrypoint")
+        file_info.size = len(content)
+        file_info.mode = mode
+        file_info.uid = uid
+        file_info.gid = uid
+        archive.addfile(file_info, __import__("io").BytesIO(content))
+
+
+def _inspect_config(*, user: str = "1000:1000", entrypoint=None, env=None, layers=None):
+    return [
+        {
+            "Architecture": "amd64",
+            "Os": "linux",
+            "Config": {
+                "User": user,
+                "Entrypoint": entrypoint or ["/app/entrypoint"],
+                "Cmd": [],
+                "Env": env or ["PATH=/usr/bin"],
+                "WorkingDir": "/",
+                "ExposedPorts": {"8080/tcp": {}},
+                "Labels": {"org.opencontainers.image.revision": "ignored"},
+            },
+            "RootFS": {"Type": "layers", "Layers": layers or ["sha256:" + "a" * 64]},
+        }
+    ]
+
+
+def test_canonical_runtime_identity_is_stable_for_identical_inputs(tmp_path: Path) -> None:
+    first = tmp_path / "first.tar"
+    second = tmp_path / "second.tar"
+    _write_rootfs_tar(first)
+    _write_rootfs_tar(second)
+
+    first_identity = canonical_runtime_identity(
+        image_role="gateway",
+        base_image=GATEWAY_BASE_IMAGE,
+        rootfs_digest=canonical_rootfs_digest(first),
+        runtime_config=canonical_runtime_config(_inspect_config()),
+    )
+    second_identity = canonical_runtime_identity(
+        image_role="gateway",
+        base_image=GATEWAY_BASE_IMAGE,
+        rootfs_digest=canonical_rootfs_digest(second),
+        runtime_config=canonical_runtime_config(_inspect_config()),
+    )
+
+    assert first_identity["identity"] == second_identity["identity"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["content", "mode", "owner", "base", "user", "entrypoint", "env", "layer"],
+)
+def test_canonical_runtime_identity_changes_for_security_relevant_inputs(
+    tmp_path: Path, change: str
+) -> None:
+    baseline = tmp_path / "baseline.tar"
+    changed = tmp_path / "changed.tar"
+    _write_rootfs_tar(baseline)
+    _write_rootfs_tar(
+        changed,
+        content=b"changed" if change == "content" else b"hello",
+        mode=0o755 if change == "mode" else 0o555,
+        uid=1001 if change == "owner" else 1000,
+    )
+    base_image = (
+        "gcr.io/distroless/python3-debian13:nonroot@sha256:" + "9" * 64
+        if change == "base"
+        else GATEWAY_BASE_IMAGE
+    )
+    config = _inspect_config(
+        user="1001:1001" if change == "user" else "1000:1000",
+        entrypoint=["/other"] if change == "entrypoint" else None,
+        env=["PATH=/usr/bin", "EXTRA=1"] if change == "env" else None,
+        layers=["sha256:" + "b" * 64] if change == "layer" else None,
+    )
+    baseline_identity = canonical_runtime_identity(
+        image_role="gateway",
+        base_image=GATEWAY_BASE_IMAGE,
+        rootfs_digest=canonical_rootfs_digest(baseline),
+        runtime_config=canonical_runtime_config(_inspect_config()),
+    )
+    changed_identity = canonical_runtime_identity(
+        image_role="gateway",
+        base_image=base_image,
+        rootfs_digest=canonical_rootfs_digest(changed),
+        runtime_config=canonical_runtime_config(config),
+    )
+
+    assert changed_identity["identity"] != baseline_identity["identity"]
+
+
+def test_canonical_runtime_identity_rejects_missing_or_wrong_evidence(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.tar"
+    with tarfile.open(empty, "w"):
+        pass
+    with pytest.raises(RuntimeImageError, match="must not be empty"):
+        canonical_rootfs_digest(empty)
+    with pytest.raises(RuntimeImageError, match="exactly one image"):
+        canonical_runtime_config([])
+    with pytest.raises(RuntimeImageError, match="image role"):
+        canonical_runtime_identity(
+            image_role="other",
+            base_image=GATEWAY_BASE_IMAGE,
+            rootfs_digest="sha256:" + "1" * 64,
+            runtime_config=canonical_runtime_config(_inspect_config()),
+        )
+    with pytest.raises(RuntimeImageError, match="pinned by digest"):
+        canonical_runtime_identity(
+            image_role="gateway",
+            base_image="python:latest",
+            rootfs_digest="sha256:" + "1" * 64,
+            runtime_config=canonical_runtime_config(_inspect_config()),
+        )
 
 
 def test_trivy_summary_tracks_fixable_and_unfixed_high_critical(tmp_path: Path) -> None:
