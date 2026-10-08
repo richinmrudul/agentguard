@@ -232,17 +232,20 @@ jobs:
                   for item in artifacts
               )
 
-          def trivy_findings(path):
+          def trivy_findings(path, image):
               data = json.loads(path.read_text(encoding="utf-8"))
               results = data.get("Results")
               if not isinstance(results, list):
                   raise SystemExit(f"missing Trivy Results in {path}")
               findings = []
               for result in results:
+                  target = str(result.get("Target", ""))
+                  target = target.replace(f"{image}-image-a.tar", f"{image}-image.tar")
+                  target = target.replace(f"{image}-image-b.tar", f"{image}-image.tar")
                   for item in result.get("Vulnerabilities") or []:
                       findings.append(
                           (
-                              str(result.get("Target", "")),
+                              target,
                               str(result.get("Type", "")),
                               str(item.get("PkgName", "")),
                               str(item.get("InstalledVersion", "")),
@@ -259,8 +262,8 @@ jobs:
               sbom_b = sbom_inventory(root / f"{image}-b.sbom.json")
               if sbom_a != sbom_b:
                   raise SystemExit(f"{image} repeat-build SBOM inventory mismatch")
-              trivy_a = trivy_findings(root / f"{image}-a.trivy.json")
-              trivy_b = trivy_findings(root / f"{image}-b.trivy.json")
+              trivy_a = trivy_findings(root / f"{image}-a.trivy.json", image)
+              trivy_b = trivy_findings(root / f"{image}-b.trivy.json", image)
               if trivy_a != trivy_b:
                   raise SystemExit(f"{image} repeat-build Trivy finding mismatch")
               comparison[image] = {

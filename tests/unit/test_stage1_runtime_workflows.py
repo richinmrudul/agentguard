@@ -31,6 +31,7 @@ def test_pr_runtime_image_workflow_builds_without_push_or_secrets() -> None:
     assert "Compare repeat-build SBOM and vulnerability evidence" in text
     assert "repeat-build-comparison.json" in text
     assert "repeat-build Trivy finding mismatch" in text
+    assert 'target.replace(f"{image}-image-a.tar"' in text
     assert "exception_count" in text
     assert "bash scripts/stage1_runtime_images.sh" in text
     assert "if: always()" in text
