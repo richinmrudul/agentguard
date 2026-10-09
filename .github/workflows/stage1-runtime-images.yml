@@ -213,8 +213,8 @@ jobs:
             image gcr.io/distroless/static-debian12:nonroot@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d \
             --format json --output /work/agent-base.trivy.json \
             --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
-          db_metadata="$(find .trivy-cache -path '*/db/metadata.json' -type f | sort | head -n 1)"
-          test -n "$db_metadata"
+          db_metadata=".trivy-cache/trivy/db/metadata.json"
+          test -s "$db_metadata"
           cp "$db_metadata" dist/stage1-runtime-images/trivy-db-metadata.json
 
       - name: Compare repeat-build SBOM and vulnerability evidence
