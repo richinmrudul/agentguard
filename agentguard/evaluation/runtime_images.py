@@ -44,8 +44,8 @@ CODEX_LINUX_X64_INTEGRITY = (
     "sha512-RrCZ1X52wpa1lOsXtCtSyhjOFdQPh7LH5Ccv8HsKmd/2UXbUwxXFqWXFK3JzatquUNGtW/TLox5Y7qVOGkV0/Q=="
 )
 EXPECTED_CREDENTIAL_ENV = "CODEX_API_KEY"
-GATEWAY_REVIEWED_IMAGE_DIGEST = "sha256:3b4973229f7644c840fa9dee12c291bff2cf9997bcb4d320e29ce10ee5e72852"
-AGENT_REVIEWED_IMAGE_DIGEST = "sha256:068b58c810869c5db4b044a9a816466dbee0a0f54902a90da83285692f0a7e0f"
+GATEWAY_REVIEWED_IMAGE_DIGEST = "sha256:b30a59331f1b111b6620203d2e25ab8c1cd20a046559ee98d1018d0a5157ac4a"
+AGENT_REVIEWED_IMAGE_DIGEST = "sha256:ef4131b5ee0ffc6da4152d9ba91dd3c468dd46732a3fca2f0d2f4c4be0a57338"
 VULNERABILITY_EXCEPTION_MANIFEST = Path("runtime-images/vulnerability-exceptions.json")
 FIXED_GATEWAY_UID = 65532
 FIXED_AGENT_UID = 10001
@@ -285,6 +285,8 @@ def validate_runtime_manifest(data: object) -> dict[str, Any]:
     )
     if vulnerability_policy.get("scanner_failures_suppressed") is not False:
         raise RuntimeImageError("scanner failures must not be suppressed")
+    if vulnerability_policy.get("status") == "hosted_trivy_high_critical_policy_passed":
+        validate_scanner_metadata(vulnerability_policy.get("scanner_metadata"))
     digest = data.get("canonical_manifest_digest")
     if digest is not None and digest != runtime_manifest_digest(dict(data, canonical_manifest_digest=None)):
         raise RuntimeImageError("runtime manifest canonical digest mismatch")
@@ -338,6 +340,10 @@ def summarize_trivy_high_critical(paths: list[Path]) -> dict[str, Any]:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise RuntimeImageError(f"invalid Trivy JSON: {path}: {error}") from error
+        if not isinstance(data.get("SchemaVersion"), int):
+            raise RuntimeImageError(f"Trivy scanner schema version is required: {path}")
+        if not isinstance(data.get("CreatedAt"), str) or not data["CreatedAt"].strip():
+            raise RuntimeImageError(f"Trivy scan timestamp is required: {path}")
         results = data.get("Results")
         if not isinstance(results, list) or not results:
             raise RuntimeImageError(f"Trivy JSON has no results: {path}")
@@ -379,6 +385,38 @@ def summarize_trivy_high_critical(paths: list[Path]) -> dict[str, Any]:
     if counts["CRITICAL"] or counts["HIGH"]:
         summary["status"] = "hosted_trivy_high_critical_policy_failed"
     return summary
+
+
+
+def validate_scanner_metadata(data: object) -> dict[str, Any]:
+    metadata = _mapping(data, "scanner metadata")
+    if metadata.get("schema") != "agentguard.stage1-runtime-scanner-metadata":
+        raise RuntimeImageError("invalid scanner metadata schema")
+    if metadata.get("schema_version") != 1:
+        raise RuntimeImageError("unsupported scanner metadata version")
+    trivy = _mapping(metadata.get("trivy"), "scanner metadata trivy")
+    version = trivy.get("version")
+    if not isinstance(version, str) or not version.strip():
+        raise RuntimeImageError("Trivy version is required")
+    output_digest = trivy.get("version_output_sha256")
+    if not isinstance(output_digest, str) or not output_digest.startswith("sha256:"):
+        raise RuntimeImageError("Trivy version output digest is required")
+    _oci_digest(output_digest, "Trivy version output digest")
+    database = _mapping(metadata.get("vulnerability_database"), "scanner metadata vulnerability database")
+    db_schema = database.get("schema_version")
+    if not isinstance(db_schema, (int, str)) or str(db_schema).strip() == "":
+        raise RuntimeImageError("Trivy vulnerability database schema/version is required")
+    updated_at = database.get("updated_at")
+    downloaded_at = database.get("downloaded_at")
+    if (not isinstance(updated_at, str) or not updated_at.strip()) and (
+        not isinstance(downloaded_at, str) or not downloaded_at.strip()
+    ):
+        raise RuntimeImageError("Trivy vulnerability database update/download timestamp is required")
+    metadata_digest = database.get("metadata_digest")
+    if not isinstance(metadata_digest, str) or not metadata_digest.startswith("sha256:"):
+        raise RuntimeImageError("Trivy vulnerability database metadata digest is required")
+    _oci_digest(metadata_digest, "Trivy vulnerability database metadata digest")
+    return metadata
 
 
 

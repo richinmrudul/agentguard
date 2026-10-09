@@ -92,13 +92,17 @@ Phase 1 tooling records or validates:
   that result.
 
 Scanner failures must not be suppressed. Raw machine-readable scan artifacts
-are retained as bounded CI artifacts.
+are retained as bounded CI artifacts. Hosted scan summaries also retain the
+Trivy version, vulnerability database schema/version, database update or
+download timestamp, and a digest of the retained database metadata when the
+scanner cache provides it. Advisory-set drift must fail closed rather than pin
+an obsolete database.
 
 
 ## Temporary Gateway Vulnerability Exceptions
 
-The reviewed Phase 1 gateway image carries 26 HIGH Trivy occurrences that
-deduplicate to 13 CVEs. The Codex agent image remains at zero HIGH and zero
+The reviewed Phase 1 gateway image carries 30 HIGH Trivy occurrences that
+deduplicate to 14 CVEs. The Codex agent image remains at zero HIGH and zero
 CRITICAL findings. The gateway findings are inherited from the reviewed
 `gcr.io/distroless/python3-debian13:nonroot` base image, and the reviewed
 Debian package records did not report fixed package versions for those
@@ -106,13 +110,19 @@ findings at approval time.
 
 The only accepted exceptions are recorded in
 `runtime-images/vulnerability-exceptions.json`. They are temporary, exact
-digest-bound records for gateway image
-`sha256:3b4973229f7644c840fa9dee12c291bff2cf9997bcb4d320e29ce10ee5e72852`
+digest-bound records for gateway canonical identity
+`sha256:b30a59331f1b111b6620203d2e25ab8c1cd20a046559ee98d1018d0a5157ac4a`
 and expire on 2026-11-06. They do not apply to the agent image, any other
-gateway image digest, any other base-image digest, fixable findings, CRITICAL
+gateway canonical identity, any other base-image digest, fixable findings, CRITICAL
 findings, new CVEs, changed package versions, or stale findings that no longer
 appear in raw Trivy JSON. Any image, base, import, dependency, or runtime
 behavior change requires reevaluation.
+
+`CVE-2026-19445` is accepted only for the exact observed Python 3.13 binary
+packages at `3.13.5-2+deb13u5`. Its reviewed vulnerable operation is
+server-side `ssl.SSLContext.sni_callback` context switching; the gateway acts
+only as an upstream TLS client with `ssl.create_default_context().wrap_socket`
+and does not terminate TLS or install an SNI callback.
 
 A narrower Python runtime or a compiled gateway remains the preferred
 longer-term remediation. Docker containment, even with non-root execution,

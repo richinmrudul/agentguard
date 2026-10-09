@@ -182,6 +182,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .trivy-cache
+          docker run --rm \
+            -v "$PWD/dist/stage1-runtime-images:/work" \
+            -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            --version > dist/stage1-runtime-images/trivy-version.txt
           for image in gateway agent; do
             for build in a b; do
               docker run --rm \
@@ -208,6 +213,9 @@ jobs:
             image gcr.io/distroless/static-debian12:nonroot@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d \
             --format json --output /work/agent-base.trivy.json \
             --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
+          db_metadata="$(find .trivy-cache -path '*/db/metadata.json' -type f | sort | head -n 1)"
+          test -n "$db_metadata"
+          cp "$db_metadata" dist/stage1-runtime-images/trivy-db-metadata.json
 
       - name: Compare repeat-build SBOM and vulnerability evidence
         run: |
@@ -282,11 +290,12 @@ jobs:
           mkdir -p dist/stage1-runtime-images
           bash scripts/stage1_runtime_images.sh dist/stage1-runtime-images
           python - <<'PY'
+          import hashlib
           import json
           import pathlib
           import sys
           sys.path.insert(0, str(pathlib.Path.cwd()))
-          from agentguard.evaluation.runtime_images import evaluate_trivy_high_critical_policy
+          from agentguard.evaluation.runtime_images import evaluate_trivy_high_critical_policy, validate_scanner_metadata
           root = pathlib.Path("dist/stage1-runtime-images")
           digests = pathlib.Path("dist-runtime-image-canonical-identities.txt").read_text(encoding="utf-8").splitlines()
           if len(digests) != 2:
@@ -297,6 +306,31 @@ jobs:
               gateway_image_digest=digests[0],
               agent_image_digest=digests[1],
           )
+          version_text = (root / "trivy-version.txt").read_text(encoding="utf-8")
+          db_metadata_path = root / "trivy-db-metadata.json"
+          db_metadata_text = db_metadata_path.read_text(encoding="utf-8")
+          db_metadata = json.loads(db_metadata_text)
+          trivy_version = ""
+          for line in version_text.splitlines():
+              if line.startswith("Version:"):
+                  trivy_version = line.split(":", 1)[1].strip()
+                  break
+          scanner_metadata = {
+              "schema": "agentguard.stage1-runtime-scanner-metadata",
+              "schema_version": 1,
+              "trivy": {
+                  "version": trivy_version,
+                  "version_output_sha256": "sha256:" + hashlib.sha256(version_text.encode("utf-8")).hexdigest(),
+              },
+              "vulnerability_database": {
+                  "schema_version": db_metadata.get("Version") or db_metadata.get("SchemaVersion"),
+                  "updated_at": db_metadata.get("UpdatedAt", ""),
+                  "downloaded_at": db_metadata.get("DownloadedAt", ""),
+                  "next_update": db_metadata.get("NextUpdate", ""),
+                  "metadata_digest": "sha256:" + hashlib.sha256(db_metadata_text.encode("utf-8")).hexdigest(),
+              },
+          }
+          vulnerability_policy["scanner_metadata"] = validate_scanner_metadata(scanner_metadata)
           for name in ("gateway", "agent"):
               (root / f"{name}.provenance.json").write_text(json.dumps({
                   "schema": "agentguard.stage1-runtime-image-provenance",
@@ -336,8 +370,8 @@ jobs:
           if policy.get("status") != "hosted_trivy_high_critical_policy_passed":
               print(json.dumps(policy.get("rejected_findings", []), indent=2), file=sys.stderr)
               raise SystemExit(1)
-          if policy.get("exception_count") != 13:
-              print("expected exactly 13 reviewed vulnerability exception records", file=sys.stderr)
+          if policy.get("exception_count") != 14:
+              print("expected exactly 14 reviewed vulnerability exception records", file=sys.stderr)
               raise SystemExit(1)
           PY
 

@@ -30,6 +30,7 @@ from agentguard.evaluation.runtime_images import (
     load_vulnerability_exceptions,
     summarize_trivy_high_critical,
     validate_runtime_manifest,
+    validate_scanner_metadata,
 )
 
 
@@ -298,7 +299,7 @@ def test_agent_entrypoint_is_compiled_wrapper_not_shell_script() -> None:
 
 def test_trivy_summary_rejects_invalid_or_incomplete_json(tmp_path: Path) -> None:
     empty = tmp_path / "empty.trivy.json"
-    empty.write_text('{"Results":[]}\n', encoding="utf-8")
+    empty.write_text('{"SchemaVersion":2,"CreatedAt":"2026-10-09T00:00:00Z","Results":[]}\n', encoding="utf-8")
 
     with pytest.raises(RuntimeImageError, match="no results"):
         summarize_trivy_high_critical([empty])
@@ -537,6 +538,8 @@ def test_trivy_summary_tracks_fixable_and_unfixed_high_critical(tmp_path: Path) 
     scan.write_text(
         json.dumps(
             {
+                "SchemaVersion": 2,
+                "CreatedAt": "2026-10-09T00:00:00Z",
                 "Results": [
                     {
                         "Target": "agent",
@@ -575,7 +578,11 @@ def test_trivy_summary_tracks_fixable_and_unfixed_high_critical(tmp_path: Path) 
 def test_trivy_summary_accepts_zero_finding_results(tmp_path: Path) -> None:
     scan = tmp_path / "agent.trivy.json"
     scan.write_text(
-        json.dumps({"Results": [{"Target": "agent", "Type": "debian"}]}),
+        json.dumps({
+            "SchemaVersion": 2,
+            "CreatedAt": "2026-10-09T00:00:00Z",
+            "Results": [{"Target": "agent", "Type": "debian"}],
+        }),
         encoding="utf-8",
     )
 
@@ -589,13 +596,13 @@ def test_trivy_summary_accepts_zero_finding_results(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("payload", "message"),
     [
-        ({"Results": ["not-object"]}, "result must be an object"),
+        ({"SchemaVersion": 2, "CreatedAt": "2026-10-09T00:00:00Z", "Results": ["not-object"]}, "result must be an object"),
         (
-            {"Results": [{"Target": "gateway", "Vulnerabilities": "not-list"}]},
+            {"SchemaVersion": 2, "CreatedAt": "2026-10-09T00:00:00Z", "Results": [{"Target": "gateway", "Vulnerabilities": "not-list"}]},
             "vulnerabilities must be a list",
         ),
         (
-            {"Results": [{"Target": "gateway", "Vulnerabilities": ["not-object"]}]},
+            {"SchemaVersion": 2, "CreatedAt": "2026-10-09T00:00:00Z", "Results": [{"Target": "gateway", "Vulnerabilities": ["not-object"]}]},
             "vulnerability must be an object",
         ),
     ],
@@ -641,7 +648,16 @@ def _write_scan(path: Path, target: str, findings: list[dict[str, str]]) -> None
     result = {"Target": target, "Type": "debian"}
     if findings:
         result["Vulnerabilities"] = findings
-    path.write_text(json.dumps({"Results": [result]}), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "SchemaVersion": 2,
+                "CreatedAt": "2026-10-09T00:00:00Z",
+                "Results": [result],
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _exception_manifest(tmp_path: Path, *, mutate=None) -> Path:
@@ -679,7 +695,7 @@ def _evaluate_policy(tmp_path: Path, gateway_findings: list[dict[str, str]], *, 
         exception_manifest=_exception_manifest(tmp_path, mutate=manifest_mutate),
         gateway_image_digest=gateway_digest,
         agent_image_digest=AGENT_REVIEWED_IMAGE_DIGEST,
-        as_of=date(2026, 10, 7),
+        as_of=date(2026, 10, 9),
     )
 
 
@@ -687,11 +703,62 @@ def test_reviewed_exception_set_passes_exact_digest_policy(tmp_path: Path) -> No
     policy = _evaluate_policy(tmp_path, _reviewed_gateway_findings())
 
     assert policy["status"] == "hosted_trivy_high_critical_policy_passed"
-    assert policy["severity_counts"] == {"CRITICAL": 0, "HIGH": 26}
+    assert policy["severity_counts"] == {"CRITICAL": 0, "HIGH": 30}
     assert policy["fixability_counts"]["fixed"] == {"CRITICAL": 0, "HIGH": 0}
-    assert policy["exception_count"] == 13
-    assert policy["accepted_exception_count"] == 26
+    assert policy["exception_count"] == 14
+    assert policy["accepted_exception_count"] == 30
+    assert len({finding["vulnerability_id"] for finding in policy["accepted_exceptions"]}) == 14
     assert policy["rejected_findings"] == []
+
+
+def test_reviewed_exception_occurrences_are_exact_current_gateway_set() -> None:
+    findings = _reviewed_gateway_findings()
+    by_cve: dict[str, set[tuple[str, str]]] = {}
+    for finding in findings:
+        by_cve.setdefault(finding["VulnerabilityID"], set()).add(
+            (finding["PkgName"], finding["InstalledVersion"])
+        )
+
+    assert len(findings) == 30
+    assert len(by_cve) == 14
+    assert by_cve["CVE-2026-19445"] == {
+        ("libpython3.13-minimal", "3.13.5-2+deb13u5"),
+        ("libpython3.13-stdlib", "3.13.5-2+deb13u5"),
+        ("python3.13-minimal", "3.13.5-2+deb13u5"),
+        ("python3.13-venv", "3.13.5-2+deb13u5"),
+    }
+
+
+def test_exception_policy_rejects_missing_cve_2026_19445(tmp_path: Path) -> None:
+    def mutate(data):
+        data["exceptions"] = [
+            item for item in data["exceptions"] if item["cve"] != "CVE-2026-19445"
+        ]
+
+    policy = _evaluate_policy(tmp_path, _reviewed_gateway_findings(), manifest_mutate=mutate)
+
+    assert policy["status"] == "hosted_trivy_high_critical_policy_failed"
+    assert any(
+        item["vulnerability_id"] == "CVE-2026-19445"
+        and item["reason"] == "unmatched gateway high vulnerability"
+        for item in policy["rejected_findings"]
+    )
+
+
+def test_exception_policy_rejects_unreviewed_package_occurrence(tmp_path: Path) -> None:
+    policy = _evaluate_policy(
+        tmp_path,
+        _reviewed_gateway_findings()
+        + [_finding("CVE-2026-19445", "python3.13", "3.13.5-2+deb13u5")],
+    )
+
+    assert policy["status"] == "hosted_trivy_high_critical_policy_failed"
+    assert any(
+        item["vulnerability_id"] == "CVE-2026-19445"
+        and item["package_name"] == "python3.13"
+        and item["reason"] == "unmatched gateway high vulnerability"
+        for item in policy["rejected_findings"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -749,7 +816,7 @@ def test_exception_manifest_rejects_malformed_wildcard_or_agent_exceptions(tmp_p
         load_vulnerability_exceptions(
             _exception_manifest(tmp_path, mutate=mutate),
             gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
-            as_of=date(2026, 10, 7),
+            as_of=date(2026, 10, 9),
         )
 
 
@@ -775,7 +842,7 @@ def test_exception_policy_rejects_unknown_image_role(tmp_path: Path) -> None:
         exception_manifest=_exception_manifest(tmp_path),
         gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
         agent_image_digest=AGENT_REVIEWED_IMAGE_DIGEST,
-        as_of=date(2026, 10, 7),
+        as_of=date(2026, 10, 9),
     )
 
     assert policy["status"] == "hosted_trivy_high_critical_policy_failed"
@@ -788,6 +855,43 @@ def test_exception_policy_rejects_stale_exception_entries(tmp_path: Path) -> Non
 
     assert policy["status"] == "hosted_trivy_high_critical_policy_failed"
     assert any(item["reason"] == "stale exception does not match a current scan finding" for item in policy["rejected_findings"])
+
+
+def _scanner_metadata(**changes):
+    data = {
+        "schema": "agentguard.stage1-runtime-scanner-metadata",
+        "schema_version": 1,
+        "trivy": {
+            "version": "0.66.0",
+            "version_output_sha256": "sha256:" + "1" * 64,
+        },
+        "vulnerability_database": {
+            "schema_version": 2,
+            "updated_at": "2026-10-09T00:00:00Z",
+            "downloaded_at": "2026-10-09T00:00:00Z",
+            "metadata_digest": "sha256:" + "2" * 64,
+        },
+    }
+    data.update(changes)
+    return data
+
+
+def test_scanner_metadata_contract_accepts_retained_trivy_identity() -> None:
+    metadata = validate_scanner_metadata(_scanner_metadata())
+
+    assert metadata["trivy"]["version"] == "0.66.0"
+
+
+def test_runtime_manifest_rejects_malformed_scanner_metadata_when_policy_passed() -> None:
+    manifest = _manifest()
+    manifest["artifacts"]["scans"]["vulnerability_policy"] = {
+        "status": "hosted_trivy_high_critical_policy_passed",
+        "scanner_failures_suppressed": False,
+        "scanner_metadata": _scanner_metadata(vulnerability_database={}),
+    }
+
+    with pytest.raises(RuntimeImageError, match="schema/version is required"):
+        validate_runtime_manifest(manifest)
 
 
 def test_exception_policy_rejects_missing_or_malformed_scan_evidence(tmp_path: Path) -> None:
@@ -803,7 +907,7 @@ def test_exception_policy_rejects_missing_or_malformed_scan_evidence(tmp_path: P
             exception_manifest=manifest,
             gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
             agent_image_digest=AGENT_REVIEWED_IMAGE_DIGEST,
-            as_of=date(2026, 10, 7),
+            as_of=date(2026, 10, 9),
         )
 
 
@@ -847,5 +951,5 @@ def test_exception_manifest_rejects_additional_malformed_shapes(
         load_vulnerability_exceptions(
             _exception_manifest(tmp_path, mutate=mutate),
             gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
-            as_of=date(2026, 10, 7),
+            as_of=date(2026, 10, 9),
         )

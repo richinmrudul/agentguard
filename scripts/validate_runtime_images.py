@@ -123,7 +123,7 @@ def validate_policy(
     load_vulnerability_exceptions(
         exception_manifest,
         gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
-        as_of=__import__("datetime").date(2026, 10, 7),
+        as_of=__import__("datetime").date(2026, 10, 9),
     )
     assert GATEWAY_BASE_IMAGE in gateway_dockerfile
     assert AGENT_BASE_IMAGE in agent_dockerfile
