@@ -151,6 +151,50 @@ Post-hoc amendments may correct clerical errors or clarify wording, but they
 must not change trial denominators, outcome classification, or public claims for
 evidence already collected.
 
+## Stage 1 Runtime Image Inputs
+
+Phase 1 adds repository-owned runtime image inputs for later reviewed live
+study execution. These files are build inputs and validation fixtures, not
+published images, live authorizations, provider approvals, or study results.
+
+The gateway image input is owned by this repository under
+`runtime-images/gateway/`. It is validated first because the gateway is the
+study boundary that records allow/deny decisions and fail-closed evidence. The
+gateway Dockerfile is pinned to the reviewed linux/amd64 distroless Python
+base-image digest, runs as UID/GID `65532`, and exposes only the standard
+library gateway source through `/usr/bin/python3 /agentguard-live-egress-gateway`.
+
+The Codex CLI agent image input is owned by this repository under
+`runtime-images/codex-agent/`. The reviewed package candidates are
+`@openai/codex` version `0.159.2`, package integrity
+`sha512-SE13C3nZCYoVL569BdegoOl6vwjb7o2sXOo7ivwVzaVoY0cswwi0/6pIE0TyO/C0vIkQh3jslExitET7PBTfIg==`,
+and linux-x64 integrity
+`sha512-RrCZ1X52wpa1lOsXtCtSyhjOFdQPh7LH5Ccv8HsKmd/2UXbUwxXFqWXFK3JzatquUNGtW/TLox5Y7qVOGkV0/Q==`.
+Those candidates remain untrusted until a reviewer supplies official package
+metadata and the local validator confirms the exact version and integrity
+values. The final runtime image extracts the verified Linux x64 musl Codex
+binary and helper binaries into a distroless static base, without Node, npm,
+package-manager caches, shells, debug tools, or the optional voice library
+tree. The compiled entrypoint fails closed unless `CODEX_API_KEY` and
+`CODEX_MODEL` are supplied by a later live-study authorization; it also unsets
+ambient `OPENAI_API_KEY`, `NPM_TOKEN`, `GH_TOKEN`, and `GITHUB_TOKEN`.
+
+Runtime-image freeze manifests use schema
+`agentguard.stage1-runtime-image-freeze` version 1. They record the source
+commit, gateway and agent OCI digests, pinned base-image digests, deterministic
+build-context digests, SBOM/provenance/scan artifact digests, publication
+status, usage-evidence policy, and a canonical manifest digest. Missing,
+malformed, conflicting, incomplete, or unattributable usage evidence fails
+closed rather than becoming a favorable result.
+
+The PR workflow `.github/workflows/stage1-runtime-images.yml` builds and
+validates the inputs without secrets or image pushes. The isolated publication
+workflow `.github/workflows/stage1-runtime-images-publish.yml` is
+`workflow_dispatch` only, requires the reviewed source commit and approval
+phrase, and cannot run from `push`, `pull_request`, `release`, or scheduled
+events. CI validation does not contact inference APIs, dispatch publication, or
+publish images.
+
 ## Public Reporting And Sanitization
 
 Public artifacts may include the protocol, canonical plans, profile and fixture

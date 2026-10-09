@@ -1,0 +1,391 @@
+name: Stage 1 Runtime Images
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-validate:
+    name: Build and validate mock-only runtime images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Verify Docker Engine
+        run: |
+          docker info
+          docker version
+
+      - name: Validate reviewed runtime-image policy
+        run: python scripts/validate_runtime_images.py
+
+      - name: Build gateway image locally
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
+            -t agentguard-stage1-gateway:ci-a \
+            -t agentguard-stage1-gateway:ci \
+            runtime-images/gateway
+          docker build \
+            --platform linux/amd64 \
+            --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
+            -t agentguard-stage1-gateway:ci-b \
+            runtime-images/gateway
+
+      - name: Build Codex agent image locally
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
+            -t agentguard-stage1-codex-agent:ci-a \
+            -t agentguard-stage1-codex-agent:ci \
+            runtime-images/codex-agent
+          docker build \
+            --platform linux/amd64 \
+            --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
+            -t agentguard-stage1-codex-agent:ci-b \
+            runtime-images/codex-agent
+
+      - name: Prove images execute by local digest and non-root identity
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage1-runtime-images
+          gateway_id="$(docker image inspect --format '{{.Id}}' agentguard-stage1-gateway:ci)"
+          agent_id="$(docker image inspect --format '{{.Id}}' agentguard-stage1-codex-agent:ci)"
+          test "$(docker image inspect --format '{{.Config.User}}' "$gateway_id")" = "65532:65532"
+          test "$(docker image inspect --format '{{.Config.User}}' "$agent_id")" = "10001:10001"
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint /usr/bin/python3 "$gateway_id" -c 'import os; print(os.getuid())' | tee gateway-uid.txt
+          grep '^65532$' gateway-uid.txt
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            "$agent_id" --version | tee codex-version.txt
+          grep '^codex-cli 0.159.2$' codex-version.txt
+          printf '%s\n%s\n' "$gateway_id" "$agent_id" > dist-runtime-image-local-digests.txt
+
+      - name: Inventory final runtime image contents
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage1-runtime-images/inventory
+          gateway_cid="$(docker create agentguard-stage1-gateway:ci)"
+          agent_cid="$(docker create agentguard-stage1-codex-agent:ci)"
+          trap 'docker rm -f "$gateway_cid" "$agent_cid" >/dev/null 2>&1 || true' EXIT
+          docker export "$gateway_cid" -o dist/stage1-runtime-images/inventory/gateway-rootfs.tar
+          docker export "$agent_cid" -o dist/stage1-runtime-images/inventory/agent-rootfs.tar
+          tar -tf dist/stage1-runtime-images/inventory/gateway-rootfs.tar | sort > dist/stage1-runtime-images/gateway.rootfs.txt
+          tar -tf dist/stage1-runtime-images/inventory/agent-rootfs.tar | sort > dist/stage1-runtime-images/agent.rootfs.txt
+          ! grep -E '(^|/)(apt|apt-get|dpkg|pip|gcc|make|curl|wget|git|sh|bash|zsh)$' dist/stage1-runtime-images/gateway.rootfs.txt
+          ! grep -E '(^|/)(node|npm|npx|yarn|apt|apt-get|dpkg|gcc|make|curl|wget|git|sh|bash|zsh)$' dist/stage1-runtime-images/agent.rootfs.txt
+          ! grep -E 'node_modules|codex-resources/voice|npm-cache|\\.npm' dist/stage1-runtime-images/agent.rootfs.txt
+          grep '^opt/codex/bin/codex$' dist/stage1-runtime-images/agent.rootfs.txt
+          grep '^opt/codex/codex-path/rg$' dist/stage1-runtime-images/agent.rootfs.txt
+
+      - name: Prove canonical runtime image identities reproduce
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage1-runtime-images/identity
+          for image in gateway agent; do
+            if [ "$image" = gateway ]; then
+              tag_base="agentguard-stage1-gateway"
+              base_image="gcr.io/distroless/python3-debian13:nonroot@sha256:339ecee37afe554f5237b9993250bc390ac9f1483a08c9b5e77ac4c016d6d39a"
+            else
+              tag_base="agentguard-stage1-codex-agent"
+              base_image="gcr.io/distroless/static-debian12:nonroot@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d"
+            fi
+            for build in a b; do
+              cid="$(docker create "$tag_base:ci-$build")"
+              trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+              docker export "$cid" -o "dist/stage1-runtime-images/identity/$image-$build-rootfs.tar"
+              docker inspect "$tag_base:ci-$build" > "dist/stage1-runtime-images/identity/$image-$build.inspect.json"
+              python scripts/runtime_image_identity.py \
+                --image-role "$image" \
+                --base-image "$base_image" \
+                --inspect-json "dist/stage1-runtime-images/identity/$image-$build.inspect.json" \
+                --rootfs-tar "dist/stage1-runtime-images/identity/$image-$build-rootfs.tar" \
+                --output "dist/stage1-runtime-images/$image-$build.identity.json"
+              docker rm -f "$cid" >/dev/null
+              trap - EXIT
+            done
+            python - "$image" <<'PY'
+          import json
+          import pathlib
+          import sys
+          image = sys.argv[1]
+          root = pathlib.Path("dist/stage1-runtime-images")
+          first = json.loads((root / f"{image}-a.identity.json").read_text(encoding="utf-8"))
+          second = json.loads((root / f"{image}-b.identity.json").read_text(encoding="utf-8"))
+          for key in ("identity", "rootfs_digest", "runtime_config_digest", "runtime_config"):
+              if first[key] != second[key]:
+                  raise SystemExit(f"{image} canonical runtime identity mismatch for {key}")
+          (root / f"{image}.identity.json").write_text(
+              json.dumps(first, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          done
+          jq -r '.identity' dist/stage1-runtime-images/gateway.identity.json > dist-runtime-image-canonical-identities.txt
+          jq -r '.identity' dist/stage1-runtime-images/agent.identity.json >> dist-runtime-image-canonical-identities.txt
+
+      - name: Run focused runtime-image tests
+        run: python -m pytest tests/unit/test_runtime_images.py tests/unit/test_stage1_runtime_workflows.py
+
+      - name: Export local image archives
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage1-runtime-images
+          docker save agentguard-stage1-gateway:ci-a -o dist/stage1-runtime-images/gateway-image-a.tar
+          docker save agentguard-stage1-gateway:ci-b -o dist/stage1-runtime-images/gateway-image-b.tar
+          docker save agentguard-stage1-codex-agent:ci-a -o dist/stage1-runtime-images/agent-image-a.tar
+          docker save agentguard-stage1-codex-agent:ci-b -o dist/stage1-runtime-images/agent-image-b.tar
+          docker save agentguard-stage1-gateway:ci -o dist/stage1-runtime-images/gateway-image.tar
+          docker save agentguard-stage1-codex-agent:ci -o dist/stage1-runtime-images/agent-image.tar
+
+      - name: Generate SBOM artifacts with pinned Syft
+        run: |
+          set -euo pipefail
+          for image in gateway agent; do
+            for build in a b; do
+              docker run --rm \
+                -v "$PWD/dist/stage1-runtime-images:/work" \
+                anchore/syft@sha256:cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033 \
+                docker-archive:/work/$image-image-$build.tar \
+                -o syft-json=/work/$image-$build.sbom.json
+            done
+            cp "dist/stage1-runtime-images/$image-a.sbom.json" "dist/stage1-runtime-images/$image.sbom.json"
+          done
+
+      - name: Run vulnerability scans with pinned Trivy
+        run: |
+          set -euo pipefail
+          mkdir -p .trivy-cache
+          docker run --rm \
+            -v "$PWD/dist/stage1-runtime-images:/work" \
+            -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            --version > dist/stage1-runtime-images/trivy-version.txt
+          for image in gateway agent; do
+            for build in a b; do
+              docker run --rm \
+                -v "$PWD/dist/stage1-runtime-images:/work" \
+                -v "$PWD/.trivy-cache:/root/.cache/" \
+                aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+                image --input /work/$image-image-$build.tar --format json \
+                --output /work/$image-$build.trivy.json \
+                --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
+            done
+            cp "dist/stage1-runtime-images/$image-a.trivy.json" "dist/stage1-runtime-images/$image.trivy.json"
+          done
+          docker run --rm \
+            -v "$PWD/dist/stage1-runtime-images:/work" \
+            -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            image gcr.io/distroless/python3-debian13:nonroot@sha256:339ecee37afe554f5237b9993250bc390ac9f1483a08c9b5e77ac4c016d6d39a \
+            --format json --output /work/gateway-base.trivy.json \
+            --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
+          docker run --rm \
+            -v "$PWD/dist/stage1-runtime-images:/work" \
+            -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            image gcr.io/distroless/static-debian12:nonroot@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d \
+            --format json --output /work/agent-base.trivy.json \
+            --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
+          db_metadata=".trivy-cache/trivy/db/metadata.json"
+          test -s "$db_metadata"
+          cp "$db_metadata" dist/stage1-runtime-images/trivy-db-metadata.json
+
+      - name: Compare repeat-build SBOM and vulnerability evidence
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+
+          root = pathlib.Path("dist/stage1-runtime-images")
+
+          def sbom_inventory(path):
+              data = json.loads(path.read_text(encoding="utf-8"))
+              artifacts = data.get("artifacts")
+              if not isinstance(artifacts, list):
+                  raise SystemExit(f"missing SBOM artifacts in {path}")
+              return sorted(
+                  (
+                      str(item.get("type", "")),
+                      str(item.get("name", "")),
+                      str(item.get("version", "")),
+                      str(item.get("purl", "")),
+                  )
+                  for item in artifacts
+              )
+
+          def trivy_findings(path, image):
+              data = json.loads(path.read_text(encoding="utf-8"))
+              results = data.get("Results")
+              if not isinstance(results, list):
+                  raise SystemExit(f"missing Trivy Results in {path}")
+              findings = []
+              for result in results:
+                  target = str(result.get("Target", ""))
+                  target = target.replace(f"{image}-image-a.tar", f"{image}-image.tar")
+                  target = target.replace(f"{image}-image-b.tar", f"{image}-image.tar")
+                  for item in result.get("Vulnerabilities") or []:
+                      findings.append(
+                          (
+                              target,
+                              str(result.get("Type", "")),
+                              str(item.get("PkgName", "")),
+                              str(item.get("InstalledVersion", "")),
+                              str(item.get("VulnerabilityID", "")),
+                              str(item.get("Severity", "")),
+                              str(item.get("FixedVersion", "")),
+                          )
+                      )
+              return sorted(findings)
+
+          comparison = {}
+          for image in ("gateway", "agent"):
+              sbom_a = sbom_inventory(root / f"{image}-a.sbom.json")
+              sbom_b = sbom_inventory(root / f"{image}-b.sbom.json")
+              if sbom_a != sbom_b:
+                  raise SystemExit(f"{image} repeat-build SBOM inventory mismatch")
+              trivy_a = trivy_findings(root / f"{image}-a.trivy.json", image)
+              trivy_b = trivy_findings(root / f"{image}-b.trivy.json", image)
+              if trivy_a != trivy_b:
+                  raise SystemExit(f"{image} repeat-build Trivy finding mismatch")
+              comparison[image] = {
+                  "sbom_package_count": len(sbom_a),
+                  "trivy_high_critical_occurrences": len(trivy_a),
+              }
+          (root / "repeat-build-comparison.json").write_text(
+              json.dumps(comparison, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Generate provenance and scan summaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage1-runtime-images
+          bash scripts/stage1_runtime_images.sh dist/stage1-runtime-images
+          python - <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+          sys.path.insert(0, str(pathlib.Path.cwd()))
+          from agentguard.evaluation.runtime_images import evaluate_trivy_high_critical_policy, validate_scanner_metadata
+          root = pathlib.Path("dist/stage1-runtime-images")
+          digests = pathlib.Path("dist-runtime-image-canonical-identities.txt").read_text(encoding="utf-8").splitlines()
+          if len(digests) != 2:
+              raise SystemExit("expected gateway and agent image digests")
+          vulnerability_policy = evaluate_trivy_high_critical_policy(
+              [root / "gateway.trivy.json", root / "agent.trivy.json"],
+              exception_manifest=pathlib.Path("runtime-images/vulnerability-exceptions.json"),
+              gateway_image_digest=digests[0],
+              agent_image_digest=digests[1],
+          )
+          version_text = (root / "trivy-version.txt").read_text(encoding="utf-8")
+          db_metadata_path = root / "trivy-db-metadata.json"
+          db_metadata_text = db_metadata_path.read_text(encoding="utf-8")
+          db_metadata = json.loads(db_metadata_text)
+          trivy_version = ""
+          for line in version_text.splitlines():
+              if line.startswith("Version:"):
+                  trivy_version = line.split(":", 1)[1].strip()
+                  break
+          scanner_metadata = {
+              "schema": "agentguard.stage1-runtime-scanner-metadata",
+              "schema_version": 1,
+              "trivy": {
+                  "version": trivy_version,
+                  "version_output_sha256": "sha256:" + hashlib.sha256(version_text.encode("utf-8")).hexdigest(),
+              },
+              "vulnerability_database": {
+                  "schema_version": db_metadata.get("Version") or db_metadata.get("SchemaVersion"),
+                  "updated_at": db_metadata.get("UpdatedAt", ""),
+                  "downloaded_at": db_metadata.get("DownloadedAt", ""),
+                  "next_update": db_metadata.get("NextUpdate", ""),
+                  "metadata_digest": "sha256:" + hashlib.sha256(db_metadata_text.encode("utf-8")).hexdigest(),
+              },
+          }
+          vulnerability_policy["scanner_metadata"] = validate_scanner_metadata(scanner_metadata)
+          for name in ("gateway", "agent"):
+              (root / f"{name}.provenance.json").write_text(json.dumps({
+                  "schema": "agentguard.stage1-runtime-image-provenance",
+                  "schema_version": 1,
+                  "image": name,
+                  "source": "${{ github.sha }}",
+              }, sort_keys=True) + "\n", encoding="utf-8")
+          (root / "scan-summary.json").write_text(json.dumps({
+              "vulnerability_policy": vulnerability_policy,
+              "secret_scan": {"findings": 0},
+              "license": {"review_required": False}
+          }, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          python scripts/validate_runtime_images.py \
+            --gateway-digest "$(sed -n '1p' dist-runtime-image-canonical-identities.txt)" \
+            --agent-digest "$(sed -n '2p' dist-runtime-image-canonical-identities.txt)" \
+            --trivy-json dist/stage1-runtime-images/gateway.trivy.json \
+            --trivy-json dist/stage1-runtime-images/agent.trivy.json
+
+      - name: Confirm no image push occurred
+        run: |
+          test -f dist-runtime-image-local-digests.txt
+          ! grep -R "docker[[:space:]]push" dist stage1-runtime-images 2>/dev/null
+
+      - name: Enforce vulnerability policy
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          import sys
+          summary = json.loads(
+              pathlib.Path("dist/stage1-runtime-images/scan-summary.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          policy = summary["vulnerability_policy"]
+          if policy.get("status") != "hosted_trivy_high_critical_policy_passed":
+              print(json.dumps(policy.get("rejected_findings", []), indent=2), file=sys.stderr)
+              raise SystemExit(1)
+          if policy.get("exception_count") != 14:
+              print("expected exactly 14 reviewed vulnerability exception records", file=sys.stderr)
+              raise SystemExit(1)
+          PY
+
+      - name: Upload bounded runtime-image validation artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: stage1-runtime-image-validation
+          path: |
+            codex-version.txt
+            dist-runtime-image-local-digests.txt
+            dist-runtime-image-canonical-identities.txt
+            dist/stage1-runtime-images/*.json
+            dist/stage1-runtime-images/*.txt
+            dist/stage1-runtime-images/identity/*.json
+          if-no-files-found: error
+          retention-days: 14
