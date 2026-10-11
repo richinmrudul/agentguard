@@ -370,8 +370,8 @@ jobs:
           if policy.get("status") != "hosted_trivy_high_critical_policy_passed":
               print(json.dumps(policy.get("rejected_findings", []), indent=2), file=sys.stderr)
               raise SystemExit(1)
-          if policy.get("exception_count") != 14:
-              print("expected exactly 14 reviewed vulnerability exception records", file=sys.stderr)
+          if policy.get("exception_count") != 15:
+              print("expected exactly 15 reviewed vulnerability exception records", file=sys.stderr)
               raise SystemExit(1)
           PY
 
