@@ -92,6 +92,14 @@ described as a live-study network boundary.
 Images must have validated provenance with immutable digest identity. A mutable
 tag alone is not enough for a contained-execution claim.
 
+Stage 1 runtime-image tooling records repository-owned image inputs without
+claiming that a live study has run. The gateway input is validated before the
+agent input, both use digest-pinned linux/amd64 base images, and the Codex CLI
+agent input verifies exact lockfile integrity for the reviewed `@openai/codex`
+`0.159.2` candidates. If Docker, registry, package, scan, provenance, SBOM, or
+usage metadata is missing or inconsistent, the validator raises an error; it
+does not convert missing evidence into a containment or usage success.
+
 ## Live-Study Egress Contract
 
 The v0.5 live-study egress contract is an experimental evaluation boundary

@@ -276,6 +276,7 @@ def _trial_record(
         elapsed_seconds = _optional_non_negative_number(result.get("elapsed_seconds"), "elapsed_seconds")
         cost = _optional_non_negative_number(result.get("cost_usd"), "cost_usd")
         usage = _optional_usage_value(result.get("usage"))
+        _validate_usage_evidence(result, usage)
         evidence_complete = (
             cleanup_complete is True
             and mutation_status == "complete"
@@ -714,6 +715,41 @@ def _optional_usage_value(value: object) -> Optional[dict[str, int]]:
             raise ContainedStudyMetricsError("Contained study optional token value is invalid.")
         usage[key] = item
     return usage
+
+
+def _validate_usage_evidence(
+    result: dict[str, object],
+    usage: Optional[dict[str, int]],
+) -> None:
+    evidence = result.get("usage_evidence")
+    if usage is None:
+        if evidence is None:
+            return
+        mapping = _mapping(evidence, "usage_evidence")
+        status = _string(mapping.get("status"), "usage_evidence.status")
+        if status not in {"not-applicable", "unavailable"}:
+            raise ContainedStudyMetricsError(
+                "Contained study usage evidence status is invalid."
+            )
+        if mapping.get("values_recorded") is not False:
+            raise ContainedStudyMetricsError(
+                "Contained study usage evidence must not record raw values."
+            )
+        return
+    mapping = _mapping(evidence, "usage_evidence")
+    if mapping.get("status") != "complete":
+        raise ContainedStudyMetricsError(
+            "Contained study optional usage requires complete usage evidence."
+        )
+    source = _string(mapping.get("source"), "usage_evidence.source")
+    if source not in {"approved-runner-metadata", "approved-provider-usage-export"}:
+        raise ContainedStudyMetricsError(
+            "Contained study usage evidence source is not approved."
+        )
+    if mapping.get("values_recorded") is not False:
+        raise ContainedStudyMetricsError(
+            "Contained study usage evidence must not record raw values."
+        )
 
 
 def _load_json_object(path: Path, label: str) -> dict[str, object]:

@@ -68,6 +68,9 @@ jobs:
       - name: Verify configuration schema and maintained examples
         run: python scripts/validate_config_schema.py
 
+      - name: Validate Stage 1 runtime image inputs
+        run: python scripts/validate_runtime_images.py
+
   coverage:
     name: Coverage quality gate (Python 3.11)
     runs-on: ubuntu-latest
