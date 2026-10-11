@@ -157,18 +157,106 @@ published or registry-verifiable.
 Final published references and registry manifest digests are filled and
 independently verified only in the separately approved Phase 2 publication.
 
-## Publication Gate
+## Build-Once Publication Architecture
 
 The prepared workflow is `.github/workflows/stage1-runtime-images-publish.yml`.
-It is `workflow_dispatch` only and requires:
+It is `workflow_dispatch` only. It has two jobs:
+
+- `prepare` builds each image exactly once for `linux/amd64`, validates the
+  exact built images, exports the exact validated Docker archives, generates
+  SBOM and raw Trivy evidence from those archives, applies the reviewed
+  vulnerability exception policy, runs mock-only checks, and uploads the
+  validated archives plus bounded evidence.
+- `publish` depends on `prepare`, downloads those exact archives, verifies
+  their digests and manifest consistency before registry authentication, loads
+  the archives, pushes the already validated image subjects to GHCR, records
+  immutable GHCR digests, attests those published digest subjects, pulls by
+  digest, recomputes canonical identities, regenerates SBOM and scan evidence,
+  reapplies the exception policy, and reruns mock-only checks using digest
+  references.
+
+The `publish` job must not run a Docker build, install packages into an image,
+reconstruct an image from source, retag to a moving alias, or publish an
+unreviewed platform. The checkout in the protected job is for validation code
+only; the image payloads come from the downloaded validated archives.
+
+## Approval Stages And Activation
+
+The workflow remains unusable for publication until a separate explicitly
+authorized settings task completes all repository settings. Dispatch requires:
 
 - exact reviewed source commit input;
 - approval phrase `APPROVE_STAGE1_RUNTIME_IMAGE_PUBLICATION`;
-- maintainer approval to run the workflow;
-- repository settings and GHCR namespace permissions that allow package
-  publication;
-- `contents: read` and `packages: write` only.
+- trusted `main` branch ref;
+- `required_source_commit == github.sha`;
+- repository variable `STAGE1_RUNTIME_PUBLICATION_ENABLED` set exactly to
+  `true`;
+- successful `prepare` job;
+- protected environment approval for environment `stage1-runtime-images`.
 
-Do not dispatch this workflow during Phase 1. Do not change package visibility,
-repository settings, environments, protections, secrets, milestones, Pages,
-tags, releases, PyPI/TestPyPI, or GHCR administration as part of Phase 1.
+Do not create or modify that environment or repository variable as part of
+runtime-image code review. Before any dispatch, a separate settings task must
+create/configure `stage1-runtime-images`, add the required reviewer, disable
+administrator bypass if supported by repository policy, restrict deployment to
+the trusted `main` branch, and enable `STAGE1_RUNTIME_PUBLICATION_ENABLED`
+only for the approved publication window.
+
+If GitHub repository settings cannot guarantee that a missing environment is
+protected before first use, operators must verify the environment and branch
+deployment protection out of band before dispatch. The activation variable is
+an additional fail-closed guard; it is not a substitute for environment
+protection.
+
+## Image Coordinates And External State
+
+Phase 2 publication creates externally visible GHCR package state only after
+the protected `publish` job is approved. The intended coordinates are:
+
+- `ghcr.io/richinmrudul/agentguard/stage1-gateway:<full-source-commit>`
+- `ghcr.io/richinmrudul/agentguard/stage1-codex-agent:<full-source-commit>`
+
+The full source commit is the final selected trusted `main` commit at dispatch
+time, not a shortened SHA and not a hardcoded historical merge commit. The
+workflow must not create `latest`, release-channel, shortened-SHA, moving, or
+unreviewed platform tags. Future Stage 1 study profiles must use immutable
+`@sha256:` GHCR references resolved after publication, not tags.
+
+The external state created by an authorized Phase 2 run is limited to the two
+GHCR image packages/tags, their immutable registry digests, registry-bound
+attestations for those digests, and retained GitHub Actions evidence artifacts.
+No provider credential, live authorization, paid call, public inference API
+contact, release, PyPI/TestPyPI publication, or live study is involved.
+
+## Provenance Subjects
+
+Publication evidence records the source repository, exact commit, workflow
+file, run ID and attempt, target platform, Dockerfile and build-context
+digests, base-image references, Codex package version and integrity, archive
+digests, canonical identities, rootfs and runtime configuration digests, SBOM
+digests and package counts, Trivy version and database metadata, raw scan
+digests and counts, exception-manifest digest and expiry, and mock integration
+status.
+
+GitHub attestations must bind the published GHCR subject names and immutable
+registry digests:
+
+- `ghcr.io/richinmrudul/agentguard/stage1-gateway@sha256:...`
+- `ghcr.io/richinmrudul/agentguard/stage1-codex-agent@sha256:...`
+
+The local Docker image ID, canonical identity, tag, archive digest, and SBOM
+digest are supporting evidence only. They are not the attestation subject.
+
+## Post-Publication Verification And Failure Behavior
+
+After registry push, verification must pull both images by immutable digest,
+recompute canonical identities, require the reviewed gateway and agent
+canonical identities, regenerate SBOMs with the reviewed package counts,
+rescan with the current Trivy database, reapply the exact exception policy,
+and run mock-only Docker checks using the pulled digest references.
+
+Any failure after push fails the workflow, retains evidence, prints the
+rejected immutable digest, and requires corrective review. Operators must not
+silently overwrite tags, rebuild and retry as if equivalent, delete evidence,
+reuse a rejected digest, begin #294 with the failed digest, or claim #310
+complete. Automatic package deletion, tag rewriting, and destructive rollback
+are intentionally not implemented.

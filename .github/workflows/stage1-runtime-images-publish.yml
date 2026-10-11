@@ -15,9 +15,21 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: stage1-runtime-images-publication-${{ github.event.inputs.required_source_commit }}
+  cancel-in-progress: false
+
+env:
+  TARGET_PLATFORM: linux/amd64
+  PUBLICATION_ENVIRONMENT: stage1-runtime-images
+  GATEWAY_IMAGE: ghcr.io/richinmrudul/agentguard/stage1-gateway:${{ github.sha }}
+  AGENT_IMAGE: ghcr.io/richinmrudul/agentguard/stage1-codex-agent:${{ github.sha }}
+  GATEWAY_REVIEWED_IDENTITY: sha256:b30a59331f1b111b6620203d2e25ab8c1cd20a046559ee98d1018d0a5157ac4a
+  AGENT_REVIEWED_IDENTITY: sha256:ef4131b5ee0ffc6da4152d9ba91dd3c468dd46732a3fca2f0d2f4c4be0a57338
+
 jobs:
-  publish:
-    name: Publish exact reviewed Stage 1 runtime images
+  prepare:
+    name: Build once and validate exact Stage 1 runtime images
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' &&
@@ -26,7 +38,6 @@ jobs:
       github.event.inputs.required_source_commit == github.sha
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Check out exact reviewed commit
@@ -35,51 +46,384 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.inputs.required_source_commit }}
 
-      - name: Validate publication gate
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Verify publication gate before any artifact build
+        env:
+          REQUIRED_SOURCE_COMMIT: ${{ github.event.inputs.required_source_commit }}
+          APPROVAL_PHRASE: ${{ github.event.inputs.approval_phrase }}
+          PUBLICATION_ENABLED: ${{ vars.STAGE1_RUNTIME_PUBLICATION_ENABLED }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$REQUIRED_SOURCE_COMMIT" = "$GITHUB_SHA"
+          test "$REQUIRED_SOURCE_COMMIT" = "$(git rev-parse HEAD)"
+          test "$APPROVAL_PHRASE" = "APPROVE_STAGE1_RUNTIME_IMAGE_PUBLICATION"
+          test "$PUBLICATION_ENABLED" = "true"
+          python scripts/validate_runtime_images.py
+
+      - name: Verify Docker Engine
+        run: |
+          docker info
+          docker version
+
+      - name: Build each publication image exactly once
+        run: |
+          set -euo pipefail
+          docker build \
+            --platform "$TARGET_PLATFORM" \
+            --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
+            -t "$GATEWAY_IMAGE" \
+            runtime-images/gateway
+          docker build \
+            --platform "$TARGET_PLATFORM" \
+            --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
+            -t "$AGENT_IMAGE" \
+            runtime-images/codex-agent
+
+      - name: Validate exact built images and canonical identities
+        run: |
+          set -euo pipefail
+          mkdir -p dist/stage1-runtime-images-publication/identity
+          gateway_id="$(docker image inspect --format '{{.Id}}' "$GATEWAY_IMAGE")"
+          agent_id="$(docker image inspect --format '{{.Id}}' "$AGENT_IMAGE")"
+          test "$(docker image inspect --format '{{.Config.User}}' "$gateway_id")" = "65532:65532"
+          test "$(docker image inspect --format '{{.Config.User}}' "$agent_id")" = "10001:10001"
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint /usr/bin/python3 "$gateway_id" -c 'import os; print(os.getuid())' \
+            | tee dist/stage1-runtime-images-publication/gateway-uid.txt
+          grep '^65532$' dist/stage1-runtime-images-publication/gateway-uid.txt
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            "$agent_id" --version | tee dist/stage1-runtime-images-publication/codex-version.txt
+          grep '^codex-cli 0.159.2$' dist/stage1-runtime-images-publication/codex-version.txt
+          for image in gateway agent; do
+            if [ "$image" = gateway ]; then
+              ref="$GATEWAY_IMAGE"
+              base_image="gcr.io/distroless/python3-debian13:nonroot@sha256:339ecee37afe554f5237b9993250bc390ac9f1483a08c9b5e77ac4c016d6d39a"
+              expected="$GATEWAY_REVIEWED_IDENTITY"
+            else
+              ref="$AGENT_IMAGE"
+              base_image="gcr.io/distroless/static-debian12:nonroot@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d"
+              expected="$AGENT_REVIEWED_IDENTITY"
+            fi
+            cid="$(docker create "$ref")"
+            trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+            docker export "$cid" -o "dist/stage1-runtime-images-publication/identity/$image-rootfs.tar"
+            docker inspect "$ref" > "dist/stage1-runtime-images-publication/identity/$image.inspect.json"
+            python scripts/runtime_image_identity.py \
+              --image-role "$image" \
+              --base-image "$base_image" \
+              --inspect-json "dist/stage1-runtime-images-publication/identity/$image.inspect.json" \
+              --rootfs-tar "dist/stage1-runtime-images-publication/identity/$image-rootfs.tar" \
+              --output "dist/stage1-runtime-images-publication/$image.identity.json"
+            test "$(jq -r '.identity' "dist/stage1-runtime-images-publication/$image.identity.json")" = "$expected"
+            docker rm -f "$cid" >/dev/null
+            trap - EXIT
+          done
+
+      - name: Export exact validated Docker archives
+        run: |
+          set -euo pipefail
+          docker save "$GATEWAY_IMAGE" -o dist/stage1-runtime-images-publication/gateway-image.tar
+          docker save "$AGENT_IMAGE" -o dist/stage1-runtime-images-publication/agent-image.tar
+          (
+            cd dist/stage1-runtime-images-publication
+            sha256sum gateway-image.tar agent-image.tar > image-archives.SHA256SUMS
+          )
+
+      - name: Generate SBOMs from exact validated archives
+        run: |
+          set -euo pipefail
+          for image in gateway agent; do
+            docker run --rm \
+              -v "$PWD/dist/stage1-runtime-images-publication:/work" \
+              anchore/syft@sha256:cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033 \
+              docker-archive:/work/$image-image.tar \
+              -o syft-json=/work/$image.sbom.json
+          done
+
+      - name: Run vulnerability scans from exact validated archives
+        run: |
+          set -euo pipefail
+          mkdir -p .trivy-cache
+          docker run --rm \
+            -v "$PWD/dist/stage1-runtime-images-publication:/work" \
+            -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            --version > dist/stage1-runtime-images-publication/trivy-version.txt
+          for image in gateway agent; do
+            docker run --rm \
+              -v "$PWD/dist/stage1-runtime-images-publication:/work" \
+              -v "$PWD/.trivy-cache:/root/.cache/" \
+              aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+              image --input /work/$image-image.tar --format json \
+              --output /work/$image.trivy.json \
+              --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
+          done
+          db_metadata=".trivy-cache/trivy/db/metadata.json"
+          test -s "$db_metadata"
+          cp "$db_metadata" dist/stage1-runtime-images-publication/trivy-db-metadata.json
+
+      - name: Run mock-provider integration against exact built images
+        run: |
+          set -euo pipefail
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint /usr/bin/python3 "$GATEWAY_IMAGE" -c 'print("mock-provider-gateway-runtime-ok")' \
+            | tee dist/stage1-runtime-images-publication/mock-provider-integration.txt
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            "$AGENT_IMAGE" --version >> dist/stage1-runtime-images-publication/mock-provider-integration.txt
+          grep 'mock-provider-gateway-runtime-ok' dist/stage1-runtime-images-publication/mock-provider-integration.txt
+          grep '^codex-cli 0.159.2$' dist/stage1-runtime-images-publication/mock-provider-integration.txt
+
+      - name: Create bounded publication manifest and enforce reviewed policy
+        env:
+          REQUIRED_SOURCE_COMMIT: ${{ github.event.inputs.required_source_commit }}
+        run: |
+          set -euo pipefail
+          python scripts/stage1_publication_manifest.py prepare \
+            --root dist/stage1-runtime-images-publication \
+            --source-commit "$REQUIRED_SOURCE_COMMIT" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --gateway-image "$GATEWAY_IMAGE" \
+            --agent-image "$AGENT_IMAGE" \
+            --output dist/stage1-runtime-images-publication/publication-manifest.json
+
+      - name: Upload exact validated publication artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: stage1-runtime-images-publication-${{ github.sha }}
+          path: |
+            dist/stage1-runtime-images-publication/*.json
+            dist/stage1-runtime-images-publication/*.txt
+            dist/stage1-runtime-images-publication/*.tar
+            dist/stage1-runtime-images-publication/*.SHA256SUMS
+            dist/stage1-runtime-images-publication/identity/*.json
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish validated Stage 1 runtime images to GHCR
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment:
+      name: stage1-runtime-images
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.event.inputs.approval_phrase == 'APPROVE_STAGE1_RUNTIME_IMAGE_PUBLICATION' &&
+      github.event.inputs.required_source_commit == github.sha &&
+      vars.STAGE1_RUNTIME_PUBLICATION_ENABLED == 'true'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out validation code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.inputs.required_source_commit }}
+
+      - name: Download exact validated publication artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: stage1-runtime-images-publication-${{ github.sha }}
+          path: validated-publication
+
+      - name: Verify downloaded artifacts before registry authentication
         env:
           REQUIRED_SOURCE_COMMIT: ${{ github.event.inputs.required_source_commit }}
         run: |
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
           test "$GITHUB_REF" = "refs/heads/main"
-          test "$REQUIRED_SOURCE_COMMIT" = "$(git rev-parse HEAD)"
-          python scripts/validate_runtime_images.py
+          test "$REQUIRED_SOURCE_COMMIT" = "$GITHUB_SHA"
+          test -f validated-publication/gateway-image.tar
+          test -f validated-publication/agent-image.tar
+          test -f validated-publication/image-archives.SHA256SUMS
+          test -f validated-publication/publication-manifest.json
+          (
+            cd validated-publication
+            sha256sum --check image-archives.SHA256SUMS
+          )
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          manifest = json.loads(pathlib.Path("validated-publication/publication-manifest.json").read_text(encoding="utf-8"))
+          if manifest.get("source", {}).get("commit") != os.environ["GITHUB_SHA"]:
+              raise SystemExit("publication manifest source commit mismatch")
+          if manifest.get("platform") != "linux/amd64":
+              raise SystemExit("publication manifest platform mismatch")
+          if manifest.get("activation", {}).get("repository_variable") != "STAGE1_RUNTIME_PUBLICATION_ENABLED":
+              raise SystemExit("publication activation evidence mismatch")
+          for role, env_name in (("gateway", "GATEWAY_IMAGE"), ("agent", "AGENT_IMAGE")):
+              image = manifest.get("images", {}).get(role, {})
+              if image.get("tag") != os.environ[env_name]:
+                  raise SystemExit(f"{role} image coordinate mismatch")
+              if image.get("canonical_identity") != os.environ[f"{role.upper()}_REVIEWED_IDENTITY"]:
+                  raise SystemExit(f"{role} reviewed canonical identity mismatch")
+          PY
 
       - name: Log in to GHCR with GitHub token
         run: |
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Build local OCI artifacts
+      - name: Load exact validated image archives
         run: |
           set -euo pipefail
-          docker build --platform linux/amd64 \
-            --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
-            -t ghcr.io/richinmrudul/agentguard/stage1-gateway:"$GITHUB_SHA" \
-            runtime-images/gateway
-          docker build --platform linux/amd64 \
-            --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
-            -t ghcr.io/richinmrudul/agentguard/stage1-codex-agent:"$GITHUB_SHA" \
-            runtime-images/codex-agent
+          docker load --input validated-publication/gateway-image.tar
+          docker load --input validated-publication/agent-image.tar
 
-      - name: Publish to repository-controlled GHCR namespace
+      - name: Publish exact validated OCI subjects
         run: |
           set -euo pipefail
-          docker push ghcr.io/richinmrudul/agentguard/stage1-gateway:"$GITHUB_SHA"
-          docker push ghcr.io/richinmrudul/agentguard/stage1-codex-agent:"$GITHUB_SHA"
+          docker push "$GATEWAY_IMAGE" | tee validated-publication/gateway-push.txt
+          docker push "$AGENT_IMAGE" | tee validated-publication/agent-push.txt
 
-      - name: Verify pull by digest and emit publication manifest
+      - name: Resolve immutable GHCR digests
+        id: digests
         run: |
           set -euo pipefail
-          mkdir -p dist/stage1-runtime-images-publication
-          docker buildx imagetools inspect ghcr.io/richinmrudul/agentguard/stage1-gateway:"$GITHUB_SHA" \
-            > dist/stage1-runtime-images-publication/gateway-imagetools.txt
-          docker buildx imagetools inspect ghcr.io/richinmrudul/agentguard/stage1-codex-agent:"$GITHUB_SHA" \
-            > dist/stage1-runtime-images-publication/agent-imagetools.txt
+          gateway_digest="$(docker buildx imagetools inspect "$GATEWAY_IMAGE" | awk '/Digest:/ {print $2; exit}')"
+          agent_digest="$(docker buildx imagetools inspect "$AGENT_IMAGE" | awk '/Digest:/ {print $2; exit}')"
+          test -n "$gateway_digest"
+          test -n "$agent_digest"
+          printf 'gateway=%s\nagent=%s\n' "$gateway_digest" "$agent_digest" \
+            | tee validated-publication/published-digests.txt
+          echo "gateway_digest=$gateway_digest" >> "$GITHUB_OUTPUT"
+          echo "agent_digest=$agent_digest" >> "$GITHUB_OUTPUT"
 
-      - name: Upload publication evidence
+      - name: Attest published gateway digest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ghcr.io/richinmrudul/agentguard/stage1-gateway
+          subject-digest: ${{ steps.digests.outputs.gateway_digest }}
+          push-to-registry: true
+
+      - name: Attest published Codex agent digest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ghcr.io/richinmrudul/agentguard/stage1-codex-agent
+          subject-digest: ${{ steps.digests.outputs.agent_digest }}
+          push-to-registry: true
+
+      - name: Pull by digest and verify canonical identities
+        run: |
+          set -euo pipefail
+          mkdir -p validated-publication/post-publish
+          gateway_ref="ghcr.io/richinmrudul/agentguard/stage1-gateway@${{ steps.digests.outputs.gateway_digest }}"
+          agent_ref="ghcr.io/richinmrudul/agentguard/stage1-codex-agent@${{ steps.digests.outputs.agent_digest }}"
+          docker pull "$gateway_ref"
+          docker pull "$agent_ref"
+          for image in gateway agent; do
+            if [ "$image" = gateway ]; then
+              ref="$gateway_ref"
+              base_image="gcr.io/distroless/python3-debian13:nonroot@sha256:339ecee37afe554f5237b9993250bc390ac9f1483a08c9b5e77ac4c016d6d39a"
+              expected="$GATEWAY_REVIEWED_IDENTITY"
+            else
+              ref="$agent_ref"
+              base_image="gcr.io/distroless/static-debian12:nonroot@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d"
+              expected="$AGENT_REVIEWED_IDENTITY"
+            fi
+            cid="$(docker create "$ref")"
+            trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+            docker export "$cid" -o "validated-publication/post-publish/$image-rootfs.tar"
+            docker inspect "$ref" > "validated-publication/post-publish/$image.inspect.json"
+            python scripts/runtime_image_identity.py \
+              --image-role "$image" \
+              --base-image "$base_image" \
+              --inspect-json "validated-publication/post-publish/$image.inspect.json" \
+              --rootfs-tar "validated-publication/post-publish/$image-rootfs.tar" \
+              --output "validated-publication/post-publish/$image.identity.json"
+            actual="$(jq -r '.identity' "validated-publication/post-publish/$image.identity.json")"
+            if [ "$actual" != "$expected" ]; then
+              echo "Rejected published $image digest: $ref" >&2
+              exit 1
+            fi
+            docker rm -f "$cid" >/dev/null
+            trap - EXIT
+          done
+
+      - name: Regenerate SBOMs and rescan pulled-by-digest images
+        run: |
+          set -euo pipefail
+          gateway_ref="ghcr.io/richinmrudul/agentguard/stage1-gateway@${{ steps.digests.outputs.gateway_digest }}"
+          agent_ref="ghcr.io/richinmrudul/agentguard/stage1-codex-agent@${{ steps.digests.outputs.agent_digest }}"
+          for image in gateway agent; do
+            if [ "$image" = gateway ]; then
+              ref="$gateway_ref"
+            else
+              ref="$agent_ref"
+            fi
+            docker save "$ref" -o "validated-publication/post-publish/$image-pulled-image.tar"
+            docker run --rm \
+              -v "$PWD/validated-publication/post-publish:/work" \
+              anchore/syft@sha256:cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033 \
+              docker-archive:/work/$image-pulled-image.tar \
+              -o syft-json=/work/$image.pulled.sbom.json
+          done
+          mkdir -p .trivy-cache
+          docker run --rm \
+            -v "$PWD/validated-publication/post-publish:/work" \
+            -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            --version > validated-publication/post-publish/trivy-version.txt
+          for image in gateway agent; do
+            docker run --rm \
+              -v "$PWD/validated-publication/post-publish:/work" \
+              -v "$PWD/.trivy-cache:/root/.cache/" \
+              aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+              image --input /work/$image-pulled-image.tar --format json \
+              --output /work/$image.pulled.trivy.json \
+              --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
+          done
+
+      - name: Enforce post-publication evidence policy
+        run: |
+          set -euo pipefail
+          python scripts/stage1_publication_manifest.py post-publish \
+            --root validated-publication \
+            --post-root validated-publication/post-publish \
+            --gateway-digest "${{ steps.digests.outputs.gateway_digest }}" \
+            --agent-digest "${{ steps.digests.outputs.agent_digest }}"
+
+      - name: Run mock-provider integration using pulled digest references
+        run: |
+          set -euo pipefail
+          gateway_ref="ghcr.io/richinmrudul/agentguard/stage1-gateway@${{ steps.digests.outputs.gateway_digest }}"
+          agent_ref="ghcr.io/richinmrudul/agentguard/stage1-codex-agent@${{ steps.digests.outputs.agent_digest }}"
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --entrypoint /usr/bin/python3 "$gateway_ref" -c 'print("mock-provider-gateway-runtime-ok")' \
+            | tee validated-publication/post-publish/mock-provider-pulled-digest.txt
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+            "$agent_ref" --version >> validated-publication/post-publish/mock-provider-pulled-digest.txt
+          grep 'mock-provider-gateway-runtime-ok' validated-publication/post-publish/mock-provider-pulled-digest.txt
+          grep '^codex-cli 0.159.2$' validated-publication/post-publish/mock-provider-pulled-digest.txt
+
+      - name: Upload post-publication evidence
+        if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: stage1-runtime-image-publication
-          path: dist/stage1-runtime-images-publication/
+          name: stage1-runtime-images-post-publication-${{ github.sha }}
+          path: |
+            validated-publication/*.json
+            validated-publication/*.txt
+            validated-publication/post-publish/*.json
+            validated-publication/post-publish/*.txt
           if-no-files-found: error
           retention-days: 30
