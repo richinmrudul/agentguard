@@ -101,8 +101,8 @@ an obsolete database.
 
 ## Temporary Gateway Vulnerability Exceptions
 
-The reviewed Phase 1 gateway image carries 30 HIGH Trivy occurrences that
-deduplicate to 14 CVEs. The Codex agent image remains at zero HIGH and zero
+The reviewed Phase 1 gateway image carries 31 HIGH Trivy occurrences that
+deduplicate to 15 CVEs. The Codex agent image remains at zero HIGH and zero
 CRITICAL findings. The gateway findings are inherited from the reviewed
 `gcr.io/distroless/python3-debian13:nonroot` base image, and the reviewed
 Debian package records did not report fixed package versions for those
@@ -123,6 +123,12 @@ packages at `3.13.5-2+deb13u5`. Its reviewed vulnerable operation is
 server-side `ssl.SSLContext.sni_callback` context switching; the gateway acts
 only as an upstream TLS client with `ssl.create_default_context().wrap_socket`
 and does not terminate TLS or install an SNI callback.
+
+`CVE-2026-77214` is accepted only for `libexpat1` at
+`2.8.3-1~deb13u1`. Its reviewed vulnerable path is Expat `XML_ParseBuffer`
+after XML parser-buffer use; the gateway imports no XML parser, performs no XML
+or content-type parsing, exposes no XML callback or buffer API, and forwards
+provider payloads as bytes after destination authorization.
 
 A narrower Python runtime or a compiled gateway remains the preferred
 longer-term remediation. Docker containment, even with non-root execution,
