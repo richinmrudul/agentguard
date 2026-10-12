@@ -122,7 +122,7 @@ def test_publication_builds_once_then_publishes_downloaded_artifacts() -> None:
     assert "docker save \"$GATEWAY_IMAGE\"" in text
     assert "docker save \"$AGENT_IMAGE\"" in text
     assert "image-archives.SHA256SUMS" in text
-    assert "sha256sum --check image-archives.SHA256SUMS" in text
+    assert "stage1_publication_manifest.py verify-archives" in text
     assert publish["steps"][1]["uses"].startswith("actions/download-artifact@")
     assert "docker load --input validated-publication/gateway-image.tar" in publish_text
     assert "docker load --input validated-publication/agent-image.tar" in publish_text
@@ -193,7 +193,44 @@ def test_publication_attests_and_verifies_published_digests() -> None:
     assert "docker pull \"$gateway_ref\"" in workflow_text
     assert "docker pull \"$agent_ref\"" in workflow_text
     assert "Rejected published $image digest: $ref" in workflow_text
-    assert "mock-provider-pulled-digest.txt" in publish_text
+    assert "mock-egress-pulled-digest.json" in publish_text
+
+
+def test_publication_compares_post_pull_sbom_rows_and_full_mock_egress() -> None:
+    workflow_text = (ROOT / ".github/workflows/stage1-runtime-images-publish.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "sbom_rows_digest" in (
+        ROOT / "scripts/stage1_publication_manifest.py"
+    ).read_text(encoding="utf-8")
+    assert "post-publication SBOM package rows mismatch" in (
+        ROOT / "scripts/stage1_publication_manifest.py"
+    ).read_text(encoding="utf-8")
+    assert "scripts/stage1_pulled_digest_integration.py" in workflow_text
+    assert "--gateway-ref \"$gateway_ref\"" in workflow_text
+    assert "--agent-ref \"$agent_ref\"" in workflow_text
+    assert "public_provider_contact" in (
+        ROOT / "scripts/stage1_pulled_digest_integration.py"
+    ).read_text(encoding="utf-8")
+    assert "credential_canary_not_retained" in (
+        ROOT / "scripts/stage1_pulled_digest_integration.py"
+    ).read_text(encoding="utf-8")
+    assert "disallowed_destination_denied" in (
+        ROOT / "scripts/stage1_pulled_digest_integration.py"
+    ).read_text(encoding="utf-8")
+    assert "direct_bypass_denied" in (
+        ROOT / "scripts/stage1_pulled_digest_integration.py"
+    ).read_text(encoding="utf-8")
+    assert "gateway_crash_detected" in (
+        ROOT / "scripts/stage1_pulled_digest_integration.py"
+    ).read_text(encoding="utf-8")
+    assert "cleanup_and_liveness" in (
+        ROOT / "scripts/stage1_pulled_digest_integration.py"
+    ).read_text(encoding="utf-8")
+    assert '"public_provider_contact": False' in (
+        ROOT / "scripts/stage1_pulled_digest_integration.py"
+    ).read_text(encoding="utf-8")
 
 
 def test_publication_artifact_verification_precedes_login_and_push() -> None:
@@ -206,6 +243,12 @@ def test_publication_artifact_verification_precedes_login_and_push() -> None:
     assert steps.index("Verify downloaded artifacts before registry authentication") < steps.index(
         "Log in to GHCR with GitHub token"
     )
+    assert steps.index("Verify downloaded artifacts before registry authentication") < steps.index(
+        "Load exact validated image archives"
+    )
     assert steps.index("Log in to GHCR with GitHub token") < steps.index(
         "Publish exact validated OCI subjects"
+    )
+    assert steps.index("Enforce post-publication evidence policy") < steps.index(
+        "Run full local mock egress integration using pulled digest references"
     )

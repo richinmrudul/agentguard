@@ -41,6 +41,11 @@ GATEWAY_EXCEPTION_COUNT = 15
 EXCEPTION_EXPIRY = "2026-11-06"
 GATEWAY_REPOSITORY = "ghcr.io/richinmrudul/agentguard/stage1-gateway"
 AGENT_REPOSITORY = "ghcr.io/richinmrudul/agentguard/stage1-codex-agent"
+ARCHIVES = {
+    "gateway": "gateway-image.tar",
+    "agent": "agent-image.tar",
+}
+MAX_ARCHIVE_BYTES = 3 * 1024 * 1024 * 1024
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -62,6 +67,12 @@ def main(argv: list[str] | None = None) -> int:
     post.add_argument("--post-root", type=Path, required=True)
     post.add_argument("--gateway-digest", required=True)
     post.add_argument("--agent-digest", required=True)
+
+    archives = subparsers.add_parser("verify-archives")
+    archives.add_argument("--root", type=Path, required=True)
+    archives.add_argument("--source-commit", required=True)
+    archives.add_argument("--gateway-image", required=True)
+    archives.add_argument("--agent-image", required=True)
 
     args = parser.parse_args(argv)
     try:
@@ -85,6 +96,13 @@ def main(argv: list[str] | None = None) -> int:
                 post_root=args.post_root,
                 gateway_digest=args.gateway_digest,
                 agent_digest=args.agent_digest,
+            )
+        elif args.command == "verify-archives":
+            verify_archive_boundary(
+                root=args.root,
+                source_commit=args.source_commit,
+                gateway_image=args.gateway_image,
+                agent_image=args.agent_image,
             )
         else:  # pragma: no cover - argparse prevents this.
             raise RuntimeImageError("unsupported command")
@@ -117,8 +135,16 @@ def build_prepare_manifest(
         raise RuntimeImageError("agent canonical identity does not match review")
 
     sbom = {
-        "gateway": _sbom_summary(root / "gateway.sbom.json", GATEWAY_PACKAGES),
-        "agent": _sbom_summary(root / "agent.sbom.json", AGENT_PACKAGES),
+        "gateway": _sbom_summary(
+            root / "gateway.sbom.json",
+            GATEWAY_PACKAGES,
+            rows_output=root / "gateway.sbom.rows.json",
+        ),
+        "agent": _sbom_summary(
+            root / "agent.sbom.json",
+            AGENT_PACKAGES,
+            rows_output=root / "agent.sbom.rows.json",
+        ),
     }
     policy = evaluate_trivy_high_critical_policy(
         [root / "gateway.trivy.json", root / "agent.trivy.json"],
@@ -249,7 +275,16 @@ def validate_post_publish(
         if actual != expected:
             raise RuntimeImageError(f"{role} pulled digest canonical identity mismatch")
     for role, expected in (("gateway", GATEWAY_PACKAGES), ("agent", AGENT_PACKAGES)):
-        _sbom_summary(post_root / f"{role}.pulled.sbom.json", expected)
+        prepared = _image_manifest(manifest, role)
+        actual = _sbom_summary(
+            post_root / f"{role}.pulled.sbom.json",
+            expected,
+            rows_output=post_root / f"{role}.pulled.sbom.rows.json",
+        )
+        if actual["rows_digest"] != prepared.get("sbom_rows_digest"):
+            raise RuntimeImageError(f"{role} post-publication SBOM package rows mismatch")
+        if actual["package_count"] != prepared.get("sbom_package_count"):
+            raise RuntimeImageError(f"{role} post-publication SBOM package count mismatch")
     policy = evaluate_trivy_high_critical_policy(
         [post_root / "gateway.pulled.trivy.json", post_root / "agent.pulled.trivy.json"],
         exception_manifest=ROOT / "runtime-images/vulnerability-exceptions.json",
@@ -263,6 +298,42 @@ def validate_post_publish(
         raise RuntimeImageError("post-publication vulnerability count mismatch")
     if policy.get("exception_count") != GATEWAY_EXCEPTION_COUNT:
         raise RuntimeImageError("post-publication exception count mismatch")
+
+
+def verify_archive_boundary(
+    *,
+    root: Path,
+    source_commit: str,
+    gateway_image: str,
+    agent_image: str,
+) -> None:
+    root = root.resolve()
+    _require_commit(source_commit)
+    manifest = _json(root / "publication-manifest.json")
+    if manifest.get("schema") != SCHEMA:
+        raise RuntimeImageError("invalid publication manifest schema")
+    if manifest.get("platform") != PLATFORM:
+        raise RuntimeImageError("publication manifest platform mismatch")
+    if manifest.get("source", {}).get("commit") != source_commit:
+        raise RuntimeImageError("publication manifest source commit mismatch")
+    expected_tags = {"gateway": gateway_image, "agent": agent_image}
+    checksums = _read_archive_checksums(root / "image-archives.SHA256SUMS")
+    if set(checksums) != set(ARCHIVES.values()):
+        raise RuntimeImageError("archive checksum file must list exactly gateway and agent archives")
+    for role, filename in ARCHIVES.items():
+        image = _image_manifest(manifest, role)
+        if image.get("role") != role:
+            raise RuntimeImageError(f"{role} archive role mismatch")
+        if image.get("tag") != expected_tags[role]:
+            raise RuntimeImageError(f"{role} image coordinate mismatch")
+        if image.get("archive_name") != filename:
+            raise RuntimeImageError(f"{role} archive filename mismatch")
+        path = _archive_path(root, filename)
+        actual_digest = "sha256:" + _sha256_file(path)
+        manifest_digest = image.get("archive_digest")
+        checksum_digest = "sha256:" + checksums[filename]
+        if manifest_digest != checksum_digest or actual_digest != manifest_digest:
+            raise RuntimeImageError(f"{role} archive digest mismatch")
 
 
 def _image_record(
@@ -283,6 +354,7 @@ def _image_record(
         "repository": repository,
         "tag": tag,
         "archive_digest": "sha256:" + _sha256_file(archive),
+        "archive_name": archive.name,
         "canonical_identity": identity["identity"],
         "rootfs_digest": identity["rootfs_digest"],
         "runtime_config_digest": identity["runtime_config_digest"],
@@ -291,6 +363,8 @@ def _image_record(
         "build_context_digest": runtime_image_context_digest(context),
         "sbom_digest": sbom["digest"],
         "sbom_package_count": sbom["package_count"],
+        "sbom_rows_digest": sbom["rows_digest"],
+        "sbom_rows_schema": sbom["rows_schema"],
         "raw_scan_digest": "sha256:" + _sha256_file(scan),
     }
 
@@ -322,27 +396,58 @@ def _scanner_metadata(root: Path) -> dict[str, Any]:
     }
 
 
-def _sbom_summary(path: Path, expected_count: int) -> dict[str, Any]:
+def _sbom_summary(
+    path: Path,
+    expected_count: int,
+    *,
+    rows_output: Path | None = None,
+) -> dict[str, Any]:
     data = _json(path)
-    artifacts = data.get("artifacts")
-    if not isinstance(artifacts, list):
-        raise RuntimeImageError(f"missing SBOM artifacts: {path}")
-    if len(artifacts) != expected_count:
+    rows = normalized_sbom_package_rows(data)
+    if len(rows) != expected_count:
         raise RuntimeImageError(f"SBOM package count mismatch for {path}")
-    rows = sorted(
-        (
-            str(item.get("type", "")),
-            str(item.get("name", "")),
-            str(item.get("version", "")),
-            str(item.get("purl", "")),
+    if rows_output is not None:
+        rows_output.write_text(
+            json.dumps(rows, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
-        for item in artifacts
-    )
     return {
         "digest": "sha256:" + _sha256_file(path),
         "package_count": len(rows),
         "rows_digest": "sha256:" + _sha256_json(rows),
+        "rows_schema": "agentguard.stage1-runtime-sbom-package-rows.v1",
     }
+
+
+def normalized_sbom_package_rows(data: object) -> list[dict[str, Any]]:
+    document = data if isinstance(data, dict) else None
+    if document is None:
+        raise RuntimeImageError("SBOM must be a JSON object")
+    artifacts = document.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise RuntimeImageError("missing SBOM artifacts")
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(artifacts):
+        if not isinstance(item, dict):
+            raise RuntimeImageError(f"SBOM package row {index} must be an object")
+        row = {
+            "type": _required_package_string(item, "type", index),
+            "name": _required_package_string(item, "name", index),
+            "version": _required_package_string(item, "version", index),
+            "purl": _optional_package_string(item.get("purl"), "purl", index),
+            "licenses": _normalized_licenses(item.get("licenses"), index),
+        }
+        rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            row["type"],
+            row["name"],
+            row["version"],
+            row["purl"],
+            tuple(row["licenses"]),
+        )
+    )
+    return rows
 
 
 def _identity(path: Path, role: str) -> dict[str, Any]:
@@ -363,6 +468,100 @@ def _json(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise RuntimeImageError(f"expected JSON object: {path}")
     return data
+
+
+def _image_manifest(manifest: dict[str, Any], role: str) -> dict[str, Any]:
+    images = manifest.get("images")
+    if not isinstance(images, dict):
+        raise RuntimeImageError("publication manifest images must be an object")
+    image = images.get(role)
+    if not isinstance(image, dict):
+        raise RuntimeImageError(f"publication manifest missing {role} image")
+    return image
+
+
+def _archive_path(root: Path, filename: str) -> Path:
+    if filename.startswith("/") or "/" in filename or filename in {"", ".", ".."}:
+        raise RuntimeImageError("archive filename must be a local basename")
+    path = root / filename
+    try:
+        relative = path.resolve(strict=False).relative_to(root)
+    except ValueError as error:
+        raise RuntimeImageError("archive path escapes artifact directory") from error
+    if relative.as_posix() != filename:
+        raise RuntimeImageError("archive path must not traverse directories")
+    if not path.exists() or path.is_symlink() or not path.is_file():
+        raise RuntimeImageError(f"archive must be a regular file: {filename}")
+    size = path.stat().st_size
+    if size <= 0 or size > MAX_ARCHIVE_BYTES:
+        raise RuntimeImageError(f"archive size is out of bounds: {filename}")
+    return path
+
+
+def _read_archive_checksums(path: Path) -> dict[str, str]:
+    checksums: dict[str, str] = {}
+    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not raw:
+            continue
+        parts = raw.split()
+        if len(parts) != 2:
+            raise RuntimeImageError(f"malformed archive checksum line {line_number}")
+        digest, filename = parts
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise RuntimeImageError(f"malformed archive checksum digest on line {line_number}")
+        if filename in checksums:
+            raise RuntimeImageError(f"duplicate archive checksum entry: {filename}")
+        if filename.startswith("/") or "/" in filename or filename in {"", ".", ".."}:
+            raise RuntimeImageError(f"invalid archive checksum filename: {filename}")
+        checksums[filename] = digest
+    if not checksums:
+        raise RuntimeImageError("archive checksum file is empty")
+    return checksums
+
+
+def _required_package_string(item: dict[str, Any], key: str, index: int) -> str:
+    value = item.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeImageError(f"SBOM package row {index} missing {key}")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise RuntimeImageError(f"SBOM package row {index} has invalid {key}")
+    return value.strip()
+
+
+def _optional_package_string(value: object, key: str, index: int) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise RuntimeImageError(f"SBOM package row {index} has invalid {key}")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise RuntimeImageError(f"SBOM package row {index} has invalid {key}")
+    return value.strip()
+
+
+def _normalized_licenses(value: object, index: int) -> list[str]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise RuntimeImageError(f"SBOM package row {index} has invalid licenses")
+    normalized: list[str] = []
+    for license_item in value:
+        if isinstance(license_item, str):
+            text = license_item
+        elif isinstance(license_item, dict):
+            candidate = (
+                license_item.get("value")
+                or license_item.get("spdxExpression")
+                or license_item.get("expression")
+            )
+            if not isinstance(candidate, str):
+                raise RuntimeImageError(f"SBOM package row {index} has invalid license")
+            text = candidate
+        else:
+            raise RuntimeImageError(f"SBOM package row {index} has invalid license")
+        text = text.strip()
+        if text and not any(ord(character) < 32 or ord(character) == 127 for character in text):
+            normalized.append(text)
+    return sorted(set(normalized))
 
 
 def _require_commit(value: str) -> None:

@@ -256,28 +256,11 @@ jobs:
           test -f validated-publication/agent-image.tar
           test -f validated-publication/image-archives.SHA256SUMS
           test -f validated-publication/publication-manifest.json
-          (
-            cd validated-publication
-            sha256sum --check image-archives.SHA256SUMS
-          )
-          python - <<'PY'
-          import json
-          import os
-          import pathlib
-          manifest = json.loads(pathlib.Path("validated-publication/publication-manifest.json").read_text(encoding="utf-8"))
-          if manifest.get("source", {}).get("commit") != os.environ["GITHUB_SHA"]:
-              raise SystemExit("publication manifest source commit mismatch")
-          if manifest.get("platform") != "linux/amd64":
-              raise SystemExit("publication manifest platform mismatch")
-          if manifest.get("activation", {}).get("repository_variable") != "STAGE1_RUNTIME_PUBLICATION_ENABLED":
-              raise SystemExit("publication activation evidence mismatch")
-          for role, env_name in (("gateway", "GATEWAY_IMAGE"), ("agent", "AGENT_IMAGE")):
-              image = manifest.get("images", {}).get(role, {})
-              if image.get("tag") != os.environ[env_name]:
-                  raise SystemExit(f"{role} image coordinate mismatch")
-              if image.get("canonical_identity") != os.environ[f"{role.upper()}_REVIEWED_IDENTITY"]:
-                  raise SystemExit(f"{role} reviewed canonical identity mismatch")
-          PY
+          python scripts/stage1_publication_manifest.py verify-archives \
+            --root validated-publication \
+            --source-commit "$REQUIRED_SOURCE_COMMIT" \
+            --gateway-image "$GATEWAY_IMAGE" \
+            --agent-image "$AGENT_IMAGE"
 
       - name: Log in to GHCR with GitHub token
         run: |
@@ -402,18 +385,19 @@ jobs:
             --gateway-digest "${{ steps.digests.outputs.gateway_digest }}" \
             --agent-digest "${{ steps.digests.outputs.agent_digest }}"
 
-      - name: Run mock-provider integration using pulled digest references
+      - name: Run full local mock egress integration using pulled digest references
         run: |
           set -euo pipefail
           gateway_ref="ghcr.io/richinmrudul/agentguard/stage1-gateway@${{ steps.digests.outputs.gateway_digest }}"
           agent_ref="ghcr.io/richinmrudul/agentguard/stage1-codex-agent@${{ steps.digests.outputs.agent_digest }}"
-          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
-            --entrypoint /usr/bin/python3 "$gateway_ref" -c 'print("mock-provider-gateway-runtime-ok")' \
-            | tee validated-publication/post-publish/mock-provider-pulled-digest.txt
-          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
-            "$agent_ref" --version >> validated-publication/post-publish/mock-provider-pulled-digest.txt
-          grep 'mock-provider-gateway-runtime-ok' validated-publication/post-publish/mock-provider-pulled-digest.txt
-          grep '^codex-cli 0.159.2$' validated-publication/post-publish/mock-provider-pulled-digest.txt
+          gateway_identity="$(jq -r '.identity' validated-publication/post-publish/gateway.identity.json)"
+          agent_identity="$(jq -r '.identity' validated-publication/post-publish/agent.identity.json)"
+          python scripts/stage1_pulled_digest_integration.py \
+            --gateway-ref "$gateway_ref" \
+            --agent-ref "$agent_ref" \
+            --gateway-identity "$gateway_identity" \
+            --agent-identity "$agent_identity" \
+            --output validated-publication/post-publish/mock-egress-pulled-digest.json
 
       - name: Upload post-publication evidence
         if: always()
