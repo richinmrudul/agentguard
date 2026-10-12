@@ -168,11 +168,12 @@ It is `workflow_dispatch` only. It has two jobs:
   vulnerability exception policy, runs mock-only checks, and uploads the
   validated archives plus bounded evidence.
 - `publish` depends on `prepare`, downloads those exact archives, verifies
-  their digests and manifest consistency before registry authentication, loads
+  their manifest/checksum/computed digests before registry authentication, loads
   the archives, pushes the already validated image subjects to GHCR, records
   immutable GHCR digests, attests those published digest subjects, pulls by
   digest, recomputes canonical identities, regenerates SBOM and scan evidence,
-  reapplies the exception policy, and reruns mock-only checks using digest
+  compares canonical SBOM package rows to the prepared evidence, reapplies the
+  exception policy, and runs the full local mock egress integration using digest
   references.
 
 The `publish` job must not run a Docker build, install packages into an image,
@@ -207,6 +208,11 @@ deployment protection out of band before dispatch. The activation variable is
 an additional fail-closed guard; it is not a substitute for environment
 protection.
 
+As of this prerequisite, the publication workflow has still not been
+dispatched, no Stage 1 GHCR images have been published, the
+`stage1-runtime-images` environment remains unconfigured, and the activation
+variable remains disabled or absent.
+
 ## Image Coordinates And External State
 
 Phase 2 publication creates externally visible GHCR package state only after
@@ -233,9 +239,17 @@ Publication evidence records the source repository, exact commit, workflow
 file, run ID and attempt, target platform, Dockerfile and build-context
 digests, base-image references, Codex package version and integrity, archive
 digests, canonical identities, rootfs and runtime configuration digests, SBOM
-digests and package counts, Trivy version and database metadata, raw scan
-digests and counts, exception-manifest digest and expiry, and mock integration
-status.
+digests, normalized SBOM package-row digests, package counts, Trivy version
+and database metadata, raw scan digests and counts, exception-manifest digest
+and expiry, and mock integration status.
+
+SBOM package-row evidence is normalized before hashing. Rows include stable
+package identity fields: package type/ecosystem, name, version, PURL when
+present, and normalized license identifiers when Syft provides them. Generated
+document IDs, timestamps, source paths, location metadata, and cataloger order
+are excluded. Rows are sorted deterministically and hashed as canonical JSON.
+Post-publication SBOM regeneration must produce the same row count and row
+digest for both images; equal counts alone are not sufficient.
 
 GitHub attestations must bind the published GHCR subject names and immutable
 registry digests:
@@ -250,9 +264,29 @@ digest are supporting evidence only. They are not the attestation subject.
 
 After registry push, verification must pull both images by immutable digest,
 recompute canonical identities, require the reviewed gateway and agent
-canonical identities, regenerate SBOMs with the reviewed package counts,
-rescan with the current Trivy database, reapply the exact exception policy,
-and run mock-only Docker checks using the pulled digest references.
+canonical identities, regenerate SBOMs with the reviewed package counts and
+canonical package-row digests, rescan with the current Trivy database, reapply
+the exact exception policy, and run local-only Docker egress checks using the
+pulled digest references.
+
+Before any GHCR login, image load, or push, the publish job performs a triple
+archive check: the publication manifest must list exactly
+`gateway-image.tar` and `agent-image.tar`; `image-archives.SHA256SUMS` must
+list exactly those same two basenames; the manifest digests, checksum-file
+digests, and freshly computed archive digests must all agree. Missing,
+additional, duplicated, absolute, traversal, symlinked, malformed, oversized,
+or role-swapped archive evidence fails closed.
+
+The pulled-by-digest integration uses repository-controlled local Docker
+networking only. It requires immutable `@sha256:` gateway and agent
+references, verifies non-root users and read-only-root compatibility, runs an
+approved local mock destination through the gateway, proves a disallowed
+destination and metadata/private destination are denied, verifies a direct
+bypass attempt cannot reach the mock provider, checks gateway crash detection,
+cleanup, liveness, bounded sanitized evidence, and confirms a fake credential
+canary is not retained. The local mock provider is on an internal Docker
+network with a documentation-prefix subnet so public internet access and real
+provider contact are not required.
 
 Any failure after push fails the workflow, retains evidence, prints the
 rejected immutable digest, and requires corrective review. Operators must not
