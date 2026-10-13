@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import hashlib
 from pathlib import Path
@@ -15,14 +17,20 @@ from scripts.stage1_publication_manifest import (
     AGENT_REPOSITORY,
     GATEWAY_REPOSITORY,
     build_prepare_manifest,
+    build_post_pull_scan_bindings,
+    ensure_not_rejected_publications,
+    load_rejected_publications,
     normalized_sbom_package_rows,
     validate_post_publish,
+    validate_post_pull_scan_bindings,
     verify_archive_boundary,
 )
 
 
 ROOT = Path(__file__).resolve().parents[2]
 COMMIT = "85bc3fc4305c5355215c58547b2d2ca1568e9248"
+GATEWAY_POST_DIGEST = "sha256:" + "a" * 64
+AGENT_POST_DIGEST = "sha256:" + "b" * 64
 
 
 def _write_json(path: Path, data: object) -> None:
@@ -88,15 +96,23 @@ def _reviewed_gateway_findings() -> list[dict[str, str]]:
     return findings
 
 
-def _scan(target: str, findings: list[dict[str, str]]) -> dict:
+def _scan(
+    target: str,
+    findings: list[dict[str, str]],
+    *,
+    artifact_name: str | None = None,
+) -> dict:
     result = {"Target": target, "Type": "debian"}
     if findings:
         result["Vulnerabilities"] = findings
-    return {
+    scan = {
         "SchemaVersion": 2,
         "CreatedAt": "2026-10-11T00:00:00Z",
         "Results": [result],
     }
+    if artifact_name is not None:
+        scan["ArtifactName"] = artifact_name
+    return scan
 
 
 def _root(tmp_path: Path) -> Path:
@@ -153,6 +169,23 @@ def _manifest(root: Path) -> dict:
         gateway_image=f"{GATEWAY_REPOSITORY}:{COMMIT}",
         agent_image=f"{AGENT_REPOSITORY}:{COMMIT}",
     )
+
+
+def _write_scan_bindings(
+    root: Path,
+    post: Path,
+    *,
+    gateway_digest: str = GATEWAY_POST_DIGEST,
+    agent_digest: str = AGENT_POST_DIGEST,
+) -> dict:
+    bindings = build_post_pull_scan_bindings(
+        root=root,
+        post_root=post,
+        gateway_digest=gateway_digest,
+        agent_digest=agent_digest,
+    )
+    _write_json(post / "scan-bindings.json", bindings)
+    return bindings
 
 
 def test_prepare_publication_manifest_records_reviewed_evidence(tmp_path: Path) -> None:
@@ -274,13 +307,14 @@ def test_post_publish_validation_requires_exact_sbom_rows(tmp_path: Path) -> Non
     _write_json(post / "agent.pulled.sbom.json", _sbom(5))
     _write_json(post / "gateway.pulled.trivy.json", _scan("gateway", _reviewed_gateway_findings()))
     _write_json(post / "agent.pulled.trivy.json", _scan("agent", []))
+    _write_scan_bindings(root, post)
 
     with pytest.raises(RuntimeImageError, match="gateway post-publication SBOM package rows mismatch"):
         validate_post_publish(
             root=root,
             post_root=post,
-            gateway_digest="sha256:" + "a" * 64,
-            agent_digest="sha256:" + "b" * 64,
+            gateway_digest=GATEWAY_POST_DIGEST,
+            agent_digest=AGENT_POST_DIGEST,
         )
 
 
@@ -303,13 +337,14 @@ def test_post_publish_validation_rejects_count_equal_package_name_drift(tmp_path
     _write_json(post / "agent.pulled.sbom.json", agent_sbom)
     _write_json(post / "gateway.pulled.trivy.json", _scan("gateway", _reviewed_gateway_findings()))
     _write_json(post / "agent.pulled.trivy.json", _scan("agent", []))
+    _write_scan_bindings(root, post)
 
     with pytest.raises(RuntimeImageError, match="agent post-publication SBOM package rows mismatch"):
         validate_post_publish(
             root=root,
             post_root=post,
-            gateway_digest="sha256:" + "a" * 64,
-            agent_digest="sha256:" + "b" * 64,
+            gateway_digest=GATEWAY_POST_DIGEST,
+            agent_digest=AGENT_POST_DIGEST,
         )
 
 
@@ -332,13 +367,14 @@ def test_post_publish_validation_rejects_added_removed_or_duplicate_package(tmp_
     _write_json(post / "agent.pulled.sbom.json", _sbom(4))
     _write_json(post / "gateway.pulled.trivy.json", _scan("gateway", _reviewed_gateway_findings()))
     _write_json(post / "agent.pulled.trivy.json", _scan("agent", []))
+    _write_scan_bindings(root, post)
 
     with pytest.raises(RuntimeImageError, match="gateway post-publication SBOM package rows mismatch"):
         validate_post_publish(
             root=root,
             post_root=post,
-            gateway_digest="sha256:" + "a" * 64,
-            agent_digest="sha256:" + "b" * 64,
+            gateway_digest=GATEWAY_POST_DIGEST,
+            agent_digest=AGENT_POST_DIGEST,
         )
 
 
@@ -424,11 +460,254 @@ def test_post_publish_validation_rejects_bad_pulled_identity(tmp_path: Path) -> 
     _write_json(post / "agent.pulled.sbom.json", _sbom(5))
     _write_json(post / "gateway.pulled.trivy.json", _scan("gateway", _reviewed_gateway_findings()))
     _write_json(post / "agent.pulled.trivy.json", _scan("agent", []))
+    _write_scan_bindings(root, post)
 
     with pytest.raises(RuntimeImageError, match="gateway pulled digest"):
         validate_post_publish(
             root=root,
             post_root=post,
-            gateway_digest="sha256:" + "a" * 64,
-            agent_digest="sha256:" + "b" * 64,
+            gateway_digest=GATEWAY_POST_DIGEST,
+            agent_digest=AGENT_POST_DIGEST,
         )
+
+
+def test_post_publish_validation_accepts_explicit_pulled_scan_role_bindings(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    _write_json(root / "publication-manifest.json", _manifest(root))
+    post = tmp_path / "post"
+    post.mkdir()
+    _write_json(
+        post / "gateway.identity.json",
+        _identity("gateway", GATEWAY_REVIEWED_IMAGE_DIGEST, GATEWAY_BASE_IMAGE),
+    )
+    _write_json(
+        post / "agent.identity.json",
+        _identity("agent", AGENT_REVIEWED_IMAGE_DIGEST, AGENT_BASE_IMAGE),
+    )
+    _write_json(post / "gateway.pulled.sbom.json", _sbom(38))
+    _write_json(post / "agent.pulled.sbom.json", _sbom(5))
+    _write_json(
+        post / "gateway.pulled.trivy.json",
+        _scan(
+            "/work/gateway-pulled-image.tar",
+            _reviewed_gateway_findings(),
+            artifact_name=f"{GATEWAY_REPOSITORY}@{GATEWAY_POST_DIGEST}",
+        ),
+    )
+    _write_json(
+        post / "agent.pulled.trivy.json",
+        _scan(
+            "/work/agent-pulled-image.tar",
+            [],
+            artifact_name=f"{AGENT_REPOSITORY}@{AGENT_POST_DIGEST}",
+        ),
+    )
+    _write_scan_bindings(root, post)
+
+    validate_post_publish(
+        root=root,
+        post_root=post,
+        gateway_digest=GATEWAY_POST_DIGEST,
+        agent_digest=AGENT_POST_DIGEST,
+    )
+
+
+@pytest.mark.parametrize(
+    "mutate,match",
+    [
+        (
+            lambda data: data["scans"][0].__setitem__("role", "other"),
+            "unknown role",
+        ),
+        (
+            lambda data: data["scans"].pop(),
+            "missing post-pull scan role",
+        ),
+        (
+            lambda data: data["scans"].append(dict(data["scans"][0])),
+            "duplicate post-pull scan role",
+        ),
+        (
+            lambda data: data["scans"][0].__setitem__("repository", AGENT_REPOSITORY),
+            "gateway post-pull repository mismatch",
+        ),
+        (
+            lambda data: data["scans"][0].__setitem__("digest", "sha256:" + "9" * 64),
+            "gateway post-pull digest mismatch",
+        ),
+        (
+            lambda data: data["scans"][0].__setitem__(
+                "pulled_reference", f"{GATEWAY_REPOSITORY}:latest"
+            ),
+            "gateway post-pull reference must be immutable",
+        ),
+        (
+            lambda data: data["scans"][0].__setitem__("prepared_archive_role", "agent"),
+            "gateway prepared archive role mismatch",
+        ),
+        (
+            lambda data: data["scans"][0].__setitem__("scan_path", "gateway.trivy.json"),
+            "gateway scan path mismatch",
+        ),
+    ],
+)
+def test_post_pull_scan_bindings_fail_closed(
+    tmp_path: Path,
+    mutate,
+    match: str,
+) -> None:
+    root = _root(tmp_path)
+    _write_json(root / "publication-manifest.json", _manifest(root))
+    post = tmp_path / "post"
+    post.mkdir()
+    _write_json(post / "gateway.pulled.trivy.json", _scan("gateway", []))
+    _write_json(post / "agent.pulled.trivy.json", _scan("agent", []))
+    bindings = _write_scan_bindings(root, post)
+    mutate(bindings)
+    _write_json(post / "scan-bindings.json", bindings)
+
+    with pytest.raises(RuntimeImageError, match=match):
+        validate_post_pull_scan_bindings(
+            root=root,
+            post_root=post,
+            gateway_digest=GATEWAY_POST_DIGEST,
+            agent_digest=AGENT_POST_DIGEST,
+        )
+
+
+def test_post_pull_scan_binding_rejects_artifact_reference_mismatch(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    _write_json(root / "publication-manifest.json", _manifest(root))
+    post = tmp_path / "post"
+    post.mkdir()
+    _write_json(
+        post / "gateway.pulled.trivy.json",
+        _scan(
+            "gateway",
+            [],
+            artifact_name=f"{AGENT_REPOSITORY}@{GATEWAY_POST_DIGEST}",
+        ),
+    )
+    _write_json(post / "agent.pulled.trivy.json", _scan("agent", []))
+
+    with pytest.raises(RuntimeImageError, match="gateway scan artifact reference mismatch"):
+        _write_scan_bindings(root, post)
+
+
+def test_gateway_exceptions_cannot_apply_to_agent_with_explicit_binding(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path)
+    _write_json(root / "publication-manifest.json", _manifest(root))
+    post = tmp_path / "post"
+    post.mkdir()
+    _write_json(
+        post / "gateway.identity.json",
+        _identity("gateway", GATEWAY_REVIEWED_IMAGE_DIGEST, GATEWAY_BASE_IMAGE),
+    )
+    _write_json(
+        post / "agent.identity.json",
+        _identity("agent", AGENT_REVIEWED_IMAGE_DIGEST, AGENT_BASE_IMAGE),
+    )
+    _write_json(post / "gateway.pulled.sbom.json", _sbom(38))
+    _write_json(post / "agent.pulled.sbom.json", _sbom(5))
+    _write_json(post / "gateway.pulled.trivy.json", _scan("gateway", []))
+    _write_json(post / "agent.pulled.trivy.json", _scan("agent", _reviewed_gateway_findings()))
+    _write_scan_bindings(root, post)
+
+    with pytest.raises(RuntimeImageError, match="post-publication vulnerability policy failed"):
+        validate_post_publish(
+            root=root,
+            post_root=post,
+            gateway_digest=GATEWAY_POST_DIGEST,
+            agent_digest=AGENT_POST_DIGEST,
+        )
+
+
+def test_rejected_publications_record_first_attempt_digests() -> None:
+    rejected = load_rejected_publications()
+    keys = {(item["role"], item["repository"], item["digest"]) for item in rejected}
+
+    assert (
+        "gateway",
+        GATEWAY_REPOSITORY,
+        "sha256:fbe729bf8768fba3c68e4f8ed7eff45eb34ab814745dd7a78a9a65e7e27000a0",
+    ) in keys
+    assert (
+        "agent",
+        AGENT_REPOSITORY,
+        "sha256:07266c6012e9b5d36c295a0ea0d1a7570c97ccbe6332ff8e9d1da1911c496d94",
+    ) in keys
+    assert all(item["status"] == "rejected" for item in rejected)
+    assert all(item["eligible_for_study"] is False for item in rejected)
+
+
+def test_rejected_publication_candidates_fail_but_unrelated_digest_passes() -> None:
+    with pytest.raises(RuntimeImageError, match="gateway published digest is recorded as rejected"):
+        ensure_not_rejected_publications(
+            {
+                "gateway": (
+                    GATEWAY_REPOSITORY,
+                    "sha256:fbe729bf8768fba3c68e4f8ed7eff45eb34ab814745dd7a78a9a65e7e27000a0",
+                ),
+                "agent": (AGENT_REPOSITORY, AGENT_POST_DIGEST),
+            }
+        )
+
+    ensure_not_rejected_publications(
+        {
+            "gateway": (GATEWAY_REPOSITORY, GATEWAY_POST_DIGEST),
+            "agent": (AGENT_REPOSITORY, AGENT_POST_DIGEST),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "mutate,match",
+    [
+        (
+            lambda data: data.__setitem__("schema", "wrong"),
+            "invalid rejected-publications schema",
+        ),
+        (
+            lambda data: data["rejected_publications"].append(
+                dict(data["rejected_publications"][0])
+            ),
+            "duplicate rejected publication",
+        ),
+        (
+            lambda data: data["rejected_publications"][0].__setitem__(
+                "status", "approved"
+            ),
+            "status must be rejected",
+        ),
+        (
+            lambda data: data["rejected_publications"][0].__setitem__(
+                "eligible_for_study", True
+            ),
+            "must not be study eligible",
+        ),
+        (
+            lambda data: data["rejected_publications"][0].__setitem__(
+                "repository", AGENT_REPOSITORY
+            ),
+            "repository mismatch",
+        ),
+    ],
+)
+def test_rejected_publication_record_schema_fails_closed(
+    tmp_path: Path,
+    mutate,
+    match: str,
+) -> None:
+    data = json.loads((ROOT / "runtime-images/rejected-publications.json").read_text())
+    mutate(data)
+    path = tmp_path / "rejected-publications.json"
+    _write_json(path, data)
+
+    with pytest.raises(RuntimeImageError, match=match):
+        load_rejected_publications(path)

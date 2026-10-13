@@ -193,6 +193,7 @@ def test_publication_attests_and_verifies_published_digests() -> None:
     assert "docker pull \"$gateway_ref\"" in workflow_text
     assert "docker pull \"$agent_ref\"" in workflow_text
     assert "Rejected published $image digest: $ref" in workflow_text
+    assert "Reject previously failed publication digests" in publish_text
     assert "mock-egress-pulled-digest.json" in publish_text
 
 
@@ -252,3 +253,28 @@ def test_publication_artifact_verification_precedes_login_and_push() -> None:
     assert steps.index("Enforce post-publication evidence policy") < steps.index(
         "Run full local mock egress integration using pulled digest references"
     )
+    assert steps.index("Run full local mock egress integration using pulled digest references") < steps.index(
+        "Attest approved published gateway digest"
+    )
+    assert steps.index("Run full local mock egress integration using pulled digest references") < steps.index(
+        "Attest approved published Codex agent digest"
+    )
+    assert steps.index("Reject previously failed publication digests") < steps.index(
+        "Pull by digest and verify canonical identities"
+    )
+
+
+def test_publication_binds_pulled_scans_before_policy_and_retains_failure_evidence() -> None:
+    workflow = _workflow(ROOT / ".github/workflows/stage1-runtime-images-publish.yml")
+    publish = workflow["jobs"]["publish"]
+    publish_text = yaml.safe_dump(publish, sort_keys=False)
+    steps = [step["name"] for step in publish["steps"]]
+
+    assert "write-scan-bindings" in publish_text
+    assert "scan-bindings.json" in publish_text
+    assert steps.index("Regenerate SBOMs and rescan pulled-by-digest images") < steps.index(
+        "Enforce post-publication evidence policy"
+    )
+    upload = _step(publish, "Upload post-publication evidence")
+    assert upload["if"] == "always()"
+    assert "validated-publication/post-publish/*.json" in yaml.safe_dump(upload)
