@@ -1,0 +1,46 @@
+{
+  "rejected_publications": [
+    {
+      "digest": "sha256:fbe729bf8768fba3c68e4f8ed7eff45eb34ab814745dd7a78a9a65e7e27000a0",
+      "eligible_for_study": false,
+      "evidence": {
+        "issue_comment_url": "https://github.com/richinmrudul/agentguard/issues/310#issuecomment-6134788817",
+        "prepare_artifact_digest": "sha256:ebc1c9da81ea0b7811c35dc88c91c1e2e61ff77eed3c563ace6288af0074",
+        "prepare_artifact_id": "11778419875",
+        "workflow_run_url": "https://github.com/richinmrudul/agentguard/actions/runs/38322883158"
+      },
+      "failure_stage": "post-publication evidence policy",
+      "protected_deployment_id": "7026361711",
+      "rejected_at": "2026-10-12",
+      "rejection_reason": "Post-pull Trivy scan target was classified as an unknown image role before the pulled-by-digest mock integration ran.",
+      "repository": "ghcr.io/richinmrudul/agentguard/stage1-gateway",
+      "role": "gateway",
+      "run_attempt": "1",
+      "run_id": "38322883158",
+      "source_commit": "26f9c74117185154f81438cdb33922067f92f10d",
+      "status": "rejected"
+    },
+    {
+      "digest": "sha256:07266c6012e9b5d36c295a0ea0d1a7570c97ccbe6332ff8e9d1da1911c496d94",
+      "eligible_for_study": false,
+      "evidence": {
+        "issue_comment_url": "https://github.com/richinmrudul/agentguard/issues/310#issuecomment-6134788817",
+        "prepare_artifact_digest": "sha256:ebc1c9da81ea0b7811c35dc88c91c1e2e61ff77eed3c563ace6288af0074",
+        "prepare_artifact_id": "11778419875",
+        "workflow_run_url": "https://github.com/richinmrudul/agentguard/actions/runs/38322883158"
+      },
+      "failure_stage": "post-publication evidence policy",
+      "protected_deployment_id": "7026361711",
+      "rejected_at": "2026-10-12",
+      "rejection_reason": "Post-publication verification failed before the pulled-by-digest mock integration ran; this digest is tied to the rejected first attempt.",
+      "repository": "ghcr.io/richinmrudul/agentguard/stage1-codex-agent",
+      "role": "agent",
+      "run_attempt": "1",
+      "run_id": "38322883158",
+      "source_commit": "26f9c74117185154f81438cdb33922067f92f10d",
+      "status": "rejected"
+    }
+  ],
+  "schema": "agentguard.stage1-runtime-rejected-publications",
+  "schema_version": 1
+}

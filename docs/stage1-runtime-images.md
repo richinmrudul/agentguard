@@ -170,11 +170,13 @@ It is `workflow_dispatch` only. It has two jobs:
 - `publish` depends on `prepare`, downloads those exact archives, verifies
   their manifest/checksum/computed digests before registry authentication, loads
   the archives, pushes the already validated image subjects to GHCR, records
-  immutable GHCR digests, attests those published digest subjects, pulls by
-  digest, recomputes canonical identities, regenerates SBOM and scan evidence,
-  compares canonical SBOM package rows to the prepared evidence, reapplies the
-  exception policy, and runs the full local mock egress integration using digest
-  references.
+  immutable GHCR digests, rejects any digest recorded in the reviewed
+  rejected-publication ledger, pulls by digest, recomputes canonical identities,
+  regenerates SBOM and scan evidence, compares canonical SBOM package rows to
+  the prepared evidence, reapplies the exception policy with explicit
+  pulled-scan role bindings, runs the full local mock egress integration using
+  digest references, and only then attests the approved published digest
+  subjects.
 
 The `publish` job must not run a Docker build, install packages into an image,
 reconstruct an image from source, retag to a moving alias, or publish an
@@ -208,10 +210,11 @@ deployment protection out of band before dispatch. The activation variable is
 an additional fail-closed guard; it is not a substitute for environment
 protection.
 
-As of this prerequisite, the publication workflow has still not been
-dispatched, no Stage 1 GHCR images have been published, the
-`stage1-runtime-images` environment remains unconfigured, and the activation
-variable remains disabled or absent.
+As of this corrective prerequisite, the protected environment is configured and
+the first publication attempt has run once and failed post-push verification.
+The pushed first-attempt digests are recorded as rejected and are not approved
+for study use. The activation variable is disabled or absent, and any second
+publication attempt requires a separate explicit authorization.
 
 ## Image Coordinates And External State
 
@@ -259,6 +262,35 @@ registry digests:
 
 The local Docker image ID, canonical identity, tag, archive digest, and SBOM
 digest are supporting evidence only. They are not the attestation subject.
+Attestations are created only after digest pullback, canonical identity
+verification, SBOM row comparison, role-bound Trivy policy enforcement, and the
+full pulled-by-digest mock integration have all passed. Provenance attestations
+for a failed digest prove where that digest came from; they do not mean
+AgentGuard approved the digest for study use.
+
+## Pulled-Scan Role Binding
+
+Post-publication Trivy scans must not infer the gateway or agent security role
+from a free-form scanner target string. The publish job writes a
+machine-readable `scan-bindings.json` file after pullback scans complete. For
+each image it binds:
+
+- explicit role, `gateway` or `agent`;
+- exact GHCR repository;
+- immutable published digest;
+- pulled `repository@sha256:...` reference;
+- prepared archive role and archive name;
+- canonical identity from the publication manifest;
+- exact pulled SBOM and Trivy evidence filenames.
+
+The post-publication validator cross-checks those bindings against the
+publication manifest and the resolved digest outputs before applying
+role-specific vulnerability policy. Gateway findings may use only reviewed
+gateway exceptions. Agent findings can never use gateway exceptions. Missing,
+unknown, duplicated, swapped, tag-only, repository-mismatched, digest-mismatched,
+or basename/substring-only bindings fail closed. Trivy `ArtifactName` and
+`Target` formatting differences are tolerated only when they do not assert a
+conflicting repository or digest.
 
 ## Post-Publication Verification And Failure Behavior
 
@@ -294,3 +326,18 @@ silently overwrite tags, rebuild and retry as if equivalent, delete evidence,
 reuse a rejected digest, begin #294 with the failed digest, or claim #310
 complete. Automatic package deletion, tag rewriting, and destructive rollback
 are intentionally not implemented.
+
+`runtime-images/rejected-publications.json` records immutable digests that were
+pushed but rejected by post-publication verification. The first publication
+attempt for source commit `26f9c74117185154f81438cdb33922067f92f10d` created
+and rejected:
+
+- `ghcr.io/richinmrudul/agentguard/stage1-gateway@sha256:fbe729bf8768fba3c68e4f8ed7eff45eb34ab814745dd7a78a9a65e7e27000a0`
+- `ghcr.io/richinmrudul/agentguard/stage1-codex-agent@sha256:07266c6012e9b5d36c295a0ea0d1a7570c97ccbe6332ff8e9d1da1911c496d94`
+
+Those digests remain `eligible_for_study: false` even if a later publication
+succeeds. Future publication and study-freeze tooling must reject a candidate
+whose immutable digest appears in this file. A second publication attempt
+requires a separate read-only readiness check and an explicit publication
+authorization; this corrective prerequisite does not dispatch the publication
+workflow, mutate GHCR, or approve any digest.

@@ -33,6 +33,10 @@ from agentguard.evaluation.runtime_images import (  # noqa: E402
 
 SCHEMA = "agentguard.stage1-runtime-publication"
 SCHEMA_VERSION = 1
+SCAN_BINDINGS_SCHEMA = "agentguard.stage1-runtime-post-pull-scan-bindings"
+SCAN_BINDINGS_SCHEMA_VERSION = 1
+REJECTED_PUBLICATIONS_SCHEMA = "agentguard.stage1-runtime-rejected-publications"
+REJECTED_PUBLICATIONS_SCHEMA_VERSION = 1
 PLATFORM = "linux/amd64"
 GATEWAY_PACKAGES = 38
 AGENT_PACKAGES = 5
@@ -41,10 +45,23 @@ GATEWAY_EXCEPTION_COUNT = 15
 EXCEPTION_EXPIRY = "2026-11-06"
 GATEWAY_REPOSITORY = "ghcr.io/richinmrudul/agentguard/stage1-gateway"
 AGENT_REPOSITORY = "ghcr.io/richinmrudul/agentguard/stage1-codex-agent"
+REPOSITORIES = {
+    "gateway": GATEWAY_REPOSITORY,
+    "agent": AGENT_REPOSITORY,
+}
 ARCHIVES = {
     "gateway": "gateway-image.tar",
     "agent": "agent-image.tar",
 }
+PULLED_SCAN_FILENAMES = {
+    "gateway": "gateway.pulled.trivy.json",
+    "agent": "agent.pulled.trivy.json",
+}
+PULLED_SBOM_FILENAMES = {
+    "gateway": "gateway.pulled.sbom.json",
+    "agent": "agent.pulled.sbom.json",
+}
+REJECTED_PUBLICATIONS = ROOT / "runtime-images/rejected-publications.json"
 MAX_ARCHIVE_BYTES = 3 * 1024 * 1024 * 1024
 
 
@@ -67,6 +84,17 @@ def main(argv: list[str] | None = None) -> int:
     post.add_argument("--post-root", type=Path, required=True)
     post.add_argument("--gateway-digest", required=True)
     post.add_argument("--agent-digest", required=True)
+
+    bindings = subparsers.add_parser("write-scan-bindings")
+    bindings.add_argument("--root", type=Path, required=True)
+    bindings.add_argument("--post-root", type=Path, required=True)
+    bindings.add_argument("--gateway-digest", required=True)
+    bindings.add_argument("--agent-digest", required=True)
+    bindings.add_argument("--output", type=Path, required=True)
+
+    rejected = subparsers.add_parser("check-rejected")
+    rejected.add_argument("--gateway-digest", required=True)
+    rejected.add_argument("--agent-digest", required=True)
 
     archives = subparsers.add_parser("verify-archives")
     archives.add_argument("--root", type=Path, required=True)
@@ -96,6 +124,24 @@ def main(argv: list[str] | None = None) -> int:
                 post_root=args.post_root,
                 gateway_digest=args.gateway_digest,
                 agent_digest=args.agent_digest,
+            )
+        elif args.command == "write-scan-bindings":
+            bindings = build_post_pull_scan_bindings(
+                root=args.root,
+                post_root=args.post_root,
+                gateway_digest=args.gateway_digest,
+                agent_digest=args.agent_digest,
+            )
+            args.output.write_text(
+                json.dumps(bindings, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        elif args.command == "check-rejected":
+            ensure_not_rejected_publications(
+                {
+                    "gateway": (GATEWAY_REPOSITORY, args.gateway_digest),
+                    "agent": (AGENT_REPOSITORY, args.agent_digest),
+                }
             )
         elif args.command == "verify-archives":
             verify_archive_boundary(
@@ -266,6 +312,18 @@ def validate_post_publish(
         raise RuntimeImageError("published platform mismatch")
     _require_digest(gateway_digest, "gateway published digest")
     _require_digest(agent_digest, "agent published digest")
+    ensure_not_rejected_publications(
+        {
+            "gateway": (GATEWAY_REPOSITORY, gateway_digest),
+            "agent": (AGENT_REPOSITORY, agent_digest),
+        }
+    )
+    bindings = validate_post_pull_scan_bindings(
+        root=root,
+        post_root=post_root,
+        gateway_digest=gateway_digest,
+        agent_digest=agent_digest,
+    )
     identities = {
         "gateway": (post_root / "gateway.identity.json", GATEWAY_REVIEWED_IMAGE_DIGEST),
         "agent": (post_root / "agent.identity.json", AGENT_REVIEWED_IMAGE_DIGEST),
@@ -285,11 +343,16 @@ def validate_post_publish(
             raise RuntimeImageError(f"{role} post-publication SBOM package rows mismatch")
         if actual["package_count"] != prepared.get("sbom_package_count"):
             raise RuntimeImageError(f"{role} post-publication SBOM package count mismatch")
+    scan_paths = [post_root / PULLED_SCAN_FILENAMES["gateway"], post_root / PULLED_SCAN_FILENAMES["agent"]]
     policy = evaluate_trivy_high_critical_policy(
-        [post_root / "gateway.pulled.trivy.json", post_root / "agent.pulled.trivy.json"],
+        scan_paths,
         exception_manifest=ROOT / "runtime-images/vulnerability-exceptions.json",
         gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
         agent_image_digest=AGENT_REVIEWED_IMAGE_DIGEST,
+        image_roles_by_path={
+            str(post_root / item["scan_path"]): item["role"]
+            for item in bindings["scans"]
+        },
         as_of=date.today(),
     )
     if policy.get("status") != "hosted_trivy_high_critical_policy_passed":
@@ -298,6 +361,169 @@ def validate_post_publish(
         raise RuntimeImageError("post-publication vulnerability count mismatch")
     if policy.get("exception_count") != GATEWAY_EXCEPTION_COUNT:
         raise RuntimeImageError("post-publication exception count mismatch")
+
+
+def build_post_pull_scan_bindings(
+    *,
+    root: Path,
+    post_root: Path,
+    gateway_digest: str,
+    agent_digest: str,
+) -> dict[str, Any]:
+    manifest = _json(root / "publication-manifest.json")
+    if manifest.get("schema") != SCHEMA:
+        raise RuntimeImageError("invalid publication manifest schema")
+    if manifest.get("platform") != PLATFORM:
+        raise RuntimeImageError("publication manifest platform mismatch")
+    digests = {"gateway": gateway_digest, "agent": agent_digest}
+    for role, digest in digests.items():
+        _require_digest(digest, f"{role} published digest")
+    scans = []
+    for role in ("gateway", "agent"):
+        image = _image_manifest(manifest, role)
+        if image.get("role") != role:
+            raise RuntimeImageError(f"{role} publication manifest role mismatch")
+        repository = image.get("repository")
+        if repository != REPOSITORIES[role]:
+            raise RuntimeImageError(f"{role} publication repository mismatch")
+        archive_name = image.get("archive_name")
+        if archive_name != ARCHIVES[role]:
+            raise RuntimeImageError(f"{role} prepared archive role mismatch")
+        canonical_identity = image.get("canonical_identity")
+        expected_identity = (
+            GATEWAY_REVIEWED_IMAGE_DIGEST if role == "gateway" else AGENT_REVIEWED_IMAGE_DIGEST
+        )
+        if canonical_identity != expected_identity:
+            raise RuntimeImageError(f"{role} canonical identity mismatch")
+        digest = digests[role]
+        scans.append(
+            {
+                "role": role,
+                "repository": repository,
+                "digest": digest,
+                "pulled_reference": f"{repository}@{digest}",
+                "prepared_archive_role": role,
+                "prepared_archive_name": archive_name,
+                "canonical_identity": canonical_identity,
+                "scan_path": PULLED_SCAN_FILENAMES[role],
+                "sbom_path": PULLED_SBOM_FILENAMES[role],
+                "pulled_archive_name": f"{role}-pulled-image.tar",
+            }
+        )
+    result = {
+        "schema": SCAN_BINDINGS_SCHEMA,
+        "schema_version": SCAN_BINDINGS_SCHEMA_VERSION,
+        "source": manifest.get("source"),
+        "platform": PLATFORM,
+        "scans": scans,
+    }
+    validate_post_pull_scan_bindings(
+        root=root,
+        post_root=post_root,
+        gateway_digest=gateway_digest,
+        agent_digest=agent_digest,
+        bindings=result,
+    )
+    return result
+
+
+def validate_post_pull_scan_bindings(
+    *,
+    root: Path,
+    post_root: Path,
+    gateway_digest: str,
+    agent_digest: str,
+    bindings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    manifest = _json(root / "publication-manifest.json")
+    data = bindings if bindings is not None else _json(post_root / "scan-bindings.json")
+    if data.get("schema") != SCAN_BINDINGS_SCHEMA:
+        raise RuntimeImageError("invalid post-pull scan binding schema")
+    if data.get("schema_version") != SCAN_BINDINGS_SCHEMA_VERSION:
+        raise RuntimeImageError("unsupported post-pull scan binding version")
+    if data.get("platform") != PLATFORM:
+        raise RuntimeImageError("post-pull scan binding platform mismatch")
+    if data.get("source") != manifest.get("source"):
+        raise RuntimeImageError("post-pull scan binding source mismatch")
+    scans = data.get("scans")
+    if not isinstance(scans, list):
+        raise RuntimeImageError("post-pull scan bindings must be a list")
+    expected_digests = {"gateway": gateway_digest, "agent": agent_digest}
+    expected_roles = {"gateway", "agent"}
+    seen: set[str] = set()
+    for index, item in enumerate(scans):
+        label = f"post-pull scan binding {index}"
+        if not isinstance(item, dict):
+            raise RuntimeImageError(f"{label} must be an object")
+        role = item.get("role")
+        if role not in expected_roles:
+            raise RuntimeImageError(f"{label} unknown role")
+        if role in seen:
+            raise RuntimeImageError(f"duplicate post-pull scan role: {role}")
+        seen.add(role)
+        image = _image_manifest(manifest, role)
+        repository = item.get("repository")
+        if repository != REPOSITORIES[role] or repository != image.get("repository"):
+            raise RuntimeImageError(f"{role} post-pull repository mismatch")
+        digest = item.get("digest")
+        if digest != expected_digests[role]:
+            raise RuntimeImageError(f"{role} post-pull digest mismatch")
+        _require_digest(digest, f"{role} post-pull digest")
+        expected_reference = f"{repository}@{digest}"
+        if item.get("pulled_reference") != expected_reference:
+            raise RuntimeImageError(f"{role} post-pull reference must be immutable")
+        if item.get("prepared_archive_role") != role:
+            raise RuntimeImageError(f"{role} prepared archive role mismatch")
+        if item.get("prepared_archive_name") != ARCHIVES[role]:
+            raise RuntimeImageError(f"{role} prepared archive name mismatch")
+        if item.get("canonical_identity") != image.get("canonical_identity"):
+            raise RuntimeImageError(f"{role} canonical identity binding mismatch")
+        if item.get("scan_path") != PULLED_SCAN_FILENAMES[role]:
+            raise RuntimeImageError(f"{role} scan path mismatch")
+        if item.get("sbom_path") != PULLED_SBOM_FILENAMES[role]:
+            raise RuntimeImageError(f"{role} SBOM path mismatch")
+        if item.get("pulled_archive_name") != f"{role}-pulled-image.tar":
+            raise RuntimeImageError(f"{role} pulled archive name mismatch")
+        for path_key in ("scan_path", "sbom_path", "pulled_archive_name"):
+            _artifact_basename(str(item[path_key]), f"{role} {path_key}")
+        if not (post_root / item["scan_path"]).exists():
+            raise RuntimeImageError(f"{role} post-pull scan is missing")
+        _validate_scan_artifact_reference(
+            post_root / item["scan_path"],
+            role=role,
+            repository=repository,
+            digest=digest,
+        )
+    if seen != expected_roles:
+        raise RuntimeImageError("missing post-pull scan role")
+    return data
+
+
+def _validate_scan_artifact_reference(
+    path: Path,
+    *,
+    role: str,
+    repository: str,
+    digest: str,
+) -> None:
+    data = _json(path)
+    candidates: list[str] = []
+    artifact = data.get("ArtifactName")
+    if isinstance(artifact, str):
+        candidates.append(artifact)
+    for result in data.get("Results") or []:
+        if isinstance(result, dict) and isinstance(result.get("Target"), str):
+            candidates.append(result["Target"])
+    for candidate in candidates:
+        if "@sha256:" not in candidate:
+            continue
+        if candidate != f"{repository}@{digest}":
+            raise RuntimeImageError(f"{role} scan artifact reference mismatch")
+    if any(
+        candidate.startswith("ghcr.io/") and "@sha256:" not in candidate
+        for candidate in candidates
+    ):
+        raise RuntimeImageError(f"{role} scan artifact reference must be immutable")
 
 
 def verify_archive_boundary(
@@ -334,6 +560,66 @@ def verify_archive_boundary(
         checksum_digest = "sha256:" + checksums[filename]
         if manifest_digest != checksum_digest or actual_digest != manifest_digest:
             raise RuntimeImageError(f"{role} archive digest mismatch")
+
+
+def ensure_not_rejected_publications(candidates: dict[str, tuple[str, str]]) -> None:
+    rejected = load_rejected_publications(REJECTED_PUBLICATIONS)
+    rejected_keys = {
+        (item["role"], item["repository"], item["digest"])
+        for item in rejected
+    }
+    for role, (repository, digest) in candidates.items():
+        if (role, repository, digest) in rejected_keys:
+            raise RuntimeImageError(f"{role} published digest is recorded as rejected")
+
+
+def load_rejected_publications(path: Path = REJECTED_PUBLICATIONS) -> list[dict[str, Any]]:
+    data = _json(path)
+    if data.get("schema") != REJECTED_PUBLICATIONS_SCHEMA:
+        raise RuntimeImageError("invalid rejected-publications schema")
+    if data.get("schema_version") != REJECTED_PUBLICATIONS_SCHEMA_VERSION:
+        raise RuntimeImageError("unsupported rejected-publications version")
+    records = data.get("rejected_publications")
+    if not isinstance(records, list):
+        raise RuntimeImageError("rejected-publications records must be a list")
+    seen: set[tuple[str, str, str]] = set()
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(records):
+        label = f"rejected_publications[{index}]"
+        if not isinstance(item, dict):
+            raise RuntimeImageError(f"{label} must be an object")
+        role = item.get("role")
+        if role not in {"gateway", "agent"}:
+            raise RuntimeImageError(f"{label} role must be gateway or agent")
+        repository = item.get("repository")
+        if repository != REPOSITORIES[role]:
+            raise RuntimeImageError(f"{label} repository mismatch")
+        digest = item.get("digest")
+        _require_digest(digest, f"{label} digest")
+        key = (role, repository, digest)
+        if key in seen:
+            raise RuntimeImageError(f"duplicate rejected publication: {role} {digest}")
+        seen.add(key)
+        if item.get("status") != "rejected":
+            raise RuntimeImageError(f"{label} status must be rejected")
+        if item.get("eligible_for_study") is not False:
+            raise RuntimeImageError(f"{label} must not be study eligible")
+        _require_commit(_required_record_string(item, "source_commit", label))
+        _required_record_string(item, "run_id", label)
+        _required_record_string(item, "run_attempt", label)
+        _required_record_string(item, "failure_stage", label)
+        _required_record_string(item, "rejection_reason", label)
+        _require_date(
+            _required_record_string(item, "rejected_at", label),
+            f"{label} rejected_at",
+        )
+        evidence = item.get("evidence")
+        if not isinstance(evidence, dict):
+            raise RuntimeImageError(f"{label} evidence must be an object")
+        _required_record_string(evidence, "workflow_run_url", f"{label} evidence")
+        _required_record_string(evidence, "issue_comment_url", f"{label} evidence")
+        result.append(item)
+    return result
 
 
 def _image_record(
@@ -481,8 +767,7 @@ def _image_manifest(manifest: dict[str, Any], role: str) -> dict[str, Any]:
 
 
 def _archive_path(root: Path, filename: str) -> Path:
-    if filename.startswith("/") or "/" in filename or filename in {"", ".", ".."}:
-        raise RuntimeImageError("archive filename must be a local basename")
+    _artifact_basename(filename, "archive filename")
     path = root / filename
     try:
         relative = path.resolve(strict=False).relative_to(root)
@@ -496,6 +781,13 @@ def _archive_path(root: Path, filename: str) -> Path:
     if size <= 0 or size > MAX_ARCHIVE_BYTES:
         raise RuntimeImageError(f"archive size is out of bounds: {filename}")
     return path
+
+
+def _artifact_basename(filename: str, label: str) -> None:
+    if filename.startswith("/") or "/" in filename or filename in {"", ".", ".."}:
+        raise RuntimeImageError(f"{label} must be a local basename")
+    if "\\" in filename or "\x00" in filename:
+        raise RuntimeImageError(f"{label} must be a local basename")
 
 
 def _read_archive_checksums(path: Path) -> dict[str, str]:
@@ -581,6 +873,22 @@ def _require_tag(value: str, repository: str, commit: str, label: str) -> None:
         raise RuntimeImageError(f"{label} image must use the full source commit tag")
     if value.endswith(":latest"):
         raise RuntimeImageError("latest tags are forbidden")
+
+
+def _required_record_string(item: dict[str, Any], key: str, label: str) -> str:
+    value = item.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeImageError(f"{label} {key} is required")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise RuntimeImageError(f"{label} {key} contains invalid characters")
+    return value.strip()
+
+
+def _require_date(value: str, label: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise RuntimeImageError(f"{label} must be YYYY-MM-DD") from error
 
 
 def _sha256_file(path: Path) -> str:

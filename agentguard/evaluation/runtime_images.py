@@ -7,6 +7,7 @@ import re
 import tarfile
 from datetime import date
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -324,7 +325,11 @@ def parse_codex_usage(payload: object, *, trial_id: str) -> dict[str, int]:
     return result
 
 
-def summarize_trivy_high_critical(paths: list[Path]) -> dict[str, Any]:
+def summarize_trivy_high_critical(
+    paths: list[Path],
+    *,
+    image_roles_by_path: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "status": "hosted_trivy_high_critical_policy_passed",
         "severity_counts": {"CRITICAL": 0, "HIGH": 0},
@@ -347,7 +352,13 @@ def summarize_trivy_high_critical(paths: list[Path]) -> dict[str, Any]:
         results = data.get("Results")
         if not isinstance(results, list) or not results:
             raise RuntimeImageError(f"Trivy JSON has no results: {path}")
-        image = path.name.removesuffix(".trivy.json")
+        image = (
+            image_roles_by_path.get(str(path))
+            if image_roles_by_path is not None
+            else path.name.removesuffix(".trivy.json")
+        )
+        if not isinstance(image, str) or not image:
+            raise RuntimeImageError(f"missing Trivy image role binding: {path}")
         for result in results:
             if not isinstance(result, dict):
                 raise RuntimeImageError(f"Trivy result must be an object: {path}")
@@ -426,9 +437,10 @@ def evaluate_trivy_high_critical_policy(
     exception_manifest: Path,
     gateway_image_digest: str,
     agent_image_digest: str,
+    image_roles_by_path: Mapping[str, str] | None = None,
     as_of: date | None = None,
 ) -> dict[str, Any]:
-    summary = summarize_trivy_high_critical(paths)
+    summary = summarize_trivy_high_critical(paths, image_roles_by_path=image_roles_by_path)
     _oci_digest(gateway_image_digest, "gateway image digest")
     _oci_digest(agent_image_digest, "agent image digest")
     exceptions = load_vulnerability_exceptions(

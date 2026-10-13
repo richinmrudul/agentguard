@@ -291,19 +291,12 @@ jobs:
           echo "gateway_digest=$gateway_digest" >> "$GITHUB_OUTPUT"
           echo "agent_digest=$agent_digest" >> "$GITHUB_OUTPUT"
 
-      - name: Attest published gateway digest
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
-        with:
-          subject-name: ghcr.io/richinmrudul/agentguard/stage1-gateway
-          subject-digest: ${{ steps.digests.outputs.gateway_digest }}
-          push-to-registry: true
-
-      - name: Attest published Codex agent digest
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
-        with:
-          subject-name: ghcr.io/richinmrudul/agentguard/stage1-codex-agent
-          subject-digest: ${{ steps.digests.outputs.agent_digest }}
-          push-to-registry: true
+      - name: Reject previously failed publication digests
+        run: |
+          set -euo pipefail
+          python scripts/stage1_publication_manifest.py check-rejected \
+            --gateway-digest "${{ steps.digests.outputs.gateway_digest }}" \
+            --agent-digest "${{ steps.digests.outputs.agent_digest }}"
 
       - name: Pull by digest and verify canonical identities
         run: |
@@ -375,6 +368,12 @@ jobs:
               --output /work/$image.pulled.trivy.json \
               --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
           done
+          python scripts/stage1_publication_manifest.py write-scan-bindings \
+            --root validated-publication \
+            --post-root validated-publication/post-publish \
+            --gateway-digest "${{ steps.digests.outputs.gateway_digest }}" \
+            --agent-digest "${{ steps.digests.outputs.agent_digest }}" \
+            --output validated-publication/post-publish/scan-bindings.json
 
       - name: Enforce post-publication evidence policy
         run: |
@@ -398,6 +397,20 @@ jobs:
             --gateway-identity "$gateway_identity" \
             --agent-identity "$agent_identity" \
             --output validated-publication/post-publish/mock-egress-pulled-digest.json
+
+      - name: Attest approved published gateway digest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ghcr.io/richinmrudul/agentguard/stage1-gateway
+          subject-digest: ${{ steps.digests.outputs.gateway_digest }}
+          push-to-registry: true
+
+      - name: Attest approved published Codex agent digest
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ghcr.io/richinmrudul/agentguard/stage1-codex-agent
+          subject-digest: ${{ steps.digests.outputs.agent_digest }}
+          push-to-registry: true
 
       - name: Upload post-publication evidence
         if: always()
