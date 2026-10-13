@@ -39,6 +39,54 @@
       "run_id": "38322883158",
       "source_commit": "26f9c74117185154f81438cdb33922067f92f10d",
       "status": "rejected"
+    },
+    {
+      "digest": "sha256:8d8b30618ec0b9b9458f5f54269432e3b48ccf29dc005676a4f53e01bef0cbf4",
+      "eligible_for_study": false,
+      "evidence": {
+        "issue_comment_url": "https://github.com/richinmrudul/agentguard/issues/310#issuecomment-6137458408",
+        "post_publication_artifact_digest": "sha256:6d8a177d4c1b9a5d7e14ac9414844465b6a72d40dd90ab5f0b55f97d32c2e63a",
+        "post_publication_artifact_id": "11785943960",
+        "prepare_artifact_digest": "sha256:fd49b605b57b58d6af6d6ce9767f5018c116971c2c492a6e27cd796b58cf9630",
+        "prepare_artifact_id": "11786743684",
+        "workflow_run_url": "https://github.com/richinmrudul/agentguard/actions/runs/38340360778"
+      },
+      "failure_stage": "post_pull_mock_integration",
+      "prepare_job_id": "115109742217",
+      "protected_deployment_id": "7029076526",
+      "publish_job_id": "115110095264",
+      "rejected_at": "2026-10-13",
+      "rejection_reason": "The full pulled-by-digest mock egress integration failed with: gateway evidence file missing.",
+      "repository": "ghcr.io/richinmrudul/agentguard/stage1-gateway",
+      "role": "gateway",
+      "run_attempt": "1",
+      "run_id": "38340360778",
+      "source_commit": "037aa62c0926e3210d8897b19d75819f5f73f692",
+      "status": "rejected"
+    },
+    {
+      "digest": "sha256:337cf49d6283639ff6fdcd2839c4b7cc77e3a83e96c710567e1d1baf30f389da",
+      "eligible_for_study": false,
+      "evidence": {
+        "issue_comment_url": "https://github.com/richinmrudul/agentguard/issues/310#issuecomment-6137458408",
+        "post_publication_artifact_digest": "sha256:6d8a177d4c1b9a5d7e14ac9414844465b6a72d40dd90ab5f0b55f97d32c2e63a",
+        "post_publication_artifact_id": "11785943960",
+        "prepare_artifact_digest": "sha256:fd49b605b57b58d6af6d6ce9767f5018c116971c2c492a6e27cd796b58cf9630",
+        "prepare_artifact_id": "11786743684",
+        "workflow_run_url": "https://github.com/richinmrudul/agentguard/actions/runs/38340360778"
+      },
+      "failure_stage": "post_pull_mock_integration",
+      "prepare_job_id": "115109742217",
+      "protected_deployment_id": "7029076526",
+      "publish_job_id": "115110095264",
+      "rejected_at": "2026-10-13",
+      "rejection_reason": "The full pulled-by-digest mock egress integration failed with: gateway evidence file missing.",
+      "repository": "ghcr.io/richinmrudul/agentguard/stage1-codex-agent",
+      "role": "agent",
+      "run_attempt": "1",
+      "run_id": "38340360778",
+      "source_commit": "037aa62c0926e3210d8897b19d75819f5f73f692",
+      "status": "rejected"
     }
   ],
   "schema": "agentguard.stage1-runtime-rejected-publications",

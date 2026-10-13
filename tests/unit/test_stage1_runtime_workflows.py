@@ -278,3 +278,23 @@ def test_publication_binds_pulled_scans_before_policy_and_retains_failure_eviden
     upload = _step(publish, "Upload post-publication evidence")
     assert upload["if"] == "always()"
     assert "validated-publication/post-publish/*.json" in yaml.safe_dump(upload)
+
+
+def test_pulled_digest_integration_prepares_real_gateway_evidence_lifecycle() -> None:
+    text = (ROOT / "scripts/stage1_pulled_digest_integration.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "prepare_gateway_evidence_directory" in text
+    assert "restore_gateway_evidence_directory" in text
+    assert '"CHOWN"' in text
+    assert '"FOWNER"' in text
+    assert "os.chown(path, {GATEWAY_UID}, {GATEWAY_GID})" in text
+    assert "os.chmod(path, 0o755)" in text
+    assert "uid={os.getuid()}; gid={os.getgid()}" in text
+    assert "gateway evidence is stale" in text
+    assert "gateway evidence ownership mismatch" in text
+    assert "gateway_evidence" in text
+    assert "diagnostics" in text
+    assert "gateway_log_stdout_digest" in text
+    assert "credential canary leaked into gateway evidence" in text

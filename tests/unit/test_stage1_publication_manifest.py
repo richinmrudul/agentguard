@@ -31,6 +31,18 @@ ROOT = Path(__file__).resolve().parents[2]
 COMMIT = "85bc3fc4305c5355215c58547b2d2ca1568e9248"
 GATEWAY_POST_DIGEST = "sha256:" + "a" * 64
 AGENT_POST_DIGEST = "sha256:" + "b" * 64
+FIRST_REJECTED_GATEWAY = (
+    "sha256:fbe729bf8768fba3c68e4f8ed7eff45eb34ab814745dd7a78a9a65e7e27000a0"
+)
+FIRST_REJECTED_AGENT = (
+    "sha256:07266c6012e9b5d36c295a0ea0d1a7570c97ccbe6332ff8e9d1da1911c496d94"
+)
+SECOND_REJECTED_GATEWAY = (
+    "sha256:8d8b30618ec0b9b9458f5f54269432e3b48ccf29dc005676a4f53e01bef0cbf4"
+)
+SECOND_REJECTED_AGENT = (
+    "sha256:337cf49d6283639ff6fdcd2839c4b7cc77e3a83e96c710567e1d1baf30f389da"
+)
 
 
 def _write_json(path: Path, data: object) -> None:
@@ -628,35 +640,47 @@ def test_gateway_exceptions_cannot_apply_to_agent_with_explicit_binding(
         )
 
 
-def test_rejected_publications_record_first_attempt_digests() -> None:
+def test_rejected_publications_record_failed_publication_digests() -> None:
     rejected = load_rejected_publications()
     keys = {(item["role"], item["repository"], item["digest"]) for item in rejected}
 
-    assert (
-        "gateway",
-        GATEWAY_REPOSITORY,
-        "sha256:fbe729bf8768fba3c68e4f8ed7eff45eb34ab814745dd7a78a9a65e7e27000a0",
-    ) in keys
-    assert (
-        "agent",
-        AGENT_REPOSITORY,
-        "sha256:07266c6012e9b5d36c295a0ea0d1a7570c97ccbe6332ff8e9d1da1911c496d94",
-    ) in keys
+    assert ("gateway", GATEWAY_REPOSITORY, FIRST_REJECTED_GATEWAY) in keys
+    assert ("agent", AGENT_REPOSITORY, FIRST_REJECTED_AGENT) in keys
+    assert ("gateway", GATEWAY_REPOSITORY, SECOND_REJECTED_GATEWAY) in keys
+    assert ("agent", AGENT_REPOSITORY, SECOND_REJECTED_AGENT) in keys
     assert all(item["status"] == "rejected" for item in rejected)
     assert all(item["eligible_for_study"] is False for item in rejected)
+    assert all(
+        item["failure_stage"]
+        in {"post-publication evidence policy", "post_pull_mock_integration"}
+        for item in rejected
+    )
 
 
 def test_rejected_publication_candidates_fail_but_unrelated_digest_passes() -> None:
-    with pytest.raises(RuntimeImageError, match="gateway published digest is recorded as rejected"):
-        ensure_not_rejected_publications(
-            {
-                "gateway": (
-                    GATEWAY_REPOSITORY,
-                    "sha256:fbe729bf8768fba3c68e4f8ed7eff45eb34ab814745dd7a78a9a65e7e27000a0",
-                ),
-                "agent": (AGENT_REPOSITORY, AGENT_POST_DIGEST),
-            }
-        )
+    for role, repository, digest in (
+        ("gateway", GATEWAY_REPOSITORY, FIRST_REJECTED_GATEWAY),
+        ("agent", AGENT_REPOSITORY, FIRST_REJECTED_AGENT),
+        ("gateway", GATEWAY_REPOSITORY, SECOND_REJECTED_GATEWAY),
+        ("agent", AGENT_REPOSITORY, SECOND_REJECTED_AGENT),
+    ):
+        candidates = {
+            "gateway": (GATEWAY_REPOSITORY, GATEWAY_POST_DIGEST),
+            "agent": (AGENT_REPOSITORY, AGENT_POST_DIGEST),
+        }
+        candidates[role] = (repository, digest)
+        with pytest.raises(
+            RuntimeImageError,
+            match=f"{role} published digest is recorded as rejected",
+        ):
+            ensure_not_rejected_publications(candidates)
+
+    ensure_not_rejected_publications(
+        {
+            "gateway": (AGENT_REPOSITORY, FIRST_REJECTED_GATEWAY),
+            "agent": (GATEWAY_REPOSITORY, FIRST_REJECTED_AGENT),
+        }
+    )
 
     ensure_not_rejected_publications(
         {
