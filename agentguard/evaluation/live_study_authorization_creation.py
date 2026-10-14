@@ -63,6 +63,15 @@ def create_live_study_authorization(
 ) -> LiveStudyAuthorizationCreation:
     """Create canonical live-study authorization JSON from explicit reviewed inputs."""
     _reject_wildcards(options)
+    if options.agent_image.startswith(
+        "ghcr.io/richinmrudul/agentguard/stage1-codex-agent@"
+    ) or options.gateway_image.startswith(
+        "ghcr.io/richinmrudul/agentguard/stage1-gateway@"
+    ):
+        raise LiveStudyAuthorizationError(
+            "Stage 1 Codex authorization requires reviewed metering-capability evidence; "
+            "the published byte-forwarding gateway is not a spending boundary."
+        )
     plan = _load_plan(options.plan_path.expanduser().resolve())
     try:
         plan_digest = _validate_plan_contract(

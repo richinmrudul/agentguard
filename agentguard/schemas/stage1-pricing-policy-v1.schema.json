@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/richinmrudul/agentguard/blob/main/agentguard/schemas/stage1-pricing-policy-v1.schema.json",
+  "title": "Stage 1 metering pricing policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "model", "source_date", "effective_date", "source_url", "currency", "input_per_million", "cached_input_per_million", "output_per_million"],
+  "properties": {
+    "schema": {"const": "agentguard.stage1-pricing-policy"},
+    "schema_version": {"const": 1},
+    "model": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{1,79}$"},
+    "source_date": {"type": "string", "format": "date"},
+    "effective_date": {"type": "string", "format": "date"},
+    "source_url": {"const": "https://developers.openai.com/api/docs/pricing"},
+    "currency": {"const": "USD"},
+    "input_per_million": {"$ref": "#/$defs/rate"},
+    "cached_input_per_million": {"$ref": "#/$defs/rate"},
+    "output_per_million": {"$ref": "#/$defs/rate"}
+  },
+  "$defs": {
+    "rate": {"type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,8})?$"}
+  }
+}

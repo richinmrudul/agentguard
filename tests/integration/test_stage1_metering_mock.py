@@ -1,0 +1,148 @@
+from __future__ import annotations
+
+import http.client
+import importlib.util
+import json
+import threading
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+
+import pytest
+
+from agentguard.evaluation.stage1_metering import (
+    MeteringLimits,
+    MeteringScope,
+    MeteringSession,
+    PricingPolicy,
+    StudyBudget,
+    canonical_bytes,
+)
+from agentguard.evaluation.stage1_metering_gateway import (
+    MockOnlyTransport,
+    handler_for,
+)
+
+
+MODEL = "stage1-mock-2026-10-14"
+CANARY = "AGENTGUARD_FAKE_CREDENTIAL_CANARY"
+SHA = "sha256:" + "a" * 64
+
+
+def _mock_handler() -> type:
+    path = (
+        Path(__file__).parents[2]
+        / "runtime-images/stage1-metering/mock_responses_provider.py"
+    )
+    spec = importlib.util.spec_from_file_location("stage1_mock_responses", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.MockHandler
+
+
+def _session(port: int) -> MeteringSession:
+    pricing = PricingPolicy(MODEL, "2026-10-14", "2026-10-14", "2.00", "0.50", "8.00")
+    limits = MeteringLimits(2, 2, 20, 20, 40, 8, 60, "0.01", "0.02")
+    scope = MeteringScope("mock-trial", SHA, SHA, MODEL, pricing.canonical_digest)
+    return MeteringSession(
+        scope, limits, pricing, StudyBudget("0.02"), CANARY,
+        MockOnlyTransport("127.0.0.1", port),
+    )
+
+
+def _post(port: int, path: str, body: bytes, token: str = CANARY) -> tuple[int, bytes]:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        connection.request("POST", path, body=body, headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        })
+        result = connection.getresponse()
+        return result.status, result.read()
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_local_mock_http_gateway_counts_and_retains_only_sanitized_evidence(
+    tmp_path: Path, stream: bool
+) -> None:
+    mock_handler = _mock_handler()
+    mock_handler.scenario = "success"
+    mock_handler.count_requests = 0
+    mock_handler.generations = 0
+    mock_server = ThreadingHTTPServer(("127.0.0.1", 0), mock_handler)
+    mock_thread = threading.Thread(target=mock_server.serve_forever, daemon=True)
+    mock_thread.start()
+    session = _session(mock_server.server_port)
+    evidence = tmp_path / "current-run-evidence.json"
+    gateway_server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(session, evidence))
+    gateway_thread = threading.Thread(target=gateway_server.serve_forever, daemon=True)
+    gateway_thread.start()
+    try:
+        body = canonical_bytes({
+            "model": MODEL, "input": [{"role": "user", "content": "private prompt"}],
+            "tools": [], "store": False, "stream": stream,
+        })
+        for _ in range(2):
+            status, response = _post(gateway_server.server_port, "/v1/responses", body)
+            assert status == 200
+            assert b"mock complete" in response
+        assert mock_handler.count_requests == 2
+        assert mock_handler.generations == 2
+        assert session.generations == 2
+        assert session.count_requests == 2
+        assert session.input_tokens == 14
+        assert session.output_tokens == 6
+        retained = evidence.read_text()
+        assert len(retained) < 4096
+        assert CANARY not in retained
+        assert "private prompt" not in retained
+        assert "mock complete" not in retained
+        assert len(json.loads(retained)["events"]) == 2
+        status, _ = _post(gateway_server.server_port, "/v1/models", body)
+        assert status == 404
+        assert session.closed
+    finally:
+        gateway_server.shutdown()
+        gateway_server.server_close()
+        mock_server.shutdown()
+        mock_server.server_close()
+        gateway_thread.join(timeout=5)
+        mock_thread.join(timeout=5)
+        assert not gateway_thread.is_alive()
+        assert not mock_thread.is_alive()
+
+
+@pytest.mark.parametrize("scenario", [
+    "count-error", "redirect", "error", "model-mismatch", "usage-mismatch",
+    "missing-usage", "disconnect",
+])
+def test_local_mock_provider_fault_closes_trial(tmp_path: Path, scenario: str) -> None:
+    mock_handler = _mock_handler()
+    mock_handler.scenario = scenario
+    mock_server = ThreadingHTTPServer(("127.0.0.1", 0), mock_handler)
+    mock_thread = threading.Thread(target=mock_server.serve_forever, daemon=True)
+    mock_thread.start()
+    session = _session(mock_server.server_port)
+    evidence = tmp_path / "failure-evidence.json"
+    gateway_server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(session, evidence))
+    gateway_thread = threading.Thread(target=gateway_server.serve_forever, daemon=True)
+    gateway_thread.start()
+    try:
+        body = canonical_bytes({
+            "model": MODEL, "input": [{"role": "user", "content": "private prompt"}],
+            "tools": [], "store": False, "stream": True,
+        })
+        status, _ = _post(gateway_server.server_port, "/v1/responses", body)
+        assert status == 403
+        assert session.closed
+        assert json.loads(evidence.read_text())["trial_closed"] is True
+        assert CANARY not in evidence.read_text()
+    finally:
+        gateway_server.shutdown()
+        gateway_server.server_close()
+        mock_server.shutdown()
+        mock_server.server_close()
+        gateway_thread.join(timeout=5)
+        mock_thread.join(timeout=5)

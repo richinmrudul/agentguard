@@ -125,7 +125,14 @@ jobs:
       - name: Verify Docker
         run: docker info
 
+      - name: Preload pinned images for offline Stage 1 mock Docker test
+        run: |
+          docker pull gcr.io/distroless/python3-debian13:nonroot@sha256:339ecee37afe554f5237b9993250bc390ac9f1483a08c9b5e77ac4c016d6d39a
+          docker pull ghcr.io/richinmrudul/agentguard/stage1-codex-agent@sha256:31402671e20d26972f0345c4bf3263d4f5309c0f450cfbaece19b2b799caa93a
+
       - name: Run complete test suite
+        env:
+          AGENTGUARD_REQUIRE_DOCKER: "1"
         run: python -m pytest
 
   package:
