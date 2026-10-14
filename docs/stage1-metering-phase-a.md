@@ -83,6 +83,8 @@ model, pricing digest, monotonic request sequence, count request count, token
 usage, and calculated token cost. This is not a measured provider bill. It
 contains no raw prompt, output, request body,
 query, authorization header, cookie, real or synthetic token, or host path.
+Failed mock requests retain only a bounded static validation reason for
+diagnosis; the Docker regression prints that reason, never the request body.
 The gateway creates current-run evidence only and refuses a stale evidence
 file. In-memory study accounting is suitable for mock proof only; Phase B must
 provide crash-safe, cross-trial reservations before a live authorization can

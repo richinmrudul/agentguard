@@ -9,6 +9,7 @@
     "schema": {"const": "agentguard.stage1-metering-evidence"},
     "schema_version": {"const": 1},
     "trial_closed": {"type": "boolean"},
+    "failure_reason": {"type": ["string", "null"], "maxLength": 100, "pattern": "^[A-Za-z0-9 -]+$"},
     "events": {
       "type": "array",
       "maxItems": 32,

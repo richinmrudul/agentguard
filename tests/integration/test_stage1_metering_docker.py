@@ -130,7 +130,17 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
             AGENT, *codex_metered_argv(MODEL), timeout=120, check=False,
         )
         safe_output = (result.stdout + result.stderr).replace(CANARY, "[REDACTED]")
-        assert result.returncode == 0, safe_output[:2000]
+        if result.returncode:
+            copied = _docker(
+                "cp", f"{gateway}:/stage1-metering/evidence.json",
+                str(tmp_path / "failed-evidence.json"), check=False,
+            )
+            reason = "no retained metering evidence"
+            if copied.returncode == 0:
+                reason = json.loads((tmp_path / "failed-evidence.json").read_text()).get(
+                    "failure_reason", "no failure reason"
+                )
+            pytest.fail(f"frozen Codex metering failed: {reason}")
         agent_state = json.loads(_docker("inspect", agent).stdout)[0]
         assert set(agent_state["NetworkSettings"]["Networks"]) == {internal}
         assert agent_state["HostConfig"]["ReadonlyRootfs"] is True

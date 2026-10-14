@@ -280,6 +280,7 @@ class MeteringSession:
         self.output_tokens = 0
         self.spent = Decimal(0)
         self.closed = False
+        self.failure_reason: str | None = None
         self._response_ids: set[str] = set()
         self._lock = threading.Lock()
         self.evidence: list[dict[str, object]] = []

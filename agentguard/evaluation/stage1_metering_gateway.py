@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import http.client
 import os
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
@@ -85,6 +86,7 @@ def handler_for(session: MeteringSession, evidence_path: Path) -> type[BaseHTTPR
             host = self.headers.get("Host", "")
             if host not in {"stage1-metering-gateway:8080", f"127.0.0.1:{self.server.server_port}"}:
                 session.closed = True
+                session.failure_reason = "unapproved host"
                 self._deny(403)
                 return
             if (
@@ -105,11 +107,14 @@ def handler_for(session: MeteringSession, evidence_path: Path) -> type[BaseHTTPR
             header = self.headers.get("Authorization", "")
             if not header.startswith("Bearer ") or len(header) > 256:
                 session.closed = True
+                session.failure_reason = "missing synthetic authorization"
                 self._deny(403)
                 return
             try:
                 reply = session.generate(self.rfile.read(int(length)), header[7:], self.path)
-            except MeteringError:
+            except MeteringError as error:
+                reason = str(error)
+                session.failure_reason = reason if re.fullmatch(r"[A-Za-z0-9 -]{1,100}", reason) else "metering rejected"
                 _write_evidence(evidence_path, session)
                 self._deny(403)
                 return
@@ -153,6 +158,7 @@ def _write_evidence(path: Path, session: MeteringSession) -> None:
         "schema_version": 1,
         "events": session.evidence,
         "trial_closed": session.closed,
+        "failure_reason": session.failure_reason,
     }))
 
 

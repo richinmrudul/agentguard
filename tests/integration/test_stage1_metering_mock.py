@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from agentguard.evaluation.stage1_metering import (
+    MeteringError,
     MeteringLimits,
     MeteringScope,
     MeteringSession,
@@ -20,6 +21,7 @@ from agentguard.evaluation.stage1_metering import (
 from agentguard.evaluation.stage1_metering_gateway import (
     MockOnlyTransport,
     handler_for,
+    mock_server_from_config,
 )
 
 
@@ -146,3 +148,65 @@ def test_local_mock_provider_fault_closes_trial(tmp_path: Path, scenario: str) -
         mock_server.server_close()
         gateway_thread.join(timeout=5)
         mock_thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("method,path,headers,expected", [
+    ("GET", "/healthz", {}, 200),
+    ("GET", "/v1/models", {}, 404),
+    ("PUT", "/v1/responses", {}, 405),
+    ("DELETE", "/v1/responses", {}, 405),
+    ("POST", "/v1/models", {}, 404),
+    ("POST", "/v1/responses", {"Host": "api.openai.com"}, 403),
+    ("POST", "/v1/responses", {"Content-Type": "text/plain"}, 400),
+    ("POST", "/v1/responses", {"Content-Encoding": "gzip"}, 400),
+    ("POST", "/v1/responses", {"Authorization": "Basic fake"}, 403),
+])
+def test_http_boundary_denies_unapproved_routes_and_headers(
+    tmp_path: Path, method: str, path: str, headers: dict[str, str], expected: int
+) -> None:
+    session = _session(1)
+    evidence = tmp_path / "denied-evidence.json"
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(session, evidence))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+    try:
+        supplied = {
+            "Content-Type": "application/json", "Authorization": f"Bearer {CANARY}",
+        }
+        supplied.update(headers)
+        connection.request(method, path, body=b"{}" if method == "POST" else None, headers=supplied)
+        reply = connection.getresponse()
+        assert reply.status == expected
+        reply.read()
+        assert session.generations == 0
+        if session.closed:
+            assert json.loads(evidence.read_text())["trial_closed"] is True
+            assert CANARY not in evidence.read_text()
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("host,port", [
+    ("api.openai.com", 443), ("stage1-mock-provider", 443), ("127.0.0.1", 0),
+])
+def test_mock_transport_rejects_nonlocal_or_unapproved_ports(host: str, port: int) -> None:
+    with pytest.raises(MeteringError):
+        MockOnlyTransport(host, port)
+
+
+@pytest.mark.parametrize("payload", [
+    b"{}", b'{"scope":{},"limits":{},"pricing":{}}',
+    b'{"scope":[],"limits":{},"pricing":{}}',
+])
+def test_mock_gateway_rejects_malformed_config_before_listening(
+    tmp_path: Path, payload: bytes
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_bytes(payload)
+    with pytest.raises(MeteringError):
+        mock_server_from_config(config, tmp_path / "evidence.json", lambda: CANARY, "127.0.0.1")
