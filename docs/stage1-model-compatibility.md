@@ -16,6 +16,12 @@ The upstream source is `openai/codex` annotated tag `rust-v0.159.2`
 `406dfdd5c68f303a3a8d04f32b3965b3b0ca0361`. Its Rust toolchain is
 `1.95.0`; `codex-rs/Cargo.lock` is SHA-256
 `4fab6fe99180e2b8f305bd4b33c1b4bd825e3fa4cdef1045be750843bd3d431e`.
+Cargo 1.95 normalizes the frozen lockfile's local workspace package versions
+from `0.0.0` to the manifests' `0.159.2` before a locked build. The build
+script accepts only paired changes of those exact version lines, rejects any
+dependency/source/checksum change, then uses `--locked` and records the
+normalized lockfile hash. This is build-input normalization, not an upstream
+source or dependency update.
 The source is Apache-2.0; the frozen `LICENSE` and `NOTICE` SHA-256 values are
 `d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc`
 and `9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915`.
