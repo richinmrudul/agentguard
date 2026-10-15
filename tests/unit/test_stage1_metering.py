@@ -67,6 +67,21 @@ class MockResponses:
             del response["usage"]
         if self.malformed == "unknown_usage":
             response["usage"]["mystery_tokens"] = 1
+        if self.malformed == "output_overcap":
+            response["usage"]["output_tokens"] = 9
+            response["usage"]["total_tokens"] = self.count + 9
+        if self.malformed == "cached_overinput":
+            response["usage"]["input_tokens_details"]["cached_tokens"] = self.count + 1
+        if self.malformed == "missing_cached":
+            response["usage"]["input_tokens_details"] = {}
+        if self.malformed == "unknown_input_detail":
+            response["usage"]["input_tokens_details"]["unknown"] = 1
+        if self.malformed == "unknown_output_detail":
+            response["usage"]["output_tokens_details"]["unknown"] = 1
+        if self.malformed == "reasoning_overoutput":
+            response["usage"]["output_tokens_details"]["reasoning_tokens"] = self.output + 1
+        if self.malformed == "negative_usage":
+            response["usage"]["input_tokens"] = -1
         if self.malformed == "redirect":
             return UpstreamReply(302, "text/plain", b"moved", "https://not-approved.example")
         if self.malformed == "error":
@@ -82,6 +97,12 @@ class MockResponses:
                 frames.append(canonical_bytes({
                     "type": "response.completed", "sequence_number": 2, "response": response,
                 }))
+            if self.malformed == "duplicate_sequence":
+                frames[1] = canonical_bytes({
+                    "type": "response.completed", "sequence_number": 0, "response": response,
+                })
+            if self.malformed == "no_terminal":
+                frames.pop()
             body = b"".join(b"data: " + frame.rstrip(b"\n") + b"\n\n" for frame in frames)
             if self.malformed == "truncated":
                 body = body[:-1]
@@ -154,6 +175,9 @@ def test_sequential_metering_records_only_bound_usage(stream: bool) -> None:
 @pytest.mark.parametrize("fault", [
     "count", "model", "input", "missing_usage", "unknown_usage", "redirect",
     "error", "duplicate_terminal", "truncated",
+    "output_overcap", "cached_overinput", "missing_cached", "unknown_input_detail",
+    "unknown_output_detail", "reasoning_overoutput", "negative_usage",
+    "duplicate_sequence", "no_terminal",
 ])
 def test_provider_uncertainty_closes_trial(fault: str) -> None:
     meter, backend = session()
@@ -162,6 +186,7 @@ def test_provider_uncertainty_closes_trial(fault: str) -> None:
         meter.generate(request(), CANARY)
     assert meter.closed
     assert meter.evidence == []
+    assert meter.count_requests == 1
     with pytest.raises(MeteringError):
         meter.generate(request(), CANARY)
 
@@ -179,6 +204,29 @@ def test_unapproved_request_never_reaches_provider(raw: bytes) -> None:
     meter, backend = session()
     with pytest.raises(MeteringError):
         meter.generate(raw, CANARY)
+    assert backend.paths == []
+
+
+@pytest.mark.parametrize("change", [
+    {"stream": "true"}, {"input": []}, {"tools": "not a list"},
+    {"tools": [{"type": "namespace"}]}, {"tools": [{"type": "future_tool"}]},
+    {"tool_choice": "required"}, {"include": ["file_search_call.results"]},
+    {"instructions": 42}, {"client_metadata": "not an object"},
+    {"previous_response_id": "resp_previous"},
+    {"input": [{"role": "user", "content": [{"type": "input_image", "image_url": "https://x"}]}]},
+])
+def test_invalid_protocol_shape_is_denied_before_token_count(change: dict[str, object]) -> None:
+    meter, backend = session()
+    with pytest.raises(MeteringError):
+        meter.generate(request(**change), CANARY)
+    assert backend.paths == []
+    assert meter.closed
+
+
+def test_large_tool_schema_is_denied_before_token_count() -> None:
+    meter, backend = session()
+    with pytest.raises(MeteringError, match="tool schemas"):
+        meter.generate(request(tools=[{"type": "function", "description": "x" * 70_000}]), CANARY)
     assert backend.paths == []
 
 
@@ -205,6 +253,13 @@ def test_elapsed_time_is_checked_before_and_after_generation() -> None:
     with pytest.raises(MeteringError, match="elapsed-time"):
         meter.generate(request(), CANARY)
     assert backend.paths == []
+
+    meter, backend = session()
+    before = meter.started
+    meter.clock = lambda: before + 61 if backend.paths else before
+    with pytest.raises(MeteringError, match="after token count"):
+        meter.generate(request(), CANARY)
+    assert backend.paths == ["/v1/responses/input_tokens"]
 
     meter, backend = session()
     before = meter.started
@@ -266,6 +321,8 @@ def test_price_policy_digest_and_rounding() -> None:
         PricingPolicy(MODEL, "2026-10-14", "2026-10-14", "1.00", "2.00", "8.00")
     with pytest.raises(MeteringError):
         PricingPolicy(MODEL, "2026-10-14", "2026-10-14", "NaN", "0.50", "8.00")
+    with pytest.raises(MeteringError, match="calendar date"):
+        PricingPolicy(MODEL, "2026-13-99", "2026-10-14", "2.00", "0.50", "8.00")
 
 
 def test_codex_argv_has_only_internal_static_provider() -> None:

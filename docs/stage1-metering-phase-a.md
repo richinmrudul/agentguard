@@ -40,6 +40,8 @@ itself issues only `POST /v1/responses/input_tokens` and
 only. All other paths and methods, redirects, model/catalog discovery,
 background mode, remote resources, uploads, hosted tools, and unknown fields
 fail closed. A future live transport, if separately reviewed, must be restricted
+to locally executed `function`/`custom` tool declarations; namespace and
+unknown hosted-tool declarations are rejected. It must connect
 to `api.openai.com:443` and these exact two paths, with TLS verification and no
 redirect following. Phase A contains no such transport or live secret resolver.
 
@@ -84,7 +86,9 @@ usage, and calculated token cost. This is not a measured provider bill. It
 contains no raw prompt, output, request body,
 query, authorization header, cookie, real or synthetic token, or host path.
 Failed mock requests retain only a bounded static validation reason for
-diagnosis; the Docker regression prints that reason, never the request body.
+diagnosis. A fixed-format denial code is also sent to local container stderr
+if evidence cannot be copied; the Docker regression filters only these codes
+and process liveness, never request bodies or unrestricted logs.
 The gateway creates current-run evidence only and refuses a stale evidence
 file. In-memory study accounting is suitable for mock proof only; Phase B must
 provide crash-safe, cross-trial reservations before a live authorization can

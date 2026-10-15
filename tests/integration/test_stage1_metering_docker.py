@@ -140,7 +140,16 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
                 reason = json.loads((tmp_path / "failed-evidence.json").read_text()).get(
                     "failure_reason", "no failure reason"
                 )
-            pytest.fail(f"frozen Codex metering failed: {reason}")
+            logs = _docker("logs", gateway, check=False)
+            denial_codes = [
+                line for line in (logs.stdout + logs.stderr).splitlines()
+                if line.startswith("STAGE1_DENIAL:") or line == "STAGE1_EVIDENCE_WRITE_FAILED"
+            ][:4]
+            state = json.loads(_docker("inspect", gateway).stdout)[0]["State"]
+            pytest.fail(
+                f"frozen Codex metering failed: {reason}; "
+                f"gateway_running={state['Running']}; denial_codes={denial_codes}"
+            )
         agent_state = json.loads(_docker("inspect", agent).stdout)[0]
         assert set(agent_state["NetworkSettings"]["Networks"]) == {internal}
         assert agent_state["HostConfig"]["ReadonlyRootfs"] is True

@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_UP
 from typing import Callable, Protocol
 
@@ -127,6 +128,10 @@ class PricingPolicy:
         for name in ("source_date", "effective_date"):
             if not re.fullmatch(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}", getattr(self, name)):
                 raise MeteringError(f"{name} must be an ISO date")
+            try:
+                date.fromisoformat(getattr(self, name))
+            except ValueError as error:
+                raise MeteringError(f"{name} is not a calendar date") from error
         if self.currency != "USD" or self.source_url != SOURCE_URL:
             raise MeteringError("pricing source or currency is unapproved")
         if self.schema != "agentguard.stage1-pricing-policy" or self.schema_version != 1:
@@ -303,11 +308,13 @@ class MeteringSession:
                 raise MeteringError("generation request limit exceeded")
             if self.count_requests >= self.limits.max_count_requests:
                 raise MeteringError("input-token-count request limit exceeded")
+            self.count_requests += 1
             count_reply = self.transport.post(
                 "/v1/responses/input_tokens", canonical_bytes(_count_payload(request))
             )
-            self.count_requests += 1
             count = _input_count(count_reply)
+            if self.clock() - self.started >= self.limits.max_elapsed_seconds:
+                raise MeteringError("trial elapsed-time limit exceeded after token count")
             output_cap = request["max_output_tokens"]
             assert isinstance(output_cap, int)
             if self.input_tokens + count > self.limits.max_input_tokens:
@@ -402,6 +409,11 @@ def _validate_request(request: dict[str, object], model: str, limits: MeteringLi
         raise MeteringError("Responses input exceeds its bound")
     if not isinstance(request.get("tools", []), list):
         raise MeteringError("tools must be a bounded list")
+    if any(
+        not isinstance(tool, dict) or tool.get("type") not in {"function", "custom"}
+        for tool in request.get("tools", [])
+    ):
+        raise MeteringError("provider hosted or unknown tool type is forbidden")
     if len(canonical_bytes(request.get("tools", []))) > MAX_TOOL_BYTES:
         raise MeteringError("tool schemas exceed their bound")
     if request.get("tool_choice", "auto") not in ("auto", "none"):

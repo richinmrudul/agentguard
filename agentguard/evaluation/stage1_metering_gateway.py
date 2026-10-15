@@ -9,6 +9,7 @@ from __future__ import annotations
 import http.client
 import os
 import re
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
@@ -81,6 +82,7 @@ def handler_for(session: MeteringSession, evidence_path: Path) -> type[BaseHTTPR
         def do_POST(self) -> None:
             if self.path != "/v1/responses":
                 session.closed = True
+                session.failure_reason = "unapproved path"
                 self._deny(404)
                 return
             host = self.headers.get("Host", "")
@@ -97,11 +99,13 @@ def handler_for(session: MeteringSession, evidence_path: Path) -> type[BaseHTTPR
                 != "application/json"
             ):
                 session.closed = True
+                session.failure_reason = "invalid request headers"
                 self._deny(400)
                 return
             length = self.headers.get("Content-Length", "")
             if not length.isdecimal() or not 0 < int(length) <= MAX_REQUEST_BYTES:
                 session.closed = True
+                session.failure_reason = "invalid request length"
                 self._deny(413)
                 return
             header = self.headers.get("Authorization", "")
@@ -115,7 +119,6 @@ def handler_for(session: MeteringSession, evidence_path: Path) -> type[BaseHTTPR
             except MeteringError as error:
                 reason = str(error)
                 session.failure_reason = reason if re.fullmatch(r"[A-Za-z0-9 -]{1,100}", reason) else "metering rejected"
-                _write_evidence(evidence_path, session)
                 self._deny(403)
                 return
             _write_evidence(evidence_path, session)
@@ -123,15 +126,21 @@ def handler_for(session: MeteringSession, evidence_path: Path) -> type[BaseHTTPR
 
         def do_PUT(self) -> None:
             session.closed = True
+            session.failure_reason = "unapproved method"
             self._deny(405)
 
         def do_DELETE(self) -> None:
             session.closed = True
+            session.failure_reason = "unapproved method"
             self._deny(405)
 
         def _deny(self, code: int) -> None:
             if session.closed:
-                _write_evidence(evidence_path, session)
+                print(f"STAGE1_DENIAL: {session.failure_reason or 'unspecified'}", file=sys.stderr, flush=True)
+                try:
+                    _write_evidence(evidence_path, session)
+                except OSError:
+                    print("STAGE1_EVIDENCE_WRITE_FAILED", file=sys.stderr, flush=True)
             self._send(code, "text/plain", b"request denied\n")
 
         def _send(self, code: int, content_type: str, body: bytes) -> None:
