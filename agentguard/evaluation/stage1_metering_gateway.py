@@ -121,7 +121,13 @@ def handler_for(session: MeteringSession, evidence_path: Path) -> type[BaseHTTPR
                 session.failure_reason = reason if re.fullmatch(r"[A-Za-z0-9 -]{1,100}", reason) else "metering rejected"
                 self._deny(403)
                 return
-            _write_evidence(evidence_path, session)
+            try:
+                _write_evidence(evidence_path, session)
+            except OSError:
+                session.closed = True
+                session.failure_reason = "evidence write failed"
+                self._deny(500)
+                return
             self._send(200, reply.content_type, reply.body)
 
         def do_PUT(self) -> None:

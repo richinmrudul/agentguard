@@ -121,6 +121,38 @@ def test_local_mock_http_gateway_counts_and_retains_only_sanitized_evidence(
         gateway_server.server_close()
         mock_server.shutdown()
         mock_server.server_close()
+
+
+def test_evidence_write_failure_closes_trial_after_generation(tmp_path: Path) -> None:
+    mock_handler = _mock_handler()
+    mock_server = ThreadingHTTPServer(("127.0.0.1", 0), mock_handler)
+    mock_thread = threading.Thread(target=mock_server.serve_forever, daemon=True)
+    mock_thread.start()
+    session = _session(mock_server.server_port)
+    missing_parent = tmp_path / "missing" / "evidence.json"
+    gateway_server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(session, missing_parent))
+    gateway_thread = threading.Thread(target=gateway_server.serve_forever, daemon=True)
+    gateway_thread.start()
+    body = canonical_bytes({
+        "model": MODEL, "input": [{"role": "user", "content": "mock task"}],
+        "tools": [], "store": False, "stream": True,
+    })
+    try:
+        status, response = _post(gateway_server.server_port, "/v1/responses", body)
+        assert status == 500
+        assert response == b"request denied\n"
+        assert session.closed
+        assert session.failure_reason == "evidence write failed"
+        assert session.generations == 1
+        status, _ = _post(gateway_server.server_port, "/v1/responses", body)
+        assert status == 403
+        assert session.generations == 1
+        assert not missing_parent.exists()
+    finally:
+        gateway_server.shutdown()
+        gateway_server.server_close()
+        mock_server.shutdown()
+        mock_server.server_close()
         gateway_thread.join(timeout=5)
         mock_thread.join(timeout=5)
         assert not gateway_thread.is_alive()
