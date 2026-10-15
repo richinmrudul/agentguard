@@ -409,10 +409,7 @@ def _validate_request(request: dict[str, object], model: str, limits: MeteringLi
         raise MeteringError("Responses input exceeds its bound")
     if not isinstance(request.get("tools", []), list):
         raise MeteringError("tools must be a bounded list")
-    if any(
-        not isinstance(tool, dict) or tool.get("type") not in {"function", "custom"}
-        for tool in request.get("tools", [])
-    ):
+    if any(not _local_tool(tool) for tool in request.get("tools", [])):
         raise MeteringError("provider hosted or unknown tool type is forbidden")
     if len(canonical_bytes(request.get("tools", []))) > MAX_TOOL_BYTES:
         raise MeteringError("tool schemas exceed their bound")
@@ -435,6 +432,24 @@ def _validate_request(request: dict[str, object], model: str, limits: MeteringLi
         raise MeteringError("max_output_tokens is outside the approved bound")
     request["max_output_tokens"] = cap
     return request
+
+
+def _local_tool(tool: object, nested: bool = False) -> bool:
+    if not isinstance(tool, dict):
+        return False
+    kind = tool.get("type")
+    if kind in {"function", "custom"}:
+        return isinstance(tool.get("name"), str) and bool(tool["name"])
+    if kind != "namespace" or nested or set(tool) - {"type", "name", "description", "tools"}:
+        return False
+    children = tool.get("tools")
+    return (
+        isinstance(tool.get("name"), str)
+        and bool(tool["name"])
+        and isinstance(children, list)
+        and 0 < len(children) <= 32
+        and all(_local_tool(child, nested=True) for child in children)
+    )
 
 
 def _reject_remote_resources(value: object) -> None:

@@ -226,7 +226,26 @@ def test_invalid_protocol_shape_is_denied_before_token_count(change: dict[str, o
 def test_large_tool_schema_is_denied_before_token_count() -> None:
     meter, backend = session()
     with pytest.raises(MeteringError, match="tool schemas"):
-        meter.generate(request(tools=[{"type": "function", "description": "x" * 70_000}]), CANARY)
+        meter.generate(request(tools=[{
+            "type": "function", "name": "local_tool", "description": "x" * 70_000,
+        }]), CANARY)
+    assert backend.paths == []
+
+
+def test_frozen_local_namespace_tool_is_counted_but_hosted_child_is_denied() -> None:
+    local_tool = {
+        "type": "namespace", "name": "functions", "description": "local tools",
+        "tools": [{"type": "function", "name": "exec_command", "parameters": {}}],
+    }
+    meter, backend = session()
+    meter.generate(request(tools=[local_tool]), CANARY)
+    assert backend.requests[0]["tools"] == [local_tool]
+    assert backend.requests[1]["tools"] == [local_tool]
+
+    meter, backend = session()
+    local_tool["tools"] = [{"type": "web_search", "name": "external"}]
+    with pytest.raises(MeteringError, match="tool type"):
+        meter.generate(request(tools=[local_tool]), CANARY)
     assert backend.paths == []
 
 

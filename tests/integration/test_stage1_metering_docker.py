@@ -146,9 +146,17 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
                 if line.startswith("STAGE1_DENIAL:") or line == "STAGE1_EVIDENCE_WRITE_FAILED"
             ][:4]
             state = json.loads(_docker("inspect", gateway).stdout)[0]["State"]
+            file_state = _docker(
+                "exec", gateway, "/usr/bin/python3", "-c",
+                "from pathlib import Path; p=Path('/stage1-metering/evidence.json'); "
+                "print('present' if p.is_file() else 'absent')",
+                check=False,
+            )
             pytest.fail(
                 f"frozen Codex metering failed: {reason}; "
-                f"gateway_running={state['Running']}; denial_codes={denial_codes}"
+                f"gateway_running={state['Running']}; "
+                f"evidence_state={file_state.stdout.strip()[:20]}; "
+                f"docker_copy_ok={copied.returncode == 0}; denial_codes={denial_codes}"
             )
         agent_state = json.loads(_docker("inspect", agent).stdout)[0]
         assert set(agent_state["NetworkSettings"]["Networks"]) == {internal}

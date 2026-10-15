@@ -40,8 +40,9 @@ itself issues only `POST /v1/responses/input_tokens` and
 only. All other paths and methods, redirects, model/catalog discovery,
 background mode, remote resources, uploads, hosted tools, and unknown fields
 fail closed. A future live transport, if separately reviewed, must be restricted
-to locally executed `function`/`custom` tool declarations; namespace and
-unknown hosted-tool declarations are rejected. It must connect
+to locally executed `function`/`custom` tool declarations, including the
+bounded `namespace` wrapper used by frozen Codex 0.159.2. Nested namespace,
+discovery, and hosted-tool declarations are rejected. It must connect
 to `api.openai.com:443` and these exact two paths, with TLS verification and no
 redirect following. Phase A contains no such transport or live secret resolver.
 
@@ -100,6 +101,7 @@ Retrieved 2026-10-14. These are the authoritative inputs used for Phase A:
 
 - [Frozen Codex 0.159.2 provider configuration](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/model-provider-info/src/lib.rs) and [CLI override parsing](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/utils/cli/src/config_override.rs).
 - [Frozen Codex Responses request construction](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/client.rs) and [request serialization](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/codex-api/src/common.rs).
+- [Frozen Codex tool-spec serialization](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/tools/src/tool_spec.rs), including locally executed namespace wrappers.
 - [OpenAI input-token counting](https://developers.openai.com/api/docs/guides/token-counting) and [endpoint reference](https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count).
 - [Responses streaming terminal event and usage](https://developers.openai.com/api/reference/resources/responses/streaming-events) and [pricing source](https://developers.openai.com/api/docs/pricing).
 
