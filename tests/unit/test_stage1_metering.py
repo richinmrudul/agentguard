@@ -361,6 +361,7 @@ def test_codex_argv_has_only_internal_static_provider() -> None:
     joined = " ".join(argv)
     assert "--ignore-user-config" in argv
     assert "model_provider=stage1_metered" in argv
+    assert 'web_search="disabled"' in argv
     assert 'env_key="CODEX_API_KEY"' in joined
     assert 'supports_websockets=false' in joined
     assert 'requires_openai_auth=false' in joined

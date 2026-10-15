@@ -249,7 +249,7 @@ def codex_metered_argv(model: str, gateway_host: str = "stage1-metering-gateway"
     return (
         "--ignore-user-config", "-c", "model_provider=stage1_metered", "-c", provider,
         "-c", "analytics.enabled=false", "-c", "otel.exporter=none",
-        "-c", "check_for_update_on_startup=false",
+        "-c", "check_for_update_on_startup=false", "-c", 'web_search="disabled"',
         "--", "Read the checked-in task instructions and complete the bounded fixture.",
     )
 

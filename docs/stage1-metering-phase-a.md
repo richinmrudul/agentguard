@@ -19,7 +19,8 @@ Codex CLI 0.159.2 has a custom `model_provider` configuration with `base_url`,
 `supports_websockets=false`. The reviewed `codex_metered_argv` uses global
 `--ignore-user-config` and `-c` overrides, an internal
 `http://stage1-metering-gateway:8080/v1` base URL, zero transport retries,
-disabled analytics, and disabled startup update checks. The existing image's
+disabled analytics, disabled hosted web search, and disabled startup update
+checks. The existing image's
 entrypoint still requires `CODEX_API_KEY`; Phase A gives it only a synthetic,
 mock-scoped value. The gateway rejects other paths and does not forward this
 value to the mock provider. No ChatGPT account login or model discovery is
