@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/richinmrudul/agentguard/blob/main/agentguard/schemas/stage1-metering-evidence-v1.schema.json",
+  "title": "Sanitized Stage 1 metering evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "events", "trial_closed"],
+  "properties": {
+    "schema": {"const": "agentguard.stage1-metering-evidence"},
+    "schema_version": {"const": 1},
+    "trial_closed": {"type": "boolean"},
+    "failure_reason": {"type": ["string", "null"], "maxLength": 100, "pattern": "^[A-Za-z0-9 -]+$"},
+    "events": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schema", "schema_version", "trial_id", "plan_digest", "authorization_digest", "model", "pricing_digest", "request_sequence", "count_requests", "input_tokens", "cached_input_tokens", "output_tokens", "total_tokens", "calculated_token_cost_usd"],
+        "properties": {
+          "schema": {"const": "agentguard.stage1-metering-event"},
+          "schema_version": {"const": 1},
+          "trial_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,79}$"},
+          "plan_digest": {"$ref": "#/$defs/digest"},
+          "authorization_digest": {"$ref": "#/$defs/digest"},
+          "model": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{1,79}$"},
+          "pricing_digest": {"$ref": "#/$defs/digest"},
+          "request_sequence": {"type": "integer", "minimum": 1, "maximum": 32},
+          "count_requests": {"type": "integer", "minimum": 1, "maximum": 32},
+          "input_tokens": {"type": "integer", "minimum": 0, "maximum": 10000000},
+          "cached_input_tokens": {"type": "integer", "minimum": 0, "maximum": 10000000},
+          "output_tokens": {"type": "integer", "minimum": 0, "maximum": 10000000},
+          "total_tokens": {"type": "integer", "minimum": 0, "maximum": 10000000},
+          "calculated_token_cost_usd": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.[0-9]{6}$"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

@@ -98,6 +98,7 @@ nav:
       - Real-Agent Evaluations: evaluation.md
       - v0.5 Study Protocol: real-agent-evaluation.md
       - Stage 1 Runtime Images: stage1-runtime-images.md
+      - Stage 1 Metering Phase A: stage1-metering-phase-a.md
       - Online Guard: online-guard.md
   - Evaluation and Evidence:
       - Detection Quality: detection-quality.md
