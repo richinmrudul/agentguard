@@ -46,6 +46,9 @@ bounded `namespace` wrapper used by frozen Codex 0.159.2. Nested namespace,
 discovery, and hosted-tool declarations are rejected. It must connect
 to `api.openai.com:443` and these exact two paths, with TLS verification and no
 redirect following. Phase A contains no such transport or live secret resolver.
+Remote-resource validation applies to request input content; local tool schema
+property names are metadata, not remote resource invocations. Top-level
+request fields and tool types remain separately allowlisted.
 
 The gateway bounds JSON size/depth, tool schemas, input items, and output bytes;
 requires the trial's exact model and `store=false`; injects or bounds

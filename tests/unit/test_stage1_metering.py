@@ -261,6 +261,19 @@ def test_hosted_tool_categories_are_explicitly_denied(kind: str, reason: str) ->
     assert backend.paths == []
 
 
+def test_local_tool_schema_property_names_are_not_remote_resources() -> None:
+    local_tool = {
+        "type": "function", "name": "local_exec", "description": "Local execution",
+        "parameters": {
+            "type": "object",
+            "properties": {"background": {"type": "boolean"}, "file_url": {"type": "string"}},
+        },
+    }
+    meter, backend = session()
+    meter.generate(request(tools=[local_tool]), CANARY)
+    assert backend.paths == ["/v1/responses/input_tokens", "/v1/responses"]
+
+
 def test_budget_failure_occurs_before_generation() -> None:
     meter, backend = session(max_input_tokens=6)
     with pytest.raises(MeteringError, match="input token limit"):

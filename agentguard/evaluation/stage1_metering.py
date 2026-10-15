@@ -427,7 +427,7 @@ def _validate_request(request: dict[str, object], model: str, limits: MeteringLi
             not isinstance(request[field], str) or len(request[field]) > 64 * 1024
         ):
             raise MeteringError(f"{field} is malformed or too large")
-    _reject_remote_resources(request)
+    _reject_remote_resources(request["input"])
     cap = request.get("max_output_tokens", limits.max_output_tokens_per_request)
     if type(cap) is not int or not 0 < cap <= limits.max_output_tokens_per_request:
         raise MeteringError("max_output_tokens is outside the approved bound")
