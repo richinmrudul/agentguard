@@ -409,8 +409,9 @@ def _validate_request(request: dict[str, object], model: str, limits: MeteringLi
         raise MeteringError("Responses input exceeds its bound")
     if not isinstance(request.get("tools", []), list):
         raise MeteringError("tools must be a bounded list")
-    if any(not _local_tool(tool) for tool in request.get("tools", [])):
-        raise MeteringError("provider hosted or unknown tool type is forbidden")
+    for tool in request.get("tools", []):
+        if not _local_tool(tool):
+            raise MeteringError(_tool_shape_reason(tool))
     if len(canonical_bytes(request.get("tools", []))) > MAX_TOOL_BYTES:
         raise MeteringError("tool schemas exceed their bound")
     if request.get("tool_choice", "auto") not in ("auto", "none"):
@@ -450,6 +451,28 @@ def _local_tool(tool: object, nested: bool = False) -> bool:
         and 0 < len(children) <= 32
         and all(_local_tool(child, nested=True) for child in children)
     )
+
+
+def _tool_shape_reason(tool: object) -> str:
+    if not isinstance(tool, dict):
+        return "tool declaration is not an object"
+    kind = tool.get("type")
+    if kind in {"function", "custom"}:
+        return "local tool name is missing"
+    if kind != "namespace":
+        return "provider hosted or unknown tool type is forbidden"
+    if set(tool) - {"type", "name", "description", "tools"}:
+        return "namespace has unexpected fields"
+    if not isinstance(tool.get("name"), str) or not tool["name"]:
+        return "namespace name is missing"
+    children = tool.get("tools")
+    if not isinstance(children, list) or not 0 < len(children) <= 32:
+        return "namespace tools are missing or excessive"
+    if any(isinstance(child, dict) and child.get("type") == "namespace" for child in children):
+        return "nested namespace is forbidden"
+    if any(isinstance(child, dict) and child.get("type") in {"function", "custom"} for child in children):
+        return "namespace child name is missing or malformed"
+    return "namespace child type is forbidden"
 
 
 def _reject_remote_resources(value: object) -> None:

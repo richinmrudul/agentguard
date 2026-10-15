@@ -244,7 +244,7 @@ def test_frozen_local_namespace_tool_is_counted_but_hosted_child_is_denied() -> 
 
     meter, backend = session()
     local_tool["tools"] = [{"type": "web_search", "name": "external"}]
-    with pytest.raises(MeteringError, match="tool type"):
+    with pytest.raises(MeteringError, match="child type"):
         meter.generate(request(tools=[local_tool]), CANARY)
     assert backend.paths == []
 

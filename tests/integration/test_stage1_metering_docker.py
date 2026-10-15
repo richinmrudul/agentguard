@@ -54,6 +54,19 @@ def _ready(container: str, seconds: int = 15) -> None:
     raise AssertionError("mock container did not become live")
 
 
+def _read_bounded_evidence(container: str) -> str | None:
+    result = _docker(
+        "exec", container, "/usr/bin/python3", "-c",
+        "from pathlib import Path; import sys; p=Path('/stage1-metering/evidence.json'); "
+        "b=p.read_bytes(); assert len(b)<=65536; sys.stdout.buffer.write(b)",
+        check=False,
+    )
+    if result.returncode:
+        return None
+    assert len(result.stdout) <= 65536
+    return result.stdout
+
+
 @pytest.mark.docker
 def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Path) -> None:
     probe = _docker("info", "--format", "{{.ServerVersion}}", check=False)
@@ -131,13 +144,11 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
         )
         safe_output = (result.stdout + result.stderr).replace(CANARY, "[REDACTED]")
         if result.returncode:
-            copied = _docker(
-                "cp", f"{gateway}:/stage1-metering/evidence.json",
-                str(tmp_path / "failed-evidence.json"), check=False,
-            )
+            current_evidence = _read_bounded_evidence(gateway)
             reason = "no retained metering evidence"
-            if copied.returncode == 0:
-                reason = json.loads((tmp_path / "failed-evidence.json").read_text()).get(
+            if current_evidence is not None:
+                assert CANARY not in current_evidence
+                reason = json.loads(current_evidence).get(
                     "failure_reason", "no failure reason"
                 )
             logs = _docker("logs", gateway, check=False)
@@ -156,7 +167,7 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
                 f"frozen Codex metering failed: {reason}; "
                 f"gateway_running={state['Running']}; "
                 f"evidence_state={file_state.stdout.strip()[:20]}; "
-                f"docker_copy_ok={copied.returncode == 0}; denial_codes={denial_codes}"
+                f"evidence_readable={current_evidence is not None}; denial_codes={denial_codes}"
             )
         agent_state = json.loads(_docker("inspect", agent).stdout)[0]
         assert set(agent_state["NetworkSettings"]["Networks"]) == {internal}
@@ -164,10 +175,11 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
         assert agent_state["Config"]["User"] == "10001:10001"
         assert CANARY not in result.stdout + result.stderr
         assert "mock complete" in safe_output
-        _docker("cp", f"{gateway}:/stage1-metering/evidence.json", str(tmp_path / "evidence.json"))
-        evidence = (tmp_path / "evidence.json").read_text()
+        evidence = _read_bounded_evidence(gateway)
+        assert evidence is not None
         assert CANARY not in evidence
         assert json.loads(evidence)["events"]
+        (tmp_path / "evidence.json").write_text(evidence)
         assert CANARY not in _docker("logs", gateway).stdout
         assert CANARY not in _docker("logs", provider).stdout
     finally:
@@ -178,3 +190,5 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
             assert _docker("inspect", name, check=False).returncode != 0
         for name in (internal, outbound):
             assert _docker("network", "inspect", name, check=False).returncode != 0
+        if (tmp_path / "evidence.json").exists():
+            assert json.loads((tmp_path / "evidence.json").read_text())["events"]

@@ -88,8 +88,10 @@ contains no raw prompt, output, request body,
 query, authorization header, cookie, real or synthetic token, or host path.
 Failed mock requests retain only a bounded static validation reason for
 diagnosis. A fixed-format denial code is also sent to local container stderr
-if evidence cannot be copied; the Docker regression filters only these codes
-and process liveness, never request bodies or unrestricted logs.
+if evidence cannot be read. The Docker regression reads at most 64 KiB of
+sanitized evidence through the same non-root container user, retains it outside
+the container before cleanup, and filters only denial codes and liveness on
+failure, never request bodies or unrestricted logs.
 The gateway creates current-run evidence only and refuses a stale evidence
 file. In-memory study accounting is suitable for mock proof only; Phase B must
 provide crash-safe, cross-trial reservations before a live authorization can
@@ -97,7 +99,8 @@ be created.
 
 ## Source record
 
-Retrieved 2026-10-14. These are the authoritative inputs used for Phase A:
+Retrieved 2026-10-14; frozen tool-spec source rechecked 2026-10-15. These are
+the authoritative inputs used for Phase A:
 
 - [Frozen Codex 0.159.2 provider configuration](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/model-provider-info/src/lib.rs) and [CLI override parsing](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/utils/cli/src/config_override.rs).
 - [Frozen Codex Responses request construction](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/client.rs) and [request serialization](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/codex-api/src/common.rs).
