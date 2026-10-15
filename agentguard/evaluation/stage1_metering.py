@@ -460,6 +460,12 @@ def _tool_shape_reason(tool: object) -> str:
     if kind in {"function", "custom"}:
         return "local tool name is missing"
     if kind != "namespace":
+        if kind == "tool_search":
+            return "hosted tool search is forbidden"
+        if kind == "web_search":
+            return "hosted web search is forbidden"
+        if kind == "image_generation":
+            return "hosted image generation is forbidden"
         return "provider hosted or unknown tool type is forbidden"
     if set(tool) - {"type", "name", "description", "tools"}:
         return "namespace has unexpected fields"

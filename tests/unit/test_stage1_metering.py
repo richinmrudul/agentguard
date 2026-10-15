@@ -249,6 +249,18 @@ def test_frozen_local_namespace_tool_is_counted_but_hosted_child_is_denied() -> 
     assert backend.paths == []
 
 
+@pytest.mark.parametrize("kind,reason", [
+    ("tool_search", "hosted tool search"),
+    ("web_search", "hosted web search"),
+    ("image_generation", "hosted image generation"),
+])
+def test_hosted_tool_categories_are_explicitly_denied(kind: str, reason: str) -> None:
+    meter, backend = session()
+    with pytest.raises(MeteringError, match=reason):
+        meter.generate(request(tools=[{"type": kind}]), CANARY)
+    assert backend.paths == []
+
+
 def test_budget_failure_occurs_before_generation() -> None:
     meter, backend = session(max_input_tokens=6)
     with pytest.raises(MeteringError, match="input token limit"):
