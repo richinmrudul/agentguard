@@ -25,11 +25,12 @@ BASE = (
     "gcr.io/distroless/python3-debian13:nonroot@"
     "sha256:339ecee37afe554f5237b9993250bc390ac9f1483a08c9b5e77ac4c016d6d39a"
 )
-AGENT = (
+PUBLISHED_AGENT = (
     "ghcr.io/richinmrudul/agentguard/stage1-codex-agent@"
     "sha256:31402671e20d26972f0345c4bf3263d4f5309c0f450cfbaece19b2b799caa93a"
 )
-MODEL = "stage1-mock-2026-10-14"
+AGENT = os.environ.get("AGENTGUARD_MODEL_COMPAT_IMAGE", PUBLISHED_AGENT)
+MODEL = os.environ.get("AGENTGUARD_MODEL_COMPAT_MODEL", "stage1-mock-2026-10-14")
 CANARY = "AGENTGUARD_FAKE_CREDENTIAL_CANARY"
 SHA = "sha256:" + "a" * 64
 
@@ -107,7 +108,7 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
             "run", "-d", "--name", provider, "--network", outbound,
             "--network-alias", "stage1-mock-provider", "--read-only",
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-            "--user", "65532:65532", provider_image,
+            "--user", "65532:65532", "--env", f"STAGE1_MOCK_MODEL={MODEL}", provider_image,
         )
         _ready(provider)
         _docker(
@@ -179,6 +180,34 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
         assert evidence is not None
         assert CANARY not in evidence
         assert json.loads(evidence)["events"]
+        if MODEL == "gpt-5.2-2025-12-11":
+            inspection = _docker(
+                "exec", provider, "/usr/bin/python3", "-c",
+                "import urllib.request; print(urllib.request.urlopen("
+                "'http://127.0.0.1:8443/inspection', timeout=2).read().decode())",
+            )
+            requests = json.loads(inspection.stdout)["requests"]
+            assert [request["path"] for request in requests] == [
+                "/v1/responses/input_tokens", "/v1/responses",
+            ]
+            generation = requests[-1]
+            assert all(request["model"] == MODEL for request in requests)
+            assert generation["stream"] is True
+            assert generation["reasoning_effort"] == "none"
+            assert generation["reasoning_summary"] is None
+            assert generation["verbosity"] is None
+            assert generation["parallel_tool_calls"] is True
+            assert set(generation["tool_types"]) <= {"function", "custom"}
+            assert generation["tool_types"]
+            assert generation["tool_names"]
+            assert (
+                "exec_command" in generation["tool_names"]
+                or "functions.exec_command" in generation["tool_names"]
+                or "functions" in generation["tool_names"]
+            )
+            assert "model" in generation["keys"]
+            assert "store" in generation["keys"]
+            assert "stream" in generation["keys"]
         (tmp_path / "evidence.json").write_text(evidence)
         assert CANARY not in _docker("logs", gateway).stdout
         assert CANARY not in _docker("logs", provider).stdout

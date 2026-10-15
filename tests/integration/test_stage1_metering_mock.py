@@ -223,6 +223,8 @@ def test_http_boundary_denies_unapproved_routes_and_headers(
         assert reply.status == expected
         reply.read()
         assert session.generations == 0
+        if path == "/v1/models":
+            assert session.closed
         if session.closed:
             assert json.loads(evidence.read_text())["trial_closed"] is True
             assert CANARY not in evidence.read_text()
