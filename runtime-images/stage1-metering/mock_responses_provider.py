@@ -79,14 +79,22 @@ class MockHandler(BaseHTTPRequestHandler):
         if self.scenario == "missing-usage":
             response.pop("usage")
         if payload.get("stream") is True:
+            message = response["output"][0]
             frames = [
                 {"type": "response.created", "sequence_number": 0, "response": {
                     "id": response["id"], "model": response["model"], "status": "in_progress",
                 }},
-                {"type": "response.output_text.delta", "sequence_number": 1,
+                {"type": "response.output_item.added", "sequence_number": 1,
+                 "output_index": 0, "item": {
+                     "id": message["id"], "type": "message", "status": "in_progress",
+                     "role": "assistant", "content": [],
+                 }},
+                {"type": "response.output_text.delta", "sequence_number": 2,
                  "item_id": "msg_stage1_mock", "output_index": 0, "content_index": 0,
                  "delta": "mock complete"},
-                {"type": "response.completed", "sequence_number": 2, "response": response},
+                {"type": "response.output_item.done", "sequence_number": 3,
+                 "output_index": 0, "item": message},
+                {"type": "response.completed", "sequence_number": 4, "response": response},
             ]
             body = b"".join(b"data: " + _json(frame).rstrip(b"\n") + b"\n\n" for frame in frames)
             if self.scenario == "disconnect":

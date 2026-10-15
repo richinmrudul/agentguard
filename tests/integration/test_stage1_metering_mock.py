@@ -90,6 +90,17 @@ def test_local_mock_http_gateway_counts_and_retains_only_sanitized_evidence(
             status, response = _post(gateway_server.server_port, "/v1/responses", body)
             assert status == 200
             assert b"mock complete" in response
+            if stream:
+                events = [
+                    json.loads(frame.removeprefix(b"data: "))
+                    for frame in response.split(b"\n\n") if frame
+                ]
+                assert [event["type"] for event in events] == [
+                    "response.created", "response.output_item.added",
+                    "response.output_text.delta", "response.output_item.done",
+                    "response.completed",
+                ]
+                assert [event["sequence_number"] for event in events] == list(range(5))
         assert mock_handler.count_requests == 2
         assert mock_handler.generations == 2
         assert session.generations == 2
