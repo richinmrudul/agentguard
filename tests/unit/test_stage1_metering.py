@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from decimal import Decimal
 from pathlib import Path
 
@@ -272,6 +273,40 @@ def test_local_tool_schema_property_names_are_not_remote_resources() -> None:
     meter, backend = session()
     meter.generate(request(tools=[local_tool]), CANARY)
     assert backend.paths == ["/v1/responses/input_tokens", "/v1/responses"]
+
+
+def test_concurrent_denial_closes_trial_before_billable_generation() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    class SlowCount(MockResponses):
+        def post(self, path: str, body: bytes) -> UpstreamReply:
+            if path == "/v1/responses/input_tokens":
+                entered.set()
+                assert release.wait(5)
+            return super().post(path, body)
+
+    meter, backend = session(SlowCount())
+    failures: list[str] = []
+
+    def first_request() -> None:
+        try:
+            meter.generate(request(), CANARY)
+        except MeteringError as error:
+            failures.append(str(error))
+
+    worker = threading.Thread(target=first_request)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        with pytest.raises(MeteringError, match="concurrent generation"):
+            meter.generate(request(), CANARY)
+    finally:
+        release.set()
+        worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert failures == ["trial closed during an in-flight token count"]
+    assert backend.paths == ["/v1/responses/input_tokens"]
 
 
 def test_budget_failure_occurs_before_generation() -> None:

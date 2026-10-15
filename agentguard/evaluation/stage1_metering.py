@@ -313,6 +313,8 @@ class MeteringSession:
                 "/v1/responses/input_tokens", canonical_bytes(_count_payload(request))
             )
             count = _input_count(count_reply)
+            if self.closed:
+                raise MeteringError("trial closed during an in-flight token count")
             if self.clock() - self.started >= self.limits.max_elapsed_seconds:
                 raise MeteringError("trial elapsed-time limit exceeded after token count")
             output_cap = request["max_output_tokens"]
