@@ -29,6 +29,12 @@ git -C "$source_dir" diff --check
 
 (
   cd "$source_dir/codex-rs"
+  if ! cargo metadata --locked --format-version 1 >/dev/null; then
+    cargo metadata --format-version 1 >/dev/null
+    git diff --numstat -- Cargo.lock
+    git diff -- Cargo.lock
+    exit 1
+  fi
   cargo test --locked -p codex-models-manager dated_gpt_5_2_snapshot_has_exact_bundled_metadata
   cargo build --locked --release --target x86_64-unknown-linux-musl -p codex-cli --bin codex
 )
