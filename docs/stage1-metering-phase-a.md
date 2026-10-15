@@ -60,6 +60,9 @@ reconciles with the pre-count. Both count requests and generation requests are
 tracked. Missing, duplicated, out-of-order, truncated, unknown, or
 contradictory usage closes the trial; a failed post-send reservation remains
 consumed conservatively rather than being reported as measured cost.
+Concurrent denial also closes an in-flight token-count operation before it can
+send generation. If sanitized evidence cannot be written, the trial closes and
+subsequent generation is denied.
 
 The count call carries only the input-shaping fields documented by the count
 endpoint (`model`, `instructions`, `input`, `tools`, `tool_choice`,
@@ -103,12 +106,15 @@ be created.
 
 ## Source record
 
-Retrieved 2026-10-14; frozen tool-spec source rechecked 2026-10-15. These are
+Retrieved 2026-10-14; frozen tool-spec, web-search configuration, and SSE
+parser source rechecked 2026-10-15. These are
 the authoritative inputs used for Phase A:
 
 - [Frozen Codex 0.159.2 provider configuration](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/model-provider-info/src/lib.rs) and [CLI override parsing](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/utils/cli/src/config_override.rs).
 - [Frozen Codex Responses request construction](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/client.rs) and [request serialization](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/codex-api/src/common.rs).
 - [Frozen Codex tool-spec serialization](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/tools/src/tool_spec.rs), including locally executed namespace wrappers.
+- [Frozen Codex web-search mode](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/protocol/src/config_types.rs) and [configuration resolution](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/config/mod.rs), which permit `web_search="disabled"`.
+- [Frozen Codex Responses SSE parser](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/codex-api/src/sse/responses.rs), which handles output-item and text-delta events.
 - [OpenAI input-token counting](https://developers.openai.com/api/docs/guides/token-counting) and [endpoint reference](https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count).
 - [Responses streaming terminal event and usage](https://developers.openai.com/api/reference/resources/responses/streaming-events) and [pricing source](https://developers.openai.com/api/docs/pricing).
 
@@ -117,8 +123,8 @@ pricing effective for that model, or live token-count billing. None is inferred.
 
 ## Phase B dependency order
 
-1. Inspect the hosted frozen-CLI Docker proof and reconcile any exact wire
-   differences. No skipped Docker result counts as proof.
+1. Preserve the hosted frozen-CLI Docker proof and extend it for every live
+   transport change. No skipped Docker result counts as proof.
 2. Add and review a production gateway transport and live-only credential
    resolver. The real `CODEX_API_KEY` must exist only inside that gateway;
    the agent receives only a synthetic trial-scoped value. Add crash-safe
