@@ -7,15 +7,35 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
-MODEL = "stage1-mock-2026-10-14"
+MODEL = os.environ.get("STAGE1_MOCK_MODEL", "stage1-mock-2026-10-14")
 CANARY = "AGENTGUARD_FAKE_CREDENTIAL_CANARY"
 MAX_BODY = 256 * 1024
+SAFE_FIELDS = {
+    "model", "instructions", "input", "tools", "tool_choice", "parallel_tool_calls",
+    "reasoning", "store", "stream", "stream_options", "include", "service_tier",
+    "prompt_cache_key", "text", "max_output_tokens", "previous_response_id",
+}
+SAFE_TOOL_NAMES = {
+    "exec_command", "apply_patch", "functions.exec_command",
+    "functions.apply_patch", "functions",
+}
+
+
+def _choice(value: object, allowed: set[object]) -> object:
+    return value if isinstance(value, (str, bool, type(None))) and value in allowed else "unexpected"
 
 
 class MockHandler(BaseHTTPRequestHandler):
     scenario = "success"
     count_requests = 0
     generations = 0
+    request_shapes: list[dict[str, object]] = []
+
+    def do_GET(self) -> None:
+        if self.path != "/inspection":
+            self._send(404, "text/plain", b"not found\n")
+            return
+        self._send(200, "application/json", _json({"requests": type(self).request_shapes}))
 
     def do_POST(self) -> None:
         length = self.headers.get("Content-Length", "")
@@ -31,6 +51,33 @@ class MockHandler(BaseHTTPRequestHandler):
         except (UnicodeError, json.JSONDecodeError):
             self._send(400, "text/plain", b"invalid JSON\n")
             return
+        tools = payload.get("tools")
+        safe_tools = tools if isinstance(tools, list) else []
+        reasoning = payload.get("reasoning")
+        safe_reasoning = reasoning if isinstance(reasoning, dict) else {}
+        text = payload.get("text")
+        safe_text = text if isinstance(text, dict) else {}
+        type(self).request_shapes.append({
+            "path": _choice(self.path, {"/v1/responses/input_tokens", "/v1/responses"}),
+            "model": payload.get("model") if payload.get("model") == MODEL else "unexpected",
+            "keys": sorted(key if key in SAFE_FIELDS else "unexpected" for key in payload)[:64],
+            "stream": payload.get("stream") is True,
+            "reasoning_effort": _choice(safe_reasoning.get("effort"),
+                                         {None, "none", "low", "medium", "high", "xhigh"}),
+            "reasoning_summary": _choice(safe_reasoning.get("summary"),
+                                          {None, "none", "auto", "concise", "detailed"}),
+            "verbosity": _choice(safe_text.get("verbosity"),
+                                 {None, "low", "medium", "high"}),
+            "parallel_tool_calls": _choice(payload.get("parallel_tool_calls"),
+                                           {None, True, False}),
+            "tool_types": [_choice(tool.get("type"), {"function", "custom"})
+                           for tool in safe_tools[:32]
+                           if isinstance(tool, dict)],
+            "tool_names": [_choice(tool.get("name"), SAFE_TOOL_NAMES)
+                           for tool in safe_tools[:32]
+                           if isinstance(tool, dict)],
+        })
+        type(self).request_shapes = type(self).request_shapes[-16:]
         if payload.get("model") != MODEL:
             self._send(400, "text/plain", b"wrong model\n")
             return
@@ -119,6 +166,8 @@ def _json(value: object) -> bytes:
 
 
 def main() -> None:
+    if MODEL not in {"stage1-mock-2026-10-14", "gpt-5.2-2025-12-11"}:
+        raise SystemExit("unknown mock model")
     scenario = os.environ.get("STAGE1_MOCK_SCENARIO", "success")
     if scenario not in {
         "success", "count-error", "redirect", "error", "model-mismatch",

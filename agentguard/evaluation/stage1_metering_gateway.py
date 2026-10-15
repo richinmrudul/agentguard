@@ -75,6 +75,8 @@ def handler_for(session: MeteringSession, evidence_path: Path) -> type[BaseHTTPR
 
         def do_GET(self) -> None:
             if self.path != "/healthz":
+                session.closed = True
+                session.failure_reason = "unapproved path"
                 self._deny(404)
                 return
             self._send(200, "text/plain", b"ok\n")
