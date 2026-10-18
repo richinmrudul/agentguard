@@ -40,6 +40,7 @@ git -C "$source_dir" diff --check
   '
   cargo metadata --locked --format-version 1 >/dev/null
   sha256sum Cargo.lock
+  cargo test --locked -p codex-models-manager bundled_models_json_roundtrips
   cargo test --locked -p codex-models-manager dated_gpt_5_2_snapshot_has_exact_bundled_metadata
   cargo build --locked --release --target x86_64-unknown-linux-musl -p codex-cli --bin codex
 )
