@@ -27,7 +27,7 @@ The source is Apache-2.0; the frozen `LICENSE` and `NOTICE` SHA-256 values are
 and `9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915`.
 The source patch at
 `runtime-images/codex-agent/model-gpt-5.2-2025-12-11.patch` has SHA-256
-`f0cfb22492f69e71b6124c45afe5809ba1dcd0f9f63c3ac2bdce990987be44eb`.
+`00c4a5f5e690b1b09f440cfbaa3e98ed7799066009ad500ad399461c20b55a95`.
 The source-built candidate reports upstream version 0.159.2; the local
 mock-only derivative image is labeled
 `0.159.2+agentguard-model-gpt-5.2-2025-12-11` to distinguish it from the
@@ -54,6 +54,10 @@ bundled record, disallow prefix/namespaced matching for it, and terminate if
 that record is absent. The static record is compiled into the source-built
 binary, not loaded from a mutable runtime path. The source test deliberately
 removes the record and requires fail-closed termination.
+Its short `base_instructions` string is an explicit AgentGuard-local task
+instruction, not an inferred model capability or a claim that the unmodified
+Codex prompt is preserved. The frozen catalog parser requires a nonempty
+instruction template before any model can be selected.
 
 ## Capability mapping
 
@@ -79,7 +83,7 @@ determine how they are emitted and consumed.
 | Tools | Unified local shell and freeform patch declarations, grounded in documented function/custom tool support and frozen Codex tool serialization. Hosted mock checks actual declarations; no hosted/provider tools are enabled. |
 | Parallel calls | Frozen Codex sends `parallel_tool_calls=true` with ordinary Responses; the model guide documents tool-call parallelism. The metering gateway still allows only one in-flight generation per trial. |
 | Streaming | Ordinary Responses SSE, not Responses Lite or WebSockets; official streaming support and frozen SSE parser. |
-| Prompt | Frozen generic Codex instructions from `models-manager/prompt.md`; this is a client instruction, not a claim about model capability. |
+| Prompt | Short static AgentGuard-local `base_instructions`; this is a client instruction, not a claim about model capability. |
 | Truncation | 10,000 bytes of tool output; conservative local limit. |
 | Advanced features | No model search, image-original, experimental context/tools, reasoning-effort updates, hosted web search, multi-agent mode, extra service tier, or node REPL. |
 | Pricing | Official model page quotes USD 1.75 input, 0.175 cached input, and 14 output per million tokens. This prerequisite does not freeze a pricing policy or authorize spending. |

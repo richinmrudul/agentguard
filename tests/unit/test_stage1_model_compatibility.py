@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 PATCH = ROOT / "runtime-images/codex-agent/model-gpt-5.2-2025-12-11.patch"
-EXPECTED_PATCH = "f0cfb22492f69e71b6124c45afe5809ba1dcd0f9f63c3ac2bdce990987be44eb"
+EXPECTED_PATCH = "00c4a5f5e690b1b09f440cfbaa3e98ed7799066009ad500ad399461c20b55a95"
 SNAPSHOT = "gpt-5.2-2025-12-11"
 
 
@@ -24,6 +24,7 @@ def test_reviewed_patch_is_exact_and_fail_closed() -> None:
     assert b'"supports_reasoning_summary_parameter": false' in patch
     assert b'"use_responses_lite": false' in patch
     assert b'"input_modalities": ["text"]' in patch
+    assert b'"base_instructions": "You are Codex, a coding assistant.' in patch
 
 
 def test_build_is_pinned_and_local_candidate_cannot_publish() -> None:

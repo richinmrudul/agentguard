@@ -12,7 +12,7 @@ expected_tree=406dfdd5c68f303a3a8d04f32b3965b3b0ca0361
 expected_lock=4fab6fe99180e2b8f305bd4b33c1b4bd825e3fa4cdef1045be750843bd3d431e
 expected_license=d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc
 expected_notice=9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915
-expected_patch=f0cfb22492f69e71b6124c45afe5809ba1dcd0f9f63c3ac2bdce990987be44eb
+expected_patch=00c4a5f5e690b1b09f440cfbaa3e98ed7799066009ad500ad399461c20b55a95
 
 test "$(git -C "$source_dir" rev-parse HEAD)" = "$expected_commit"
 test "$(git -C "$source_dir" rev-parse refs/tags/rust-v0.159.2)" = "$expected_tag"

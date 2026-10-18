@@ -2,7 +2,7 @@ diff --git a/codex-rs/models-manager/models.json b/codex-rs/models-manager/model
 index 77e0389..84acb5d 100644
 --- a/codex-rs/models-manager/models.json
 +++ b/codex-rs/models-manager/models.json
-@@ -2,0 +3,44 @@
+@@ -2,0 +3,45 @@
 +    {
 +      "slug": "gpt-5.2-2025-12-11",
 +      "display_name": "GPT-5.2 (2025-12-11)",
@@ -45,7 +45,8 @@ index 77e0389..84acb5d 100644
 +      "node_repl_auto_review_required": false,
 +      "node_repl_disabled": true,
 +      "tool_mode": null,
-+      "model_messages": null
++      "model_messages": null,
++      "base_instructions": "You are Codex, a coding assistant. Follow the bounded task instructions and use only the available local tools."
 +    },
 diff --git a/codex-rs/models-manager/src/manager.rs b/codex-rs/models-manager/src/manager.rs
 index 7b4d613..cb9851a 100644
@@ -130,11 +131,7 @@ diff --git a/codex-rs/models-manager/src/model_info.rs b/codex-rs/models-manager
 index 88ade7c..6791138 100644
 --- a/codex-rs/models-manager/src/model_info.rs
 +++ b/codex-rs/models-manager/src/model_info.rs
-@@ -19,0 +20,3 @@ pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig)
-+    if model.slug == "gpt-5.2-2025-12-11" && model.model_messages.is_none() {
-+        model.model_messages = Some(local_model_messages());
-+    }
-@@ -99,0 +103,5 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
+@@ -99,0 +100,5 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
 +    assert_ne!(
 +        slug,
 +        "gpt-5.2-2025-12-11",
