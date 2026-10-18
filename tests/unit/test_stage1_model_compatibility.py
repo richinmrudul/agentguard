@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
+import json
 from pathlib import Path
 
 
@@ -32,7 +34,7 @@ def test_build_is_pinned_and_local_candidate_cannot_publish() -> None:
     assert EXPECTED_PATCH in script
     assert "ff6aec96948b70d94983af2641a6b67c94faeff5" in script
     assert "406dfdd5c68f303a3a8d04f32b3965b3b0ca0361" in script
-    assert "cargo build --locked --release" in script
+    assert "cargo build --locked --target x86_64-unknown-linux-musl" in script
     assert "docker push" not in script
     dockerfile = (
         ROOT / "runtime-images/codex-agent/Dockerfile.model-compatibility"
@@ -52,3 +54,38 @@ def test_mock_inspection_can_never_echo_unreviewed_values() -> None:
     for value in ("FAKE_CREDENTIAL_CANARY", "Authorization: Bearer secret", "/private/path"):
         assert module._choice(value, {SNAPSHOT}) == "unexpected"
     assert module._choice([SNAPSHOT], {SNAPSHOT}) == "unexpected"
+
+    module.MODEL = SNAPSHOT
+    payload = json.dumps({"model": SNAPSHOT, "stream": False}).encode()
+    handler = object.__new__(module.MockHandler)
+    handler.path = "/v1/responses/input_tokens"
+    handler.headers = {"Content-Length": str(len(payload))}
+    handler.rfile = io.BytesIO(payload)
+    sent = []
+    handler._send = lambda status, content_type, body: sent.append(
+        (status, content_type, body)
+    )
+    handler.do_POST()
+    assert sent[-1][0] == 200
+    assert json.loads(sent[-1][2])["input_tokens"] == 7
+    assert module.MockHandler.request_shapes[-1]["model"] == SNAPSHOT
+
+    handler.path = "/inspection"
+    handler.do_GET()
+    inspection = json.loads(sent[-1][2])
+    assert inspection["requests"][-1]["model"] == SNAPSHOT
+    assert "Authorization" not in sent[-1][2].decode()
+
+    handler.path = "/models"
+    handler.do_GET()
+    assert sent[-1][0] == 404
+
+    handler.path = "/v1/responses"
+    handler.headers = {
+        "Content-Length": str(len(payload)),
+        "Authorization": "Bearer FAKE_CREDENTIAL_CANARY",
+    }
+    handler.rfile = io.BytesIO(payload)
+    handler.do_POST()
+    assert sent[-1][0] == 400
+    assert b"FAKE_CREDENTIAL_CANARY" not in sent[-1][2]

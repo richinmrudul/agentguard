@@ -185,7 +185,7 @@ jobs:
           docker build --pull=false --network=none \
             -f runtime-images/codex-agent/Dockerfile.model-compatibility \
             -t agentguard-codex-model-compatibility:mock \
-            "$RUNNER_TEMP/reviewed-codex/codex-rs/target/x86_64-unknown-linux-musl/release"
+            "$RUNNER_TEMP/reviewed-codex/codex-rs/target/x86_64-unknown-linux-musl/debug"
 
       - name: Prove exact snapshot through internal mock only
         env:

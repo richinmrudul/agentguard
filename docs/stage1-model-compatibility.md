@@ -32,7 +32,10 @@ The source-built candidate reports upstream version 0.159.2; the local
 mock-only derivative image is labeled
 `0.159.2+agentguard-model-gpt-5.2-2025-12-11` to distinguish it from the
 published upstream-package image. No stable replacement binary or image digest
-is claimed before a reproducible hosted build.
+is claimed before a reproducible hosted build. The hosted compatibility check
+uses a locked Linux musl debug binary to prove selection and wire behavior;
+the production replacement in Phase B2 still requires a separately reviewed
+optimized binary and build identity.
 
 The frozen bundled catalog contains no `gpt-5.2` family or dated snapshot.
 The [model manager](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/models-manager/src/manager.rs)
