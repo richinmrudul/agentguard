@@ -16,7 +16,9 @@ SAFE_FIELDS = {
     "prompt_cache_key", "text", "max_output_tokens", "previous_response_id",
 }
 SAFE_TOOL_NAMES = {
-    "exec_command", "apply_patch", "functions.exec_command",
+    "exec_command", "write_stdin", "update_plan", "apply_patch", "view_image",
+    "request_permissions", "spawn_agent", "send_input", "resume_agent",
+    "wait_agent", "close_agent", "functions.exec_command",
     "functions.apply_patch", "functions",
 }
 

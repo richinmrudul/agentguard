@@ -201,6 +201,7 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
             assert generation["tool_types"]
             assert generation["tool_names"]
             assert "unexpected" not in generation["tool_names"]
+            assert "apply_patch" in generation["tool_names"]
             assert (
                 "exec_command" in generation["tool_names"]
                 or "functions.exec_command" in generation["tool_names"]
@@ -209,6 +210,7 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
             assert "model" in generation["keys"]
             assert "store" in generation["keys"]
             assert "stream" in generation["keys"]
+            print("STAGE1_REVIEWED_REQUEST_SHAPE=" + json.dumps(generation, sort_keys=True))
         (tmp_path / "evidence.json").write_text(evidence)
         assert CANARY not in _docker("logs", gateway).stdout
         assert CANARY not in _docker("logs", provider).stdout
