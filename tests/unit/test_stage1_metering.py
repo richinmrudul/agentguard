@@ -411,7 +411,7 @@ def test_codex_argv_has_only_internal_static_provider() -> None:
     assert "model_provider=stage1_metered" in argv
     assert 'web_search="disabled"' in argv
     for disabled in (
-        "features.multi_agent=false", "features.apps=false",
+        "agents.enabled=false", "features.multi_agent=false", "features.apps=false",
         "features.plugins=false", "features.view_image=false",
         "features.sleep_tool=false", "tools.experimental_request_user_input.enabled=false",
     ):
