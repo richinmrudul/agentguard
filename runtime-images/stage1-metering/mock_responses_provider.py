@@ -16,13 +16,7 @@ SAFE_FIELDS = {
     "prompt_cache_key", "text", "max_output_tokens", "previous_response_id",
 }
 SAFE_TOOL_NAMES = {
-    "exec_command", "write_stdin", "update_plan", "apply_patch", "view_image",
-    "request_permissions", "spawn_agent", "send_input", "resume_agent",
-    "wait_agent", "close_agent", "wait_for_environment", "request_user_input",
-    "request_user_input_async", "send_message_to_user_async", "new_context",
-    "get_context_remaining", "curr_time", "sleep", "send_message",
-    "followup_task", "interrupt_agent", "list_agents", "functions.exec_command",
-    "functions.apply_patch", "functions",
+    "exec_command", "write_stdin", "apply_patch",
 }
 
 

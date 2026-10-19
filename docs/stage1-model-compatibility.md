@@ -99,6 +99,10 @@ upstream count operation is `POST /v1/responses/input_tokens`. The hosted test
 uses synthetic prices, an internal-only Docker network, and a repository
 mock that records only bounded field names and enum projections. It rejects
 unexpected model names and does not forward or contact a provider.
+The metered argv explicitly disables the frozen CLI's default multi-agent,
+apps/plugins, view-image, sleep, and interactive-input tools. The mock accepts
+only the remaining local `exec_command`, `write_stdin`, and `apply_patch`
+declarations; an additional tool fails the compatibility proof.
 
 ## Replacement dependency
 
