@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -47,6 +48,33 @@ def _tool_shape(tools: object) -> tuple[list[object], list[object]]:
         if len(types) > 32:
             return ["unexpected"], ["unexpected"]
     return types, names
+
+
+def _tool_diagnostic(tools: object) -> list[dict[str, object]]:
+    if not isinstance(tools, list) or len(tools) > 32:
+        return []
+    result = []
+    for index, tool in enumerate(tools):
+        if not isinstance(tool, dict):
+            return []
+        tool_type = tool.get("type")
+        name = tool.get("name")
+        if not isinstance(tool_type, str) or len(tool_type) > 64 or not tool_type.isidentifier():
+            return []
+        if name is not None and (
+            not isinstance(name, str) or len(name) > 64 or not name.isidentifier()
+            or CANARY in name
+        ):
+            return []
+        canonical = json.dumps(tool, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=True, allow_nan=False).encode("ascii")
+        record: dict[str, object] = {
+            "index": index, "type": tool_type, "sha256": sha256(canonical).hexdigest(),
+        }
+        if name is not None:
+            record["name"] = name
+        result.append(record)
+    return result
 
 
 class MockHandler(BaseHTTPRequestHandler):
@@ -95,6 +123,7 @@ class MockHandler(BaseHTTPRequestHandler):
                                            {None, True, False}),
             "tool_types": tool_types,
             "tool_names": tool_names,
+            "tool_declarations": _tool_diagnostic(payload.get("tools")),
         })
         type(self).request_shapes = type(self).request_shapes[-16:]
         if payload.get("model") != MODEL:

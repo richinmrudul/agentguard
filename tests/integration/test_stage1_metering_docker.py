@@ -200,6 +200,10 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
             assert set(generation["tool_types"]) <= {"function", "custom"}
             assert generation["tool_types"]
             assert generation["tool_names"]
+            if "unexpected" in generation["tool_names"]:
+                print("STAGE1_TOOL_DIAGNOSTIC=" + json.dumps(
+                    generation["tool_declarations"], sort_keys=True,
+                ))
             assert "unexpected" not in generation["tool_names"]
             assert "apply_patch" in generation["tool_names"]
             assert (

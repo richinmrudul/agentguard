@@ -66,6 +66,21 @@ def test_mock_inspection_can_never_echo_unreviewed_values() -> None:
     assert module._tool_shape([{"type": "function", "name": "request_plugin_install"}]) == (
         ["function"], ["unexpected"]
     )
+    declaration = {
+        "type": "function", "name": "exec_command",
+        "description": "private prompt and path /private/fixture",
+        "parameters": {"properties": {"secret": "FAKE_CREDENTIAL_CANARY"}},
+    }
+    diagnostic = module._tool_diagnostic([declaration])
+    assert diagnostic == [{
+        "index": 0, "type": "function", "name": "exec_command",
+        "sha256": hashlib.sha256(json.dumps(
+            declaration, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        ).encode("ascii")).hexdigest(),
+    }]
+    assert "private prompt" not in json.dumps(diagnostic)
+    assert "FAKE_CREDENTIAL_CANARY" not in json.dumps(diagnostic)
+    assert module._tool_diagnostic([{"type": "function", "name": "/private/path"}]) == []
     assert module._tool_shape([{
         "type": "namespace", "name": "functions", "tools": [
             {"type": "provider_hosted", "name": "private-value"},
