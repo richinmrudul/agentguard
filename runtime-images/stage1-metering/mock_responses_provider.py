@@ -19,6 +19,11 @@ SAFE_FIELDS = {
 SAFE_TOOL_NAMES = {
     "exec_command", "write_stdin", "apply_patch",
 }
+REVIEWED_TOOL_DECLARATIONS = [
+    {"index": 0, "type": "function", "name": "exec_command", "sha256": "7ecb0f4f51b3982e36be43a9d08daa05348d7dd5f70646231b1f0f9823f40ec3"},
+    {"index": 1, "type": "function", "name": "write_stdin", "sha256": "9c3adbaa65e36ce23c7f1a8778e094a14b2086c993fc783727156276831c99dd"},
+    {"index": 2, "type": "custom", "name": "apply_patch", "sha256": "5947b870d79e16bddc34946a4afb6200ff14a97f8419a2d23f8e5040af9a7154"},
+]
 
 
 def _choice(value: object, allowed: set[object]) -> object:
@@ -77,6 +82,10 @@ def _tool_diagnostic(tools: object) -> list[dict[str, object]]:
     return result
 
 
+def _reviewed_tool_contract(tools: object) -> bool:
+    return _tool_diagnostic(tools) == REVIEWED_TOOL_DECLARATIONS
+
+
 class MockHandler(BaseHTTPRequestHandler):
     scenario = "success"
     count_requests = 0
@@ -124,6 +133,7 @@ class MockHandler(BaseHTTPRequestHandler):
             "tool_types": tool_types,
             "tool_names": tool_names,
             "tool_declarations": _tool_diagnostic(payload.get("tools")),
+            "reviewed_tool_contract": _reviewed_tool_contract(payload.get("tools")),
         })
         type(self).request_shapes = type(self).request_shapes[-16:]
         if payload.get("model") != MODEL:

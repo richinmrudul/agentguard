@@ -81,6 +81,12 @@ def test_mock_inspection_can_never_echo_unreviewed_values() -> None:
     assert "private prompt" not in json.dumps(diagnostic)
     assert "FAKE_CREDENTIAL_CANARY" not in json.dumps(diagnostic)
     assert module._tool_diagnostic([{"type": "function", "name": "/private/path"}]) == []
+    assert [record["name"] for record in module.REVIEWED_TOOL_DECLARATIONS] == [
+        "exec_command", "write_stdin", "apply_patch",
+    ]
+    assert [record["type"] for record in module.REVIEWED_TOOL_DECLARATIONS] == [
+        "function", "function", "custom",
+    ]
     assert module._tool_shape([{
         "type": "namespace", "name": "functions", "tools": [
             {"type": "provider_hosted", "name": "private-value"},
@@ -128,3 +134,29 @@ def test_mock_inspection_can_never_echo_unreviewed_values() -> None:
     handler.do_POST()
     assert sent[-1][0] == 400
     assert b"FAKE_CREDENTIAL_CANARY" not in sent[-1][2]
+
+
+def test_reviewed_tool_contract_rejects_every_shape_mutation(monkeypatch) -> None:
+    source = ROOT / "runtime-images/stage1-metering/mock_responses_provider.py"
+    spec = importlib.util.spec_from_file_location("stage1_mock_tool_contract", source)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    tools = [
+        {"type": "function", "name": "exec_command", "parameters": {"type": "object"}},
+        {"type": "function", "name": "write_stdin", "parameters": {"type": "object"}},
+        {"type": "custom", "name": "apply_patch", "format": {"type": "text"}},
+    ]
+    monkeypatch.setattr(module, "REVIEWED_TOOL_DECLARATIONS", module._tool_diagnostic(tools))
+    assert module._reviewed_tool_contract(tools)
+    variants = [
+        [tools[1], tools[0], tools[2]],
+        [tools[0], tools[0], tools[2]],
+        tools[:2],
+        tools + [{"type": "function", "name": "create_goal"}],
+        [dict(tools[0], name="run_command"), *tools[1:]],
+        [dict(tools[0], parameters={"type": "string"}), *tools[1:]],
+        [dict(tools[0], type="custom"), *tools[1:]],
+    ]
+    for variant in variants:
+        assert not module._reviewed_tool_contract(variant)

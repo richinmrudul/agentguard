@@ -100,9 +100,33 @@ uses synthetic prices, an internal-only Docker network, and a repository
 mock that records only bounded field names and enum projections. It rejects
 unexpected model names and does not forward or contact a provider.
 The metered argv explicitly sets `agents.enabled=false` and disables the frozen CLI's multi-agent,
-apps/plugins, view-image, sleep, and interactive-input tools. The mock accepts
-only the remaining local `exec_command`, `write_stdin`, and `apply_patch`
-declarations; an additional tool fails the compatibility proof.
+goals, apps/plugins, view-image, sleep, and interactive-input tools. The mock
+requires the complete ordered declaration set below by canonical JSON SHA-256;
+renaming, reordering, duplicating, deleting, adding, or changing a schema fails.
+The digest covers the whole declaration, while retained inspection contains
+only index, type, name, and digest. It never retains descriptions or schemas.
+
+| Position | Responses type/name | Frozen constructor and local router | Fixture need / decision | Canonical declaration SHA-256 |
+| --- | --- | --- | --- | --- |
+| 0 | `function` / `exec_command` | `add_shell_tools` -> `ExecCommandHandler::spec` -> `create_exec_command_tool_with_environment_id`; `ExecCommandHandler` | Required local shell for both fixtures; allowed | `7ecb0f4f51b3982e36be43a9d08daa05348d7dd5f70646231b1f0f9823f40ec3` |
+| 1 | `function` / `write_stdin` | `add_shell_tools` -> `WriteStdinHandler::spec` -> `create_write_stdin_tool`; `WriteStdinHandler` | Required for bounded interactive shell; allowed | `9c3adbaa65e36ce23c7f1a8778e094a14b2086c993fc783727156276831c99dd` |
+| 2 | `custom` / `apply_patch` | `add_core_utility_tools` -> `ApplyPatchHandler::spec` -> `create_apply_patch_freeform_tool`; `ApplyPatchHandler` | Required for bounded edit fixture; allowed | `5947b870d79e16bddc34946a4afb6200ff14a97f8419a2d23f8e5040af9a7154` |
+
+The first hosted fail-closed diagnostic also observed three unneeded
+`function` declarations at positions 3-5: `get_goal`
+(`460d7ce06591cae242849cc2a71b7ca991fe5aa56b89ecf686daced9ee843386`),
+`create_goal` (`3d6fb9faa106db74bff252990c4f689bc3b00edf4768c661dd98dc82dbc84285`),
+and `update_goal` (`289891a532194d2638a15032544166dcf1510d0c3f22067518332db27413058e`).
+They come from the frozen `codex-rs/ext/goal/src/spec.rs` constructors and
+`GoalToolKind` router in `codex-rs/ext/goal/src/tool.rs`; neither fixture needs
+goal state. The stable `goals` feature defaults on in the frozen source, so
+`features.goals=false` disables all three. None is added to the accepted set.
+The selected static model has `shell_type=shell_command` and
+`apply_patch_tool_type=freeform`: these are a function shell declaration and
+custom patch declaration, **not** Responses built-in `shell` or built-in
+`apply_patch`. No namespace, compatibility, hosted, or additional function
+declaration is accepted. The frozen source path for serialization is
+`codex-rs/tools/src/tool_spec.rs::create_tools_json_for_responses_api`.
 
 ## Replacement dependency
 
