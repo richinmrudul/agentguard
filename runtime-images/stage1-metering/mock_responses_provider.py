@@ -25,6 +25,31 @@ def _choice(value: object, allowed: set[object]) -> object:
     return value if isinstance(value, (str, bool, type(None))) and value in allowed else "unexpected"
 
 
+def _tool_shape(tools: object) -> tuple[list[object], list[object]]:
+    if not isinstance(tools, list) or len(tools) > 32:
+        return ["unexpected"], ["unexpected"]
+    types: list[object] = []
+    names: list[object] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            return ["unexpected"], ["unexpected"]
+        if tool.get("type") == "namespace":
+            members = tool.get("tools")
+            if not isinstance(members, list) or len(members) > 32:
+                return ["unexpected"], ["unexpected"]
+            for member in members:
+                if not isinstance(member, dict):
+                    return ["unexpected"], ["unexpected"]
+                types.append(_choice(member.get("type"), {"function", "custom"}))
+                names.append(_choice(member.get("name"), SAFE_TOOL_NAMES))
+        else:
+            types.append(_choice(tool.get("type"), {"function", "custom"}))
+            names.append(_choice(tool.get("name"), SAFE_TOOL_NAMES))
+        if len(types) > 32:
+            return ["unexpected"], ["unexpected"]
+    return types, names
+
+
 class MockHandler(BaseHTTPRequestHandler):
     scenario = "success"
     count_requests = 0
@@ -51,8 +76,7 @@ class MockHandler(BaseHTTPRequestHandler):
         except (UnicodeError, json.JSONDecodeError):
             self._send(400, "text/plain", b"invalid JSON\n")
             return
-        tools = payload.get("tools")
-        safe_tools = tools if isinstance(tools, list) else []
+        tool_types, tool_names = _tool_shape(payload.get("tools"))
         reasoning = payload.get("reasoning")
         safe_reasoning = reasoning if isinstance(reasoning, dict) else {}
         text = payload.get("text")
@@ -70,12 +94,8 @@ class MockHandler(BaseHTTPRequestHandler):
                                  {None, "low", "medium", "high"}),
             "parallel_tool_calls": _choice(payload.get("parallel_tool_calls"),
                                            {None, True, False}),
-            "tool_types": [_choice(tool.get("type"), {"function", "custom"})
-                           for tool in safe_tools[:32]
-                           if isinstance(tool, dict)],
-            "tool_names": [_choice(tool.get("name"), SAFE_TOOL_NAMES)
-                           for tool in safe_tools[:32]
-                           if isinstance(tool, dict)],
+            "tool_types": tool_types,
+            "tool_names": tool_names,
         })
         type(self).request_shapes = type(self).request_shapes[-16:]
         if payload.get("model") != MODEL:

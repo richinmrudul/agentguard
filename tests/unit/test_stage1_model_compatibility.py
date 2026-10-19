@@ -54,6 +54,24 @@ def test_mock_inspection_can_never_echo_unreviewed_values() -> None:
     for value in ("FAKE_CREDENTIAL_CANARY", "Authorization: Bearer secret", "/private/path"):
         assert module._choice(value, {SNAPSHOT}) == "unexpected"
     assert module._choice([SNAPSHOT], {SNAPSHOT}) == "unexpected"
+    assert module._tool_shape([{
+        "type": "namespace", "name": "functions", "tools": [
+            {"type": "function", "name": "exec_command"},
+            {"type": "custom", "name": "apply_patch"},
+        ],
+    }]) == (["function", "custom"], ["exec_command", "apply_patch"])
+    assert module._tool_shape([{
+        "type": "namespace", "name": "functions", "tools": [
+            {"type": "provider_hosted", "name": "private-value"},
+        ],
+    }]) == (["unexpected"], ["unexpected"])
+    assert module._tool_shape([{
+        "type": "namespace", "name": "functions", "tools": [
+            {"type": "function", "name": "exec_command"} for _ in range(32)
+        ],
+    }, {"type": "custom", "name": "apply_patch"}]) == (
+        ["unexpected"], ["unexpected"]
+    )
 
     module.MODEL = SNAPSHOT
     payload = json.dumps({"model": SNAPSHOT, "stream": False}).encode()
