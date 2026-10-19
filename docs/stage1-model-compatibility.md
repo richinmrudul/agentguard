@@ -99,6 +99,10 @@ upstream count operation is `POST /v1/responses/input_tokens`. The hosted test
 uses synthetic prices, an internal-only Docker network, and a repository
 mock that records only bounded field names and enum projections. It rejects
 unexpected model names and does not forward or contact a provider.
+The frozen count request has exactly `input`, `instructions`, `model`,
+`parallel_tool_calls`, `reasoning`, `tool_choice`, and `tools`. The generation
+adds `include`, `max_output_tokens`, `prompt_cache_key`, `store`, and `stream`;
+both exact field sets are asserted in the hosted mock proof.
 The metered argv explicitly sets `agents.enabled=false` and disables the frozen CLI's multi-agent,
 goals, apps/plugins, view-image, sleep, and interactive-input tools. The mock
 requires the complete ordered declaration set below by canonical JSON SHA-256;

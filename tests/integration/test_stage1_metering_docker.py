@@ -193,6 +193,10 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
             generation = requests[-1]
             assert all(request["model"] == MODEL for request in requests)
             assert all(request["reviewed_tool_contract"] for request in requests)
+            assert requests[0]["keys"] == [
+                "input", "instructions", "model", "parallel_tool_calls",
+                "reasoning", "tool_choice", "tools",
+            ]
             assert generation["stream"] is True
             assert generation["reasoning_effort"] == "none"
             assert generation["reasoning_summary"] is None
@@ -211,9 +215,11 @@ def test_frozen_codex_uses_only_internal_metered_mock_and_cleans_up(tmp_path: Pa
                 "exec_command", "write_stdin", "apply_patch",
             ]
             assert generation["tool_types"] == ["function", "function", "custom"]
-            assert "model" in generation["keys"]
-            assert "store" in generation["keys"]
-            assert "stream" in generation["keys"]
+            assert generation["keys"] == [
+                "include", "input", "instructions", "max_output_tokens", "model",
+                "parallel_tool_calls", "prompt_cache_key", "reasoning", "store",
+                "stream", "tool_choice", "tools",
+            ]
             print("STAGE1_REVIEWED_REQUEST_SHAPE=" + json.dumps(generation, sort_keys=True))
         (tmp_path / "evidence.json").write_text(evidence)
         assert CANARY not in _docker("logs", gateway).stdout
