@@ -60,6 +60,12 @@ def test_mock_inspection_can_never_echo_unreviewed_values() -> None:
             {"type": "custom", "name": "apply_patch"},
         ],
     }]) == (["function", "custom"], ["exec_command", "apply_patch"])
+    assert module._tool_shape([{"type": "function", "name": "wait_for_environment"}]) == (
+        ["function"], ["wait_for_environment"]
+    )
+    assert module._tool_shape([{"type": "function", "name": "request_plugin_install"}]) == (
+        ["function"], ["unexpected"]
+    )
     assert module._tool_shape([{
         "type": "namespace", "name": "functions", "tools": [
             {"type": "provider_hosted", "name": "private-value"},
