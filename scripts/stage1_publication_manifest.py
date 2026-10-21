@@ -23,6 +23,7 @@ from agentguard.evaluation.runtime_images import (  # noqa: E402
     CODEX_VERSION,
     GATEWAY_BASE_IMAGE,
     GATEWAY_REVIEWED_IMAGE_DIGEST,
+    VULNERABILITY_EXCEPTION_MANIFEST,
     RuntimeImageError,
     evaluate_trivy_high_critical_policy,
     load_vulnerability_exceptions,
@@ -40,8 +41,8 @@ REJECTED_PUBLICATIONS_SCHEMA_VERSION = 1
 PLATFORM = "linux/amd64"
 GATEWAY_PACKAGES = 38
 AGENT_PACKAGES = 5
-GATEWAY_HIGH_OCCURRENCES = 31
-GATEWAY_EXCEPTION_COUNT = 15
+GATEWAY_HIGH_OCCURRENCES = 26
+GATEWAY_EXCEPTION_COUNT = 10
 EXCEPTION_EXPIRY = "2026-11-06"
 GATEWAY_REPOSITORY = "ghcr.io/richinmrudul/agentguard/stage1-gateway"
 AGENT_REPOSITORY = "ghcr.io/richinmrudul/agentguard/stage1-codex-agent"
@@ -194,7 +195,7 @@ def build_prepare_manifest(
     }
     policy = evaluate_trivy_high_critical_policy(
         [root / "gateway.trivy.json", root / "agent.trivy.json"],
-        exception_manifest=ROOT / "runtime-images/vulnerability-exceptions.json",
+        exception_manifest=ROOT / VULNERABILITY_EXCEPTION_MANIFEST,
         gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
         agent_image_digest=AGENT_REVIEWED_IMAGE_DIGEST,
         as_of=date.today(),
@@ -211,7 +212,7 @@ def build_prepare_manifest(
     scanner_metadata = _scanner_metadata(root)
     policy["scanner_metadata"] = validate_scanner_metadata(scanner_metadata)
     exceptions = load_vulnerability_exceptions(
-        ROOT / "runtime-images/vulnerability-exceptions.json",
+        ROOT / VULNERABILITY_EXCEPTION_MANIFEST,
         gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
         as_of=date.today(),
     )
@@ -280,7 +281,7 @@ def build_prepare_manifest(
             "fixability_counts": policy["fixability_counts"],
             "exception_count": policy["exception_count"],
             "accepted_exception_count": policy["accepted_exception_count"],
-            "exception_manifest_digest": "sha256:" + _sha256_file(ROOT / "runtime-images/vulnerability-exceptions.json"),
+            "exception_manifest_digest": "sha256:" + _sha256_file(ROOT / VULNERABILITY_EXCEPTION_MANIFEST),
             "exception_expiry": EXCEPTION_EXPIRY,
         },
         "mock_integration": {
@@ -346,7 +347,7 @@ def validate_post_publish(
     scan_paths = [post_root / PULLED_SCAN_FILENAMES["gateway"], post_root / PULLED_SCAN_FILENAMES["agent"]]
     policy = evaluate_trivy_high_critical_policy(
         scan_paths,
-        exception_manifest=ROOT / "runtime-images/vulnerability-exceptions.json",
+        exception_manifest=ROOT / VULNERABILITY_EXCEPTION_MANIFEST,
         gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
         agent_image_digest=AGENT_REVIEWED_IMAGE_DIGEST,
         image_roles_by_path={

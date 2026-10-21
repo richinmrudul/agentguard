@@ -111,7 +111,7 @@ jobs:
           for image in gateway agent; do
             if [ "$image" = gateway ]; then
               tag_base="agentguard-stage1-gateway"
-              base_image="gcr.io/distroless/python3-debian13:nonroot@sha256:339ecee37afe554f5237b9993250bc390ac9f1483a08c9b5e77ac4c016d6d39a"
+              base_image="gcr.io/distroless/python3-debian13:nonroot@sha256:ab7db4566f1d345612bcd57e1d33d8beb428d111f477dac98521a98fa4ab754d"
             else
               tag_base="agentguard-stage1-codex-agent"
               base_image="gcr.io/distroless/static-debian12:nonroot@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d"
@@ -203,7 +203,7 @@ jobs:
             -v "$PWD/dist/stage1-runtime-images:/work" \
             -v "$PWD/.trivy-cache:/root/.cache/" \
             aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
-            image gcr.io/distroless/python3-debian13:nonroot@sha256:339ecee37afe554f5237b9993250bc390ac9f1483a08c9b5e77ac4c016d6d39a \
+            image gcr.io/distroless/python3-debian13:nonroot@sha256:ab7db4566f1d345612bcd57e1d33d8beb428d111f477dac98521a98fa4ab754d \
             --format json --output /work/gateway-base.trivy.json \
             --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
           docker run --rm \
@@ -302,7 +302,7 @@ jobs:
               raise SystemExit("expected gateway and agent image digests")
           vulnerability_policy = evaluate_trivy_high_critical_policy(
               [root / "gateway.trivy.json", root / "agent.trivy.json"],
-              exception_manifest=pathlib.Path("runtime-images/vulnerability-exceptions.json"),
+              exception_manifest=pathlib.Path("runtime-images/vulnerability-exceptions-gateway-base-2026-10-21.json"),
               gateway_image_digest=digests[0],
               agent_image_digest=digests[1],
           )
@@ -370,8 +370,8 @@ jobs:
           if policy.get("status") != "hosted_trivy_high_critical_policy_passed":
               print(json.dumps(policy.get("rejected_findings", []), indent=2), file=sys.stderr)
               raise SystemExit(1)
-          if policy.get("exception_count") != 15:
-              print("expected exactly 15 reviewed vulnerability exception records", file=sys.stderr)
+          if policy.get("exception_count") != 10:
+              print("expected exactly 10 reviewed vulnerability exception records", file=sys.stderr)
               raise SystemExit(1)
           PY
 

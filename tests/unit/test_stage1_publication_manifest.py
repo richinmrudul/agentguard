@@ -11,6 +11,7 @@ from agentguard.evaluation.runtime_images import (
     AGENT_REVIEWED_IMAGE_DIGEST,
     GATEWAY_BASE_IMAGE,
     GATEWAY_REVIEWED_IMAGE_DIGEST,
+    VULNERABILITY_EXCEPTION_MANIFEST,
     RuntimeImageError,
 )
 from scripts.stage1_publication_manifest import (
@@ -90,7 +91,7 @@ def _sbom(count: int) -> dict:
 
 def _reviewed_gateway_findings() -> list[dict[str, str]]:
     manifest = json.loads(
-        (ROOT / "runtime-images/vulnerability-exceptions.json").read_text(
+        (ROOT / VULNERABILITY_EXCEPTION_MANIFEST).read_text(
             encoding="utf-8"
         )
     )
@@ -233,7 +234,7 @@ def test_prepare_publication_manifest_records_reviewed_evidence(tmp_path: Path) 
     )
     assert manifest["vulnerability_policy"]["severity_counts"] == {
         "CRITICAL": 0,
-        "HIGH": 31,
+        "HIGH": 26,
     }
     assert manifest["vulnerability_policy"]["exception_expiry"] == "2026-11-06"
     assert manifest["manifest_digest"].startswith("sha256:")

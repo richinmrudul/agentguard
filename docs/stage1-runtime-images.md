@@ -20,6 +20,31 @@ sockets, avoid host namespaces, and avoid devices.
 
 ## Build Inputs
 
+The original published gateway below is a historical record, not the current
+source build. The reviewed source candidate for issue #319 uses
+`gcr.io/distroless/python3-debian13:nonroot@sha256:ab7db4566f1d345612bcd57e1d33d8beb428d111f477dac98521a98fa4ab754d`
+(`linux/amd64`; index `sha256:727eccc5d83f11273c954652667b5b5a1c66120bd4cfb884e879ab77dcdf966a`).
+Its two hosted builds in [run 39657895846](https://github.com/richinmrudul/agentguard/actions/runs/39657895846)
+had identical canonical identity
+`sha256:26ff4e4e02e965a2cdd3b37a00ff4ea14dcc245e5016888900efd328c8271ab0`,
+rootfs digest `sha256:09a515c12ed750d4fc85f93421a7fa886066a7d27019df2309395f1e43354d01`,
+runtime-configuration digest
+`sha256:725ab21ef4734334b9beb73c15e9a2082b52654e03b3e9b3ca451787c7470ba9`,
+and 38 normalized SBOM rows. Trivy 0.66.0 with a database updated
+2026-10-21 reported 26 HIGH occurrences across 10 previously reviewed CVEs,
+zero CRITICAL, zero fixable HIGH/CRITICAL, and no new HIGH. `libexpat1` is
+`2.9.0-1~deb13u1`, removing the five fixable HIGH occurrences. The narrowed,
+identity-bound source policy is
+`runtime-images/vulnerability-exceptions-gateway-base-2026-10-21.json`;
+it expires 2026-11-06. The original exception manifest remains unchanged.
+
+This source candidate is **not published** and its canonical identity is not
+an approved GHCR subject or #294 study image. The existing published gateway
+digest is unchanged. The manual publication workflow retains the historical
+publication gates and must not be dispatched for this candidate without a
+separate review and explicit authorization. The newer provider-aware metering
+gateway also requires its own image/security review.
+
 Gateway:
 
 - Dockerfile: `runtime-images/gateway/Dockerfile`

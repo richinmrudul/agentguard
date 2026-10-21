@@ -17,6 +17,7 @@ from agentguard.evaluation.runtime_images import (
     EXPECTED_CREDENTIAL_ENV,
     GATEWAY_BASE_IMAGE,
     GATEWAY_REVIEWED_IMAGE_DIGEST,
+    VULNERABILITY_EXCEPTION_MANIFEST,
     AGENT_REVIEWED_IMAGE_DIGEST,
     RuntimeImageError,
     build_runtime_manifest,
@@ -661,7 +662,7 @@ def _write_scan(path: Path, target: str, findings: list[dict[str, str]]) -> None
 
 
 def _exception_manifest(tmp_path: Path, *, mutate=None) -> Path:
-    source = json.loads((ROOT / "runtime-images/vulnerability-exceptions.json").read_text(encoding="utf-8"))
+    source = json.loads((ROOT / VULNERABILITY_EXCEPTION_MANIFEST).read_text(encoding="utf-8"))
     data = copy.deepcopy(source)
     if mutate is not None:
         mutate(data)
@@ -671,7 +672,7 @@ def _exception_manifest(tmp_path: Path, *, mutate=None) -> Path:
 
 
 def _reviewed_gateway_findings() -> list[dict[str, str]]:
-    manifest = json.loads((ROOT / "runtime-images/vulnerability-exceptions.json").read_text(encoding="utf-8"))
+    manifest = json.loads((ROOT / VULNERABILITY_EXCEPTION_MANIFEST).read_text(encoding="utf-8"))
     findings = []
     for exception in manifest["exceptions"]:
         for package in exception["affected_packages"]:
@@ -702,7 +703,7 @@ def _evaluate_policy(
         exception_manifest=_exception_manifest(tmp_path, mutate=manifest_mutate),
         gateway_image_digest=gateway_digest,
         agent_image_digest=AGENT_REVIEWED_IMAGE_DIGEST,
-        as_of=date(2026, 10, 10),
+        as_of=date(2026, 10, 21),
     )
 
 
@@ -710,11 +711,11 @@ def test_reviewed_exception_set_passes_exact_digest_policy(tmp_path: Path) -> No
     policy = _evaluate_policy(tmp_path, _reviewed_gateway_findings())
 
     assert policy["status"] == "hosted_trivy_high_critical_policy_passed"
-    assert policy["severity_counts"] == {"CRITICAL": 0, "HIGH": 31}
+    assert policy["severity_counts"] == {"CRITICAL": 0, "HIGH": 26}
     assert policy["fixability_counts"]["fixed"] == {"CRITICAL": 0, "HIGH": 0}
-    assert policy["exception_count"] == 15
-    assert policy["accepted_exception_count"] == 31
-    assert len({finding["vulnerability_id"] for finding in policy["accepted_exceptions"]}) == 15
+    assert policy["exception_count"] == 10
+    assert policy["accepted_exception_count"] == 26
+    assert len({finding["vulnerability_id"] for finding in policy["accepted_exceptions"]}) == 10
     assert policy["rejected_findings"] == []
 
 
@@ -726,17 +727,18 @@ def test_reviewed_exception_occurrences_are_exact_current_gateway_set() -> None:
             (finding["PkgName"], finding["InstalledVersion"])
         )
 
-    assert len(findings) == 31
-    assert len(by_cve) == 15
+    assert len(findings) == 26
+    assert len(by_cve) == 10
     assert by_cve["CVE-2026-19445"] == {
         ("libpython3.13-minimal", "3.13.5-2+deb13u5"),
         ("libpython3.13-stdlib", "3.13.5-2+deb13u5"),
         ("python3.13-minimal", "3.13.5-2+deb13u5"),
         ("python3.13-venv", "3.13.5-2+deb13u5"),
     }
-    assert by_cve["CVE-2026-77214"] == {
-        ("libexpat1", "2.8.3-1~deb13u1"),
-    }
+    assert "CVE-2026-77214" not in by_cve
+    historical = json.loads((ROOT / "runtime-images/vulnerability-exceptions.json").read_text())
+    assert len(historical["exceptions"]) == 15
+    assert any(item["cve"] == "CVE-2026-77214" for item in historical["exceptions"])
 
 
 def test_exception_policy_rejects_missing_cve_2026_19445(tmp_path: Path) -> None:
@@ -755,32 +757,27 @@ def test_exception_policy_rejects_missing_cve_2026_19445(tmp_path: Path) -> None
     )
 
 
-def test_exception_policy_rejects_missing_cve_2026_77214(tmp_path: Path) -> None:
-    def mutate(data):
-        data["exceptions"] = [
-            item for item in data["exceptions"] if item["cve"] != "CVE-2026-77214"
-        ]
-
-    policy = _evaluate_policy(tmp_path, _reviewed_gateway_findings(), manifest_mutate=mutate)
+def test_fixed_expat_is_not_in_new_exception_set(tmp_path: Path) -> None:
+    policy = _evaluate_policy(
+        tmp_path,
+        _reviewed_gateway_findings()
+        + [_finding("CVE-2026-77214", "libexpat1", "2.8.3-1~deb13u1", fixed="2.9.0-1~deb13u1")],
+    )
 
     assert policy["status"] == "hosted_trivy_high_critical_policy_failed"
     assert any(
         item["vulnerability_id"] == "CVE-2026-77214"
         and item["package_name"] == "libexpat1"
-        and item["reason"] == "unmatched gateway high vulnerability"
+        and item["reason"] == "fixable high vulnerabilities require remediation"
         for item in policy["rejected_findings"]
     )
 
 
-def test_exception_policy_rejects_wrong_cve_2026_77214_package_version(tmp_path: Path) -> None:
-    findings = [
-        _finding("CVE-2026-77214", "libexpat1", "2.8.3-2")
-        if item["VulnerabilityID"] == "CVE-2026-77214"
-        else item
-        for item in _reviewed_gateway_findings()
-    ]
-
-    policy = _evaluate_policy(tmp_path, findings)
+def test_removed_expat_cve_cannot_reenter_without_review(tmp_path: Path) -> None:
+    policy = _evaluate_policy(
+        tmp_path,
+        _reviewed_gateway_findings() + [_finding("CVE-2026-77214", "libexpat1", "2.8.3-2")],
+    )
 
     assert policy["status"] == "hosted_trivy_high_critical_policy_failed"
     assert any(
@@ -788,12 +785,6 @@ def test_exception_policy_rejects_wrong_cve_2026_77214_package_version(tmp_path:
         and item["package_name"] == "libexpat1"
         and item["installed_version"] == "2.8.3-2"
         and item["reason"] == "unmatched gateway high vulnerability"
-        for item in policy["rejected_findings"]
-    )
-    assert any(
-        item["vulnerability_id"] == "CVE-2026-77214"
-        and item["installed_version"] == "2.8.3-1~deb13u1"
-        and item["reason"] == "stale exception does not match a current scan finding"
         for item in policy["rejected_findings"]
     )
 
@@ -814,7 +805,7 @@ def test_exception_policy_rejects_unreviewed_package_occurrence(tmp_path: Path) 
     )
 
 
-def test_exception_policy_rejects_additional_sixteenth_cve(tmp_path: Path) -> None:
+def test_exception_policy_rejects_additional_eleventh_cve(tmp_path: Path) -> None:
     policy = _evaluate_policy(
         tmp_path,
         _reviewed_gateway_findings() + [_finding("CVE-2099-0001", "libnew", "1")],
@@ -828,10 +819,10 @@ def test_exception_policy_rejects_additional_sixteenth_cve(tmp_path: Path) -> No
     )
 
 
-def test_exception_policy_rejects_fixable_cve_2026_77214(tmp_path: Path) -> None:
+def test_exception_policy_rejects_fixable_reviewed_high(tmp_path: Path) -> None:
     findings = [
-        _finding("CVE-2026-77214", "libexpat1", "2.8.3-1~deb13u1", fixed="2.9.0-1")
-        if item["VulnerabilityID"] == "CVE-2026-77214"
+        _finding(item["VulnerabilityID"], item["PkgName"], item["InstalledVersion"], fixed="3.13.6")
+        if item["VulnerabilityID"] == "CVE-2026-19445"
         else item
         for item in _reviewed_gateway_findings()
     ]
@@ -840,7 +831,7 @@ def test_exception_policy_rejects_fixable_cve_2026_77214(tmp_path: Path) -> None
 
     assert policy["status"] == "hosted_trivy_high_critical_policy_failed"
     assert any(
-        item["vulnerability_id"] == "CVE-2026-77214"
+        item["vulnerability_id"] == "CVE-2026-19445"
         and item["reason"] == "fixable high vulnerabilities require remediation"
         for item in policy["rejected_findings"]
     )
@@ -901,7 +892,7 @@ def test_exception_manifest_rejects_malformed_wildcard_or_agent_exceptions(tmp_p
         load_vulnerability_exceptions(
             _exception_manifest(tmp_path, mutate=mutate),
             gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
-            as_of=date(2026, 10, 10),
+            as_of=date(2026, 10, 21),
         )
 
 
@@ -927,7 +918,7 @@ def test_exception_policy_rejects_unknown_image_role(tmp_path: Path) -> None:
         exception_manifest=_exception_manifest(tmp_path),
         gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
         agent_image_digest=AGENT_REVIEWED_IMAGE_DIGEST,
-        as_of=date(2026, 10, 10),
+        as_of=date(2026, 10, 21),
     )
 
     assert policy["status"] == "hosted_trivy_high_critical_policy_failed"
@@ -992,7 +983,7 @@ def test_exception_policy_rejects_missing_or_malformed_scan_evidence(tmp_path: P
             exception_manifest=manifest,
             gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
             agent_image_digest=AGENT_REVIEWED_IMAGE_DIGEST,
-            as_of=date(2026, 10, 10),
+            as_of=date(2026, 10, 21),
         )
 
 
@@ -1036,5 +1027,5 @@ def test_exception_manifest_rejects_additional_malformed_shapes(
         load_vulnerability_exceptions(
             _exception_manifest(tmp_path, mutate=mutate),
             gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
-            as_of=date(2026, 10, 10),
+            as_of=date(2026, 10, 21),
         )
