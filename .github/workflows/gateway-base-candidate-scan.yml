@@ -1,0 +1,109 @@
+name: Gateway Base Candidate Scan
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/gateway-base-candidate-scan.yml
+      - runtime-images/gateway/**
+      - runtime-images/stage1-metering/**
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    name: Build twice and retain gateway candidate evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Build two identical linux/amd64 gateway subjects
+        run: |
+          set -euo pipefail
+          mkdir -p dist/gateway-base-candidate .trivy-cache
+          base='gcr.io/distroless/python3-debian13:nonroot@sha256:ab7db4566f1d345612bcd57e1d33d8beb428d111f477dac98521a98fa4ab754d'
+          docker pull --platform linux/amd64 "$base"
+          for build in a b; do
+            docker build --pull=false --platform linux/amd64 \
+              --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
+              -t "agentguard-gateway-candidate:$build" runtime-images/gateway
+            docker inspect "agentguard-gateway-candidate:$build" > "dist/gateway-base-candidate/$build.inspect.json"
+            cid="$(docker create "agentguard-gateway-candidate:$build")"
+            docker export "$cid" -o "dist/gateway-base-candidate/$build.rootfs.tar"
+            docker rm "$cid"
+            python scripts/runtime_image_identity.py --image-role gateway \
+              --base-image "$base" \
+              --inspect-json "dist/gateway-base-candidate/$build.inspect.json" \
+              --rootfs-tar "dist/gateway-base-candidate/$build.rootfs.tar" \
+              --output "dist/gateway-base-candidate/$build.identity.json"
+            docker save "agentguard-gateway-candidate:$build" \
+              -o "dist/gateway-base-candidate/$build.image.tar"
+          done
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('dist/gateway-base-candidate')
+          a, b = (json.loads((root / f'{name}.identity.json').read_text()) for name in ('a', 'b'))
+          for key in ('identity', 'rootfs_digest', 'runtime_config_digest', 'runtime_config'):
+              if a[key] != b[key]:
+                  raise SystemExit(f'nonreproducible gateway {key}')
+          print('CANDIDATE_CANONICAL_IDENTITY=' + a['identity'])
+          PY
+      - name: Record independent SBOMs and Trivy scans
+        run: |
+          set -euo pipefail
+          root="$PWD/dist/gateway-base-candidate"
+          for build in a b; do
+            docker run --rm -v "$root:/work" \
+              anchore/syft@sha256:cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033 \
+              "docker-archive:/work/$build.image.tar" -o "syft-json=/work/$build.sbom.json"
+            docker run --rm -v "$root:/work" -v "$PWD/.trivy-cache:/root/.cache/" \
+              aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+              image --input "/work/$build.image.tar" --format json \
+              --output "/work/$build.trivy.json" --severity HIGH,CRITICAL --exit-code 0
+          done
+          docker run --rm -v "$root:/work" -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            image gcr.io/distroless/python3-debian13:nonroot@sha256:ab7db4566f1d345612bcd57e1d33d8beb428d111f477dac98521a98fa4ab754d \
+            --format json --output /work/base.trivy.json \
+            --severity HIGH,CRITICAL --exit-code 0
+          docker run --rm aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            --version > "$root/trivy-version.txt"
+          cp .trivy-cache/db/metadata.json "$root/trivy-db-metadata.json"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from scripts.stage1_publication_manifest import normalized_sbom_package_rows
+          root = Path('dist/gateway-base-candidate')
+          rows = [normalized_sbom_package_rows(json.loads((root / f'{n}.sbom.json').read_text())) for n in ('a', 'b')]
+          if rows[0] != rows[1]:
+              raise SystemExit('gateway SBOM package rows are not reproducible')
+          scans = [json.loads((root / f'{n}.trivy.json').read_text()) for n in ('a', 'b')]
+          def findings(scan):
+              return sorted((v['VulnerabilityID'], v['PkgName'], v['InstalledVersion'],
+                             v.get('FixedVersion', ''), v['Severity'])
+                            for result in scan.get('Results', [])
+                            for v in result.get('Vulnerabilities') or [])
+          if findings(scans[0]) != findings(scans[1]):
+              raise SystemExit('gateway Trivy findings are not reproducible')
+          summary = {'package_rows': rows[0], 'findings': findings(scans[0])}
+          (root / 'candidate-summary.json').write_text(json.dumps(summary, sort_keys=True) + '\n')
+          print('CANDIDATE_PACKAGES=' + str(len(rows[0])))
+          print('CANDIDATE_FINDINGS=' + str(len(summary['findings'])))
+          PY
+      - name: Retain bounded review evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: gateway-base-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/gateway-base-candidate/*.identity.json
+            dist/gateway-base-candidate/*.inspect.json
+            dist/gateway-base-candidate/*.sbom.json
+            dist/gateway-base-candidate/*.trivy.json
+            dist/gateway-base-candidate/*metadata.json
+            dist/gateway-base-candidate/trivy-version.txt
+            dist/gateway-base-candidate/candidate-summary.json
+          if-no-files-found: error
+          retention-days: 30

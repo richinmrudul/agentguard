@@ -23,7 +23,7 @@ from agentguard.evaluation.stage1_metering import (
 ROOT = Path(__file__).parents[2]
 BASE = (
     "gcr.io/distroless/python3-debian13:nonroot@"
-    "sha256:339ecee37afe554f5237b9993250bc390ac9f1483a08c9b5e77ac4c016d6d39a"
+    "sha256:ab7db4566f1d345612bcd57e1d33d8beb428d111f477dac98521a98fa4ab754d"
 )
 AGENT = (
     "ghcr.io/richinmrudul/agentguard/stage1-codex-agent@"
