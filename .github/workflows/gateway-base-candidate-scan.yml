@@ -70,7 +70,7 @@ jobs:
             --severity HIGH,CRITICAL --exit-code 0
           docker run --rm aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
             --version > "$root/trivy-version.txt"
-          cp .trivy-cache/db/metadata.json "$root/trivy-db-metadata.json"
+          cp .trivy-cache/trivy/db/metadata.json "$root/trivy-db-metadata.json"
           python - <<'PY'
           import json
           from pathlib import Path
