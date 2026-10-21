@@ -50,7 +50,7 @@ def test_pr_runtime_image_workflow_builds_without_push_or_secrets() -> None:
     assert "--severity HIGH,CRITICAL --exit-code 0 --skip-version-check" in text
     assert "Enforce vulnerability policy" in text
     assert "evaluate_trivy_high_critical_policy" in text
-    assert "runtime-images/vulnerability-exceptions.json" in text
+    assert "runtime-images/vulnerability-exceptions-gateway-base-2026-10-21.json" in text
     assert "runtime_image_identity.py" in text
     assert "dist-runtime-image-canonical-identities.txt" in text
     assert "canonical runtime identity mismatch" in text
@@ -59,7 +59,7 @@ def test_pr_runtime_image_workflow_builds_without_push_or_secrets() -> None:
     assert "repeat-build Trivy finding mismatch" in text
     assert 'target.replace(f"{image}-image-a.tar"' in text
     assert "exception_count" in text
-    assert "expected exactly 15 reviewed vulnerability exception records" in text
+    assert "expected exactly 10 reviewed vulnerability exception records" in text
     assert "trivy-version.txt" in text
     assert "trivy-db-metadata.json" in text
     assert "validate_scanner_metadata" in text

@@ -5,6 +5,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gateway-digest", default="sha256:" + "1" * 64)
     parser.add_argument("--agent-digest", default="sha256:" + "2" * 64)
     parser.add_argument("--trivy-json", type=Path, action="append", default=[])
-    parser.add_argument("--exception-manifest", type=Path, default=ROOT / "runtime-images/vulnerability-exceptions.json")
+    parser.add_argument("--exception-manifest", type=Path, default=ROOT / "runtime-images/vulnerability-exceptions-gateway-base-2026-10-21.json")
     args = parser.parse_args(argv)
     try:
         validate_policy(args.trivy_json, exception_manifest=args.exception_manifest, gateway_digest=args.gateway_digest, agent_digest=args.agent_digest)
@@ -106,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
 def validate_policy(
     trivy_json: list[Path] | None = None,
     *,
-    exception_manifest: Path = ROOT / "runtime-images/vulnerability-exceptions.json",
+    exception_manifest: Path = ROOT / "runtime-images/vulnerability-exceptions-gateway-base-2026-10-21.json",
     gateway_digest: str = GATEWAY_REVIEWED_IMAGE_DIGEST,
     agent_digest: str = AGENT_REVIEWED_IMAGE_DIGEST,
 ) -> None:
@@ -123,7 +124,7 @@ def validate_policy(
     load_vulnerability_exceptions(
         exception_manifest,
         gateway_image_digest=GATEWAY_REVIEWED_IMAGE_DIGEST,
-        as_of=__import__("datetime").date(2026, 10, 10),
+        as_of=date.today(),
     )
     assert GATEWAY_BASE_IMAGE in gateway_dockerfile
     assert AGENT_BASE_IMAGE in agent_dockerfile
