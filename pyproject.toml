@@ -47,6 +47,7 @@ agentguard = "agentguard.cli.main:app"
 
 [tool.setuptools.package-data]
 "agentguard.schemas" = ["*.json"]
+"agentguard.evaluation" = ["stage1_pricing_v2.json"]
 "agentguard.evaluation.study_fixtures" = ["v1/**/*"]
 
 [tool.setuptools.packages.find]

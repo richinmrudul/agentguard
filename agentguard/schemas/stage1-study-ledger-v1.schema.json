@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/richinmrudul/agentguard/blob/main/agentguard/schemas/stage1-study-ledger-v1.schema.json",
+  "title": "Crash-closed Stage 1 study budget ledger snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "scope_digest", "sequence", "trials"],
+  "properties": {
+    "schema": {"const": "agentguard.stage1-study-ledger"},
+    "schema_version": {"const": 1},
+    "scope_digest": {"$ref": "#/$defs/digest"},
+    "sequence": {"type": "integer", "minimum": 0, "maximum": 128},
+    "trials": {
+      "type": "object", "minProperties": 1, "maxProperties": 16,
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9-]{0,79}$": {"$ref": "#/$defs/trial"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "trial": {
+      "type": "object", "additionalProperties": false,
+      "required": ["counts", "generations", "input_tokens", "output_tokens", "charged_usd", "pending", "failed", "request_ids", "started_at"],
+      "properties": {
+        "counts": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "generations": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "input_tokens": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "output_tokens": {"type": "integer", "minimum": 0, "maximum": 10000000},
+        "charged_usd": {"type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$"},
+        "pending": {"oneOf": [{"type": "null"}, {"type": "object", "additionalProperties": false, "required": ["request_id", "input_tokens", "output_cap", "reserved_usd", "owner_digest"], "properties": {"request_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,79}$"}, "input_tokens": {"type": "integer", "minimum": 0, "maximum": 10000000}, "output_cap": {"type": "integer", "minimum": 0, "maximum": 10000000}, "reserved_usd": {"type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$"}, "owner_digest": {"$ref": "#/$defs/digest"}}}]},
+        "failed": {"type": "boolean"},
+        "request_ids": {"type": "array", "maxItems": 128, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,79}$"}},
+        "started_at": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]}
+      }
+    }
+  }
+}

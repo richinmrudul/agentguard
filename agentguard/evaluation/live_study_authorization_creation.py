@@ -18,6 +18,7 @@ from agentguard.evaluation.live_study_authorization import (
     live_study_authorization_digest,
     parse_live_study_authorization,
 )
+from agentguard.evaluation.stage1_live_capabilities import stage1_live_unavailable
 from agentguard.evaluation.study_runner import (
     ContainedStudyRunnerError,
     _load_plan,
@@ -63,14 +64,13 @@ def create_live_study_authorization(
 ) -> LiveStudyAuthorizationCreation:
     """Create canonical live-study authorization JSON from explicit reviewed inputs."""
     _reject_wildcards(options)
-    if options.agent_image.startswith(
-        "ghcr.io/richinmrudul/agentguard/stage1-codex-agent@"
-    ) or options.gateway_image.startswith(
-        "ghcr.io/richinmrudul/agentguard/stage1-gateway@"
+    if stage1_live_unavailable(
+        options.agent_image, options.gateway_image,
+        model_id=options.model_id, profile_id=options.profile_id,
     ):
         raise LiveStudyAuthorizationError(
             "Stage 1 Codex authorization requires reviewed metering-capability evidence; "
-            "the published byte-forwarding gateway is not a spending boundary."
+            "replacement image subjects and the final profile are not frozen."
         )
     plan = _load_plan(options.plan_path.expanduser().resolve())
     try:

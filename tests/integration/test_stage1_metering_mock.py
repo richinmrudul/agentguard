@@ -203,6 +203,7 @@ def test_local_mock_provider_fault_closes_trial(tmp_path: Path, scenario: str) -
     ("POST", "/v1/responses", {"Host": "api.openai.com"}, 403),
     ("POST", "/v1/responses", {"Content-Type": "text/plain"}, 400),
     ("POST", "/v1/responses", {"Content-Encoding": "gzip"}, 400),
+    ("POST", "/v1/responses", {"Cookie": "fake-session=canary"}, 400),
     ("POST", "/v1/responses", {"Content-Length": "0"}, 413),
     ("POST", "/v1/responses", {"Authorization": "Basic fake"}, 403),
 ])

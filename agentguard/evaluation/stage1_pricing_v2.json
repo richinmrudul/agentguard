@@ -1,0 +1,23 @@
+{
+  "schema": "agentguard.stage1-pricing-policy",
+  "schema_version": 2,
+  "provider": "openai-api",
+  "model": "gpt-5.2-2025-12-11",
+  "currency": "USD",
+  "tokens_per_unit": 1000000,
+  "uncached_input_usd": "1.75",
+  "cached_input_usd": "0.175",
+  "output_usd": "14.00",
+  "output_includes_nonvisible_and_reasoning_tokens": true,
+  "service_tier": "standard",
+  "regional_processing": false,
+  "cache_write_allowed": false,
+  "rounding": "ROUND_UP_TO_0.000001_USD_PER_REQUEST",
+  "source_urls": [
+    "https://developers.openai.com/api/docs/models/gpt-5.2",
+    "https://developers.openai.com/api/docs/guides/token-counting",
+    "https://developers.openai.com/api/docs/guides/prompt-caching"
+  ],
+  "retrieved_on": "2026-10-22",
+  "source_effective_date": null
+}

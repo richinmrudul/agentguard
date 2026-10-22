@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -15,6 +16,7 @@ SAFE_FIELDS = {
     "model", "instructions", "input", "tools", "tool_choice", "parallel_tool_calls",
     "reasoning", "store", "stream", "stream_options", "include", "service_tier",
     "prompt_cache_key", "text", "max_output_tokens", "previous_response_id",
+    "prompt_cache_retention",
 }
 SAFE_TOOL_NAMES = {
     "exec_command", "write_stdin", "apply_patch",
@@ -104,7 +106,11 @@ class MockHandler(BaseHTTPRequestHandler):
             self._send(413, "text/plain", b"invalid request\n")
             return
         raw = self.rfile.read(int(length))
-        if CANARY.encode() in raw or self.headers.get("Authorization"):
+        expected = os.environ.get("STAGE1_MOCK_TLS_FAKE_TOKEN")
+        authorization = self.headers.get("Authorization")
+        if CANARY.encode() in raw or (
+            authorization != f"Bearer {expected}" if expected else bool(authorization)
+        ):
             self._send(400, "text/plain", b"credential leaked to mock provider\n")
             return
         try:
@@ -130,6 +136,9 @@ class MockHandler(BaseHTTPRequestHandler):
                                  {None, "low", "medium", "high"}),
             "parallel_tool_calls": _choice(payload.get("parallel_tool_calls"),
                                            {None, True, False}),
+            "prompt_cache_retention": _choice(payload.get("prompt_cache_retention"),
+                                               {None, "in_memory"}),
+            "store": _choice(payload.get("store"), {None, True, False}),
             "tool_types": tool_types,
             "tool_names": tool_names,
             "tool_declarations": _tool_diagnostic(payload.get("tools")),
@@ -181,6 +190,9 @@ class MockHandler(BaseHTTPRequestHandler):
                 "output_tokens_details": {"reasoning_tokens": 0},
             },
         }
+        if expected:
+            response["service_tier"] = "default"
+            response["usage"]["input_tokens_details"]["cache_write_tokens"] = 0
         if self.scenario == "missing-usage":
             response.pop("usage")
         if payload.get("stream") is True:
@@ -233,7 +245,17 @@ def main() -> None:
     }:
         raise SystemExit("unknown mock scenario")
     MockHandler.scenario = scenario
-    ThreadingHTTPServer(("0.0.0.0", 8443), MockHandler).serve_forever(poll_interval=0.1)
+    server = ThreadingHTTPServer(("0.0.0.0", 8443), MockHandler)
+    if os.environ.get("STAGE1_MOCK_TLS") == "true":
+        certificate = os.environ.get("STAGE1_MOCK_CERT", "")
+        private_key = os.environ.get("STAGE1_MOCK_KEY", "")
+        if not certificate or not private_key or not os.environ.get("STAGE1_MOCK_TLS_FAKE_TOKEN"):
+            raise SystemExit("mock TLS fixtures are missing")
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(certificate, private_key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+    server.serve_forever(poll_interval=0.1)
 
 
 if __name__ == "__main__":
