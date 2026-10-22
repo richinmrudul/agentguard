@@ -242,6 +242,24 @@ def test_live_transport_rejects_proxy_before_trust_context(
         ExactTLSTransport()
 
 
+def test_mock_only_entrypoint_removes_docker_proxy_injection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from importlib.util import module_from_spec, spec_from_file_location
+    source = Path(__file__).parents[2] / "runtime-images/stage1-metering/b1_mock_gateway.py"
+    spec = spec_from_file_location("stage1_b1_mock_entrypoint", source)
+    assert spec and spec.loader
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setenv("HTTPS_PROXY", "FAKE_PROXY_CANARY")
+    monkeypatch.setenv("SSL_CERT_FILE", "FAKE_CA_CANARY")
+    monkeypatch.setenv("STAGE1_B1_MOCK_ONLY", "true")
+    module._clear_mock_proxy_environment()
+    assert "HTTPS_PROXY" not in os.environ
+    assert "SSL_CERT_FILE" not in os.environ
+    assert os.environ["STAGE1_B1_MOCK_ONLY"] == "true"
+
+
 @pytest.mark.parametrize(("path", "body", "credential", "timeout"), [
     ("/v1/models", b"{}", "FAKE_CANARY_NOT_REAL", 10),
     ("/v1/responses?x=1", b"{}", "FAKE_CANARY_NOT_REAL", 10),

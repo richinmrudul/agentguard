@@ -7,15 +7,24 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from agentguard.evaluation.stage1_live_session import LiveMeteringSession
-from agentguard.evaluation.stage1_live_transport import LocalTestTLSTransport
+from agentguard.evaluation.stage1_live_transport import LocalTestTLSTransport, _PROXY_NAMES
 from agentguard.evaluation.stage1_metering import MeteringError, parse_json
 from agentguard.evaluation.stage1_metering_gateway import handler_for
 from agentguard.evaluation.stage1_study_ledger import LedgerScope, StudyLedger
 
 
+def _clear_mock_proxy_environment() -> None:
+    for name in list(os.environ):
+        if name.lower() in _PROXY_NAMES:
+            os.environ.pop(name)
+
+
 def main() -> None:
     if os.environ.get("STAGE1_B1_MOCK_ONLY") != "true":
         raise SystemExit("B1 gateway has no live execution mode")
+    # Docker can inject host proxy settings into containers. This mock-only
+    # entrypoint removes them; the production transport rejects their presence.
+    _clear_mock_proxy_environment()
     config = parse_json(Path("/stage1-config/config.json").read_bytes())
     if set(config) != {"scope", "output_cap"} or not isinstance(config["scope"], dict):
         raise SystemExit("B1 mock configuration is malformed")
