@@ -194,6 +194,12 @@ jobs:
           AGENTGUARD_MODEL_COMPAT_MODEL: gpt-5.2-2025-12-11
         run: python -m pytest -q -s tests/integration/test_stage1_metering_docker.py
 
+      - name: Prove B1 TLS mock, patched agent, and durable ledger
+        env:
+          AGENTGUARD_REQUIRE_DOCKER: "1"
+          AGENTGUARD_B1_MODEL_IMAGE: agentguard-codex-model-compatibility:mock
+        run: python -m pytest -q -s tests/integration/test_stage1_live_b1_docker.py
+
   package:
     name: Build and validate release artifacts
     runs-on: ubuntu-latest

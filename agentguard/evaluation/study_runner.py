@@ -41,6 +41,7 @@ from agentguard.evaluation.live_study_authorization import (
     resolve_authorized_credentials,
     validate_live_study_authorization_scope,
 )
+from agentguard.evaluation.stage1_live_capabilities import stage1_live_unavailable
 from agentguard.evaluation.study_fixtures import (
     DEFAULT_STUDY_FIXTURE_MANIFEST,
     StudyFixture,
@@ -809,6 +810,14 @@ def _execute_study_egress_trial(
         )
     if authorization is None:
         raise ContainedStudyRunnerError("Study-egress execution requires authorization.")
+    if stage1_live_unavailable(
+        profile.image, gateway_image,
+        model_id=str(authorization.data["provider"]["model_id"]),
+        profile_id=profile.id,
+    ):
+        raise ContainedStudyRunnerError(
+            "Stage 1 live execution is disabled until replacement metering subjects are frozen."
+        )
     credential_names = list(profile.environment.required)
     trial_id = _string(trial.get("trial_id"), "trial_id")
     plan_digest = _string(plan.get("plan_digest"), "plan_digest")

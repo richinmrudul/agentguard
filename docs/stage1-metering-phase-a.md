@@ -143,3 +143,75 @@ pricing effective for that model, or live token-count billing. None is inferred.
 
 No real credential, OpenAI request, billable call, or live authorization is
 involved in Phase A. The old `study-egress` route remains non-metering.
+
+## Phase B1 source-only boundary
+
+Phase B1 adds a separate, still-disabled live transport contract. The only
+reviewed upstream destination is `api.openai.com:443`, using system-CA TLS and
+the exact hostname as SNI. Every DNS answer is checked for globally routable
+addresses before a direct connection. Proxy and alternate-CA environment
+controls, redirects, a second host, and every path other than
+`POST /v1/responses/input_tokens` and `POST /v1/responses` are denied.
+The agent-side network remains internal-only; this transport is never placed
+in the agent container. The repository-controlled test variant connects only
+to a local TLS mock using a test-only CA and fake credential. Neither variant
+is enabled by `study-auth live-run` for Stage 1.
+
+The reviewed model is `gpt-5.2-2025-12-11`. The frozen price artifact is
+`agentguard/evaluation/stage1_pricing_v2.json`, retrieved 2026-10-22, with
+canonical digest
+`sha256:11da095d2856b07a2ce0a6da30e8d3229b9d4a2138122549d129580f0378eb35`.
+It records standard USD prices per million tokens: uncached input 1.75,
+cached input 0.175, and output 14.00. Reported output includes reasoning and
+other non-visible generated tokens. Each request is rounded **up** to six
+decimal places using exact decimal arithmetic. The source does not state a
+separate price-effective date, so that field is null, not inferred from the
+snapshot date. A pricing change requires a new reviewed policy and digest.
+
+The gateway normalizes a generation from the frozen CLI to an exact dated
+model, the three ordered declaration digests reviewed in PR #318, stream mode,
+`reasoning.effort=none`, `store=false`, bounded output, and in-memory cache
+retention. Unknown tools or request fields, hosted resources, non-text input,
+reasoning summary, verbosity, extended cache retention, and nonstandard tiers
+fail closed. The input-token count is derived from the normalized generation's
+input-shaping fields. A terminal response must reconcile the count, model,
+service tier, total tokens, cached input, and output including reasoning.
+Cache-write usage is rejected because it is not priced in this policy.
+
+The future real `CODEX_API_KEY` can be read only by the gateway's one-shot
+resolver after image subjects, authorization, plan, trial, profile, model,
+destination, pricing, redaction, and remaining ledger budget agree. Its
+approved replacement-subject set is intentionally empty in B1. The agent
+would receive only a random trial-scoped synthetic token. Python cannot
+guarantee erasure of immutable strings from memory, so B2 must keep the
+gateway process short-lived and never expose its environment or memory to
+the agent; no claim of cryptographic memory erasure is made.
+
+The host-side `agentguard.stage1-study-ledger` v1 snapshot and hash-chained
+journal are private (0700 directory, 0600 files), locked across processes,
+written with fsync and atomic snapshot replacement, and never agent-mounted.
+Before generation, a count request and worst-case uncached-input plus maximum
+output cost are reserved durably against trial and study limits. Terminal
+authoritative usage settles only the unused delta. An outstanding reservation,
+crash, malformed usage, truncated journal, snapshot/journal disagreement, or
+replay blocks further provider work; it does not automatically refund a
+possible charge. The local directory is trusted host storage. Malicious
+rollback of the *entire* directory by a privileged operator cannot be
+detected without an external monotonic anchor, which remains a Phase B2
+deployment requirement.
+
+Official sources rechecked 2026-10-22:
+
+- [GPT-5.2 snapshot, Responses support, and model rates](https://developers.openai.com/api/docs/models/gpt-5.2).
+- [Responses input-token count endpoint](https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count).
+- [Responses create fields and terminal usage](https://developers.openai.com/api/reference/resources/responses/methods/create).
+- [Output-token and non-visible-token accounting](https://developers.openai.com/api/docs/guides/token-counting).
+- [Prompt-cache retention and separately priced writes](https://developers.openai.com/api/docs/guides/prompt-caching).
+
+Phase B2 still requires replacement patched-agent and metering-gateway images,
+deterministic identities, SBOM and vulnerability review, image-level mock
+integration, build-once protected publication, pull-by-digest verification,
+subject-digest attestations, and a final digest-bound profile and plan freeze.
+The published byte-forwarding gateway remains ineligible for #294. No real
+credential, OpenAI request, paid call, image publication, live authorization,
+or live trial is part of B1.

@@ -96,6 +96,10 @@ def handler_for(session: MeteringSession, evidence_path: Path) -> type[BaseHTTPR
             if (
                 self.headers.get("Transfer-Encoding")
                 or self.headers.get("Content-Encoding")
+                or self.headers.get("Cookie")
+                or self.headers.get("Proxy-Authorization")
+                or len(self.headers.get_all("Host", [])) != 1
+                or len(self.headers.get_all("Authorization", [])) != 1
                 or len(self.headers.get_all("Content-Length", [])) != 1
                 or self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
                 != "application/json"
@@ -144,6 +148,9 @@ def handler_for(session: MeteringSession, evidence_path: Path) -> type[BaseHTTPR
 
         def _deny(self, code: int) -> None:
             if session.closed:
+                fail_closed = getattr(session, "fail_closed", None)
+                if fail_closed is not None:
+                    fail_closed()
                 print(f"STAGE1_DENIAL: {session.failure_reason or 'unspecified'}", file=sys.stderr, flush=True)
                 try:
                     _write_evidence(evidence_path, session)
@@ -161,6 +168,9 @@ def handler_for(session: MeteringSession, evidence_path: Path) -> type[BaseHTTPR
                 self.wfile.write(body)
             except OSError:
                 session.closed = True
+                fail_closed = getattr(session, "fail_closed", None)
+                if fail_closed is not None:
+                    fail_closed()
                 _write_evidence(evidence_path, session)
 
         def log_message(self, *_args: object) -> None:
@@ -172,7 +182,7 @@ def handler_for(session: MeteringSession, evidence_path: Path) -> type[BaseHTTPR
 def _write_evidence(path: Path, session: MeteringSession) -> None:
     path.write_bytes(canonical_bytes({
         "schema": "agentguard.stage1-metering-evidence",
-        "schema_version": 1,
+        "schema_version": getattr(session, "evidence_schema_version", 1),
         "events": session.evidence,
         "trial_closed": session.closed,
         "failure_reason": session.failure_reason,

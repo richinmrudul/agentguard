@@ -138,6 +138,7 @@ from agentguard.evaluation.live_study_authorization_creation import (
     LiveStudyAuthorizationCreateOptions,
     create_live_study_authorization,
 )
+from agentguard.evaluation.stage1_live_capabilities import stage1_live_unavailable
 from agentguard.evaluation.live_egress_contract import LIVE_STUDY_EGRESS_EXECUTION_MODE
 from agentguard.evaluation.live_egress_gateway import (
     EgressDestinationRule,
@@ -1916,6 +1917,15 @@ def evaluation_study_auth_live_run(
     """Execute a frozen authorization through the explicit study-egress boundary."""
     try:
         loaded = load_live_study_authorization(authorization)
+        images = loaded.data["images"]
+        provider = loaded.data["provider"]
+        if stage1_live_unavailable(
+            str(images["agent"]), str(images["gateway"]),
+            model_id=str(provider["model_id"]), profile_id=str(loaded.data["profile"]["id"]),
+        ) or stage1_live_unavailable("", gateway_image):
+            raise LiveStudyAuthorizationError(
+                "Stage 1 live execution is disabled until replacement image and metering capabilities are frozen."
+            )
         if confirm_authorization_id != loaded.data["authorization_id"]:
             raise LiveStudyAuthorizationError(
                 "Explicit confirmation must match the live-study authorization id."

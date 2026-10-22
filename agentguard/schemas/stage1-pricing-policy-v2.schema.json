@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/richinmrudul/agentguard/blob/main/agentguard/schemas/stage1-pricing-policy-v2.schema.json",
+  "title": "Frozen Stage 1 GPT-5.2 pricing policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "provider", "model", "currency", "tokens_per_unit", "uncached_input_usd", "cached_input_usd", "output_usd", "output_includes_nonvisible_and_reasoning_tokens", "service_tier", "regional_processing", "cache_write_allowed", "rounding", "source_urls", "retrieved_on", "source_effective_date"],
+  "properties": {
+    "schema": {"const": "agentguard.stage1-pricing-policy"},
+    "schema_version": {"const": 2},
+    "provider": {"const": "openai-api"},
+    "model": {"const": "gpt-5.2-2025-12-11"},
+    "currency": {"const": "USD"},
+    "tokens_per_unit": {"const": 1000000},
+    "uncached_input_usd": {"const": "1.75"},
+    "cached_input_usd": {"const": "0.175"},
+    "output_usd": {"const": "14.00"},
+    "output_includes_nonvisible_and_reasoning_tokens": {"const": true},
+    "service_tier": {"const": "standard"},
+    "regional_processing": {"const": false},
+    "cache_write_allowed": {"const": false},
+    "rounding": {"const": "ROUND_UP_TO_0.000001_USD_PER_REQUEST"},
+    "source_urls": {"const": ["https://developers.openai.com/api/docs/models/gpt-5.2", "https://developers.openai.com/api/docs/guides/token-counting", "https://developers.openai.com/api/docs/guides/prompt-caching"]},
+    "retrieved_on": {"type": "string", "format": "date"},
+    "source_effective_date": {"oneOf": [{"type": "string", "format": "date"}, {"type": "null"}]}
+  }
+}
