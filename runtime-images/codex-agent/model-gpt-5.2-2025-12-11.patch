@@ -1,0 +1,139 @@
+diff --git a/codex-rs/models-manager/models.json b/codex-rs/models-manager/models.json
+index 77e0389..84acb5d 100644
+--- a/codex-rs/models-manager/models.json
++++ b/codex-rs/models-manager/models.json
+@@ -2,0 +3,45 @@
++    {
++      "slug": "gpt-5.2-2025-12-11",
++      "display_name": "GPT-5.2 (2025-12-11)",
++      "description": "AgentGuard reviewed dated Responses snapshot.",
++      "default_reasoning_level": "none",
++      "supported_reasoning_levels": [
++        { "effort": "none", "description": "No reasoning tokens" },
++        { "effort": "low", "description": "Low reasoning effort" },
++        { "effort": "medium", "description": "Medium reasoning effort" },
++        { "effort": "high", "description": "High reasoning effort" },
++        { "effort": "xhigh", "description": "Extra-high reasoning effort" }
++      ],
++      "shell_type": "shell_command",
++      "visibility": "none",
++      "supported_in_api": true,
++      "priority": 99,
++      "availability_nux": null,
++      "upgrade": null,
++      "support_verbosity": false,
++      "default_verbosity": null,
++      "supports_reasoning_summary_parameter": false,
++      "default_reasoning_summary": "none",
++      "apply_patch_tool_type": "freeform",
++      "web_search_tool_type": "text",
++      "truncation_policy": { "mode": "bytes", "limit": 10000 },
++      "context_window": 128000,
++      "max_context_window": 128000,
++      "auto_compact_token_limit": 100000,
++      "effective_context_window_percent": 80,
++      "input_modalities": ["text"],
++      "experimental_supported_tools": [],
++      "include_skills_usage_instructions": false,
++      "include_plugin_usage_instructions": false,
++      "include_apps_usage_instructions": false,
++      "supports_image_detail_original": false,
++      "supports_search_tool": false,
++      "supports_experimental_context": false,
++      "use_responses_lite": false,
++      "supports_reasoning_effort_updates": false,
++      "node_repl_auto_review_required": false,
++      "node_repl_disabled": true,
++      "tool_mode": null,
++      "model_messages": null,
++      "base_instructions": "You are Codex, a coding assistant. Follow the bounded task instructions and use only the available local tools."
++    },
+diff --git a/codex-rs/models-manager/src/manager.rs b/codex-rs/models-manager/src/manager.rs
+index 7b4d613..cb9851a 100644
+--- a/codex-rs/models-manager/src/manager.rs
++++ b/codex-rs/models-manager/src/manager.rs
+@@ -747,0 +748,3 @@ fn find_model_by_longest_prefix(model: &str, candidates: &[ModelInfo]) -> Option
++        if candidate.slug == "gpt-5.2-2025-12-11" && model != candidate.slug {
++            continue;
++        }
+@@ -768,0 +772,3 @@ fn find_model_by_namespaced_suffix(model: &str, candidates: &[ModelInfo]) -> Opt
++    if suffix == "gpt-5.2-2025-12-11" {
++        return None;
++    }
+diff --git a/codex-rs/models-manager/src/manager_tests.rs b/codex-rs/models-manager/src/manager_tests.rs
+index 4ef2971..4606ff2 100644
+--- a/codex-rs/models-manager/src/manager_tests.rs
++++ b/codex-rs/models-manager/src/manager_tests.rs
+@@ -769,0 +770,62 @@ async fn get_model_info_tracks_fallback_usage() {
++#[tokio::test]
++async fn dated_gpt_5_2_snapshot_has_exact_bundled_metadata() {
++    let codex_home = tempdir().expect("temp dir");
++    let manager = openai_manager_for_tests(
++        codex_home.path().to_path_buf(),
++        TestModelsEndpoint::new(Vec::new()),
++    );
++    let config = ModelsManagerConfig::default();
++    let slug = "gpt-5.2-2025-12-11";
++
++    let exact = manager.get_model_info(slug, &config).await;
++    assert!(!exact.used_fallback_model_metadata);
++    assert_eq!(exact.slug, slug);
++    assert_eq!(exact.context_window, Some(128_000));
++    assert_eq!(exact.max_context_window, Some(128_000));
++    assert_eq!(exact.auto_compact_token_limit(), Some(100_000));
++    assert_eq!(
++        exact.default_reasoning_level.as_ref().map(|v| v.as_str()),
++        Some("none")
++    );
++    assert_eq!(
++        exact
++            .supported_reasoning_levels
++            .iter()
++            .map(|level| level.effort.as_str())
++            .collect::<Vec<_>>(),
++        ["none", "low", "medium", "high", "xhigh"]
++    );
++    assert!(!exact.supports_reasoning_summary_parameter);
++    assert!(!exact.support_verbosity);
++    assert!(!exact.use_responses_lite);
++    assert_eq!(
++        exact.apply_patch_tool_type,
++        Some(codex_protocol::openai_models::ApplyPatchToolType::Freeform)
++    );
++    assert!(exact
++        .model_messages
++        .as_ref()
++        .and_then(|messages| messages.instructions_template.as_ref())
++        .is_some_and(|instructions| !instructions.is_empty()));
++
++    let suffixed = manager
++        .get_model_info("gpt-5.2-2025-12-11-unreviewed", &config)
++        .await;
++    assert!(suffixed.used_fallback_model_metadata);
++    let namespaced = manager
++        .get_model_info("unreviewed/gpt-5.2-2025-12-11", &config)
++        .await;
++    assert!(namespaced.used_fallback_model_metadata);
++
++    let no_snapshot = manager
++        .get_remote_models()
++        .await
++        .into_iter()
++        .filter(|candidate| candidate.slug != slug)
++        .collect::<Vec<_>>();
++    assert!(std::panic::catch_unwind(|| {
++        construct_model_info_from_candidates(slug, &no_snapshot, &config)
++    })
++    .is_err());
++}
++
+diff --git a/codex-rs/models-manager/src/model_info.rs b/codex-rs/models-manager/src/model_info.rs
+index 88ade7c..6791138 100644
+--- a/codex-rs/models-manager/src/model_info.rs
++++ b/codex-rs/models-manager/src/model_info.rs
+@@ -99,0 +100,5 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
++    assert_ne!(
++        slug,
++        "gpt-5.2-2025-12-11",
++        "reviewed snapshot metadata is missing"
++    );

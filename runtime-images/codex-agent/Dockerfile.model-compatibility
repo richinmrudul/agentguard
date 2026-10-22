@@ -1,0 +1,5 @@
+FROM --platform=linux/amd64 ghcr.io/richinmrudul/agentguard/stage1-codex-agent@sha256:31402671e20d26972f0345c4bf3263d4f5309c0f450cfbaece19b2b799caa93a
+
+COPY --chown=10001:10001 --chmod=0555 codex /opt/codex/bin/codex
+LABEL org.opencontainers.image.title="AgentGuard mock-only Codex model compatibility candidate"
+LABEL org.opencontainers.image.version="0.159.2+agentguard-model-gpt-5.2-2025-12-11"

@@ -21,6 +21,7 @@ from agentguard.evaluation.stage1_metering import (
 from agentguard.evaluation.stage1_metering_gateway import (
     MockOnlyTransport,
     handler_for,
+    main as gateway_main,
     mock_server_from_config,
 )
 
@@ -202,6 +203,7 @@ def test_local_mock_provider_fault_closes_trial(tmp_path: Path, scenario: str) -
     ("POST", "/v1/responses", {"Host": "api.openai.com"}, 403),
     ("POST", "/v1/responses", {"Content-Type": "text/plain"}, 400),
     ("POST", "/v1/responses", {"Content-Encoding": "gzip"}, 400),
+    ("POST", "/v1/responses", {"Content-Length": "0"}, 413),
     ("POST", "/v1/responses", {"Authorization": "Basic fake"}, 403),
 ])
 def test_http_boundary_denies_unapproved_routes_and_headers(
@@ -223,6 +225,8 @@ def test_http_boundary_denies_unapproved_routes_and_headers(
         assert reply.status == expected
         reply.read()
         assert session.generations == 0
+        if path == "/v1/models":
+            assert session.closed
         if session.closed:
             assert json.loads(evidence.read_text())["trial_closed"] is True
             assert CANARY not in evidence.read_text()
@@ -240,6 +244,42 @@ def test_http_boundary_denies_unapproved_routes_and_headers(
 def test_mock_transport_rejects_nonlocal_or_unapproved_ports(host: str, port: int) -> None:
     with pytest.raises(MeteringError):
         MockOnlyTransport(host, port)
+
+
+def test_mock_transport_rejects_path_and_disconnect(monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = MockOnlyTransport("127.0.0.1", 8443)
+    with pytest.raises(MeteringError, match="upstream path is not approved"):
+        transport.post("/v1/models", b"{}")
+
+    class BrokenConnection:
+        closed = False
+
+        def request(self, *_args: object, **_kwargs: object) -> None:
+            raise OSError("synthetic disconnect")
+
+        def close(self) -> None:
+            self.closed = True
+
+    connection = BrokenConnection()
+    monkeypatch.setattr(
+        "agentguard.evaluation.stage1_metering_gateway.http.client.HTTPConnection",
+        lambda *_args, **_kwargs: connection,
+    )
+    with pytest.raises(MeteringError, match="mock upstream disconnected"):
+        transport.post("/v1/responses", b"{}")
+    assert connection.closed
+
+
+def test_mock_gateway_main_requires_explicit_local_only_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("STAGE1_MOCK_ONLY", raising=False)
+    with pytest.raises(SystemExit, match="mock-only operation"):
+        gateway_main()
+    monkeypatch.setenv("STAGE1_MOCK_ONLY", "true")
+    monkeypatch.setenv("STAGE1_MOCK_UPSTREAM", "api.openai.com")
+    with pytest.raises(SystemExit, match="fixed local mock upstream"):
+        gateway_main()
 
 
 @pytest.mark.parametrize("payload", [

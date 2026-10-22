@@ -410,6 +410,13 @@ def test_codex_argv_has_only_internal_static_provider() -> None:
     assert "--ignore-user-config" in argv
     assert "model_provider=stage1_metered" in argv
     assert 'web_search="disabled"' in argv
+    for disabled in (
+        "agents.enabled=false", "features.multi_agent=false", "features.goals=false",
+        "features.apps=false",
+        "features.plugins=false", "features.view_image=false",
+        "features.sleep_tool=false", "tools.experimental_request_user_input.enabled=false",
+    ):
+        assert disabled in argv
     assert 'env_key="CODEX_API_KEY"' in joined
     assert 'supports_websockets=false' in joined
     assert 'requires_openai_auth=false' in joined
