@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -51,13 +52,35 @@ def _certificate(directory: Path) -> tuple[Path, Path]:
 
 def _ready(container: str, code: str, seconds: int = 20) -> None:
     deadline = time.monotonic() + seconds
+    last_result: subprocess.CompletedProcess[str] | None = None
     while time.monotonic() < deadline:
         result = _docker("exec", container, "/usr/bin/python3", "-c", code,
                          check=False, timeout=5)
         if result.returncode == 0:
             return
+        last_result = result
         time.sleep(0.2)
-    raise AssertionError("local mock service did not become ready")
+    state = _docker("inspect", "--format", "{{.State.Status}}/{{.State.ExitCode}}",
+                    container, check=False)
+    diagnostic = "unavailable"
+    if last_result is not None:
+        for name in ("SSLCertVerificationError", "SSLError", "ConnectionRefusedError",
+                     "FileNotFoundError", "PermissionError", "URLError", "gaierror"):
+            if name in last_result.stderr:
+                diagnostic = name
+                break
+    if diagnostic == "unavailable":
+        logs = _docker("logs", container, check=False)
+        classes = re.findall(
+            r"(?m)^(?:[A-Za-z_][A-Za-z_0-9]*\.)*([A-Za-z_][A-Za-z_0-9]*(?:Error|Exception)):",
+            logs.stderr[-4096:],
+        )
+        if classes:
+            diagnostic = classes[-1]
+    status = state.stdout.strip() if state.returncode == 0 else "missing"
+    raise AssertionError(
+        f"local mock service did not become ready: state={status}, diagnostic={diagnostic}"
+    )
 
 
 @pytest.mark.docker
