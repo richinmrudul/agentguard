@@ -58,7 +58,15 @@ def reviewed_tools(tools: object) -> bool:
 
 def normalize_generation(raw: bytes, output_cap: int) -> dict[str, object]:
     request = parse_json(raw)
-    if set(request) - _REQUEST_FIELDS:
+    extras = set(request) - _REQUEST_FIELDS
+    if extras:
+        diagnostic_names = {
+            "stream_options", "service_tier", "previous_response_id", "text",
+            "client_metadata", "prompt_cache_retention",
+        }
+        if extras <= diagnostic_names:
+            names = " ".join(sorted(name.replace("_", "-") for name in extras))
+            raise MeteringError(f"frozen Codex request has unreviewed fields {names}")
         raise MeteringError("frozen Codex request contains an unreviewed field")
     if request.get("model") != MODEL or request.get("store") is not False:
         raise MeteringError("model or storage policy differs")

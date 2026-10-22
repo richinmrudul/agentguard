@@ -285,6 +285,14 @@ def test_live_request_rejects_remote_or_nontext_nested_inputs(value: object) -> 
         _text_only(value)
 
 
+def test_unreviewed_request_field_diagnostic_exposes_name_only() -> None:
+    with pytest.raises(MeteringError, match="previous-response-id") as caught:
+        normalize_generation(canonical_bytes({
+            "previous_response_id": "FAKE_PRIVATE_CANARY",
+        }), 8)
+    assert "FAKE_PRIVATE_CANARY" not in str(caught.value)
+
+
 def test_local_tls_transport_has_test_only_destination(tmp_path: Path) -> None:
     with pytest.raises(MeteringError):
         LocalTestTLSTransport(str(tmp_path / "missing"), 443, "api.openai.com")
