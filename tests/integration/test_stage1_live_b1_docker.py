@@ -126,7 +126,8 @@ def test_patched_codex_uses_tls_mock_and_durable_b1_ledger(tmp_path: Path) -> No
         _docker(
             "run", "-d", "--name", provider, "--network", network_provider,
             "--network-alias", "stage1-mock-provider", "--read-only", "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges", "--user", "0:0",
+            "--security-opt", "no-new-privileges", "--user",
+            f"{os.getuid()}:{os.getgid()}",
             "--env", f"STAGE1_MOCK_MODEL={MODEL}", "--env", "STAGE1_MOCK_TLS=true",
             "--env", f"STAGE1_MOCK_TLS_FAKE_TOKEN={FAKE_PROVIDER}",
             "--env", "STAGE1_MOCK_CERT=/test/ca.pem", "--env", "STAGE1_MOCK_KEY=/test/key.pem",
