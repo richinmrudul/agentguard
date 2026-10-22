@@ -31,7 +31,7 @@ _REVIEWED_TOOLS = (
     ("custom", "apply_patch", "5947b870d79e16bddc34946a4afb6200ff14a97f8419a2d23f8e5040af9a7154"),
 )
 _REQUEST_FIELDS = {
-    "include", "input", "instructions", "max_output_tokens", "model",
+    "client_metadata", "include", "input", "instructions", "max_output_tokens", "model",
     "parallel_tool_calls", "prompt_cache_key", "reasoning", "store",
     "stream", "tool_choice", "tools",
 }
@@ -68,6 +68,10 @@ def normalize_generation(raw: bytes, output_cap: int) -> dict[str, object]:
             names = " ".join(sorted(name.replace("_", "-") for name in extras))
             raise MeteringError(f"frozen Codex request has unreviewed fields {names}")
         raise MeteringError("frozen Codex request contains an unreviewed field")
+    if "client_metadata" in request:
+        metadata = request.pop("client_metadata")
+        if not isinstance(metadata, dict) or len(canonical_bytes(metadata)) > 4096:
+            raise MeteringError("client metadata is malformed or excessive")
     if request.get("model") != MODEL or request.get("store") is not False:
         raise MeteringError("model or storage policy differs")
     if request.get("stream") is not True:

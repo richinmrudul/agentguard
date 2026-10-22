@@ -177,6 +177,9 @@ fail closed. The input-token count is derived from the normalized generation's
 input-shaping fields. A terminal response must reconcile the count, model,
 service tier, total tokens, cached input, and output including reasoning.
 Cache-write usage is rejected because it is not priced in this policy.
+Frozen Codex may attach bounded `client_metadata`; the gateway validates its
+type and size and strips it before both count and generation. It is never
+forwarded, persisted, or used to relax the request contract.
 
 The future real `CODEX_API_KEY` can be read only by the gateway's one-shot
 resolver after image subjects, authorization, plan, trial, profile, model,

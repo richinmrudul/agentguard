@@ -293,6 +293,35 @@ def test_unreviewed_request_field_diagnostic_exposes_name_only() -> None:
     assert "FAKE_PRIVATE_CANARY" not in str(caught.value)
 
 
+def test_client_metadata_is_bounded_and_never_forwarded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = [
+        {"type": "function", "name": "exec_command", "parameters": {"type": "object"}},
+        {"type": "function", "name": "write_stdin", "parameters": {"type": "object"}},
+        {"type": "custom", "name": "apply_patch", "format": {"type": "text"}},
+    ]
+    contract = tuple((item["type"], item["name"], sha256(json.dumps(
+        item, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode()).hexdigest()) for item in tools)
+    monkeypatch.setattr(session_module, "_REVIEWED_TOOLS", contract)
+    request = {
+        "model": MODEL, "instructions": "fake task", "input": [
+            {"role": "user", "content": "fake fixture"},
+        ], "tools": tools, "tool_choice": "auto", "parallel_tool_calls": True,
+        "reasoning": {"effort": "none"}, "store": False, "stream": True,
+        "include": [], "prompt_cache_key": "fake-fixture",
+        "client_metadata": {"session": "FAKE_PRIVATE_CANARY"},
+    }
+    generation = normalize_generation(canonical_bytes(request), 8)
+    assert "client_metadata" not in generation
+    assert b"FAKE_PRIVATE_CANARY" not in canonical_bytes(generation)
+    assert b"FAKE_PRIVATE_CANARY" not in count_request(generation)
+    request["client_metadata"] = {"session": "x" * 4097}
+    with pytest.raises(MeteringError, match="client metadata"):
+        normalize_generation(canonical_bytes(request), 8)
+
+
 def test_local_tls_transport_has_test_only_destination(tmp_path: Path) -> None:
     with pytest.raises(MeteringError):
         LocalTestTLSTransport(str(tmp_path / "missing"), 443, "api.openai.com")
