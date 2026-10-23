@@ -53,14 +53,18 @@ def test_trivy_rows_preserve_exact_package_and_fixability() -> None:
         "PkgName": "libexample", "InstalledVersion": "1.0", "FixedVersion": "1.1",
         "SrcName": "example", "Status": "fixed",
     }
-    document = {"Results": [{"Type": "deb", "Target": "Debian 13", "Vulnerabilities": [finding]}]}
-    rows = trivy_rows(document)
+    document = {"Results": [{"Type": "deb", "Target": "/work/a.image.tar (debian 13.7)", "Vulnerabilities": [finding]}]}
+    rows = trivy_rows(document, "a")
     assert rows == [{
         "cve": "CVE-2026-12345", "severity": "HIGH", "package": "libexample",
         "installed_version": "1.0", "fixed_version": "1.1", "status": "fixed",
-        "source_package": "example", "result_type": "deb", "target": "Debian 13",
+        "source_package": "example", "result_type": "deb", "target": "candidate-image (debian 13.7)",
     }]
     assert json.loads(json.dumps(rows)) == rows
+    document["Results"][0]["Target"] = "/work/b.image.tar (debian 13.7)"
+    assert trivy_rows(document, "b") == rows
+    with pytest.raises(RuntimeImageError):
+        trivy_rows(document, "a")
 
 
 @pytest.mark.parametrize("document", [
@@ -71,4 +75,4 @@ def test_trivy_rows_preserve_exact_package_and_fixability() -> None:
 ])
 def test_malformed_scan_fails_closed(document: dict) -> None:
     with pytest.raises(RuntimeImageError):
-        trivy_rows(document)
+        trivy_rows(document, "a")

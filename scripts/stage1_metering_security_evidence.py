@@ -87,7 +87,9 @@ def rootfs_inventory(path: Path) -> list[dict]:
     return entries
 
 
-def trivy_rows(document: dict) -> list[dict]:
+def trivy_rows(document: dict, build: str) -> list[dict]:
+    if build not in {"a", "b"}:
+        raise RuntimeImageError("unknown candidate build role")
     results = document.get("Results")
     if not isinstance(results, list) or not results:
         raise RuntimeImageError("Trivy Results are missing")
@@ -95,6 +97,13 @@ def trivy_rows(document: dict) -> list[dict]:
     for result in results:
         if not isinstance(result, dict):
             raise RuntimeImageError("Trivy result is malformed")
+        target = result.get("Target")
+        prefix = f"/work/{build}.image.tar (debian "
+        if not isinstance(target, str) or not target.startswith(prefix) or not re.fullmatch(
+            r"[0-9]+(?:\.[0-9]+)?\)", target[len(prefix):],
+        ):
+            raise RuntimeImageError("Trivy target does not bind the exact candidate archive")
+        normalized_target = "candidate-image (debian " + target[len(prefix):]
         findings = result.get("Vulnerabilities")
         if findings is None:
             findings = []
@@ -115,7 +124,7 @@ def trivy_rows(document: dict) -> list[dict]:
                 "status": finding.get("Status") or "",
                 "source_package": finding.get("SrcName") or "",
                 "result_type": result.get("Type") or "",
-                "target": result.get("Target") or "",
+                "target": normalized_target,
             }
             if any(not isinstance(value, str) for value in row.values()):
                 raise RuntimeImageError("Trivy finding field is malformed")
@@ -157,7 +166,7 @@ def summarize(root: Path, commit: str) -> dict:
         (root / f"{build}.license-inventory.json").write_text(
             json.dumps(license_inventory, indent=2, sort_keys=True) + "\n", encoding="utf-8",
         )
-        findings = trivy_rows(_json(root / f"{build}.trivy.json"))
+        findings = trivy_rows(_json(root / f"{build}.trivy.json"), build)
         (root / f"{build}.findings.json").write_text(
             json.dumps(findings, indent=2, sort_keys=True) + "\n", encoding="utf-8",
         )
