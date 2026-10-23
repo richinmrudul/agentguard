@@ -89,6 +89,7 @@ def _reviewed_tool_contract(tools: object) -> bool:
 
 
 class MockHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
     scenario = "success"
     count_requests = 0
     generations = 0

@@ -401,3 +401,63 @@ until this correction merges, a new read-only readiness review passes, and a
 separate explicit publication authorization is issued. This corrective
 prerequisite does not dispatch the publication workflow, mutate GHCR, or
 approve any digest.
+
+## Compiled Metering-Gateway Security Candidate
+
+Issue #322 requires replacing the Python metering candidate. Draft PR #323,
+its canonical identity `sha256:e9caf0f4ce96c6c53d22241b25dc5109960831ecf5e6f64eac7072c3eb3c3ff2`,
+and its raw evidence remain rejected-candidate review material; they are not
+modified by the compiled-runtime work. The prior `libexpat1` remediation and
+the gateway's old exception manifest do not approve a new metering runtime.
+
+The replacement candidate in `runtime-images/stage1-metering-rust/` uses the
+exact Rust 1.95.0 toolchain, a locked dependency graph, and
+`#![forbid(unsafe_code)]` in project-owned code. Its build stage is pinned to
+the Linux/amd64 official Rust image manifest digest. The final `scratch` image
+contains only the compiled gateway binary, runs as `65532:65532`, and has no
+shell, package manager, Python runtime, compiler, mutable home, or baked-in
+credential. A test-only CA is mounted for repository-controlled TLS mock
+traffic. No live resolver, real credential, public-provider request, or study
+authorization is enabled by this image.
+
+The inbound surface is an internal-network HTTP/1.1 `POST /v1/responses` with
+a synthetic bearer token. The request must use the exact
+`gpt-5.2-2025-12-11` model, reviewed ordered tool declarations, text-only
+input, stateless streaming mode, and bounded JSON and HTTP framing. The mock
+gateway forwards only `POST /v1/responses/input_tokens` followed by
+`POST /v1/responses` to the local TLS provider. It never forwards arbitrary
+methods, paths, query strings, cookies, proxy headers, or redirects. The
+production hostname remains `api.openai.com:443` in the reviewed transport
+contract, but the candidate executable has no live mode or credential
+resolver. Production TLS trust roots and credential activation require later
+review, not a silent reuse of the test CA.
+
+The reviewed pricing policy remains
+`sha256:11da095d2856b07a2ce0a6da30e8d3229b9d4a2138122549d129580f0378eb35`.
+The compiled ledger preserves the `agentguard.stage1-study-ledger` v1
+snapshot/journal format and adds a separate, host-managed anchor directory.
+Both directories must be private to the gateway UID and inaccessible to the
+agent. Every transition fsyncs the journal, atomically replaces and fsyncs the
+snapshot, then atomically replaces and fsyncs the anchor. A crash between
+those steps produces disagreement and blocks restart; an outstanding
+reservation keeps its full worst-case charge. A stale or missing anchor blocks
+startup. The anchor detects rollback of the ledger directory alone; rollback
+of both host-managed directories by an administrator remains outside this
+format's threat model and must not be represented as solved.
+
+The non-publishing security workflow
+`.github/workflows/stage1-compiled-metering-security.yml` builds independently
+twice, compares binary/rootfs/configuration identities and normalized SBOM
+rows, retains raw Syft/Trivy/RustSec evidence, and runs the compiled image
+with patched Codex on internal Docker networks against only a local TLS mock.
+Any HIGH/CRITICAL or failed reproducibility check must stop approval; no
+Python exception is inherited. Raw evidence is uploaded even when a policy
+check fails. The exact candidate identity, package findings, and mock result
+must be taken from a completed hosted run rather than assumed from source.
+
+The old published byte-forwarding gateway and agent remain valid for their
+original scope but are not eligible for the metered #294 pilot. This security
+task has no GHCR login, publication workflow, activation variable, provider
+credential, paid request, authorization, or live trial. A replacement subject
+would require separate build-once publication preparation, explicit approval,
+digest pullback verification, and a later frozen pilot review.
