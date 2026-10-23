@@ -37,6 +37,8 @@ def test_hosted_candidate_scan_is_retained_before_fail_closed_policy() -> None:
     policy = workflow.index("Fail closed on unreviewed candidate HIGH or CRITICAL")
     assert build < integration < upload < policy
     assert "if: always()" in workflow[upload:policy]
+    assert "dist/stage1-metering-security/SHA256SUMS" in workflow[upload:policy]
+    assert "dist/stage1-metering-security/*.rootfs.tar" in workflow[upload:policy]
     assert "stage1_metering_security_evidence.py" in workflow[policy:]
     assert "--enforce" in workflow[policy:]
     script = (ROOT / "scripts/stage1_metering_security_build.sh").read_text()
