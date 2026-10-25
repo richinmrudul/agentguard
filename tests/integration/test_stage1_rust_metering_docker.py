@@ -73,17 +73,36 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
     gateway = f"agentguard-rust-{marker}-gateway"
     agent = f"agentguard-rust-{marker}-codex"
     provider_image = f"agentguard-rust-{marker}-mock:local"
-    certificate = tmp_path / "ca.pem"
-    private_key = tmp_path / "key.pem"
+    root_certificate = tmp_path / "ca.pem"
+    root_key = tmp_path / "ca-key.pem"
+    certificate = tmp_path / "server.pem"
+    private_key = tmp_path / "server-key.pem"
+    certificate_request = tmp_path / "server.csr"
     certificate_der = tmp_path / "ca.der"
     subprocess.run([
         "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256",
-        "-days", "1", "-keyout", str(private_key), "-out", str(certificate),
-        "-subj", "/CN=stage1-mock-provider",
-        "-addext", "subjectAltName=DNS:stage1-mock-provider",
+        "-days", "1", "-keyout", str(root_key), "-out", str(root_certificate),
+        "-subj", "/CN=AgentGuard local mock CA",
+        "-addext", "basicConstraints=critical,CA:TRUE",
+        "-addext", "keyUsage=critical,keyCertSign,cRLSign",
     ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run([
-        "openssl", "x509", "-in", str(certificate), "-outform", "DER", "-out", str(certificate_der),
+        "openssl", "req", "-newkey", "rsa:2048", "-nodes", "-sha256",
+        "-keyout", str(private_key), "-out", str(certificate_request),
+        "-subj", "/CN=stage1-mock-provider",
+        "-addext", "subjectAltName=DNS:stage1-mock-provider",
+        "-addext", "basicConstraints=critical,CA:FALSE",
+        "-addext", "extendedKeyUsage=serverAuth",
+        "-addext", "keyUsage=digitalSignature,keyEncipherment",
+    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run([
+        "openssl", "x509", "-req", "-in", str(certificate_request),
+        "-CA", str(root_certificate), "-CAkey", str(root_key), "-CAcreateserial",
+        "-out", str(certificate), "-days", "1", "-sha256", "-copy_extensions", "copy",
+    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run([
+        "openssl", "x509", "-in", str(root_certificate), "-outform", "DER",
+        "-out", str(certificate_der),
     ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     sha = "sha256:" + "a" * 64
     scope = LedgerScope(
