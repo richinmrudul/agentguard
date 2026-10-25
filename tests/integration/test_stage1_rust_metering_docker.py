@@ -202,7 +202,42 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
             raise AssertionError(f"compiled mock gateway denied patched Codex: {diagnostic}")
         assert "mock complete" in result.stdout + result.stderr
         evidence_file = tmp_path / "evidence.json"
-        _docker("cp", f"{gateway}:/stage1-metering/evidence.json", str(evidence_file))
+        copied = _docker(
+            "cp", f"{gateway}:/stage1-metering/evidence.json", str(evidence_file),
+            check=False,
+        )
+        if copied.returncode:
+            gateway_logs = _docker("logs", gateway, check=False).stderr
+            classes = sorted(set(re.findall(
+                r"STAGE1_RUST_(?:DENIAL_[A-Z_]+|STAGE_[A-Z_]+|GATEWAY_READY|GATEWAY_STOPPED)",
+                gateway_logs,
+            )))[:16]
+            gateway_state = _docker(
+                "inspect", "--format", "{{.State.Running}}:{{.State.ExitCode}}",
+                gateway, check=False,
+            ).stdout.strip()
+            inspection = _docker(
+                "exec", provider, "/usr/bin/python3", "-c",
+                "import ssl,urllib.request; c=ssl.create_default_context(cafile='/test/root.pem'); "
+                "print(urllib.request.urlopen('https://stage1-mock-provider:8443/inspection',"
+                "context=c,timeout=3).read().decode())",
+                check=False,
+            )
+            requests = json.loads(inspection.stdout).get("requests", []) if inspection.returncode == 0 else []
+            paths = [entry.get("path") for entry in requests[:4] if isinstance(entry, dict)]
+            diagnostic = {
+                "gateway_classes": classes,
+                "gateway_state": (
+                    gateway_state if re.fullmatch(r"(?:true|false):[0-9]{1,3}", gateway_state)
+                    else "unknown"
+                ),
+                "mock_request_count": min(len(requests), 100),
+                "mock_paths": [path for path in paths if path in (
+                    "/v1/responses/input_tokens", "/v1/responses",
+                )],
+                "evidence_copy_succeeded": False,
+            }
+            raise AssertionError(f"compiled mock evidence absent: {diagnostic}")
         evidence = evidence_file.read_bytes()
         assert len(evidence) < 64 * 1024
         assert json.loads(evidence)["events"]
