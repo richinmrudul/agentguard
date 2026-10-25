@@ -388,6 +388,18 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
             .get("type")
             .and_then(Value::as_str)
             .ok_or(Denial::InvalidProvider)?;
+        if !matches!(
+            kind,
+            "response.created"
+                | "response.output_item.added"
+                | "response.output_text.delta"
+                | "response.output_item.done"
+                | "response.completed"
+                | "response.failed"
+                | "response.incomplete"
+        ) {
+            return Err(Denial::InvalidProvider);
+        }
         if matches!(kind, "response.failed" | "response.incomplete") {
             return Err(Denial::InvalidProvider);
         }
@@ -423,17 +435,31 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
         .get("output")
         .and_then(Value::as_array)
         .ok_or(Denial::InvalidProvider)?;
-    if output.len() > 128
-        || output.iter().any(|item| {
-            !matches!(
-                item.get("type").and_then(Value::as_str),
-                Some("message" | "function_call" | "custom_tool_call")
-            )
-        })
-    {
+    if output.len() > 128 || output.iter().any(|item| !reviewed_output_item(item)) {
         return Err(Denial::InvalidProvider);
     }
     Ok(response)
+}
+
+fn reviewed_output_item(item: &Value) -> bool {
+    match item.get("type").and_then(Value::as_str) {
+        Some("message") => item
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|content| {
+                content.len() <= 128
+                    && content.iter().all(|part| {
+                        part.get("type").and_then(Value::as_str) == Some("output_text")
+                            && part.get("text").and_then(Value::as_str).is_some()
+                    })
+            }),
+        Some("function_call") => matches!(
+            item.get("name").and_then(Value::as_str),
+            Some("exec_command" | "write_stdin")
+        ),
+        Some("custom_tool_call") => item.get("name").and_then(Value::as_str) == Some("apply_patch"),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -461,5 +487,32 @@ mod tests {
         let completed = br#"data: {"sequence_number":1,"type":"response.completed","response":{"id":"abc","model":"gpt-5.2-2025-12-11","status":"completed","service_tier":"default","output":[]}}\n\n"#;
         assert!(terminal_stream(completed).is_err());
         assert!(terminal_stream(b"data: {}\n").is_err());
+    }
+
+    #[test]
+    fn rejects_unreviewed_events_and_provider_tool_calls() {
+        let base = serde_json::json!({
+            "id":"resp_mock", "model": MODEL, "status":"completed",
+            "service_tier":"default", "output":[],
+        });
+        let frame = |kind: &str, response: &Value| {
+            format!(
+                "data: {}\n\n",
+                serde_json::json!({
+                    "sequence_number": 0, "type": kind, "response": response,
+                })
+            )
+        };
+        assert!(terminal_stream(frame("response.completed", &base).as_bytes()).is_ok());
+        assert!(terminal_stream(frame("response.web_search_call", &base).as_bytes()).is_err());
+        for item in [
+            serde_json::json!({"type":"function_call","name":"web_search"}),
+            serde_json::json!({"type":"custom_tool_call","name":"unreviewed"}),
+            serde_json::json!({"type":"message","content":[{"type":"output_image"}]}),
+        ] {
+            let mut response = base.clone();
+            response["output"] = serde_json::json!([item]);
+            assert!(terminal_stream(frame("response.completed", &response).as_bytes()).is_err());
+        }
     }
 }

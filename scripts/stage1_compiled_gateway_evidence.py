@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
+import re
 import sys
 import tarfile
 from pathlib import Path
@@ -34,6 +36,45 @@ SOURCE_FILES = [
     Path("runtime-images/stage1-metering-rust/Dockerfile"),
     Path("agentguard/evaluation/stage1_pricing_v2.json"),
 ]
+LAYER_NAME = re.compile(r"blobs/sha256/([0-9a-f]{64})\Z")
+MAX_IMAGE_ARCHIVE = 128 * 1024 * 1024
+
+
+def _extract_rootfs(root: Path, build: str) -> None:
+    image = root / f"gateway-{build}.image.tar"
+    if image.stat().st_size > MAX_IMAGE_ARCHIVE:
+        raise RuntimeImageError("candidate image archive exceeds size bound")
+    with tarfile.open(image, "r:") as archive:
+        members = archive.getmembers()
+        names = [item.name for item in members]
+        if len(names) != len(set(names)) or any(
+            item.issym() or item.islnk() or item.name.startswith("/")
+            or ".." in Path(item.name).parts for item in members
+        ):
+            raise RuntimeImageError("candidate archive contains duplicate or unsafe paths")
+        descriptor = archive.extractfile("manifest.json")
+        if descriptor is None:
+            raise RuntimeImageError("candidate image manifest is missing")
+        manifest = json.load(descriptor)
+        if not isinstance(manifest, list) or len(manifest) != 1 or not isinstance(manifest[0], dict):
+            raise RuntimeImageError("candidate archive must contain one image manifest")
+        layers = manifest[0].get("Layers")
+        if not isinstance(layers, list) or len(layers) != 1:
+            raise RuntimeImageError("scratch candidate must have exactly one image layer")
+        layer_name = layers[0]
+        match = LAYER_NAME.fullmatch(layer_name) if isinstance(layer_name, str) else None
+        if match is None or layer_name not in names:
+            raise RuntimeImageError("candidate layer path is malformed or absent")
+        layer = archive.extractfile(layer_name)
+        if layer is None:
+            raise RuntimeImageError("candidate layer bytes are missing")
+        raw = layer.read(MAX_IMAGE_ARCHIVE + 1)
+        if len(raw) > MAX_IMAGE_ARCHIVE or hashlib.sha256(raw).hexdigest() != match.group(1):
+            raise RuntimeImageError("candidate layer digest differs from image manifest")
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as rootfs:
+            if len(rootfs.getmembers()) != 1:
+                raise RuntimeImageError("scratch candidate layer has unexpected files")
+        (root / f"gateway-{build}.rootfs.tar").write_bytes(raw)
 
 
 def _read_json(path: Path) -> dict[str, object]:
@@ -73,8 +114,14 @@ def _rootfs(rootfs: Path) -> dict[str, object]:
     }
 
 
-def _findings(document: dict[str, object]) -> list[dict[str, str]]:
+def _findings(document: dict[str, object], package_count: int) -> list[dict[str, str]]:
     results = document.get("Results")
+    if results is None:
+        if (document.get("SchemaVersion") != 2
+                or document.get("ArtifactType") != "container_image"
+                or package_count != 0):
+            raise RuntimeImageError("empty Trivy result is not bound to an empty image SBOM")
+        return []
     if not isinstance(results, list):
         raise RuntimeImageError("raw Trivy results are missing")
     findings = []
@@ -108,12 +155,14 @@ def _candidate(root: Path, build: str, source: str) -> dict[str, object]:
         raise RuntimeImageError("compiled runtime platform or user differs")
     if config["entrypoint"] != ["/stage1-metering-gateway"] or config["working_dir"] != "/":
         raise RuntimeImageError("compiled runtime entrypoint or workdir differs")
-    if config["env"] or config["volumes"] or config["cmd"]:
+    if config["env"] != ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]:
+        raise RuntimeImageError("compiled runtime has unexpected ambient environment")
+    if config["volumes"] or config["cmd"]:
         raise RuntimeImageError("compiled runtime contains ambient environment, volume, or command")
     rootfs = _rootfs(root / f"gateway-{build}.rootfs.tar")
     sbom = _read_json(root / f"gateway-{build}.sbom.json")
     rows = normalized_sbom_package_rows(sbom)
-    findings = _findings(_read_json(root / f"gateway-{build}.trivy.json"))
+    findings = _findings(_read_json(root / f"gateway-{build}.trivy.json"), len(rows))
     identity = canonical_json_digest({
         "schema": "agentguard.stage1-compiled-gateway-canonical-identity",
         "schema_version": 1,
@@ -139,9 +188,14 @@ def _candidate(root: Path, build: str, source: str) -> dict[str, object]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument("--extract-only", action="store_true")
     arguments = parser.parse_args()
     root = arguments.evidence
     try:
+        if arguments.extract_only:
+            for build in ("a", "b"):
+                _extract_rootfs(root, build)
+            return 0
         source = _source_digest()
         first = _candidate(root, "a", source)
         second = _candidate(root, "b", source)
@@ -167,7 +221,7 @@ def main() -> int:
         }, sort_keys=True))
         if first["findings"]:
             raise RuntimeImageError("unreviewed HIGH/CRITICAL requires separate review")
-    except (OSError, ValueError, KeyError, RuntimeImageError) as error:
+    except (OSError, ValueError, KeyError, TypeError, tarfile.TarError, RuntimeImageError) as error:
         print(f"compiled gateway evidence rejected: {error}", file=sys.stderr)
         return 1
     return 0

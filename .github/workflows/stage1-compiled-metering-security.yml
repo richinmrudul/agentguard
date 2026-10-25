@@ -72,6 +72,7 @@ jobs:
           docker version > dist/stage1-compiled-metering/docker-version.txt
           docker pull docker.io/library/rust:1.95.0-alpine3.22@sha256:2805e96db5234c9cfaf7ecb50f488693dab84d28ad30b6290cc1b707a18bf775
           docker pull gcr.io/distroless/python3-debian13:nonroot@sha256:ab7db4566f1d345612bcd57e1d33d8beb428d111f477dac98521a98fa4ab754d
+          docker pull ghcr.io/richinmrudul/agentguard/stage1-codex-agent@sha256:31402671e20d26972f0345c4bf3263d4f5309c0f450cfbaece19b2b799caa93a
 
       - name: Build compiled scratch image twice independently
         shell: bash
@@ -84,12 +85,12 @@ jobs:
               2>&1 | tee "dist/stage1-compiled-metering/build-$build.log"
             docker image inspect "agentguard-stage1-compiled-metering:$build" \
               > "dist/stage1-compiled-metering/gateway-$build.inspect.json"
-            container="$(docker create "agentguard-stage1-compiled-metering:$build")"
-            docker export "$container" -o "dist/stage1-compiled-metering/gateway-$build.rootfs.tar"
-            docker rm -f "$container" >/dev/null
             docker save "agentguard-stage1-compiled-metering:$build" \
               -o "dist/stage1-compiled-metering/gateway-$build.image.tar"
           done
+
+      - name: Extract digest-verified scratch layers from image archives
+        run: python scripts/stage1_compiled_gateway_evidence.py --evidence dist/stage1-compiled-metering --extract-only
 
       - name: Prove static linkage and enumerate runtime linkage
         shell: bash
@@ -177,7 +178,7 @@ jobs:
           name: stage1-compiled-metering-security-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist/stage1-compiled-metering/
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 90
 
       - name: Enforce security decision after evidence retention
         if: always()

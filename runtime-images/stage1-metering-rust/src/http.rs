@@ -1,9 +1,37 @@
 use crate::{Denial, Result};
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
+use std::time::{Duration, Instant};
 
 pub const MAX_HEADER: usize = 16 * 1024;
 pub const MAX_BODY: usize = 2 * 1024 * 1024;
 const MAX_HEADERS: usize = 32;
+
+pub struct DeadlineReader<R> {
+    inner: R,
+    deadline: Instant,
+}
+
+impl<R: Read> DeadlineReader<R> {
+    pub fn new(inner: R, maximum: Duration) -> Self {
+        Self {
+            inner,
+            deadline: Instant::now() + maximum,
+        }
+    }
+}
+
+impl<R: Read> Read for DeadlineReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if Instant::now() >= self.deadline {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "read deadline"));
+        }
+        let count = self.inner.read(buffer)?;
+        if Instant::now() >= self.deadline {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "read deadline"));
+        }
+        Ok(count)
+    }
+}
 
 #[derive(Debug)]
 pub struct Message {
@@ -18,6 +46,85 @@ pub struct UpstreamResponse {
     pub status: u16,
     pub content_type: String,
     pub body: Vec<u8>,
+}
+
+struct PrefixReader<'a, R: Read> {
+    prefix: Vec<u8>,
+    position: usize,
+    inner: &'a mut R,
+}
+
+impl<R: Read> Read for PrefixReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if self.position < self.prefix.len() {
+            let count = buffer.len().min(self.prefix.len() - self.position);
+            buffer[..count].copy_from_slice(&self.prefix[self.position..self.position + count]);
+            self.position += count;
+            Ok(count)
+        } else {
+            self.inner.read(buffer)
+        }
+    }
+}
+
+fn read_chunked<R: Read>(reader: &mut R, prefix: Vec<u8>) -> Result<Vec<u8>> {
+    let mut source = PrefixReader {
+        prefix,
+        position: 0,
+        inner: reader,
+    };
+    let mut decoded = Vec::new();
+    loop {
+        let mut line = Vec::new();
+        loop {
+            let mut byte = [0_u8; 1];
+            source
+                .read_exact(&mut byte)
+                .map_err(|_| Denial::InvalidProvider)?;
+            line.push(byte[0]);
+            if line.len() > 18 {
+                return Err(Denial::InvalidProvider);
+            }
+            if line.ends_with(b"\r\n") {
+                break;
+            }
+        }
+        let digits = &line[..line.len() - 2];
+        if digits.is_empty() || !digits.iter().all(u8::is_ascii_hexdigit) {
+            return Err(Denial::InvalidProvider);
+        }
+        let text = std::str::from_utf8(digits).map_err(|_| Denial::InvalidProvider)?;
+        let size = usize::from_str_radix(text, 16).map_err(|_| Denial::InvalidProvider)?;
+        if size == 0 {
+            let mut ending = [0_u8; 2];
+            source
+                .read_exact(&mut ending)
+                .map_err(|_| Denial::InvalidProvider)?;
+            if ending != *b"\r\n" || source.position != source.prefix.len() {
+                return Err(Denial::InvalidProvider);
+            }
+            break;
+        }
+        if size > MAX_BODY - decoded.len() {
+            return Err(Denial::InvalidProvider);
+        }
+        let offset = decoded.len();
+        decoded.resize(offset + size, 0);
+        source
+            .read_exact(&mut decoded[offset..])
+            .map_err(|_| Denial::InvalidProvider)?;
+        let mut separator = [0_u8; 2];
+        source
+            .read_exact(&mut separator)
+            .map_err(|_| Denial::InvalidProvider)?;
+        if separator != *b"\r\n" {
+            return Err(Denial::InvalidProvider);
+        }
+    }
+    if decoded.is_empty() {
+        return Err(Denial::InvalidProvider);
+    }
+    Ok(decoded)
 }
 
 impl Message {
@@ -177,7 +284,7 @@ pub fn read_upstream<R: Read>(reader: &mut R, expected_type: &str) -> Result<Ups
     if headers.iter().any(|(name, _)| {
         matches!(
             name.as_str(),
-            "location" | "content-encoding" | "transfer-encoding" | "set-cookie"
+            "location" | "content-encoding" | "set-cookie" | "trailer"
         )
     }) {
         return Err(Denial::InvalidProvider);
@@ -192,6 +299,17 @@ pub fn read_upstream<R: Read>(reader: &mut R, expected_type: &str) -> Result<Ups
         .is_none_or(|value| value.split(';').next().unwrap_or("").trim() != expected_type)
     {
         return Err(Denial::InvalidProvider);
+    }
+    if let Some(encoding) = field("transfer-encoding") {
+        if encoding != "chunked" || field("content-length").is_some() {
+            return Err(Denial::InvalidProvider);
+        }
+        let decoded = read_chunked(reader, body)?;
+        return Ok(UpstreamResponse {
+            status,
+            content_type: expected_type.into(),
+            body: decoded,
+        });
     }
     let size = field("content-length").ok_or(Denial::InvalidProvider)?;
     if size.is_empty()
@@ -262,5 +380,52 @@ mod tests {
         ] {
             assert!(read_request(&mut Cursor::new(invalid), 16).is_err());
         }
+    }
+
+    #[test]
+    fn upstream_framing_and_redirects_fail_closed() {
+        let valid =
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
+        assert_eq!(
+            read_upstream(&mut Cursor::new(valid), "application/json")
+                .unwrap()
+                .body,
+            b"{}"
+        );
+        let chunked = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n";
+        assert_eq!(
+            read_upstream(&mut Cursor::new(chunked), "application/json")
+                .unwrap()
+                .body,
+            b"{}"
+        );
+        for invalid in [
+            b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}".as_slice(),
+            b"HTTP/1.1 302 Found\r\nLocation: https://elsewhere.example/\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}",
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\n\r\n{}",
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\nContent-Length: 2\r\n\r\n{}",
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n2;ext=x\r\n{}\r\n0\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\nX: y\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n3\r\n{}\r\n0\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{",
+            b"NOT_HTTP\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+        ] {
+            assert!(read_upstream(&mut Cursor::new(invalid), "application/json").is_err());
+        }
+    }
+
+    #[test]
+    fn total_read_deadline_rejects_trickle() {
+        struct Trickle;
+        impl Read for Trickle {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                std::thread::sleep(Duration::from_millis(3));
+                buffer[0] = b'P';
+                Ok(1)
+            }
+        }
+        let mut reader = DeadlineReader::new(Trickle, Duration::from_millis(1));
+        assert!(read_request(&mut reader, 16).is_err());
     }
 }

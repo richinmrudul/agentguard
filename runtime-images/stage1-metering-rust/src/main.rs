@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use agentguard_stage1_metering_gateway::config::{expected_pricing, parse_mock_config};
-use agentguard_stage1_metering_gateway::http::{read_request, write_response};
+use agentguard_stage1_metering_gateway::http::{DeadlineReader, read_request, write_response};
 use agentguard_stage1_metering_gateway::ledger::StudyLedger;
 use agentguard_stage1_metering_gateway::session::{LocalTlsProvider, Session};
 use agentguard_stage1_metering_gateway::{Denial, MAX_REQUEST_BYTES, Result};
@@ -71,7 +71,10 @@ fn run() -> Result<()> {
 }
 
 fn handle(stream: &mut TcpStream, session: &mut Session<LocalTlsProvider>) {
-    let request = match read_request(stream, MAX_REQUEST_BYTES) {
+    let request = match read_request(
+        &mut DeadlineReader::new(&mut *stream, Duration::from_secs(30)),
+        MAX_REQUEST_BYTES,
+    ) {
         Ok(request) => request,
         Err(_) => {
             eprintln!("STAGE1_RUST_DENIAL_REQUEST_FRAMING");

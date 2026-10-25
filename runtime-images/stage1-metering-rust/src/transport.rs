@@ -1,4 +1,4 @@
-use crate::http::{UpstreamResponse, read_upstream};
+use crate::http::{DeadlineReader, UpstreamResponse, read_upstream};
 use crate::{Denial, Result};
 use rustls::pki_types::{CertificateDer, ServerName};
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
@@ -184,7 +184,10 @@ pub fn mock_tls_request(
     } else {
         "text/event-stream"
     };
-    read_upstream(&mut stream, expected_type)
+    read_upstream(
+        &mut DeadlineReader::new(&mut stream, Duration::from_secs(60)),
+        expected_type,
+    )
 }
 
 #[cfg(test)]

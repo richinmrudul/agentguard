@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 import uuid
@@ -150,7 +151,25 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
             "--env", f"CODEX_API_KEY={FAKE_AGENT}", "--env", f"CODEX_MODEL={MODEL}",
             agent_image, *codex_metered_argv(MODEL), check=False, timeout=120,
         )
-        assert result.returncode == 0, "patched Codex did not complete through compiled mock gateway"
+        if result.returncode:
+            gateway_logs = _docker("logs", gateway, check=False).stderr
+            classes = sorted(set(re.findall(
+                r"STAGE1_RUST_(?:DENIAL_[A-Z_]+|GATEWAY_READY|GATEWAY_STOPPED)", gateway_logs,
+            )))[:16]
+            state = _docker(
+                "inspect", "--format", "{{.State.Running}}:{{.State.ExitCode}}",
+                gateway, check=False,
+            ).stdout.strip()
+            diagnostic = {
+                "schema": "agentguard.stage1-rust-mock-failure",
+                "gateway_classes": classes,
+                "gateway_state": state if re.fullmatch(r"(?:true|false):[0-9]{1,3}", state) else "unknown",
+                "agent_exit_code": result.returncode,
+            }
+            path = ROOT / "dist/stage1-compiled-metering/mock-failure.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(diagnostic, sort_keys=True) + "\n", encoding="utf-8")
+            raise AssertionError(f"compiled mock gateway denied patched Codex: {diagnostic}")
         assert "mock complete" in result.stdout + result.stderr
         evidence_file = tmp_path / "evidence.json"
         _docker("cp", f"{gateway}:/stage1-metering/evidence.json", str(evidence_file))
