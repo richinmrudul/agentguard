@@ -427,6 +427,12 @@ input, stateless streaming mode, and bounded JSON and HTTP framing. The mock
 gateway forwards only `POST /v1/responses/input_tokens` followed by
 `POST /v1/responses` to the local TLS provider. It never forwards arbitrary
 methods, paths, query strings, cookies, proxy headers, or redirects. The
+inbound header allowlist includes the session and turn metadata emitted by
+frozen Codex 0.159.2 (`codex-api/src/endpoint/responses.rs`,
+`codex-api/src/requests/headers.rs`, and `core/src/responses_metadata.rs`);
+those headers are discarded at the gateway rather than copied upstream.
+Unknown header names still fail closed.
+The
 production hostname remains `api.openai.com:443` in the reviewed transport
 contract, but the candidate executable has no live mode or credential
 resolver. Production TLS trust roots and credential activation require later

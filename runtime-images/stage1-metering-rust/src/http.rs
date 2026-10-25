@@ -212,6 +212,13 @@ pub fn read_request<R: Read>(reader: &mut R, maximum_body: usize) -> Result<Mess
                 | "user-agent"
                 | "x-agentguard-trial"
                 | "x-agentguard-request"
+                | "originator"
+                | "session-id"
+                | "thread-id"
+                | "x-client-request-id"
+                | "x-codex-beta-features"
+                | "x-codex-window-id"
+                | "x-codex-turn-metadata"
         ) {
             return Err(Denial::InvalidRequest);
         }
@@ -372,11 +379,20 @@ mod tests {
             read_request(&mut Cursor::new(valid), 16).unwrap().body,
             b"{}"
         );
+        let frozen_codex_headers = b"POST /v1/responses HTTP/1.1\r\nHost: gateway\r\nContent-Type: application/json\r\nContent-Length: 2\r\nOriginator: codex_cli_rs\r\nSession-Id: 00000000-0000-0000-0000-000000000001\r\nThread-Id: 00000000-0000-0000-0000-000000000001\r\nX-Client-Request-Id: 00000000-0000-0000-0000-000000000001\r\nX-Codex-Window-Id: 00000000-0000-0000-0000-000000000002\r\nX-Codex-Turn-Metadata: {}\r\n\r\n{}";
+        assert_eq!(
+            read_request(&mut Cursor::new(frozen_codex_headers), 16)
+                .unwrap()
+                .body,
+            b"{}"
+        );
         for invalid in [
             b"POST /v1/responses?x=1 HTTP/1.1\r\nHost: gateway\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}".as_slice(),
             b"POST /v1/responses HTTP/1.1\r\nHost: gateway\r\nContent-Type: application/json\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}",
             b"POST /v1/responses HTTP/1.1\r\nHost: gateway\r\nContent-Type: application/json\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\n\r\n{}",
             b"POST /v1/responses HTTP/1.0\r\nHost: gateway\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+            b"POST /v1/responses HTTP/1.1\r\nHost: gateway\r\nContent-Type: application/json\r\nContent-Length: 2\r\nX-Unknown: value\r\n\r\n{}",
+            b"POST /v1/responses HTTP/1.1\r\nHost: gateway\r\nContent-Type: application/json\r\nContent-Length: 2\r\nCookie: value\r\n\r\n{}",
         ] {
             assert!(read_request(&mut Cursor::new(invalid), 16).is_err());
         }
