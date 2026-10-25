@@ -29,6 +29,7 @@ pub struct Scope {
 #[serde(deny_unknown_fields)]
 pub struct MockConfig {
     pub scope: Scope,
+    pub trial_id: String,
     pub output_cap: u64,
 }
 
@@ -107,7 +108,10 @@ pub fn parse_mock_config(raw: &[u8]) -> Result<MockConfig> {
     let value = parse_json(raw, MAX_CONFIG_BYTES).map_err(|_| Denial::InvalidConfig)?;
     let config: MockConfig = serde_json::from_value(value).map_err(|_| Denial::InvalidConfig)?;
     config.scope.validate()?;
-    if !(1..=4096).contains(&config.output_cap) {
+    if !(1..=4096).contains(&config.output_cap)
+        || !valid_id(&config.trial_id)
+        || !config.scope.trial_ids.contains(&config.trial_id)
+    {
         return Err(Denial::InvalidConfig);
     }
     Ok(config)
@@ -124,11 +128,51 @@ pub fn expected_pricing() -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     #[test]
     fn embedded_pricing_is_exact_reviewed_policy() {
         let policy = super::expected_pricing().unwrap();
         assert_eq!(policy["uncached_input_usd"], "1.75");
         assert_eq!(policy["cached_input_usd"], "0.175");
         assert_eq!(policy["output_usd"], "14.00");
+    }
+
+    #[test]
+    fn mock_trial_selection_must_bind_to_frozen_scope() {
+        let marker = format!("sha256:{}", "a".repeat(64));
+        let scope = json!({
+            "authorization_digest": marker,
+            "plan_digest": marker,
+            "profile_digest": marker,
+            "pricing_digest": crate::PRICING_DIGEST,
+            "redaction_digest": marker,
+            "provider": crate::PROVIDER,
+            "model": crate::MODEL,
+            "trial_ids": ["trial-a", "trial-b"],
+            "max_trial_generations": 2,
+            "max_trial_counts": 2,
+            "max_trial_input_tokens": 30,
+            "max_trial_output_tokens": 20,
+            "max_trial_total_tokens": 50,
+            "max_trial_seconds": 120,
+            "max_trial_cost_usd": "0.01",
+            "max_study_cost_usd": "0.02"
+        });
+        let valid = json!({"scope": scope, "trial_id": "trial-b", "output_cap": 8});
+        assert_eq!(
+            super::parse_mock_config(&crate::canonical(&valid).unwrap())
+                .unwrap()
+                .trial_id,
+            "trial-b"
+        );
+        for invalid in ["trial-c", "", "Trial-B"] {
+            let mut changed = valid.clone();
+            changed["trial_id"] = invalid.into();
+            assert!(super::parse_mock_config(&crate::canonical(&changed).unwrap()).is_err());
+        }
+        let mut absent = valid;
+        absent.as_object_mut().unwrap().remove("trial_id");
+        assert!(super::parse_mock_config(&crate::canonical(&absent).unwrap()).is_err());
     }
 }

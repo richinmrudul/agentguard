@@ -128,26 +128,45 @@ impl<P: Provider> Session<P> {
         let fingerprint = format!("{:x}", Sha256::digest(&request_bytes));
         let count_id = format!("count-{}", &fingerprint[..48]);
         let generation_id = format!("generation-{}", &fingerprint[..48]);
-        self.ledger.count(&self.trial_id, &count_id)?;
+        self.ledger
+            .count(&self.trial_id, &count_id)
+            .inspect_err(|_| {
+                eprintln!("STAGE1_RUST_STAGE_COUNT_FAILED");
+            })?;
         let count_bytes = count_payload(&request)?;
         let count_reply = self
             .provider
-            .post("/v1/responses/input_tokens", &count_bytes)?;
+            .post("/v1/responses/input_tokens", &count_bytes)
+            .inspect_err(|_| {
+                eprintln!("STAGE1_RUST_STAGE_INPUT_TRANSPORT_FAILED");
+            })?;
         if count_reply.status != 200 || count_reply.content_type != "application/json" {
             return Err(Denial::InvalidProvider);
         }
         let counted = input_count(&count_reply.body)?;
         self.deadline()?;
         self.ledger
-            .reserve(&self.trial_id, &generation_id, counted, self.output_cap)?;
-        let generation_reply = self.provider.post("/v1/responses", &request_bytes)?;
+            .reserve(&self.trial_id, &generation_id, counted, self.output_cap)
+            .inspect_err(|_| {
+                eprintln!("STAGE1_RUST_STAGE_RESERVE_FAILED");
+            })?;
+        let generation_reply = self
+            .provider
+            .post("/v1/responses", &request_bytes)
+            .inspect_err(|_| {
+                eprintln!("STAGE1_RUST_STAGE_GENERATION_TRANSPORT_FAILED");
+            })?;
         if generation_reply.status != 200 || generation_reply.content_type != "text/event-stream" {
             return Err(Denial::InvalidProvider);
         }
         let terminal = terminal_stream(&generation_reply.body)?;
         let usage = Usage::from_terminal(&terminal, counted)?;
         self.deadline()?;
-        self.ledger.settle(&self.trial_id, &generation_id, usage)?;
+        self.ledger
+            .settle(&self.trial_id, &generation_id, usage)
+            .inspect_err(|_| {
+                eprintln!("STAGE1_RUST_STAGE_SETTLE_FAILED");
+            })?;
         self.record_success(usage)?;
         Ok(generation_reply.body)
     }

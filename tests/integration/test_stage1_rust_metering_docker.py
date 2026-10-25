@@ -92,7 +92,9 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
         2, 2, 30, 20, 50, 120, "0.01", "0.02",
     )
     configuration = tmp_path / "config.json"
-    configuration.write_bytes(canonical_bytes({"scope": vars(scope), "output_cap": 8}))
+    configuration.write_bytes(canonical_bytes({
+        "scope": vars(scope), "trial_id": "docker-mock-trial", "output_cap": 8,
+    }))
     _docker("build", "--pull=false", "--network=none", "-f",
             "runtime-images/stage1-metering/Dockerfile.mock", "-t", provider_image, ".")
     _docker("network", "create", "--internal", agent_network)
@@ -154,16 +156,24 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
         if result.returncode:
             gateway_logs = _docker("logs", gateway, check=False).stderr
             classes = sorted(set(re.findall(
-                r"STAGE1_RUST_(?:DENIAL_[A-Z_]+|GATEWAY_READY|GATEWAY_STOPPED)", gateway_logs,
+                r"STAGE1_RUST_(?:DENIAL_[A-Z_]+|STAGE_[A-Z_]+|GATEWAY_READY|GATEWAY_STOPPED)", gateway_logs,
             )))[:16]
             state = _docker(
                 "inspect", "--format", "{{.State.Running}}:{{.State.ExitCode}}",
                 gateway, check=False,
             ).stdout.strip()
+            provider_state = _docker(
+                "inspect", "--format", "{{.State.Running}}:{{.State.ExitCode}}",
+                provider, check=False,
+            ).stdout.strip()
             diagnostic = {
                 "schema": "agentguard.stage1-rust-mock-failure",
                 "gateway_classes": classes,
                 "gateway_state": state if re.fullmatch(r"(?:true|false):[0-9]{1,3}", state) else "unknown",
+                "provider_state": (
+                    provider_state if re.fullmatch(r"(?:true|false):[0-9]{1,3}", provider_state)
+                    else "unknown"
+                ),
                 "agent_exit_code": result.returncode,
             }
             path = ROOT / "dist/stage1-compiled-metering/mock-failure.json"

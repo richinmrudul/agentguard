@@ -37,19 +37,13 @@ fn run() -> Result<()> {
         &PathBuf::from("/stage1-ledger-anchor"),
         config.scope,
     )?;
-    let trial_id = ledger
-        .scope
-        .trial_ids
-        .first()
-        .ok_or(Denial::InvalidConfig)?
-        .clone();
     let provider = LocalTlsProvider {
         ca_file: "/stage1-config/ca.der".into(),
         fake_upstream_token: fake_upstream,
     };
     let mut session = Session::new(
         ledger,
-        &trial_id,
+        &config.trial_id,
         synthetic.as_bytes(),
         provider,
         config.output_cap,

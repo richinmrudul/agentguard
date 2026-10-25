@@ -130,7 +130,10 @@ pub fn mock_tls_request(
     check_proxy_environment()?;
     let addresses: Vec<SocketAddr> = ("stage1-mock-provider", 8443)
         .to_socket_addrs()
-        .map_err(|_| Denial::Io)?
+        .map_err(|_| {
+            eprintln!("STAGE1_RUST_STAGE_MOCK_DNS_FAILED");
+            Denial::Io
+        })?
         .collect();
     if addresses.is_empty()
         || addresses.len() > 32
@@ -143,7 +146,10 @@ pub fn mock_tls_request(
     let socket = addresses
         .into_iter()
         .find_map(|address| TcpStream::connect_timeout(&address, Duration::from_secs(5)).ok())
-        .ok_or(Denial::Io)?;
+        .ok_or_else(|| {
+            eprintln!("STAGE1_RUST_STAGE_MOCK_CONNECT_FAILED");
+            Denial::Io
+        })?;
     socket
         .set_read_timeout(Some(Duration::from_secs(15)))
         .map_err(|_| Denial::Io)?;
@@ -178,7 +184,10 @@ pub fn mock_tls_request(
     stream
         .write_all(header.as_bytes())
         .and_then(|_| stream.write_all(body))
-        .map_err(|_| Denial::Io)?;
+        .map_err(|_| {
+            eprintln!("STAGE1_RUST_STAGE_MOCK_TLS_WRITE_FAILED");
+            Denial::Io
+        })?;
     let expected_type = if path.ends_with("/input_tokens") {
         "application/json"
     } else {

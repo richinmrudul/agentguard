@@ -690,4 +690,56 @@ mod tests {
         fs::remove_dir_all(path).unwrap();
         fs::remove_dir_all(anchor).unwrap();
     }
+
+    #[test]
+    fn independent_gateways_cannot_oversubscribe_study_reservation() {
+        let path = std::env::temp_dir().join(format!(
+            "agentguard-contention-{}-{}",
+            std::process::id(),
+            TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let anchor = path.with_extension("anchor");
+        let mut bounded = scope();
+        bounded.max_study_cost_usd = "0.000200".into();
+        let first = StudyLedger::open(&path, &anchor, bounded.clone()).unwrap();
+        let second = StudyLedger::open(&path, &anchor, bounded.clone()).unwrap();
+        first.count("trial-a", "count-a").unwrap();
+        second.count("trial-b", "count-b").unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let left = std::thread::spawn({
+            let barrier = barrier.clone();
+            move || {
+                barrier.wait();
+                first.reserve("trial-a", "generation-a", 7, 8)
+            }
+        });
+        let right = std::thread::spawn({
+            let barrier = barrier.clone();
+            move || {
+                barrier.wait();
+                second.reserve("trial-b", "generation-b", 7, 8)
+            }
+        });
+        barrier.wait();
+        let outcomes = [left.join().unwrap(), right.join().unwrap()];
+        assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+        let restarted = StudyLedger::open(&path, &anchor, bounded).unwrap();
+        let state = restarted.snapshot().unwrap();
+        let total = state
+            .trials
+            .values()
+            .map(|trial| dollar(&trial.charged_usd).unwrap())
+            .sum::<u64>();
+        assert!(total > 0 && total <= 200);
+        assert_eq!(
+            state
+                .trials
+                .values()
+                .filter(|trial| trial.pending.is_some())
+                .count(),
+            1
+        );
+        fs::remove_dir_all(path).unwrap();
+        fs::remove_dir_all(anchor).unwrap();
+    }
 }

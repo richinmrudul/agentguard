@@ -442,6 +442,8 @@ The reviewed pricing policy remains
 `sha256:11da095d2856b07a2ce0a6da30e8d3229b9d4a2138122549d129580f0378eb35`.
 The compiled ledger preserves the `agentguard.stage1-study-ledger` v1
 snapshot/journal format and adds a separate, host-managed anchor directory.
+The mock-only startup config binds one explicit trial ID to the frozen study
+scope; it cannot silently select the first trial from a multi-trial plan.
 Both directories must be private to the gateway UID and inaccessible to the
 agent. Every transition fsyncs the journal, atomically replaces and fsyncs the
 snapshot, then atomically replaces and fsyncs the anchor. A crash between
