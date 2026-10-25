@@ -137,6 +137,7 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
                 "--env", "STAGE1_MOCK_CERT=/test/ca.pem", "--env", "STAGE1_MOCK_KEY=/test/key.pem",
                 "--mount", f"type=bind,source={certificate},target=/test/ca.pem,readonly",
                 "--mount", f"type=bind,source={private_key},target=/test/key.pem,readonly",
+                "--mount", f"type=bind,source={root_certificate},target=/test/root.pem,readonly",
                 provider_image)
         _docker("run", "-d", "--name", gateway, "--network", agent_network,
                 "--network-alias", "stage1-metering-gateway", "--read-only",
@@ -215,7 +216,7 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
             assert FAKE_AGENT not in value and FAKE_PROVIDER not in value
         inspection = _docker(
             "exec", provider, "/usr/bin/python3", "-c",
-            "import ssl,urllib.request; c=ssl.create_default_context(cafile='/test/ca.pem'); "
+            "import ssl,urllib.request; c=ssl.create_default_context(cafile='/test/root.pem'); "
             "print(urllib.request.urlopen('https://stage1-mock-provider:8443/inspection',"
             "context=c,timeout=3).read().decode())",
         )
