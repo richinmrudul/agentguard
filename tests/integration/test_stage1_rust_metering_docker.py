@@ -215,7 +215,7 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
     projection_file = tmp_path / "projection.json"
     projection_file.write_bytes(projection.canonical)
     authorization_file = tmp_path / "authorization.json"
-    authorization_file.write_bytes(canonical_live_study_authorization(authorization.data))
+    authorization_file.write_bytes(canonical_live_study_authorization(authorization.data).encode())
     broker = OneShotCredentialBroker(
         binding_for_rehearsal(projection), tmp_path, expected_peer_uid=65532,
         credential_source=lambda: FAKE_PROVIDER,
