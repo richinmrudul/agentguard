@@ -385,7 +385,15 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
         evidence_file.write_bytes(evidence)
         assert json.loads(evidence)["events"]
         ledger_file = tmp_path / "snapshot.json"
-        _docker("cp", f"{gateway}:/stage1-ledger/snapshot.json", str(ledger_file))
+        assert _docker("inspect", "--format", "{{.State.Running}}", gateway).stdout.strip() == "true"
+        ledger_read = _docker(
+            "run", "--rm", "--network", "none", "--read-only", "--user", "65532:65532",
+            "--mount", f"type=volume,source={ledger_volume},target=/stage1-ledger,readonly",
+            "--entrypoint", "/usr/bin/python3", BASE, "-c",
+            "import pathlib,sys; b=pathlib.Path('/stage1-ledger/snapshot.json').read_bytes(); "
+            "assert 0<len(b)<65536; sys.stdout.buffer.write(b)",
+        )
+        ledger_file.write_text(ledger_read.stdout, encoding="utf-8")
         trial = json.loads(ledger_file.read_bytes())["trials"]["docker-mock-trial"]
         assert trial["pending"] is None
         assert trial["counts"] == trial["generations"] >= 1
