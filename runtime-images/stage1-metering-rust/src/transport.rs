@@ -189,14 +189,14 @@ pub fn live_tls_request(path: &str, body: &[u8], credential: &[u8]) -> Result<Up
 pub fn mock_tls_request(
     path: &str,
     body: &[u8],
-    fake_token: &str,
+    fake_token: &[u8],
     ca_file: &Path,
 ) -> Result<UpstreamResponse> {
     validate_upstream_path("POST", path)?;
     if body.len() > crate::MAX_REQUEST_BYTES
         || fake_token.is_empty()
         || fake_token.len() > 256
-        || !fake_token.bytes().all(|byte| byte.is_ascii_graphic())
+        || !fake_token.iter().all(u8::is_ascii_graphic)
     {
         return Err(Denial::InvalidConfig);
     }
@@ -249,7 +249,7 @@ pub fn mock_tls_request(
         roots,
         path,
         body,
-        fake_token.as_bytes(),
+        fake_token,
     )
     .inspect_err(|_| eprintln!("STAGE1_RUST_STAGE_MOCK_TLS_EXCHANGE_FAILED"))
 }

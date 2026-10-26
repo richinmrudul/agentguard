@@ -450,9 +450,17 @@ The production hostname remains `api.openai.com:443` in the reviewed transport
 contract. The dormant TLS request path uses the pinned production trust roots,
 exact hostname verification, public-address filtering, and the same bounded
 HTTP exchange as the local mock path. The candidate executable still has no
-live mode or credential resolver. Trust-root suitability, complete
-authorization binding, and credential activation require separate review;
-the test CA is never used for the production path.
+live mode. Its candidate-only rehearsal projection is derived from the
+checked-in authorization contract, canonicalized by Python and independently
+validated by Rust. A private one-shot Unix socket supplies only a fake mock
+credential after the projection, image/binary, trial, pricing, and ledger
+bindings pass. The socket is mounted only into the UID 65532 gateway, never
+the agent; neither container receives the provider canary in its environment.
+The broker verifies the gateway peer UID and exact run-bound request before
+delivery, then removes the socket. A candidate projection is structurally
+ineligible for live use. Production trust-root suitability, published-subject
+binding, and live credential activation require separate review; the test CA
+is never used for the production path.
 
 The reviewed pricing policy remains
 `sha256:11da095d2856b07a2ce0a6da30e8d3229b9d4a2138122549d129580f0378eb35`.

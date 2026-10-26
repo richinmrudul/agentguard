@@ -20,6 +20,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
+from agentguard.evaluation.stage1_rehearsal_projection import RehearsalProjection
+from agentguard.evaluation.stage1_metering import canonical_bytes, digest
+
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _ID = re.compile(r"[a-z0-9][a-z0-9-]{0,79}\Z")
@@ -74,6 +77,42 @@ class BrokerBinding:
                 or self.expires_at_epoch <= current
                 or self.expires_at_epoch > current + 7 * 24 * 60 * 60):
             raise CredentialBrokerError("handoff deadline is invalid")
+
+
+def binding_for_rehearsal(projection: RehearsalProjection) -> BrokerBinding:
+    """Derive every broker field from the already validated canonical projection."""
+    data = projection.data
+    if (data.get("mode") != "candidate-rehearsal"
+            or canonical_bytes(data) != projection.canonical
+            or digest(data) != projection.digest):
+        raise CredentialBrokerError("handoff mode is invalid")
+    try:
+        authorization = data["authorization"]
+        gateway = data["gateway"]
+        agent = data["agent"]
+        provider = data["provider"]
+        if not (isinstance(authorization, dict) and isinstance(gateway, dict)
+                and isinstance(agent, dict) and isinstance(provider, dict)):
+            raise CredentialBrokerError("handoff projection is invalid")
+        binding = BrokerBinding(
+            authorization_digest=authorization["digest"],
+            projection_digest=projection.digest,
+            nonce=data["run_nonce"],
+            study_id=data["study_id"], trial_id=data["trial_id"],
+            gateway_subject=gateway["subject"],
+            gateway_canonical_identity=gateway["canonical_identity"],
+            gateway_binary_digest=gateway["binary_digest"],
+            agent_subject=agent["subject"],
+            agent_canonical_identity=agent["canonical_identity"],
+            model=provider["model"], destination=provider["destination"],
+            pricing_digest=data["pricing_digest"],
+            credential_env_name=data["credential_env_name"],
+            expires_at_epoch=authorization["expires_at_epoch"],
+        )
+        binding.validate()
+    except (AssertionError, KeyError, TypeError, ValueError):
+        raise CredentialBrokerError("handoff projection is invalid") from None
+    return binding
 
 
 def handoff_request(binding: BrokerBinding) -> bytes:

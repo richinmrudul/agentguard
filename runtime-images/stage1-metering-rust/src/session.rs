@@ -238,7 +238,13 @@ fn error_class(failure: Denial) -> &'static str {
 
 pub struct LocalTlsProvider {
     pub ca_file: PathBuf,
-    pub fake_upstream_token: String,
+    pub fake_upstream_token: Vec<u8>,
+}
+
+impl Drop for LocalTlsProvider {
+    fn drop(&mut self) {
+        self.fake_upstream_token.fill(0);
+    }
 }
 
 impl Provider for LocalTlsProvider {

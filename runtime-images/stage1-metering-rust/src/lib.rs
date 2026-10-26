@@ -4,6 +4,7 @@ pub mod config;
 pub mod http;
 pub mod ledger;
 pub mod pricing;
+pub mod projection;
 pub mod protocol;
 pub mod session;
 pub mod transport;

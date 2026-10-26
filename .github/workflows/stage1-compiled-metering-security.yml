@@ -156,8 +156,11 @@ jobs:
             -t agentguard-codex-model-compatibility:mock \
             "$RUNNER_TEMP/reviewed-codex/codex-rs/target/x86_64-unknown-linux-musl/debug"
 
-      - name: Prove one-shot Unix credential broker on Linux
-        run: python -m pytest -q -rs tests/unit/test_stage1_credential_broker.py
+      - name: Prove canonical projection and one-shot Unix credential broker on Linux
+        run: |
+          python -m pytest -q -rs \
+            tests/unit/test_stage1_rehearsal_projection.py \
+            tests/unit/test_stage1_credential_broker.py
 
       - name: Execute compiled image with patched agent and local TLS mock
         env:
