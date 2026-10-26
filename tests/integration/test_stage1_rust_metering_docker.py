@@ -79,6 +79,18 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
     private_key = tmp_path / "server-key.pem"
     certificate_request = tmp_path / "server.csr"
     certificate_der = tmp_path / "ca.der"
+    evidence_dir = tmp_path / "gateway-evidence"
+    evidence_dir.mkdir(mode=0o700)
+    assert not list(evidence_dir.iterdir())
+    evidence_started_at = time.time()
+    subprocess.run([
+        "sudo", "-n", "chown", "65532:65532", str(evidence_dir),
+    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    directory_metadata = subprocess.run(
+        ["sudo", "-n", "stat", "-c", "%u:%g:%a", str(evidence_dir)],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert directory_metadata == "65532:65532:700"
     subprocess.run([
         "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256",
         "-days", "1", "-keyout", str(root_key), "-out", str(root_certificate),
@@ -142,8 +154,8 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
         _docker("run", "-d", "--name", gateway, "--network", agent_network,
                 "--network-alias", "stage1-metering-gateway", "--read-only",
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-                "--user", "65532:65532", "--tmpfs",
-                "/stage1-metering:rw,uid=65532,gid=65532,mode=0700,size=1m",
+                "--user", "65532:65532",
+                "--mount", f"type=bind,source={evidence_dir},target=/stage1-metering",
                 "--mount", f"type=volume,source={ledger_volume},target=/stage1-ledger",
                 "--mount", f"type=volume,source={anchor_volume},target=/stage1-ledger-anchor",
                 "--mount", f"type=bind,source={configuration},target=/stage1-config/config.json,readonly",
@@ -202,11 +214,12 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
             raise AssertionError(f"compiled mock gateway denied patched Codex: {diagnostic}")
         assert "mock complete" in result.stdout + result.stderr
         evidence_file = tmp_path / "evidence.json"
-        copied = _docker(
-            "cp", f"{gateway}:/stage1-metering/evidence.json", str(evidence_file),
-            check=False,
+        gateway_evidence = evidence_dir / "evidence.json"
+        evidence_read = subprocess.run(
+            ["sudo", "-n", "head", "-c", "65537", str(gateway_evidence)],
+            check=False, capture_output=True,
         )
-        if copied.returncode:
+        if evidence_read.returncode:
             gateway_logs = _docker("logs", gateway, check=False).stderr
             classes = sorted(set(re.findall(
                 r"STAGE1_RUST_(?:DENIAL_[A-Z_]+|STAGE_[A-Z_]+|GATEWAY_READY|GATEWAY_STOPPED)",
@@ -235,11 +248,18 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
                 "mock_paths": [path for path in paths if path in (
                     "/v1/responses/input_tokens", "/v1/responses",
                 )],
-                "evidence_copy_succeeded": False,
+                "evidence_read_succeeded": False,
             }
             raise AssertionError(f"compiled mock evidence absent: {diagnostic}")
-        evidence = evidence_file.read_bytes()
-        assert len(evidence) < 64 * 1024
+        evidence = evidence_read.stdout
+        metadata = subprocess.run(
+            ["sudo", "-n", "stat", "-c", "%u:%g:%a:%s:%Y", str(gateway_evidence)],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip().split(":")
+        assert metadata[:3] == ["65532", "65532", "600"]
+        assert 0 < int(metadata[3]) == len(evidence) < 64 * 1024
+        assert int(metadata[4]) >= int(evidence_started_at) - 1
+        evidence_file.write_bytes(evidence)
         assert json.loads(evidence)["events"]
         ledger_file = tmp_path / "snapshot.json"
         _docker("cp", f"{gateway}:/stage1-ledger/snapshot.json", str(ledger_file))
@@ -270,5 +290,9 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
         _docker("volume", "rm", ledger_volume, check=False)
         _docker("volume", "rm", anchor_volume, check=False)
         _docker("image", "rm", provider_image, check=False)
+        subprocess.run([
+            "sudo", "-n", "chown", "-R", f"{os.getuid()}:{os.getgid()}", str(evidence_dir),
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for name in (gateway, provider, agent):
             assert _docker("inspect", name, check=False).returncode != 0
+    assert gateway_evidence.read_bytes() == evidence
