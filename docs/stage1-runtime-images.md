@@ -446,11 +446,13 @@ frozen Codex 0.159.2 (`codex-api/src/endpoint/responses.rs`,
 `codex-api/src/requests/headers.rs`, and `core/src/responses_metadata.rs`);
 those headers are discarded at the gateway rather than copied upstream.
 Unknown header names still fail closed.
-The
-production hostname remains `api.openai.com:443` in the reviewed transport
-contract, but the candidate executable has no live mode or credential
-resolver. Production TLS trust roots and credential activation require later
-review, not a silent reuse of the test CA.
+The production hostname remains `api.openai.com:443` in the reviewed transport
+contract. The dormant TLS request path uses the pinned production trust roots,
+exact hostname verification, public-address filtering, and the same bounded
+HTTP exchange as the local mock path. The candidate executable still has no
+live mode or credential resolver. Trust-root suitability, complete
+authorization binding, and credential activation require separate review;
+the test CA is never used for the production path.
 
 The reviewed pricing policy remains
 `sha256:11da095d2856b07a2ce0a6da30e8d3229b9d4a2138122549d129580f0378eb35`.

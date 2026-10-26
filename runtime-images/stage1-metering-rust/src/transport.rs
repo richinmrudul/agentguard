@@ -113,6 +113,79 @@ pub fn validate_upstream_path(method: &str, path: &str) -> Result<()> {
     Ok(())
 }
 
+fn tls_post(
+    socket: TcpStream,
+    server_name: &'static str,
+    host_header: &'static str,
+    roots: RootCertStore,
+    path: &str,
+    body: &[u8],
+    token: &[u8],
+) -> Result<UpstreamResponse> {
+    validate_upstream_path("POST", path)?;
+    if body.is_empty()
+        || body.len() > crate::MAX_REQUEST_BYTES
+        || !(16..=512).contains(&token.len())
+        || !token.iter().all(u8::is_ascii_graphic)
+        || roots.is_empty()
+    {
+        return Err(Denial::InvalidConfig);
+    }
+    let tls_config = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let name = ServerName::try_from(server_name).map_err(|_| Denial::InvalidConfig)?;
+    let connection =
+        ClientConnection::new(Arc::new(tls_config), name).map_err(|_| Denial::InvalidConfig)?;
+    let mut stream = StreamOwned::new(connection, socket);
+    let mut header = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host_header}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nAuthorization: Bearer "
+    )
+    .into_bytes();
+    header.extend_from_slice(token);
+    header.extend_from_slice(
+        format!(
+            "\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .as_bytes(),
+    );
+    let write_result = stream
+        .write_all(&header)
+        .and_then(|_| stream.write_all(body));
+    header.fill(0);
+    write_result.map_err(|_| Denial::Io)?;
+    let expected_type = if path == "/v1/responses/input_tokens" {
+        "application/json"
+    } else {
+        "text/event-stream"
+    };
+    read_upstream(
+        &mut DeadlineReader::new(&mut stream, Duration::from_secs(60)),
+        expected_type,
+    )
+}
+
+pub fn live_tls_request(path: &str, body: &[u8], credential: &[u8]) -> Result<UpstreamResponse> {
+    validate_upstream_path("POST", path)?;
+    if body.is_empty() || body.len() > crate::MAX_REQUEST_BYTES {
+        return Err(Denial::InvalidRequest);
+    }
+    if !(16..=512).contains(&credential.len()) || !credential.iter().all(u8::is_ascii_graphic) {
+        return Err(Denial::InvalidConfig);
+    }
+    let socket = connect_exact(DESTINATION, PORT, None)?;
+    tls_post(
+        socket,
+        DESTINATION,
+        DESTINATION,
+        crate::trust::production_roots(),
+        path,
+        body,
+        credential,
+    )
+}
+
 pub fn mock_tls_request(
     path: &str,
     body: &[u8],
@@ -169,34 +242,16 @@ pub fn mock_tls_request(
     if roots.is_empty() {
         return Err(Denial::InvalidConfig);
     }
-    let tls_config = ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    let server_name =
-        ServerName::try_from("stage1-mock-provider").map_err(|_| Denial::InvalidConfig)?;
-    let connection = ClientConnection::new(Arc::new(tls_config), server_name)
-        .map_err(|_| Denial::InvalidConfig)?;
-    let mut stream = StreamOwned::new(connection, socket);
-    let header = format!(
-        "POST {path} HTTP/1.1\r\nHost: stage1-mock-provider:8443\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nAuthorization: Bearer {fake_token}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    stream
-        .write_all(header.as_bytes())
-        .and_then(|_| stream.write_all(body))
-        .map_err(|_| {
-            eprintln!("STAGE1_RUST_STAGE_MOCK_TLS_WRITE_FAILED");
-            Denial::Io
-        })?;
-    let expected_type = if path.ends_with("/input_tokens") {
-        "application/json"
-    } else {
-        "text/event-stream"
-    };
-    read_upstream(
-        &mut DeadlineReader::new(&mut stream, Duration::from_secs(60)),
-        expected_type,
+    tls_post(
+        socket,
+        "stage1-mock-provider",
+        "stage1-mock-provider:8443",
+        roots,
+        path,
+        body,
+        fake_token.as_bytes(),
     )
+    .inspect_err(|_| eprintln!("STAGE1_RUST_STAGE_MOCK_TLS_EXCHANGE_FAILED"))
 }
 
 #[cfg(test)]
@@ -226,5 +281,11 @@ mod tests {
         ] {
             assert!(!allowed_address(address.parse().unwrap()));
         }
+        let token = b"FAKE_TEST_ONLY_UPSTREAM_TOKEN";
+        assert!(live_tls_request("/v1/models", b"{}", token).is_err());
+        assert!(live_tls_request("/v1/responses?x=1", b"{}", token).is_err());
+        assert!(connect_exact("example.com", PORT, None).is_err());
+        let private = ["127.0.0.1:443".parse().unwrap()];
+        assert!(connect_exact(DESTINATION, PORT, Some(&private)).is_err());
     }
 }
