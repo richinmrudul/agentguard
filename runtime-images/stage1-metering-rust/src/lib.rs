@@ -7,6 +7,7 @@ pub mod pricing;
 pub mod protocol;
 pub mod session;
 pub mod transport;
+pub mod trust;
 
 use sha2::{Digest, Sha256};
 

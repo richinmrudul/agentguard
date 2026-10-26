@@ -420,6 +420,20 @@ credential. A test-only CA is mounted for repository-controlled TLS mock
 traffic. No live resolver, real credential, public-provider request, or study
 authorization is enabled by this image.
 
+The binary also embeds Mozilla-derived server trust anchors from the exactly
+locked `webpki-roots` 1.0.11 crate (CDLA-Permissive-2.0). The crates.io archive
+checksum is
+`sha256:f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171`;
+the ordered trust-anchor content digest is
+`sha256:b48d5407902ced1e0577fd6bff2e8ecbf5230c58100d1b67a25ea9d7075bbc7c`.
+The crate is sourced from the rustls `webpki-roots` project and its frozen
+Mozilla/CCADB input; Cargo.lock records the registry checksum. No host CA
+directory or mutable trust download enters the scratch image. These roots
+must be re-reviewed before any production publication and whenever the
+Mozilla/CCADB program changes, a root expires or is distrusted, or a relevant
+crate/advisory update appears. This candidate review grants no live TLS
+activation or indefinite trust-root validity.
+
 The inbound surface is an internal-network HTTP/1.1 `POST /v1/responses` with
 a synthetic bearer token. The request must use the exact
 `gpt-5.2-2025-12-11` model, reviewed ordered tool declarations, text-only
