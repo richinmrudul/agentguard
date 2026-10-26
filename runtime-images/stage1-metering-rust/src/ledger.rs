@@ -742,4 +742,42 @@ mod tests {
         fs::remove_dir_all(path).unwrap();
         fs::remove_dir_all(anchor).unwrap();
     }
+
+    #[test]
+    fn corrupted_journal_snapshot_and_anchor_reject_restart() {
+        for fault in ["truncated-journal", "malformed-snapshot", "forked-anchor"] {
+            let path = std::env::temp_dir().join(format!(
+                "agentguard-{fault}-{}-{}",
+                std::process::id(),
+                TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ));
+            let anchor = path.with_extension("anchor");
+            let ledger = StudyLedger::open(&path, &anchor, scope()).unwrap();
+            ledger.count("trial-a", "count-a").unwrap();
+            assert!(ledger.count("trial-a", "count-a").is_err());
+            drop(ledger);
+
+            match fault {
+                "truncated-journal" => {
+                    let mut journal = fs::read(path.join("journal.jsonl")).unwrap();
+                    journal.pop();
+                    fs::write(path.join("journal.jsonl"), journal).unwrap();
+                }
+                "malformed-snapshot" => {
+                    fs::write(path.join("snapshot.json"), b"{}").unwrap();
+                }
+                "forked-anchor" => {
+                    let mut value: Value =
+                        serde_json::from_slice(&fs::read(anchor.join("head.json")).unwrap())
+                            .unwrap();
+                    value["journal_hash"] = "0".repeat(64).into();
+                    fs::write(anchor.join("head.json"), canonical(&value).unwrap()).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert!(StudyLedger::open(&path, &anchor, scope()).is_err());
+            fs::remove_dir_all(path).unwrap();
+            fs::remove_dir_all(anchor).unwrap();
+        }
+    }
 }
