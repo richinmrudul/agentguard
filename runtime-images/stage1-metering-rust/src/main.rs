@@ -3,10 +3,10 @@
 use agentguard_stage1_metering_gateway::config::{expected_pricing, parse_mock_config};
 use agentguard_stage1_metering_gateway::http::{DeadlineReader, read_request, write_response};
 use agentguard_stage1_metering_gateway::ledger::StudyLedger;
-use agentguard_stage1_metering_gateway::session::{LocalTlsProvider, Session};
 use agentguard_stage1_metering_gateway::projection::{
     now_epoch, parse_rehearsal, request_fake_credential, running_binary_digest,
 };
+use agentguard_stage1_metering_gateway::session::{LocalTlsProvider, Session};
 use agentguard_stage1_metering_gateway::{Denial, MAX_REQUEST_BYTES, Result};
 use std::fs;
 use std::net::{TcpListener, TcpStream};
@@ -33,15 +33,15 @@ fn run() -> Result<()> {
     )?;
     let fake_upstream = if mock {
         std::env::var("STAGE1_B1_FAKE_UPSTREAM_TOKEN")
-            .map_err(|_| Denial::InvalidConfig)?.into_bytes()
+            .map_err(|_| Denial::InvalidConfig)?
+            .into_bytes()
     } else {
         if std::env::var_os("STAGE1_B1_FAKE_UPSTREAM_TOKEN").is_some() {
             return Err(Denial::InvalidConfig);
         }
         let raw = fs::read("/stage1-config/projection.json").map_err(|_| Denial::InvalidConfig)?;
-        let (projection, projection_digest) = parse_rehearsal(
-            &raw, &config.scope, &config.trial_id, now_epoch()?,
-        )?;
+        let (projection, projection_digest) =
+            parse_rehearsal(&raw, &config.scope, &config.trial_id, now_epoch()?)?;
         if projection.gateway.binary_digest != running_binary_digest()? {
             return Err(Denial::InvalidConfig);
         }
@@ -51,7 +51,9 @@ fn run() -> Result<()> {
         || fake_upstream.len() < 16
         || fake_upstream.len() > 128
         || !fake_upstream.iter().all(u8::is_ascii_graphic)
-    { return Err(Denial::InvalidConfig); }
+    {
+        return Err(Denial::InvalidConfig);
+    }
     let provider = LocalTlsProvider {
         ca_file: "/stage1-config/ca.der".into(),
         fake_upstream_token: fake_upstream,

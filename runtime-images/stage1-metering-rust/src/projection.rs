@@ -124,12 +124,18 @@ pub struct Projection {
     pub broker_protocol_version: u64,
 }
 
-pub fn parse_rehearsal(raw: &[u8], scope: &Scope, trial_id: &str, now: u64) -> Result<(Projection, String)> {
+pub fn parse_rehearsal(
+    raw: &[u8],
+    scope: &Scope,
+    trial_id: &str,
+    now: u64,
+) -> Result<(Projection, String)> {
     let value = parse_json(raw, MAX_PROJECTION).map_err(|_| Denial::InvalidConfig)?;
     if canonical(&value)? != raw {
         return Err(Denial::InvalidConfig);
     }
-    let parsed: Projection = serde_json::from_value(value.clone()).map_err(|_| Denial::InvalidConfig)?;
+    let parsed: Projection =
+        serde_json::from_value(value.clone()).map_err(|_| Denial::InvalidConfig)?;
     let projection_digest = digest(&value)?;
     parsed.validate(scope, trial_id, now)?;
     Ok((parsed, projection_digest))
@@ -138,14 +144,22 @@ pub fn parse_rehearsal(raw: &[u8], scope: &Scope, trial_id: &str, now: u64) -> R
 impl Projection {
     fn validate(&self, scope: &Scope, trial_id: &str, now: u64) -> Result<()> {
         let candidate = "candidate-rehearsal";
-        let auth_digest = self.authorization.digest.strip_prefix("sha256:").ok_or(Denial::InvalidConfig)?;
+        let auth_digest = self
+            .authorization
+            .digest
+            .strip_prefix("sha256:")
+            .ok_or(Denial::InvalidConfig)?;
         if self.schema != "agentguard.stage1-live-capability-projection"
             || self.schema_version != 1
             || self.mode != candidate
             || self.authorization.schema != "agentguard.live-study-authorization"
             || self.authorization.schema_version != 1
             || !valid_id(&self.study_id)
-            || self.study_id != format!("study-{}", &self.plan_digest.get(7..31).ok_or(Denial::InvalidConfig)?)
+            || self.study_id
+                != format!(
+                    "study-{}",
+                    &self.plan_digest.get(7..31).ok_or(Denial::InvalidConfig)?
+                )
             || !valid_id(&self.trial_id)
             || self.trial_id != trial_id
             || !valid_id(&self.profile.id)
@@ -155,10 +169,17 @@ impl Projection {
             || self.provider.id != PROVIDER
             || self.provider.model != MODEL
             || self.provider.destination != "api.openai.com:443"
-            || self.provider.operations != [
-                Operation { method: "POST".into(), path: "/v1/responses/input_tokens".into() },
-                Operation { method: "POST".into(), path: "/v1/responses".into() },
-            ]
+            || self.provider.operations
+                != [
+                    Operation {
+                        method: "POST".into(),
+                        path: "/v1/responses/input_tokens".into(),
+                    },
+                    Operation {
+                        method: "POST".into(),
+                        path: "/v1/responses".into(),
+                    },
+                ]
             || self.credential_env_name != "CODEX_API_KEY"
             || self.pricing_digest != PRICING_DIGEST
             || self.ledger.schema != "agentguard.stage1-study-ledger"
@@ -168,7 +189,10 @@ impl Projection {
             || self.evidence.schema_version != 2
             || self.broker_protocol_version != 1
             || self.run_nonce.len() != 64
-            || !self.run_nonce.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            || !self
+                .run_nonce
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
             || self.authorization.not_before_epoch > now
             || now >= self.authorization.expires_at_epoch
             || self.authorization.expires_at_epoch - now > 7 * 24 * 60 * 60
@@ -178,11 +202,18 @@ impl Projection {
             return Err(Denial::InvalidConfig);
         }
         for field in [
-            &self.authorization.digest, &self.plan_digest, &self.profile.digest,
-            &self.fixture.digest, &self.gateway.subject, &self.gateway.canonical_identity,
-            &self.gateway.binary_digest, &self.agent.subject,
-            &self.agent.canonical_identity, &self.pricing_digest,
-            &self.ledger.scope_digest, &self.redaction_digest,
+            &self.authorization.digest,
+            &self.plan_digest,
+            &self.profile.digest,
+            &self.fixture.digest,
+            &self.gateway.subject,
+            &self.gateway.canonical_identity,
+            &self.gateway.binary_digest,
+            &self.agent.subject,
+            &self.agent.canonical_identity,
+            &self.pricing_digest,
+            &self.ledger.scope_digest,
+            &self.redaction_digest,
         ] {
             if !valid_digest(field) {
                 return Err(Denial::InvalidConfig);
@@ -253,15 +284,24 @@ impl Projection {
 pub struct Credential(Vec<u8>);
 
 impl Credential {
-    pub fn bytes(&self) -> &[u8] { &self.0 }
-    pub fn into_bytes(mut self) -> Vec<u8> { std::mem::take(&mut self.0) }
+    pub fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+    pub fn into_bytes(mut self) -> Vec<u8> {
+        std::mem::take(&mut self.0)
+    }
 }
 
 impl Drop for Credential {
-    fn drop(&mut self) { self.0.fill(0); }
+    fn drop(&mut self) {
+        self.0.fill(0);
+    }
 }
 
-pub fn request_fake_credential(projection: &Projection, projection_digest: &str) -> Result<Credential> {
+pub fn request_fake_credential(
+    projection: &Projection,
+    projection_digest: &str,
+) -> Result<Credential> {
     let metadata = fs::symlink_metadata(SOCKET_PATH).map_err(|_| Denial::InvalidConfig)?;
     if !metadata.file_type().is_socket()
         || metadata.uid() != 65532
@@ -270,21 +310,33 @@ pub fn request_fake_credential(projection: &Projection, projection_digest: &str)
         return Err(Denial::InvalidConfig);
     }
     let mut stream = UnixStream::connect(Path::new(SOCKET_PATH)).map_err(|_| Denial::Io)?;
-    stream.set_read_timeout(Some(Duration::from_secs(3))).map_err(|_| Denial::Io)?;
-    stream.set_write_timeout(Some(Duration::from_secs(3))).map_err(|_| Denial::Io)?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .map_err(|_| Denial::Io)?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(3)))
+        .map_err(|_| Denial::Io)?;
     let request = projection.broker_request(projection_digest)?;
-    stream.write_all(&(request.len() as u32).to_be_bytes()).map_err(|_| Denial::Io)?;
+    stream
+        .write_all(&(request.len() as u32).to_be_bytes())
+        .map_err(|_| Denial::Io)?;
     stream.write_all(&request).map_err(|_| Denial::Io)?;
-    stream.shutdown(std::net::Shutdown::Write).map_err(|_| Denial::Io)?;
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .map_err(|_| Denial::Io)?;
     let mut header = [0u8; 4];
     stream.read_exact(&mut header).map_err(|_| Denial::Io)?;
     let length = u32::from_be_bytes(header) as usize;
-    if !(16..=512).contains(&length) { return Err(Denial::InvalidConfig); }
+    if !(16..=512).contains(&length) {
+        return Err(Denial::InvalidConfig);
+    }
     let mut bytes = vec![0u8; length];
     stream.read_exact(&mut bytes).map_err(|_| Denial::Io)?;
     let mut trailing = [0u8; 1];
     if stream.read(&mut trailing).map_err(|_| Denial::Io)? != 0
-        || !bytes.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_')
+        || !bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_')
     {
         bytes.fill(0);
         return Err(Denial::InvalidConfig);
@@ -301,6 +353,8 @@ pub fn running_binary_digest() -> Result<String> {
 }
 
 pub fn now_epoch() -> Result<u64> {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|value| value.as_secs())
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs())
         .map_err(|_| Denial::InvalidConfig)
 }
