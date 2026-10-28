@@ -410,9 +410,14 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
             "response.output_item.added" | "response.output_item.done" => {
                 &["type", "sequence_number", "output_index", "item"]
             }
-            "response.output_text.delta" => {
-                &["type", "sequence_number", "item_id", "output_index", "content_index", "delta"]
-            }
+            "response.output_text.delta" => &[
+                "type",
+                "sequence_number",
+                "item_id",
+                "output_index",
+                "content_index",
+                "delta",
+            ],
             _ => return Err(Denial::InvalidProvider),
         };
         if !exact_fields(&event, expected_fields) {
@@ -436,7 +441,9 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                 if response_id.is_none() || active_item.is_some() {
                     return Err(Denial::InvalidProvider);
                 }
-                let index = event.get("output_index").and_then(Value::as_u64)
+                let index = event
+                    .get("output_index")
+                    .and_then(Value::as_u64)
                     .ok_or(Denial::InvalidProvider)?;
                 if index != completed_items.len() as u64 {
                     return Err(Denial::InvalidProvider);
@@ -477,7 +484,9 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                 if Some(valid_response_id(response)?) != response_id.as_deref() {
                     return Err(Denial::InvalidProvider);
                 }
-                let output = response.get("output").and_then(Value::as_array)
+                let output = response
+                    .get("output")
+                    .and_then(Value::as_array)
                     .ok_or(Denial::InvalidProvider)?;
                 if output != &completed_items {
                     return Err(Denial::InvalidProvider);
@@ -519,9 +528,15 @@ fn exact_fields(value: &Value, names: &[&str]) -> bool {
 }
 
 fn valid_response_id(response: &Value) -> Result<&str> {
-    let id = response.get("id").and_then(Value::as_str).ok_or(Denial::InvalidProvider)?;
-    if id.is_empty() || id.len() > 128
-        || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    let id = response
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or(Denial::InvalidProvider)?;
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
     {
         return Err(Denial::InvalidProvider);
     }
@@ -529,9 +544,15 @@ fn valid_response_id(response: &Value) -> Result<&str> {
 }
 
 fn valid_item_id(item: &Value) -> Result<&str> {
-    let id = item.get("id").and_then(Value::as_str).ok_or(Denial::InvalidProvider)?;
-    if id.is_empty() || id.len() > 128
-        || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    let id = item
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or(Denial::InvalidProvider)?;
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
     {
         return Err(Denial::InvalidProvider);
     }

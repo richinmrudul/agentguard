@@ -110,14 +110,22 @@ fn sse_identity_order_replay_and_terminal_usage_fail_closed() {
         assert!(terminal_stream(&stream(case)).is_err(), "case {index}");
     }
     assert!(terminal_stream(&good[..good.len() - 1]).is_err());
-    assert!(terminal_stream(b"data: {\"type\":\"response.created\",\"type\":\"response.completed\"}\n\n").is_err());
+    assert!(
+        terminal_stream(
+            b"data: {\"type\":\"response.created\",\"type\":\"response.completed\"}\n\n"
+        )
+        .is_err()
+    );
     assert!(terminal_stream(b"data: not-json\n\n").is_err());
 }
 
 #[test]
 fn http_framing_and_routing_reject_ambiguity() {
     let valid = b"POST /v1/responses HTTP/1.1\r\nHost: stage1-metering-gateway:8080\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
-    assert_eq!(read_request(&mut Cursor::new(valid), 2).unwrap().body, b"{}");
+    assert_eq!(
+        read_request(&mut Cursor::new(valid), 2).unwrap().body,
+        b"{}"
+    );
     let invalid: &[&[u8]] = &[
         b"GET /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
         b"POST https://x/v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
@@ -131,7 +139,10 @@ fn http_framing_and_routing_reject_ambiguity() {
         b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 184467440737095516160000\r\n\r\n{}",
     ];
     for (index, raw) in invalid.iter().enumerate() {
-        assert!(read_request(&mut Cursor::new(raw), 2).is_err(), "case {index}");
+        assert!(
+            read_request(&mut Cursor::new(raw), 2).is_err(),
+            "case {index}"
+        );
     }
     let upstream: &[&[u8]] = &[
         b"HTTP/1.1 302 Found\r\nLocation: https://other.example/\r\nContent-Length: 0\r\n\r\n",
@@ -140,6 +151,9 @@ fn http_framing_and_routing_reject_ambiguity() {
         b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Encoding: gzip\r\nContent-Length: 2\r\n\r\n{}",
     ];
     for (index, raw) in upstream.iter().enumerate() {
-        assert!(read_upstream(&mut Cursor::new(raw), "text/event-stream").is_err(), "upstream {index}");
+        assert!(
+            read_upstream(&mut Cursor::new(raw), "text/event-stream").is_err(),
+            "upstream {index}"
+        );
     }
 }
