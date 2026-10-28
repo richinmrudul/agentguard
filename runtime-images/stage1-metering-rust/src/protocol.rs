@@ -341,11 +341,11 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
         return Err(Denial::InvalidProvider);
     }
     let mut terminal: Option<Value> = None;
-    let mut previous: i64 = -1;
-    let frames: Vec<&[u8]> = raw.split(|byte| *byte == b'\n').collect();
-    if frames.len() > MAX_EVENTS * 3 {
-        return Err(Denial::InvalidProvider);
-    }
+    let mut previous: Option<u64> = None;
+    let mut response_id: Option<String> = None;
+    let mut active_item: Option<(usize, String)> = None;
+    let mut completed_items = Vec::<Value>::new();
+    let mut done_marker = false;
     let mut events = 0_usize;
     let mut offset = 0_usize;
     while offset < raw.len() {
@@ -356,11 +356,9 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
             .ok_or(Denial::InvalidProvider)?;
         let frame = &remainder[..end];
         offset += end + 2;
-        if frame.is_empty() {
-            continue;
-        }
         events += 1;
         if events > MAX_EVENTS
+            || frame.is_empty()
             || frame.len() > MAX_FRAME_BYTES
             || frame.contains(&b'\r')
             || frame.contains(&b'\n')
@@ -369,21 +367,25 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
             return Err(Denial::InvalidProvider);
         }
         if frame == b"data: [DONE]" {
-            if terminal.is_none() || offset != raw.len() {
+            if terminal.is_none() || done_marker || offset != raw.len() {
                 return Err(Denial::InvalidProvider);
             }
+            done_marker = true;
             continue;
+        }
+        if done_marker || terminal.is_some() {
+            return Err(Denial::InvalidProvider);
         }
         let event =
             parse_json(&frame[6..], MAX_FRAME_BYTES).map_err(|_| Denial::InvalidProvider)?;
         let sequence = event
             .get("sequence_number")
-            .and_then(Value::as_i64)
+            .and_then(Value::as_u64)
             .ok_or(Denial::InvalidProvider)?;
-        if sequence <= previous || terminal.is_some() {
+        if previous.is_some_and(|number| sequence <= number) {
             return Err(Denial::InvalidProvider);
         }
-        previous = sequence;
+        previous = Some(sequence);
         let kind = event
             .get("type")
             .and_then(Value::as_str)
@@ -403,34 +405,97 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
         if matches!(kind, "response.failed" | "response.incomplete") {
             return Err(Denial::InvalidProvider);
         }
-        if kind == "response.completed" {
-            terminal = Some(
-                event
-                    .get("response")
-                    .cloned()
-                    .ok_or(Denial::InvalidProvider)?,
-            );
+        let expected_fields: &[&str] = match kind {
+            "response.created" | "response.completed" => &["type", "sequence_number", "response"],
+            "response.output_item.added" | "response.output_item.done" => {
+                &["type", "sequence_number", "output_index", "item"]
+            }
+            "response.output_text.delta" => {
+                &["type", "sequence_number", "item_id", "output_index", "content_index", "delta"]
+            }
+            _ => return Err(Denial::InvalidProvider),
+        };
+        if !exact_fields(&event, expected_fields) {
+            return Err(Denial::InvalidProvider);
+        }
+        match kind {
+            "response.created" => {
+                if response_id.is_some() || active_item.is_some() || !completed_items.is_empty() {
+                    return Err(Denial::InvalidProvider);
+                }
+                let response = event.get("response").ok_or(Denial::InvalidProvider)?;
+                if response.get("status").and_then(Value::as_str) != Some("in_progress")
+                    || response.get("model").and_then(Value::as_str) != Some(MODEL)
+                    || response.get("usage").is_some_and(|usage| !usage.is_null())
+                {
+                    return Err(Denial::InvalidProvider);
+                }
+                response_id = Some(valid_response_id(response)?.to_owned());
+            }
+            "response.output_item.added" => {
+                if response_id.is_none() || active_item.is_some() {
+                    return Err(Denial::InvalidProvider);
+                }
+                let index = event.get("output_index").and_then(Value::as_u64)
+                    .ok_or(Denial::InvalidProvider)?;
+                if index != completed_items.len() as u64 {
+                    return Err(Denial::InvalidProvider);
+                }
+                let item = event.get("item").ok_or(Denial::InvalidProvider)?;
+                let id = valid_item_id(item)?;
+                if !reviewed_output_item(item) {
+                    return Err(Denial::InvalidProvider);
+                }
+                active_item = Some((index as usize, id.to_owned()));
+            }
+            "response.output_text.delta" => {
+                let (index, id) = active_item.as_ref().ok_or(Denial::InvalidProvider)?;
+                if event.get("output_index").and_then(Value::as_u64) != Some(*index as u64)
+                    || event.get("item_id").and_then(Value::as_str) != Some(id.as_str())
+                    || event.get("content_index").and_then(Value::as_u64) != Some(0)
+                    || event.get("delta").and_then(Value::as_str).is_none()
+                {
+                    return Err(Denial::InvalidProvider);
+                }
+            }
+            "response.output_item.done" => {
+                let (index, id) = active_item.take().ok_or(Denial::InvalidProvider)?;
+                let item = event.get("item").ok_or(Denial::InvalidProvider)?;
+                if event.get("output_index").and_then(Value::as_u64) != Some(index as u64)
+                    || valid_item_id(item)? != id
+                    || !reviewed_output_item(item)
+                {
+                    return Err(Denial::InvalidProvider);
+                }
+                completed_items.push(item.clone());
+            }
+            "response.completed" => {
+                if response_id.is_none() || active_item.is_some() {
+                    return Err(Denial::InvalidProvider);
+                }
+                let response = event.get("response").ok_or(Denial::InvalidProvider)?;
+                if Some(valid_response_id(response)?) != response_id.as_deref() {
+                    return Err(Denial::InvalidProvider);
+                }
+                let output = response.get("output").and_then(Value::as_array)
+                    .ok_or(Denial::InvalidProvider)?;
+                if output != &completed_items {
+                    return Err(Denial::InvalidProvider);
+                }
+                terminal = Some(response.clone());
+            }
+            _ => return Err(Denial::InvalidProvider),
         }
     }
     let response = terminal.ok_or(Denial::InvalidProvider)?;
     if response.get("status").and_then(Value::as_str) != Some("completed")
         || response.get("model").and_then(Value::as_str) != Some(MODEL)
         || response.get("service_tier").and_then(Value::as_str) != Some("default")
+        || !response.get("usage").is_some_and(Value::is_object)
     {
         return Err(Denial::InvalidProvider);
     }
-    let id = response
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or(Denial::InvalidProvider)?;
-    if id.is_empty()
-        || id.len() > 128
-        || !id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-    {
-        return Err(Denial::InvalidProvider);
-    }
+    valid_response_id(&response)?;
     let output = response
         .get("output")
         .and_then(Value::as_array)
@@ -438,7 +503,39 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
     if output.len() > 128 || output.iter().any(|item| !reviewed_output_item(item)) {
         return Err(Denial::InvalidProvider);
     }
+    let counted = response
+        .get("usage")
+        .and_then(|usage| usage.get("input_tokens"))
+        .and_then(Value::as_u64)
+        .ok_or(Denial::InvalidProvider)?;
+    crate::pricing::Usage::from_terminal(&response, counted)?;
     Ok(response)
+}
+
+fn exact_fields(value: &Value, names: &[&str]) -> bool {
+    value.as_object().is_some_and(|fields| {
+        fields.len() == names.len() && names.iter().all(|name| fields.contains_key(*name))
+    })
+}
+
+fn valid_response_id(response: &Value) -> Result<&str> {
+    let id = response.get("id").and_then(Value::as_str).ok_or(Denial::InvalidProvider)?;
+    if id.is_empty() || id.len() > 128
+        || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return Err(Denial::InvalidProvider);
+    }
+    Ok(id)
+}
+
+fn valid_item_id(item: &Value) -> Result<&str> {
+    let id = item.get("id").and_then(Value::as_str).ok_or(Denial::InvalidProvider)?;
+    if id.is_empty() || id.len() > 128
+        || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return Err(Denial::InvalidProvider);
+    }
+    Ok(id)
 }
 
 fn reviewed_output_item(item: &Value) -> bool {
@@ -503,7 +600,7 @@ mod tests {
                 })
             )
         };
-        assert!(terminal_stream(frame("response.completed", &base).as_bytes()).is_ok());
+        assert!(terminal_stream(frame("response.completed", &base).as_bytes()).is_err());
         assert!(terminal_stream(frame("response.web_search_call", &base).as_bytes()).is_err());
         for item in [
             serde_json::json!({"type":"function_call","name":"web_search"}),
