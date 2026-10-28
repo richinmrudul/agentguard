@@ -46,6 +46,12 @@ fn stream(values: &[Value]) -> Vec<u8> {
     values.iter().flat_map(frame).collect()
 }
 
+fn resequence(values: &mut [Value]) {
+    for (index, value) in values.iter_mut().enumerate() {
+        value["sequence_number"] = json!(index);
+    }
+}
+
 #[test]
 fn sse_exact_lifecycle_and_completed_only_rejection() {
     let good = valid_stream();
@@ -59,6 +65,58 @@ fn sse_exact_lifecycle_and_completed_only_rejection() {
     assert!(terminal_stream(&with_done).is_ok());
     with_done.extend(b"data: [DONE]\n\n");
     assert!(terminal_stream(&with_done).is_err());
+}
+
+#[test]
+fn sse_documented_content_and_local_tool_lifecycles() {
+    let mut full = events(&valid_stream());
+    full.insert(1, json!({"type":"response.in_progress","sequence_number":1,
+        "response":{"id":"resp_1","model":"gpt-5.2-2025-12-11","status":"in_progress"}}));
+    full.insert(3, json!({"type":"response.content_part.added","sequence_number":3,
+        "item_id":"msg_1","output_index":0,"content_index":0,
+        "part":{"type":"output_text","text":"","annotations":[],"logprobs":[]}}));
+    full.insert(5, json!({"type":"response.output_text.done","sequence_number":5,
+        "item_id":"msg_1","output_index":0,"content_index":0,"text":"ok","logprobs":[]}));
+    full.insert(6, json!({"type":"response.content_part.done","sequence_number":6,
+        "item_id":"msg_1","output_index":0,"content_index":0,
+        "part":{"type":"output_text","text":"ok","annotations":[],"logprobs":[]}}));
+    resequence(&mut full);
+    assert!(terminal_stream(&stream(&full)).is_ok());
+    let mut invalid = full.clone();
+    invalid.remove(6);
+    resequence(&mut invalid);
+    assert!(terminal_stream(&stream(&invalid)).is_err());
+    let mut invalid = full.clone();
+    invalid[5]["text"] = json!("other");
+    assert!(terminal_stream(&stream(&invalid)).is_err());
+    let mut invalid = full.clone();
+    invalid[5]["logprobs"] = json!([{"unreviewed":true}]);
+    assert!(terminal_stream(&stream(&invalid)).is_err());
+
+    for (kind, name, delta_kind, done_kind, field) in [
+        ("function_call", "exec_command", "response.function_call_arguments.delta",
+            "response.function_call_arguments.done", "arguments"),
+        ("custom_tool_call", "apply_patch", "response.custom_tool_call_input.delta",
+            "response.custom_tool_call_input.done", "input"),
+    ] {
+        let mut tool = events(&valid_stream());
+        tool[1]["item"] = json!({"id":"call_1","type":kind,"name":name});
+        tool[2] = json!({"type":delta_kind,"sequence_number":2,
+            "item_id":"call_1","output_index":0,"delta":"{}"});
+        let mut complete = json!({"id":"call_1","type":kind,"name":name});
+        complete[field] = json!("{}");
+        let mut done = json!({"type":done_kind,"sequence_number":3,
+            "item_id":"call_1","output_index":0});
+        done[field] = json!("{}");
+        tool.insert(3, done);
+        tool[4]["item"] = complete.clone();
+        tool[5]["response"]["output"] = json!([complete]);
+        resequence(&mut tool);
+        assert!(terminal_stream(&stream(&tool)).is_ok(), "{kind}");
+        let mut invalid = tool.clone();
+        invalid[3][field] = json!("changed");
+        assert!(terminal_stream(&stream(&invalid)).is_err(), "{kind}");
+    }
 }
 
 #[test]

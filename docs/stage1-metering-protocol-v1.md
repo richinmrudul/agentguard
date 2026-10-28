@@ -34,10 +34,15 @@ The local mock path requires `text/event-stream`, bounded HTTP/1.1 framing
 and a stream no larger than 2 MiB. Every frame is `data: <JSON>\n\n`, at
 most 64 KiB, with at most 256 frames. The accepted event order is:
 
-1. exactly one `response.created` with an in-progress response ID and exact model;
-2. zero or more ordered `response.output_item.added`, optional
-   `response.output_text.delta`, then matching `response.output_item.done`
-   pairs, one active output item at a time;
+1. exactly one `response.created` with an in-progress response ID and exact model,
+   optionally followed by one matching `response.in_progress`;
+2. zero or more ordered `response.output_item.added` and matching
+   `response.output_item.done` pairs, one active output item at a time;
+   message items may carry a bounded `response.content_part.added`,
+   `response.output_text.delta`, `response.output_text.done`, and
+   `response.content_part.done` lifecycle; only the reviewed local function
+   and custom-tool items may carry matching argument/input delta and done
+   events;
 3. exactly one `response.completed` with the same response ID, exact model,
    completed status, standard service tier, output exactly matching the done
    items, and complete authoritative usage;
@@ -79,6 +84,8 @@ for this metered path. Ambiguity is rejected rather than treated as approval.
 | S06 | Truncated frame, duplicate JSON key, unreviewed event field | Reject; retain reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
 | S07 | Missing event, failed/incomplete terminal, unreviewed provider tool | Reject; retain reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
 | S08 | Invalid UTF-8, unsupported SSE field, oversized frame | Reject; retain reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
+| S09 | Documented in-progress, content-part, and local-tool events | Accept only matched item identities and bounded final values; otherwise retain reservation and block replay | Rust `sse_documented_content_and_local_tool_lifecycles` |
+| S10 | Completed-only stream through exact scratch gateway | Reject; keep pending full reservation, close trial, block replay | Hosted Docker `test_compiled_gateway_with_patched_codex_tls_and_ledger` (completed-only parameter) |
 
 The table records implemented cases, not an assertion that the whole
 production transport and fault matrix is complete. The remaining exact-image

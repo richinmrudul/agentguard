@@ -202,18 +202,33 @@ class MockHandler(BaseHTTPRequestHandler):
                 {"type": "response.created", "sequence_number": 0, "response": {
                     "id": response["id"], "model": response["model"], "status": "in_progress",
                 }},
-                {"type": "response.output_item.added", "sequence_number": 1,
+                {"type": "response.in_progress", "sequence_number": 1, "response": {
+                    "id": response["id"], "model": response["model"], "status": "in_progress",
+                }},
+                {"type": "response.output_item.added", "sequence_number": 2,
                  "output_index": 0, "item": {
                      "id": message["id"], "type": "message", "status": "in_progress",
                      "role": "assistant", "content": [],
                  }},
-                {"type": "response.output_text.delta", "sequence_number": 2,
+                {"type": "response.content_part.added", "sequence_number": 3,
+                 "item_id": "msg_stage1_mock", "output_index": 0, "content_index": 0,
+                 "part": {"type": "output_text", "text": "", "annotations": []}},
+                {"type": "response.output_text.delta", "sequence_number": 4,
                  "item_id": "msg_stage1_mock", "output_index": 0, "content_index": 0,
                  "delta": "mock complete"},
-                {"type": "response.output_item.done", "sequence_number": 3,
+                {"type": "response.output_text.done", "sequence_number": 5,
+                 "item_id": "msg_stage1_mock", "output_index": 0, "content_index": 0,
+                 "text": "mock complete"},
+                {"type": "response.content_part.done", "sequence_number": 6,
+                 "item_id": "msg_stage1_mock", "output_index": 0, "content_index": 0,
+                 "part": {"type": "output_text", "text": "mock complete",
+                          "annotations": []}},
+                {"type": "response.output_item.done", "sequence_number": 7,
                  "output_index": 0, "item": message},
-                {"type": "response.completed", "sequence_number": 4, "response": response},
+                {"type": "response.completed", "sequence_number": 8, "response": response},
             ]
+            if self.scenario == "completed-only":
+                frames = [frames[-1]]
             body = b"".join(b"data: " + _json(frame).rstrip(b"\n") + b"\n\n" for frame in frames)
             if self.scenario == "disconnect":
                 body = body[:-1]
@@ -242,7 +257,7 @@ def main() -> None:
     scenario = os.environ.get("STAGE1_MOCK_SCENARIO", "success")
     if scenario not in {
         "success", "count-error", "redirect", "error", "model-mismatch",
-        "usage-mismatch", "missing-usage", "disconnect",
+        "usage-mismatch", "missing-usage", "disconnect", "completed-only",
     }:
         raise SystemExit("unknown mock scenario")
     MockHandler.scenario = scenario
