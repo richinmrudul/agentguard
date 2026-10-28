@@ -200,6 +200,39 @@ jobs:
           AGENTGUARD_B1_MODEL_IMAGE: agentguard-codex-model-compatibility:mock
         run: python -m pytest -q -s tests/integration/test_stage1_live_b1_docker.py
 
+      - name: Build and inspect metering-gateway security candidate twice
+        run: bash scripts/stage1_metering_security_build.sh "$GITHUB_SHA"
+
+      - name: Prove candidate image against local TLS mock and durable ledger
+        env:
+          AGENTGUARD_REQUIRE_DOCKER: "1"
+          AGENTGUARD_B1_MODEL_IMAGE: agentguard-codex-model-compatibility:mock
+          AGENTGUARD_B1_GATEWAY_IMAGE: agentguard-metering-security:a
+        run: |
+          python -m pytest -q -s tests/integration/test_stage1_live_b1_docker.py
+          printf 'candidate-image TLS/mock/ledger integration passed\n' > dist/stage1-metering-security/mock-integration.txt
+
+      - name: Retain raw candidate evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: stage1-metering-security-${{ github.sha }}
+          path: |
+            dist/stage1-metering-security/*.json
+            dist/stage1-metering-security/*.txt
+            dist/stage1-metering-security/SHA256SUMS
+            dist/stage1-metering-security/*.image.tar
+            dist/stage1-metering-security/*.rootfs.tar
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail closed on unreviewed candidate HIGH or CRITICAL
+        run: >-
+          python scripts/stage1_metering_security_evidence.py
+          --root dist/stage1-metering-security
+          --source-commit "$GITHUB_SHA"
+          --enforce
+
   package:
     name: Build and validate release artifacts
     runs-on: ubuntu-latest

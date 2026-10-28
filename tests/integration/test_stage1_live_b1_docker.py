@@ -99,7 +99,7 @@ def test_patched_codex_uses_tls_mock_and_durable_b1_ledger(tmp_path: Path) -> No
     provider = f"agentguard-b1-{token}-mock"
     gateway = f"agentguard-b1-{token}-gateway"
     agent = f"agentguard-b1-{token}-codex"
-    gateway_image = f"agentguard-b1-{token}-gateway:mock"
+    gateway_image = os.environ.get("AGENTGUARD_B1_GATEWAY_IMAGE") or f"agentguard-b1-{token}-gateway:mock"
     provider_image = f"agentguard-b1-{token}-provider:mock"
     certificate, key = _certificate(tmp_path)
     config = tmp_path / "config.json"
@@ -109,9 +109,12 @@ def test_patched_codex_uses_tls_mock_and_durable_b1_ledger(tmp_path: Path) -> No
         2, 2, 30, 20, 50, 120, "0.01", "0.02",
     )
     config.write_bytes(canonical_bytes({"scope": vars(scope), "output_cap": 8}))
-    _docker("build", "--pull=false", "--network=none", "-f",
-            "runtime-images/stage1-metering/Dockerfile.b1-mock", "-t", gateway_image,
-            ".", timeout=240)
+    if not os.environ.get("AGENTGUARD_B1_GATEWAY_IMAGE"):
+        _docker("build", "--pull=false", "--network=none", "-f",
+                "runtime-images/stage1-metering/Dockerfile.b1-mock", "-t", gateway_image,
+                ".", timeout=240)
+    else:
+        assert _docker("image", "inspect", gateway_image, check=False).returncode == 0
     _docker("build", "--pull=false", "--network=none", "-f",
             "runtime-images/stage1-metering/Dockerfile.mock", "-t", provider_image,
             ".", timeout=240)
@@ -280,7 +283,9 @@ else:
         _docker("rm", "-f", provider, gateway, agent, check=False)
         _docker("network", "rm", network_agent, network_provider, check=False)
         _docker("volume", "rm", volume, check=False)
-        _docker("image", "rm", gateway_image, provider_image, check=False)
+        if not os.environ.get("AGENTGUARD_B1_GATEWAY_IMAGE"):
+            _docker("image", "rm", gateway_image, check=False)
+        _docker("image", "rm", provider_image, check=False)
         for name in (provider, gateway, agent):
             assert _docker("inspect", name, check=False).returncode != 0
         for name in (network_agent, network_provider):
