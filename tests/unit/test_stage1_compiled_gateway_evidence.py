@@ -62,3 +62,15 @@ def test_empty_trivy_result_requires_empty_image_sbom() -> None:
         _findings(empty, 1)
     with pytest.raises(RuntimeImageError):
         _findings({"SchemaVersion": 2, "Results": None}, 0)
+
+
+def test_candidate_executable_has_no_live_or_public_transport_selection() -> None:
+    source = Path(__file__).parents[2] / "runtime-images/stage1-metering-rust/src"
+    main = (source / "main.rs").read_text(encoding="utf-8")
+    session = (source / "session.rs").read_text(encoding="utf-8")
+    assert 'if mock == rehearsal || std::env::var_os("CODEX_API_KEY").is_some()' in main
+    assert "parse_rehearsal(&raw" in main
+    assert "LocalTlsProvider" in main and "LocalTlsProvider" in session
+    assert "mock_tls_request(" in session
+    assert "live_tls_request(" not in main + session
+    assert "STAGE1_RUST_LIVE" not in main

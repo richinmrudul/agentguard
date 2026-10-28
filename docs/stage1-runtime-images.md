@@ -462,6 +462,17 @@ ineligible for live use. Production trust-root suitability, published-subject
 binding, and live credential activation require separate review; the test CA
 is never used for the production path.
 
+This is an inert, unpublished experimental foundation, not a production
+provider gateway or an approval for live use. Its executable accepts only mock
+and candidate-rehearsal modes; no checked-in authorization or ordinary
+AgentGuard command can activate a live mode or resolve a real credential.
+The current SSE parser accepts a completed-only event stream in the local mock
+path. A strict HTTP/SSE lifecycle state machine and the exact-image
+crash/restart and ledger fault matrix remain incomplete. Those contracts must
+be reviewed and proven before runtime approval, replacement-image publication,
+or a #294 live study. The hosted proof establishes only the stated local-mock
+boundary, not public-provider or production transport safety.
+
 The reviewed pricing policy remains
 `sha256:11da095d2856b07a2ce0a6da30e8d3229b9d4a2138122549d129580f0378eb35`.
 The compiled ledger preserves the `agentguard.stage1-study-ledger` v1
