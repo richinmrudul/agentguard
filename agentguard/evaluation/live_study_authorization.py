@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import time
@@ -700,7 +701,7 @@ def _small_json_value(value: object, label: str) -> object:
             raise LiveStudyAuthorizationError(f"Live-study authorization {label} is out of bounds.")
         return value
     if isinstance(value, float):
-        if value < 0 or value > 1_000_000:
+        if not math.isfinite(value) or value < 0 or value > 1_000_000:
             raise LiveStudyAuthorizationError(f"Live-study authorization {label} is out of bounds.")
         return round(value, 6)
     if isinstance(value, str):
@@ -785,8 +786,11 @@ def _nonnegative_int(value: object, label: str, *, maximum: int) -> int:
 def _nonnegative_number(value: object, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise LiveStudyAuthorizationError(f"Live-study authorization {label} is invalid.")
-    number = float(value)
-    if number < 0 or number > 1_000_000:
+    try:
+        number = float(value)
+    except (OverflowError, ValueError) as error:
+        raise LiveStudyAuthorizationError(f"Live-study authorization {label} is out of bounds.") from error
+    if not math.isfinite(number) or number < 0 or number > 1_000_000:
         raise LiveStudyAuthorizationError(f"Live-study authorization {label} is out of bounds.")
     return round(number, 6)
 

@@ -401,3 +401,106 @@ until this correction merges, a new read-only readiness review passes, and a
 separate explicit publication authorization is issued. This corrective
 prerequisite does not dispatch the publication workflow, mutate GHCR, or
 approve any digest.
+
+## Compiled Metering-Gateway Security Candidate
+
+Issue #322 requires replacing the Python metering candidate. Draft PR #323,
+its canonical identity `sha256:e9caf0f4ce96c6c53d22241b25dc5109960831ecf5e6f64eac7072c3eb3c3ff2`,
+and its raw evidence remain rejected-candidate review material; they are not
+modified by the compiled-runtime work. The prior `libexpat1` remediation and
+the gateway's old exception manifest do not approve a new metering runtime.
+
+The replacement candidate in `runtime-images/stage1-metering-rust/` uses the
+exact Rust 1.95.0 toolchain, a locked dependency graph, and
+`#![forbid(unsafe_code)]` in project-owned code. Its build stage is pinned to
+the Linux/amd64 official Rust image manifest digest. The final `scratch` image
+contains only the compiled gateway binary, runs as `65532:65532`, and has no
+shell, package manager, Python runtime, compiler, mutable home, or baked-in
+credential. A test-only CA is mounted for repository-controlled TLS mock
+traffic. No live resolver, real credential, public-provider request, or study
+authorization is enabled by this image.
+
+The binary also embeds Mozilla-derived server trust anchors from the exactly
+locked `webpki-roots` 1.0.11 crate (CDLA-Permissive-2.0). The crates.io archive
+checksum is
+`sha256:f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171`;
+the ordered trust-anchor content digest is
+`sha256:b48d5407902ced1e0577fd6bff2e8ecbf5230c58100d1b67a25ea9d7075bbc7c`.
+The crate is sourced from the rustls `webpki-roots` project and its frozen
+Mozilla/CCADB input; Cargo.lock records the registry checksum. No host CA
+directory or mutable trust download enters the scratch image. These roots
+must be re-reviewed before any production publication and whenever the
+Mozilla/CCADB program changes, a root expires or is distrusted, or a relevant
+crate/advisory update appears. This candidate review grants no live TLS
+activation or indefinite trust-root validity.
+
+The inbound surface is an internal-network HTTP/1.1 `POST /v1/responses` with
+a synthetic bearer token. The request must use the exact
+`gpt-5.2-2025-12-11` model, reviewed ordered tool declarations, text-only
+input, stateless streaming mode, and bounded JSON and HTTP framing. The mock
+gateway forwards only `POST /v1/responses/input_tokens` followed by
+`POST /v1/responses` to the local TLS provider. It never forwards arbitrary
+methods, paths, query strings, cookies, proxy headers, or redirects. The
+inbound header allowlist includes the session and turn metadata emitted by
+frozen Codex 0.159.2 (`codex-api/src/endpoint/responses.rs`,
+`codex-api/src/requests/headers.rs`, and `core/src/responses_metadata.rs`);
+those headers are discarded at the gateway rather than copied upstream.
+Unknown header names still fail closed.
+The production hostname remains `api.openai.com:443` in the reviewed transport
+contract. The dormant TLS request path uses the pinned production trust roots,
+exact hostname verification, public-address filtering, and the same bounded
+HTTP exchange as the local mock path. The candidate executable still has no
+live mode. Its candidate-only rehearsal projection is derived from the
+checked-in authorization contract, canonicalized by Python and independently
+validated by Rust. A private one-shot Unix socket supplies only a fake mock
+credential after the projection, image/binary, trial, pricing, and ledger
+bindings pass. The socket is mounted only into the UID 65532 gateway, never
+the agent; neither container receives the provider canary in its environment.
+The broker verifies the gateway peer UID and exact run-bound request before
+delivery, then removes the socket. A candidate projection is structurally
+ineligible for live use. Production trust-root suitability, published-subject
+binding, and live credential activation require separate review; the test CA
+is never used for the production path.
+
+This is an inert, unpublished experimental foundation, not a production
+provider gateway or an approval for live use. Its executable accepts only mock
+and candidate-rehearsal modes; no checked-in authorization or ordinary
+AgentGuard command can activate a live mode or resolve a real credential.
+The current SSE parser accepts a completed-only event stream in the local mock
+path. A strict HTTP/SSE lifecycle state machine and the exact-image
+crash/restart and ledger fault matrix remain incomplete. Those contracts must
+be reviewed and proven before runtime approval, replacement-image publication,
+or a #294 live study. The hosted proof establishes only the stated local-mock
+boundary, not public-provider or production transport safety.
+
+The reviewed pricing policy remains
+`sha256:11da095d2856b07a2ce0a6da30e8d3229b9d4a2138122549d129580f0378eb35`.
+The compiled ledger preserves the `agentguard.stage1-study-ledger` v1
+snapshot/journal format and adds a separate, host-managed anchor directory.
+The mock-only startup config binds one explicit trial ID to the frozen study
+scope; it cannot silently select the first trial from a multi-trial plan.
+Both directories must be private to the gateway UID and inaccessible to the
+agent. Every transition fsyncs the journal, atomically replaces and fsyncs the
+snapshot, then atomically replaces and fsyncs the anchor. A crash between
+those steps produces disagreement and blocks restart; an outstanding
+reservation keeps its full worst-case charge. A stale or missing anchor blocks
+startup. The anchor detects rollback of the ledger directory alone; rollback
+of both host-managed directories by an administrator remains outside this
+format's threat model and must not be represented as solved.
+
+The non-publishing security workflow
+`.github/workflows/stage1-compiled-metering-security.yml` builds independently
+twice, compares binary/rootfs/configuration identities and normalized SBOM
+rows, retains raw Syft/Trivy/RustSec evidence, and runs the compiled image
+with patched Codex on internal Docker networks against only a local TLS mock.
+Any HIGH/CRITICAL or failed reproducibility check must stop approval; no
+Python exception is inherited. Raw evidence is uploaded even when a policy
+check fails. The exact candidate identity, package findings, and mock result
+must be taken from a completed hosted run rather than assumed from source.
+
+The old published byte-forwarding gateway and agent remain valid for their
+original scope but are not eligible for the metered #294 pilot. This security
+task has no GHCR login, publication workflow, activation variable, provider
+credential, paid request, authorization, or live trial. A replacement subject
+would require separate build-once publication preparation, explicit approval,
+digest pullback verification, and a later frozen pilot review.

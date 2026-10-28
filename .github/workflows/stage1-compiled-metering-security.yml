@@ -1,0 +1,194 @@
+name: Stage 1 Compiled Metering Security Candidate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compiled-gateway:
+    name: Build twice, scan, and execute local TLS mock
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Prepare bounded evidence directory
+        run: mkdir -p dist/stage1-compiled-metering
+
+      - name: Install exact Rust toolchain
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
+          rustup target add --toolchain 1.95.0 x86_64-unknown-linux-musl
+          rustc +1.95.0 --version > dist/stage1-compiled-metering/rust-version.txt
+          cargo +1.95.0 --version > dist/stage1-compiled-metering/cargo-version.txt
+
+      - name: Check compiled source, formatting, and lint
+        working-directory: runtime-images/stage1-metering-rust
+        env:
+          RUSTUP_TOOLCHAIN: "1.95.0"
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo metadata --locked --format-version 1 --filter-platform x86_64-unknown-linux-musl \
+            | python ../../scripts/stage1_compiled_gateway_dependencies.py \
+              --output ../../dist/stage1-compiled-metering/source-sbom-license-inventory.json
+
+      - name: Audit exact locked Rust dependencies
+        id: rustsec
+        continue-on-error: true
+        working-directory: runtime-images/stage1-metering-rust
+        env:
+          RUSTUP_TOOLCHAIN: "1.95.0"
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo audit --json --file Cargo.lock \
+            > ../../dist/stage1-compiled-metering/rustsec-audit.json
+          cargo audit --version > ../../dist/stage1-compiled-metering/rustsec-version.txt
+
+      - name: Verify Docker and preload pinned build/test bases
+        run: |
+          docker info
+          docker version > dist/stage1-compiled-metering/docker-version.txt
+          docker pull docker.io/library/rust:1.95.0-alpine3.22@sha256:2805e96db5234c9cfaf7ecb50f488693dab84d28ad30b6290cc1b707a18bf775
+          docker pull gcr.io/distroless/python3-debian13:nonroot@sha256:ab7db4566f1d345612bcd57e1d33d8beb428d111f477dac98521a98fa4ab754d
+          docker pull ghcr.io/richinmrudul/agentguard/stage1-codex-agent@sha256:31402671e20d26972f0345c4bf3263d4f5309c0f450cfbaece19b2b799caa93a
+
+      - name: Build compiled scratch image twice independently
+        shell: bash
+        run: |
+          set -euo pipefail
+          for build in a b; do
+            docker build --no-cache --pull=false --platform linux/amd64 --progress plain \
+              -f runtime-images/stage1-metering-rust/Dockerfile \
+              -t "agentguard-stage1-compiled-metering:$build" . \
+              2>&1 | tee "dist/stage1-compiled-metering/build-$build.log"
+            docker image inspect "agentguard-stage1-compiled-metering:$build" \
+              > "dist/stage1-compiled-metering/gateway-$build.inspect.json"
+            docker save "agentguard-stage1-compiled-metering:$build" \
+              -o "dist/stage1-compiled-metering/gateway-$build.image.tar"
+          done
+
+      - name: Extract digest-verified scratch layers from image archives
+        run: python scripts/stage1_compiled_gateway_evidence.py --evidence dist/stage1-compiled-metering --extract-only
+
+      - name: Prove static linkage and enumerate runtime linkage
+        shell: bash
+        run: |
+          set -euo pipefail
+          for build in a b; do
+            mkdir -p "dist/stage1-compiled-metering/extract-$build"
+            tar -xf "dist/stage1-compiled-metering/gateway-$build.rootfs.tar" \
+              -C "dist/stage1-compiled-metering/extract-$build" stage1-metering-gateway
+            binary="dist/stage1-compiled-metering/extract-$build/stage1-metering-gateway"
+            file "$binary" > "dist/stage1-compiled-metering/linked-$build.txt"
+            readelf -l "$binary" >> "dist/stage1-compiled-metering/linked-$build.txt"
+            readelf -d "$binary" >> "dist/stage1-compiled-metering/linked-$build.txt"
+            if grep -Eq 'INTERP|NEEDED' "dist/stage1-compiled-metering/linked-$build.txt"; then
+              echo 'compiled scratch binary has a dynamic interpreter or library' >&2
+              exit 1
+            fi
+          done
+
+      - name: Generate raw image SBOMs
+        run: |
+          for build in a b; do
+            docker run --rm -v "$PWD/dist/stage1-compiled-metering:/work" \
+              anchore/syft@sha256:cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033 \
+              "docker-archive:/work/gateway-$build.image.tar" \
+              -o "syft-json=/work/gateway-$build.sbom.json"
+          done
+
+      - name: Generate raw vulnerability scans
+        run: |
+          set -euo pipefail
+          mkdir -p .trivy-cache
+          docker run --rm -v "$PWD/dist/stage1-compiled-metering:/work" \
+            -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            --version > dist/stage1-compiled-metering/trivy-version.txt
+          for build in a b; do
+            docker run --rm -v "$PWD/dist/stage1-compiled-metering:/work" \
+              -v "$PWD/.trivy-cache:/root/.cache/" \
+              aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+              image --input "/work/gateway-$build.image.tar" --format json \
+              --output "/work/gateway-$build.trivy.json" \
+              --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
+          done
+          cp .trivy-cache/trivy/db/metadata.json dist/stage1-compiled-metering/trivy-db-metadata.json
+
+      - name: Verify A/B identity, binary, packages, and findings
+        id: policy
+        continue-on-error: true
+        run: python scripts/stage1_compiled_gateway_evidence.py --evidence dist/stage1-compiled-metering
+
+      - name: Build frozen patched Codex candidate without provider contact
+        env:
+          RUSTUP_TOOLCHAIN: "1.95.0"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools protobuf-compiler
+          git clone --filter=blob:none --depth=1 --branch rust-v0.159.2 \
+            https://github.com/openai/codex.git "$RUNNER_TEMP/reviewed-codex"
+          bash scripts/verify_reviewed_codex_model.sh "$RUNNER_TEMP/reviewed-codex"
+          docker build --pull=false --network=none \
+            -f runtime-images/codex-agent/Dockerfile.model-compatibility \
+            -t agentguard-codex-model-compatibility:mock \
+            "$RUNNER_TEMP/reviewed-codex/codex-rs/target/x86_64-unknown-linux-musl/debug"
+
+      - name: Prove canonical projection and one-shot Unix credential broker on Linux
+        run: |
+          python -m pytest -q -rs \
+            tests/unit/test_stage1_rehearsal_projection.py \
+            tests/unit/test_stage1_credential_broker.py
+
+      - name: Execute compiled image with patched agent and local TLS mock
+        env:
+          AGENTGUARD_RUST_GATEWAY_IMAGE: agentguard-stage1-compiled-metering:a
+          AGENTGUARD_B1_MODEL_IMAGE: agentguard-codex-model-compatibility:mock
+          AGENTGUARD_REQUIRE_DOCKER: "1"
+        run: python -m pytest -q -s tests/integration/test_stage1_rust_metering_docker.py
+
+      - name: Hash retained security evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          find dist/stage1-compiled-metering -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > dist/stage1-compiled-metering/SHA256SUMS
+
+      - name: Retain available raw candidate evidence on all outcomes
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: stage1-compiled-metering-security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/stage1-compiled-metering/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Enforce security decision after evidence retention
+        if: always()
+        env:
+          POLICY_OUTCOME: ${{ steps.policy.outcome }}
+          RUSTSEC_OUTCOME: ${{ steps.rustsec.outcome }}
+        run: test "$POLICY_OUTCOME" = success && test "$RUSTSEC_OUTCOME" = success
