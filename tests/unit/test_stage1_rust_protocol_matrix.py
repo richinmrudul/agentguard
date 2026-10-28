@@ -16,13 +16,14 @@ def test_protocol_matrix_case_ids_and_test_bindings() -> None:
     )
     for case in (
         "H01", "H02", "H03", "H04", "H05", "H06", "H07",
-        "S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08",
+        "S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09", "S10",
     ):
         assert matrix.count(f"| {case} |") == 1
     for test in (
         "http_framing_and_routing_reject_ambiguity",
         "sse_exact_lifecycle_and_completed_only_rejection",
         "sse_identity_order_replay_and_terminal_usage_fail_closed",
+        "sse_documented_content_and_local_tool_lifecycles",
         "test_compiled_gateway_with_patched_codex_tls_and_ledger",
     ):
         assert f"fn {test}" in names or f"def {test}" in names
