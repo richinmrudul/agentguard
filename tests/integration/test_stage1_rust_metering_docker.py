@@ -336,6 +336,16 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
             path.write_text(json.dumps(diagnostic, sort_keys=True) + "\n", encoding="utf-8")
             raise AssertionError(f"compiled mock gateway denied patched Codex: {diagnostic}")
         assert "mock complete" in result.stdout + result.stderr
+        malformed = _docker(
+            "run", "--rm", "--network", agent_network, "--read-only",
+            "--entrypoint", "/usr/bin/python3", BASE, "-c",
+            "import socket; s=socket.create_connection(('stage1-metering-gateway',8080),timeout=3); "
+            "s.sendall(b'POST /v1/responses HTTP/1.1\\r\\nHost: stage1-metering-gateway:8080\\r\\n' "
+            "b'Content-Type: application/json\\r\\nContent-Length: 2\\r\\n' "
+            "b'Content-Length: 2\\r\\n\\r\\n{}'); "
+            "print(s.recv(128).decode('ascii').split('\\r\\n',1)[0])",
+        )
+        assert malformed.stdout.strip() == "HTTP/1.1 400 Rejected"
         evidence_file = tmp_path / "evidence.json"
         gateway_evidence = evidence_dir / "evidence.json"
         evidence_read = subprocess.run(
@@ -383,7 +393,11 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
         assert 0 < int(metadata[3]) == len(evidence) < 64 * 1024
         assert int(metadata[4]) >= int(evidence_started_at) - 1
         evidence_file.write_bytes(evidence)
-        assert json.loads(evidence)["events"]
+        parsed_evidence = json.loads(evidence)
+        assert parsed_evidence["trial_closed"] is True
+        statuses = [event["status"] for event in parsed_evidence["events"]]
+        assert statuses[-1] == "rejected"
+        assert statuses[:-1] and set(statuses[:-1]) == {"settled"}
         ledger_file = tmp_path / "snapshot.json"
         assert _docker("inspect", "--format", "{{.State.Running}}", gateway).stdout.strip() == "true"
         ledger_read = _docker(
@@ -396,6 +410,7 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
         ledger_file.write_text(ledger_read.stdout, encoding="utf-8")
         trial = json.loads(ledger_file.read_bytes())["trials"]["docker-mock-trial"]
         assert trial["pending"] is None
+        assert trial["failed"] is True
         assert trial["counts"] == trial["generations"] >= 1
         for value in (evidence.decode(), ledger_file.read_text(), result.stdout, result.stderr,
                       _docker("logs", gateway).stderr, authorization_file.read_text(),

@@ -43,7 +43,8 @@ most 64 KiB, with at most 256 frames. The accepted event order is:
    items, and complete authoritative usage;
 4. optionally one final `data: [DONE]` marker.
 
-Sequence numbers must strictly increase. Item IDs and output indices must
+Sequence numbers start at zero or one and must then increase by exactly one.
+Item IDs and output indices must
 match. Unsupported fields or event types, completed-only streams, terminal
 failure/incompletion, duplicate or post-terminal events, malformed frames, and
 missing or inconsistent usage fail closed. The terminal usage must reconcile
@@ -69,12 +70,15 @@ for this metered path. Ambiguity is rejected rather than treated as approval.
 | H04 | Trailing/pipelined request bytes in parsed message | Reject before generation; no reservation | Rust `http_framing_and_routing_reject_ambiguity` |
 | H05 | Premature EOF, zero/overflowing body length | Reject before generation; no reservation | Rust `http_framing_and_routing_reject_ambiguity` |
 | H06 | Redirect, compression, ambiguous chunking/trailers | Reject upstream; retain full reservation if generation sent; block replay | Rust `http_framing_and_routing_reject_ambiguity` |
+| H07 | Duplicate framing header against exact scratch gateway | Reject; close trial; no extra provider request | Hosted Docker `test_compiled_gateway_with_patched_codex_tls_and_ledger` |
 | S01 | Valid mock lifecycle | Settle only after terminal usage; sequential next request permitted | Rust `sse_exact_lifecycle_and_completed_only_rejection`, hosted Docker `test_compiled_gateway_with_patched_codex_tls_and_ledger` |
 | S02 | Completed-only, empty, heartbeat-only stream | Reject; retain reservation; block replay | Rust `sse_exact_lifecycle_and_completed_only_rejection` |
 | S03 | Response or output-item identity mismatch | Reject; retain reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
 | S04 | Reordered, duplicated or replayed event | Reject; retain reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
 | S05 | Missing, malformed or contradictory terminal usage | Reject; retain reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
 | S06 | Truncated frame, duplicate JSON key, unreviewed event field | Reject; retain reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
+| S07 | Missing event, failed/incomplete terminal, unreviewed provider tool | Reject; retain reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
+| S08 | Invalid UTF-8, unsupported SSE field, oversized frame | Reject; retain reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
 
 The table records implemented cases, not an assertion that the whole
 production transport and fault matrix is complete. The remaining exact-image

@@ -94,6 +94,9 @@ fn sse_identity_order_replay_and_terminal_usage_fail_closed() {
     case[4]["sequence_number"] = json!(3);
     cases.push(case);
     let mut case = original.clone();
+    case[2]["sequence_number"] = json!(99);
+    cases.push(case);
+    let mut case = original.clone();
     let replay = case[2].clone();
     case.insert(3, replay);
     cases.push(case);
@@ -106,10 +109,35 @@ fn sse_identity_order_replay_and_terminal_usage_fail_closed() {
     let mut case = original.clone();
     case[2]["extra"] = json!("unreviewed");
     cases.push(case);
+    let mut case = original.clone();
+    case[4]["type"] = json!("response.failed");
+    cases.push(case);
+    let mut case = original.clone();
+    case[4]["type"] = json!("response.incomplete");
+    cases.push(case);
+    let mut case = original.clone();
+    case[1]["type"] = json!("response.web_search_call.in_progress");
+    cases.push(case);
+    let mut case = original.clone();
+    case[4]["response"]["usage"]["input_tokens_details"]["cached_tokens"] = json!(-1);
+    cases.push(case);
+    let mut case = original.clone();
+    case[4]["response"]["usage"]["total_tokens"] = json!(11);
+    cases.push(case);
     for (index, case) in cases.iter().enumerate() {
         assert!(terminal_stream(&stream(case)).is_err(), "case {index}");
     }
     assert!(terminal_stream(&good[..good.len() - 1]).is_err());
+    let mut invalid_utf8 = good.clone();
+    invalid_utf8[8] = 0xff;
+    assert!(terminal_stream(&invalid_utf8).is_err());
+    let mut unsupported_sse_field = good.clone();
+    unsupported_sse_field.splice(0..0, b"event: response.created\n".iter().copied());
+    assert!(terminal_stream(&unsupported_sse_field).is_err());
+    let mut oversized = b"data: ".to_vec();
+    oversized.extend(vec![b'x'; 64 * 1024]);
+    oversized.extend(b"\n\n");
+    assert!(terminal_stream(&oversized).is_err());
     assert!(
         terminal_stream(
             b"data: {\"type\":\"response.created\",\"type\":\"response.completed\"}\n\n"

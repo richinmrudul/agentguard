@@ -382,7 +382,10 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
             .get("sequence_number")
             .and_then(Value::as_u64)
             .ok_or(Denial::InvalidProvider)?;
-        if previous.is_some_and(|number| sequence <= number) {
+        if match previous {
+            Some(number) => number.checked_add(1) != Some(sequence),
+            None => sequence > 1,
+        } {
             return Err(Denial::InvalidProvider);
         }
         previous = Some(sequence);

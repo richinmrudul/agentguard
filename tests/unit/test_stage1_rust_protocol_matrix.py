@@ -15,8 +15,8 @@ def test_protocol_matrix_case_ids_and_test_bindings() -> None:
         encoding="utf-8"
     )
     for case in (
-        "H01", "H02", "H03", "H04", "H05", "H06",
-        "S01", "S02", "S03", "S04", "S05", "S06",
+        "H01", "H02", "H03", "H04", "H05", "H06", "H07",
+        "S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08",
     ):
         assert matrix.count(f"| {case} |") == 1
     for test in (
