@@ -336,16 +336,51 @@ pub fn input_count(raw: &[u8]) -> Result<u64> {
     Ok(count)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ItemKind {
+    Message,
+    Function,
+    Custom,
+}
+
+struct ActiveItem {
+    index: usize,
+    id: String,
+    kind: ItemKind,
+    accumulated: String,
+    part_started: bool,
+    part_done: bool,
+    text_done: bool,
+    input_done: bool,
+}
+
+impl ActiveItem {
+    fn matches(&self, event: &Value) -> bool {
+        event.get("output_index").and_then(Value::as_u64) == Some(self.index as u64)
+            && event.get("item_id").and_then(Value::as_str) == Some(self.id.as_str())
+    }
+
+    fn append(&mut self, value: &Value) -> Result<()> {
+        let delta = value.as_str().ok_or(Denial::InvalidProvider)?;
+        if self.accumulated.len() + delta.len() > MAX_STRING_BYTES {
+            return Err(Denial::InvalidProvider);
+        }
+        self.accumulated.push_str(delta);
+        Ok(())
+    }
+}
+
 pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
     if raw.is_empty() || raw.len() > MAX_RESPONSE_BYTES || !raw.ends_with(b"\n\n") {
         return Err(Denial::InvalidProvider);
     }
     let mut terminal: Option<Value> = None;
-    let mut previous: i64 = -1;
-    let frames: Vec<&[u8]> = raw.split(|byte| *byte == b'\n').collect();
-    if frames.len() > MAX_EVENTS * 3 {
-        return Err(Denial::InvalidProvider);
-    }
+    let mut previous: Option<u64> = None;
+    let mut response_id: Option<String> = None;
+    let mut in_progress_seen = false;
+    let mut active_item: Option<ActiveItem> = None;
+    let mut completed_items = Vec::<Value>::new();
+    let mut done_marker = false;
     let mut events = 0_usize;
     let mut offset = 0_usize;
     while offset < raw.len() {
@@ -356,11 +391,9 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
             .ok_or(Denial::InvalidProvider)?;
         let frame = &remainder[..end];
         offset += end + 2;
-        if frame.is_empty() {
-            continue;
-        }
         events += 1;
         if events > MAX_EVENTS
+            || frame.is_empty()
             || frame.len() > MAX_FRAME_BYTES
             || frame.contains(&b'\r')
             || frame.contains(&b'\n')
@@ -369,21 +402,28 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
             return Err(Denial::InvalidProvider);
         }
         if frame == b"data: [DONE]" {
-            if terminal.is_none() || offset != raw.len() {
+            if terminal.is_none() || done_marker || offset != raw.len() {
                 return Err(Denial::InvalidProvider);
             }
+            done_marker = true;
             continue;
+        }
+        if done_marker || terminal.is_some() {
+            return Err(Denial::InvalidProvider);
         }
         let event =
             parse_json(&frame[6..], MAX_FRAME_BYTES).map_err(|_| Denial::InvalidProvider)?;
         let sequence = event
             .get("sequence_number")
-            .and_then(Value::as_i64)
+            .and_then(Value::as_u64)
             .ok_or(Denial::InvalidProvider)?;
-        if sequence <= previous || terminal.is_some() {
+        if match previous {
+            Some(number) => number.checked_add(1) != Some(sequence),
+            None => sequence > 1,
+        } {
             return Err(Denial::InvalidProvider);
         }
-        previous = sequence;
+        previous = Some(sequence);
         let kind = event
             .get("type")
             .and_then(Value::as_str)
@@ -391,8 +431,16 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
         if !matches!(
             kind,
             "response.created"
+                | "response.in_progress"
                 | "response.output_item.added"
+                | "response.content_part.added"
                 | "response.output_text.delta"
+                | "response.output_text.done"
+                | "response.content_part.done"
+                | "response.function_call_arguments.delta"
+                | "response.function_call_arguments.done"
+                | "response.custom_tool_call_input.delta"
+                | "response.custom_tool_call_input.done"
                 | "response.output_item.done"
                 | "response.completed"
                 | "response.failed"
@@ -403,22 +451,302 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
         if matches!(kind, "response.failed" | "response.incomplete") {
             return Err(Denial::InvalidProvider);
         }
-        if kind == "response.completed" {
-            terminal = Some(
-                event
-                    .get("response")
-                    .cloned()
-                    .ok_or(Denial::InvalidProvider)?,
-            );
+        let expected_fields: &[&str] = match kind {
+            "response.created" | "response.in_progress" | "response.completed" => {
+                &["type", "sequence_number", "response"]
+            }
+            "response.output_item.added" | "response.output_item.done" => {
+                &["type", "sequence_number", "output_index", "item"]
+            }
+            "response.content_part.added" | "response.content_part.done" => &[
+                "type", "sequence_number", "item_id", "output_index", "content_index", "part",
+            ],
+            "response.output_text.delta" => &[
+                "type",
+                "sequence_number",
+                "item_id",
+                "output_index",
+                "content_index",
+                "delta",
+            ],
+            "response.output_text.done" => &[
+                "type", "sequence_number", "item_id", "output_index", "content_index", "text",
+            ],
+            "response.function_call_arguments.delta"
+            | "response.custom_tool_call_input.delta" => {
+                &["type", "sequence_number", "item_id", "output_index", "delta"]
+            }
+            "response.function_call_arguments.done" => {
+                &["type", "sequence_number", "item_id", "output_index", "arguments"]
+            }
+            "response.custom_tool_call_input.done" => {
+                &["type", "sequence_number", "item_id", "output_index", "input"]
+            }
+            _ => return Err(Denial::InvalidProvider),
+        };
+        if !exact_fields(&event, expected_fields)
+            && !(matches!(kind, "response.output_text.delta" | "response.output_text.done")
+                && event
+                    .get("logprobs")
+                    .and_then(Value::as_array)
+                    .is_some_and(Vec::is_empty)
+                && event.as_object().is_some_and(|fields| {
+                    fields.len() == expected_fields.len() + 1
+                        && expected_fields.iter().all(|name| fields.contains_key(*name))
+                }))
+        {
+            return Err(Denial::InvalidProvider);
+        }
+        match kind {
+            "response.created" => {
+                if response_id.is_some() || active_item.is_some() || !completed_items.is_empty() {
+                    return Err(Denial::InvalidProvider);
+                }
+                let response = event.get("response").ok_or(Denial::InvalidProvider)?;
+                if response.get("status").and_then(Value::as_str) != Some("in_progress")
+                    || response.get("model").and_then(Value::as_str) != Some(MODEL)
+                    || response.get("usage").is_some_and(|usage| !usage.is_null())
+                {
+                    return Err(Denial::InvalidProvider);
+                }
+                response_id = Some(valid_response_id(response)?.to_owned());
+            }
+            "response.in_progress" => {
+                if response_id.is_none()
+                    || in_progress_seen
+                    || active_item.is_some()
+                    || !completed_items.is_empty()
+                {
+                    return Err(Denial::InvalidProvider);
+                }
+                let response = event.get("response").ok_or(Denial::InvalidProvider)?;
+                if Some(valid_response_id(response)?) != response_id.as_deref()
+                    || response.get("model").and_then(Value::as_str) != Some(MODEL)
+                    || response.get("status").and_then(Value::as_str) != Some("in_progress")
+                    || response.get("usage").is_some_and(|usage| !usage.is_null())
+                {
+                    return Err(Denial::InvalidProvider);
+                }
+                in_progress_seen = true;
+            }
+            "response.output_item.added" => {
+                if response_id.is_none() || active_item.is_some() {
+                    return Err(Denial::InvalidProvider);
+                }
+                let index = event
+                    .get("output_index")
+                    .and_then(Value::as_u64)
+                    .ok_or(Denial::InvalidProvider)?;
+                if index != completed_items.len() as u64 {
+                    return Err(Denial::InvalidProvider);
+                }
+                let item = event.get("item").ok_or(Denial::InvalidProvider)?;
+                let id = valid_item_id(item)?;
+                if !reviewed_output_item(item) {
+                    return Err(Denial::InvalidProvider);
+                }
+                let kind = match item.get("type").and_then(Value::as_str) {
+                    Some("message") => ItemKind::Message,
+                    Some("function_call") => ItemKind::Function,
+                    Some("custom_tool_call") => ItemKind::Custom,
+                    _ => return Err(Denial::InvalidProvider),
+                };
+                active_item = Some(ActiveItem {
+                    index: index as usize,
+                    id: id.to_owned(),
+                    kind,
+                    accumulated: String::new(),
+                    part_started: false,
+                    part_done: false,
+                    text_done: false,
+                    input_done: false,
+                });
+            }
+            "response.content_part.added" => {
+                let active = active_item.as_mut().ok_or(Denial::InvalidProvider)?;
+                let part = event.get("part").ok_or(Denial::InvalidProvider)?;
+                if active.kind != ItemKind::Message
+                    || !active.matches(&event)
+                    || active.part_started
+                    || event.get("content_index").and_then(Value::as_u64) != Some(0)
+                    || !reviewed_text_part(part, "")
+                {
+                    return Err(Denial::InvalidProvider);
+                }
+                active.part_started = true;
+            }
+            "response.output_text.delta" => {
+                let active = active_item.as_mut().ok_or(Denial::InvalidProvider)?;
+                if active.kind != ItemKind::Message
+                    || !active.matches(&event)
+                    || active.part_done
+                    || active.text_done
+                    || event.get("content_index").and_then(Value::as_u64) != Some(0)
+                {
+                    return Err(Denial::InvalidProvider);
+                }
+                active.append(event.get("delta").ok_or(Denial::InvalidProvider)?)?;
+            }
+            "response.output_text.done" | "response.content_part.done" => {
+                let active = active_item.as_mut().ok_or(Denial::InvalidProvider)?;
+                let text = if kind == "response.output_text.done" {
+                    event.get("text").and_then(Value::as_str)
+                } else {
+                    event.get("part").and_then(|part| part.get("text")).and_then(Value::as_str)
+                };
+                if active.kind != ItemKind::Message
+                    || !active.matches(&event)
+                    || event.get("content_index").and_then(Value::as_u64) != Some(0)
+                    || text != Some(active.accumulated.as_str())
+                    || (kind == "response.content_part.done"
+                        && !event.get("part").is_some_and(|part| {
+                            reviewed_text_part(part, &active.accumulated)
+                        }))
+                {
+                    return Err(Denial::InvalidProvider);
+                }
+                if kind == "response.output_text.done" {
+                    if active.text_done {
+                        return Err(Denial::InvalidProvider);
+                    }
+                    active.text_done = true;
+                } else {
+                    if !active.part_started || active.part_done {
+                        return Err(Denial::InvalidProvider);
+                    }
+                    active.part_done = true;
+                }
+            }
+            "response.function_call_arguments.delta"
+            | "response.custom_tool_call_input.delta" => {
+                let active = active_item.as_mut().ok_or(Denial::InvalidProvider)?;
+                let expected = if kind == "response.function_call_arguments.delta" {
+                    ItemKind::Function
+                } else {
+                    ItemKind::Custom
+                };
+                if active.kind != expected || !active.matches(&event) || active.input_done {
+                    return Err(Denial::InvalidProvider);
+                }
+                active.append(event.get("delta").ok_or(Denial::InvalidProvider)?)?;
+            }
+            "response.function_call_arguments.done" | "response.custom_tool_call_input.done" => {
+                let active = active_item.as_mut().ok_or(Denial::InvalidProvider)?;
+                let (expected, field) = if kind == "response.function_call_arguments.done" {
+                    (ItemKind::Function, "arguments")
+                } else {
+                    (ItemKind::Custom, "input")
+                };
+                if active.kind != expected
+                    || !active.matches(&event)
+                    || active.input_done
+                    || event.get(field).and_then(Value::as_str) != Some(active.accumulated.as_str())
+                {
+                    return Err(Denial::InvalidProvider);
+                }
+                active.input_done = true;
+            }
+            "response.output_item.done" => {
+                let active = active_item.take().ok_or(Denial::InvalidProvider)?;
+                let item = event.get("item").ok_or(Denial::InvalidProvider)?;
+                if event.get("output_index").and_then(Value::as_u64) != Some(active.index as u64)
+                    || valid_item_id(item)? != active.id
+                    || !reviewed_output_item(item)
+                {
+                    return Err(Denial::InvalidProvider);
+                }
+                match active.kind {
+                    ItemKind::Message => {
+                        let parts = item.get("content").and_then(Value::as_array)
+                            .ok_or(Denial::InvalidProvider)?;
+                        let text = parts.first().and_then(|part| part.get("text"))
+                            .and_then(Value::as_str);
+                        if (active.part_started && !active.part_done)
+                            || parts.len() > 1
+                            || (text.is_some() && text != Some(active.accumulated.as_str()))
+                        {
+                            return Err(Denial::InvalidProvider);
+                        }
+                    }
+                    ItemKind::Function | ItemKind::Custom => {
+                        let field = if active.kind == ItemKind::Function { "arguments" } else { "input" };
+                        if !active.input_done
+                            || item.get(field).and_then(Value::as_str) != Some(active.accumulated.as_str())
+                        {
+                            return Err(Denial::InvalidProvider);
+                        }
+                    }
+                }
+                completed_items.push(item.clone());
+            }
+            "response.completed" => {
+                if response_id.is_none() || active_item.is_some() {
+                    return Err(Denial::InvalidProvider);
+                }
+                let response = event.get("response").ok_or(Denial::InvalidProvider)?;
+                if Some(valid_response_id(response)?) != response_id.as_deref() {
+                    return Err(Denial::InvalidProvider);
+                }
+                let output = response
+                    .get("output")
+                    .and_then(Value::as_array)
+                    .ok_or(Denial::InvalidProvider)?;
+                if output != &completed_items {
+                    return Err(Denial::InvalidProvider);
+                }
+                terminal = Some(response.clone());
+            }
+            _ => return Err(Denial::InvalidProvider),
         }
     }
     let response = terminal.ok_or(Denial::InvalidProvider)?;
     if response.get("status").and_then(Value::as_str) != Some("completed")
         || response.get("model").and_then(Value::as_str) != Some(MODEL)
         || response.get("service_tier").and_then(Value::as_str) != Some("default")
+        || !response.get("usage").is_some_and(Value::is_object)
     {
         return Err(Denial::InvalidProvider);
     }
+    valid_response_id(&response)?;
+    let output = response
+        .get("output")
+        .and_then(Value::as_array)
+        .ok_or(Denial::InvalidProvider)?;
+    if output.len() > 128 || output.iter().any(|item| !reviewed_output_item(item)) {
+        return Err(Denial::InvalidProvider);
+    }
+    let counted = response
+        .get("usage")
+        .and_then(|usage| usage.get("input_tokens"))
+        .and_then(Value::as_u64)
+        .ok_or(Denial::InvalidProvider)?;
+    crate::pricing::Usage::from_terminal(&response, counted)?;
+    Ok(response)
+}
+
+fn exact_fields(value: &Value, names: &[&str]) -> bool {
+    value.as_object().is_some_and(|fields| {
+        fields.len() == names.len() && names.iter().all(|name| fields.contains_key(*name))
+    })
+}
+
+fn reviewed_text_part(part: &Value, expected_text: &str) -> bool {
+    part.as_object().is_some_and(|fields| {
+        fields.keys().all(|name| matches!(
+            name.as_str(), "type" | "text" | "annotations" | "logprobs"
+        ))
+            && part.get("type").and_then(Value::as_str) == Some("output_text")
+            && part.get("text").and_then(Value::as_str) == Some(expected_text)
+            && part.get("annotations").is_none_or(|value| {
+                value.as_array().is_some_and(Vec::is_empty)
+            })
+            && part.get("logprobs").is_none_or(|value| {
+                value.as_array().is_some_and(Vec::is_empty)
+            })
+    })
+}
+
+fn valid_response_id(response: &Value) -> Result<&str> {
     let id = response
         .get("id")
         .and_then(Value::as_str)
@@ -431,14 +759,23 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
     {
         return Err(Denial::InvalidProvider);
     }
-    let output = response
-        .get("output")
-        .and_then(Value::as_array)
+    Ok(id)
+}
+
+fn valid_item_id(item: &Value) -> Result<&str> {
+    let id = item
+        .get("id")
+        .and_then(Value::as_str)
         .ok_or(Denial::InvalidProvider)?;
-    if output.len() > 128 || output.iter().any(|item| !reviewed_output_item(item)) {
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
         return Err(Denial::InvalidProvider);
     }
-    Ok(response)
+    Ok(id)
 }
 
 fn reviewed_output_item(item: &Value) -> bool {
@@ -447,7 +784,7 @@ fn reviewed_output_item(item: &Value) -> bool {
             .get("content")
             .and_then(Value::as_array)
             .is_some_and(|content| {
-                content.len() <= 128
+                content.len() <= 1
                     && content.iter().all(|part| {
                         part.get("type").and_then(Value::as_str) == Some("output_text")
                             && part.get("text").and_then(Value::as_str).is_some()
@@ -503,7 +840,7 @@ mod tests {
                 })
             )
         };
-        assert!(terminal_stream(frame("response.completed", &base).as_bytes()).is_ok());
+        assert!(terminal_stream(frame("response.completed", &base).as_bytes()).is_err());
         assert!(terminal_stream(frame("response.web_search_call", &base).as_bytes()).is_err());
         for item in [
             serde_json::json!({"type":"function_call","name":"web_search"}),

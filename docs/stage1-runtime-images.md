@@ -466,12 +466,14 @@ This is an inert, unpublished experimental foundation, not a production
 provider gateway or an approval for live use. Its executable accepts only mock
 and candidate-rehearsal modes; no checked-in authorization or ordinary
 AgentGuard command can activate a live mode or resolve a real credential.
-The current SSE parser accepts a completed-only event stream in the local mock
-path. A strict HTTP/SSE lifecycle state machine and the exact-image
-crash/restart and ledger fault matrix remain incomplete. Those contracts must
-be reviewed and proven before runtime approval, replacement-image publication,
-or a #294 live study. The hosted proof establishes only the stated local-mock
-boundary, not public-provider or production transport safety.
+The #326 protocol candidate rejects completed-only streams and requires a
+created response, ordered item events, one matching terminal response identity,
+and authoritative terminal usage. Its bounded rules and test mapping are in
+[the Stage 1 protocol contract](stage1-metering-protocol-v1.md). This remains
+mock-only and is not runtime approval. The exact-image crash/restart and ledger
+fault matrix (#327) and final security approval (#328) remain separate blockers
+before replacement-image publication or a #294 live study. Hosted mock proof
+does not establish public-provider or production transport safety.
 
 The reviewed pricing policy remains
 `sha256:11da095d2856b07a2ce0a6da30e8d3229b9d4a2138122549d129580f0378eb35`.
