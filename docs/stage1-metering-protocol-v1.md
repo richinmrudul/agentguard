@@ -30,7 +30,7 @@ may call upstream `POST /v1/responses/input_tokens` and
 
 ## Upstream SSE
 
-The local mock path requires `text/event-stream`, bounded HTTP/1.1 framing
+The local mock path requires the exact `text/event-stream` content type, bounded HTTP/1.1 framing
 and a stream no larger than 2 MiB. Every frame is `data: <JSON>\n\n`, at
 most 64 KiB, with at most 256 frames. The accepted event order is:
 
@@ -80,7 +80,7 @@ for this metered path. Ambiguity is rejected rather than treated as approval.
 | H09 | Wrong/duplicate content type, unreviewed header, cookie, proxy authorization, invalid UTF-8, NUL, or obs-fold | Reject before generation; no reservation | Rust `http_framing_and_routing_reject_ambiguity` |
 | H10 | Transfer encoding without length, malformed chunked request, or zero/overflowing length | Reject before generation; no reservation | Rust `http_framing_and_routing_reject_ambiguity` |
 | H11 | JSON duplicate key, unsupported number, invalid UTF-8/control, or array/string bound | Reject before generation; no reservation | Rust `json_depth_element_string_and_number_boundaries` |
-| H12 | Upstream wrong HTTP version/type, duplicate or contradictory framing, unsupported encoding, trailer, or premature EOF | Reject; retain full reservation after send; block replay | Rust `http_framing_and_routing_reject_ambiguity` |
+| H12 | Upstream wrong HTTP version, wrong or parameterized content type, duplicate or contradictory framing, unsupported encoding, trailer, or premature EOF | Reject; retain full reservation after send; block replay | Rust `http_framing_and_routing_reject_ambiguity` |
 | S01 | Valid mock lifecycle | Settle only after terminal usage; sequential next request permitted | Rust `sse_exact_lifecycle_and_completed_only_rejection`, hosted Docker `test_compiled_gateway_with_patched_codex_tls_and_ledger` |
 | S02 | Completed-only, empty, heartbeat-only stream | Reject; retain reservation; block replay | Rust `sse_exact_lifecycle_and_completed_only_rejection` |
 | S03 | Response or output-item identity mismatch | Reject; retain reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |

@@ -346,6 +346,7 @@ fn http_framing_and_routing_reject_ambiguity() {
         b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n2;ext=x\r\n{}\r\n0\r\n\r\n",
         b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Encoding: gzip\r\nContent-Length: 2\r\n\r\n{}",
         b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; unreviewed=x\r\nContent-Length: 2\r\n\r\n{}",
         b"HTTP/1.0 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 2\r\n\r\n{}",
         b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}",
         b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: gzip\r\n\r\n{}",

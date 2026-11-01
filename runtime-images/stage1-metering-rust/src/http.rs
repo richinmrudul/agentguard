@@ -302,9 +302,7 @@ pub fn read_upstream<R: Read>(reader: &mut R, expected_type: &str) -> Result<Ups
             .find(|(name, _)| name == key)
             .map(|(_, value)| value.as_str())
     };
-    if field("content-type")
-        .is_none_or(|value| value.split(';').next().unwrap_or("").trim() != expected_type)
-    {
+    if field("content-type") != Some(expected_type) {
         return Err(Denial::InvalidProvider);
     }
     if let Some(encoding) = field("transfer-encoding") {
