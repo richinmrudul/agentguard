@@ -104,7 +104,11 @@ fn read_chunked<R: Read>(reader: &mut R, prefix: Vec<u8>) -> Result<Vec<u8>> {
                 return Err(Denial::InvalidProvider);
             }
             let mut trailing = [0_u8; 1];
-            if source.read(&mut trailing).map_err(|_| Denial::InvalidProvider)? != 0 {
+            if source
+                .read(&mut trailing)
+                .map_err(|_| Denial::InvalidProvider)?
+                != 0
+            {
                 return Err(Denial::InvalidProvider);
             }
             break;
@@ -343,7 +347,11 @@ pub fn read_upstream<R: Read>(reader: &mut R, expected_type: &str) -> Result<Ups
         body.extend_from_slice(&chunk[..count]);
     }
     let mut trailing = [0_u8; 1];
-    if reader.read(&mut trailing).map_err(|_| Denial::InvalidProvider)? != 0 {
+    if reader
+        .read(&mut trailing)
+        .map_err(|_| Denial::InvalidProvider)?
+        != 0
+    {
         return Err(Denial::InvalidProvider);
     }
     Ok(UpstreamResponse {
