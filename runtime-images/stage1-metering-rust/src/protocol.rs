@@ -507,8 +507,8 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
             ],
             _ => return Err(Denial::InvalidProvider),
         };
-        if !exact_fields(&event, expected_fields)
-            && !(matches!(
+        if !(exact_fields(&event, expected_fields)
+            || (matches!(
                 kind,
                 "response.output_text.delta" | "response.output_text.done"
             ) && event
@@ -520,7 +520,7 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                         && expected_fields
                             .iter()
                             .all(|name| fields.contains_key(*name))
-                }))
+                })))
         {
             return Err(Denial::InvalidProvider);
         }
