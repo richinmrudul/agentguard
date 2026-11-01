@@ -721,7 +721,9 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                         if (active.part_started && !active.part_done)
                             || parts.len() > 1
                             || (parts.is_empty() && !active.accumulated.is_empty())
-                            || (text.is_some() && text != Some(active.accumulated.as_str()))
+                            || (text.is_some()
+                                && (text != Some(active.accumulated.as_str())
+                                    || !reviewed_text_part(&parts[0], &active.accumulated)))
                         {
                             return Err(Denial::InvalidProvider);
                         }
@@ -766,6 +768,10 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
     if response.get("status").and_then(Value::as_str) != Some("completed")
         || response.get("model").and_then(Value::as_str) != Some(MODEL)
         || response.get("service_tier").and_then(Value::as_str) != Some("default")
+        || response.get("error").is_some_and(|value| !value.is_null())
+        || response
+            .get("incomplete_details")
+            .is_some_and(|value| !value.is_null())
         || !response.get("usage").is_some_and(Value::is_object)
     {
         return Err(Denial::InvalidProvider);

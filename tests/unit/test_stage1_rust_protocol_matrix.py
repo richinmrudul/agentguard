@@ -1,5 +1,6 @@
 """Keep the reviewed mock-only protocol cases tied to executable tests."""
 
+import re
 from pathlib import Path
 
 
@@ -14,17 +15,20 @@ def test_protocol_matrix_case_ids_and_test_bindings() -> None:
     names = RUST_TESTS.read_text(encoding="utf-8") + DOCKER_TEST.read_text(
         encoding="utf-8"
     )
-    for case in (
-        "H01", "H02", "H03", "H04", "H05", "H06", "H07",
-        "S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09", "S10",
-    ):
+    required = (
+        "H01", "H02", "H03", "H04", "H05", "H06", "H07", "H08", "H09", "H10", "H11", "H12",
+        "S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09", "S10", "S11", "S12", "S13",
+    )
+    rows = {
+        fields[1].strip(): fields
+        for line in matrix.splitlines()
+        if line.startswith("| H") or line.startswith("| S")
+        if len(fields := line.split("|")) == 6
+    }
+    assert set(rows) == set(required)
+    for case in required:
         assert matrix.count(f"| {case} |") == 1
-    for test in (
-        "http_framing_and_routing_reject_ambiguity",
-        "sse_exact_lifecycle_and_completed_only_rejection",
-        "sse_identity_order_replay_and_terminal_usage_fail_closed",
-        "sse_documented_content_and_local_tool_lifecycles",
-        "test_compiled_gateway_with_patched_codex_tls_and_ledger",
-    ):
-        assert f"fn {test}" in names or f"def {test}" in names
-        assert f"`{test}`" in matrix
+        tests = re.findall(r"`([A-Za-z_][A-Za-z_0-9]*)`", rows[case][4])
+        assert tests, case
+        for test in tests:
+            assert f"fn {test}" in names or f"def {test}" in names, (case, test)
