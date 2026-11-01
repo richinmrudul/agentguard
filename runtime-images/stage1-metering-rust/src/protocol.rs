@@ -459,7 +459,12 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                 &["type", "sequence_number", "output_index", "item"]
             }
             "response.content_part.added" | "response.content_part.done" => &[
-                "type", "sequence_number", "item_id", "output_index", "content_index", "part",
+                "type",
+                "sequence_number",
+                "item_id",
+                "output_index",
+                "content_index",
+                "part",
             ],
             "response.output_text.delta" => &[
                 "type",
@@ -470,29 +475,51 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                 "delta",
             ],
             "response.output_text.done" => &[
-                "type", "sequence_number", "item_id", "output_index", "content_index", "text",
+                "type",
+                "sequence_number",
+                "item_id",
+                "output_index",
+                "content_index",
+                "text",
             ],
-            "response.function_call_arguments.delta"
-            | "response.custom_tool_call_input.delta" => {
-                &["type", "sequence_number", "item_id", "output_index", "delta"]
+            "response.function_call_arguments.delta" | "response.custom_tool_call_input.delta" => {
+                &[
+                    "type",
+                    "sequence_number",
+                    "item_id",
+                    "output_index",
+                    "delta",
+                ]
             }
-            "response.function_call_arguments.done" => {
-                &["type", "sequence_number", "item_id", "output_index", "arguments"]
-            }
-            "response.custom_tool_call_input.done" => {
-                &["type", "sequence_number", "item_id", "output_index", "input"]
-            }
+            "response.function_call_arguments.done" => &[
+                "type",
+                "sequence_number",
+                "item_id",
+                "output_index",
+                "arguments",
+            ],
+            "response.custom_tool_call_input.done" => &[
+                "type",
+                "sequence_number",
+                "item_id",
+                "output_index",
+                "input",
+            ],
             _ => return Err(Denial::InvalidProvider),
         };
         if !exact_fields(&event, expected_fields)
-            && !(matches!(kind, "response.output_text.delta" | "response.output_text.done")
-                && event
-                    .get("logprobs")
-                    .and_then(Value::as_array)
-                    .is_some_and(Vec::is_empty)
+            && !(matches!(
+                kind,
+                "response.output_text.delta" | "response.output_text.done"
+            ) && event
+                .get("logprobs")
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty)
                 && event.as_object().is_some_and(|fields| {
                     fields.len() == expected_fields.len() + 1
-                        && expected_fields.iter().all(|name| fields.contains_key(*name))
+                        && expected_fields
+                            .iter()
+                            .all(|name| fields.contains_key(*name))
                 }))
         {
             return Err(Denial::InvalidProvider);
@@ -506,6 +533,9 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                 if response.get("status").and_then(Value::as_str) != Some("in_progress")
                     || response.get("model").and_then(Value::as_str) != Some(MODEL)
                     || response.get("usage").is_some_and(|usage| !usage.is_null())
+                    || response.get("output").is_some_and(|value| {
+                        value.as_array().is_none_or(|items| !items.is_empty())
+                    })
                 {
                     return Err(Denial::InvalidProvider);
                 }
@@ -524,6 +554,9 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                     || response.get("model").and_then(Value::as_str) != Some(MODEL)
                     || response.get("status").and_then(Value::as_str) != Some("in_progress")
                     || response.get("usage").is_some_and(|usage| !usage.is_null())
+                    || response.get("output").is_some_and(|value| {
+                        value.as_array().is_none_or(|items| !items.is_empty())
+                    })
                 {
                     return Err(Denial::InvalidProvider);
                 }
@@ -542,6 +575,12 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                 }
                 let item = event.get("item").ok_or(Denial::InvalidProvider)?;
                 let id = valid_item_id(item)?;
+                if completed_items
+                    .iter()
+                    .any(|earlier| earlier.get("id").and_then(Value::as_str) == Some(id))
+                {
+                    return Err(Denial::InvalidProvider);
+                }
                 if !reviewed_output_item(item) {
                     return Err(Denial::InvalidProvider);
                 }
@@ -568,6 +607,7 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                 if active.kind != ItemKind::Message
                     || !active.matches(&event)
                     || active.part_started
+                    || !active.accumulated.is_empty()
                     || event.get("content_index").and_then(Value::as_u64) != Some(0)
                     || !reviewed_text_part(part, "")
                 {
@@ -592,16 +632,19 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                 let text = if kind == "response.output_text.done" {
                     event.get("text").and_then(Value::as_str)
                 } else {
-                    event.get("part").and_then(|part| part.get("text")).and_then(Value::as_str)
+                    event
+                        .get("part")
+                        .and_then(|part| part.get("text"))
+                        .and_then(Value::as_str)
                 };
                 if active.kind != ItemKind::Message
                     || !active.matches(&event)
                     || event.get("content_index").and_then(Value::as_u64) != Some(0)
                     || text != Some(active.accumulated.as_str())
                     || (kind == "response.content_part.done"
-                        && !event.get("part").is_some_and(|part| {
-                            reviewed_text_part(part, &active.accumulated)
-                        }))
+                        && !event
+                            .get("part")
+                            .is_some_and(|part| reviewed_text_part(part, &active.accumulated)))
                 {
                     return Err(Denial::InvalidProvider);
                 }
@@ -617,8 +660,7 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                     active.part_done = true;
                 }
             }
-            "response.function_call_arguments.delta"
-            | "response.custom_tool_call_input.delta" => {
+            "response.function_call_arguments.delta" | "response.custom_tool_call_input.delta" => {
                 let active = active_item.as_mut().ok_or(Denial::InvalidProvider)?;
                 let expected = if kind == "response.function_call_arguments.delta" {
                     ItemKind::Function
@@ -652,26 +694,47 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                 if event.get("output_index").and_then(Value::as_u64) != Some(active.index as u64)
                     || valid_item_id(item)? != active.id
                     || !reviewed_output_item(item)
+                    || match active.kind {
+                        ItemKind::Message => {
+                            item.get("type").and_then(Value::as_str) != Some("message")
+                        }
+                        ItemKind::Function => {
+                            item.get("type").and_then(Value::as_str) != Some("function_call")
+                        }
+                        ItemKind::Custom => {
+                            item.get("type").and_then(Value::as_str) != Some("custom_tool_call")
+                        }
+                    }
                 {
                     return Err(Denial::InvalidProvider);
                 }
                 match active.kind {
                     ItemKind::Message => {
-                        let parts = item.get("content").and_then(Value::as_array)
+                        let parts = item
+                            .get("content")
+                            .and_then(Value::as_array)
                             .ok_or(Denial::InvalidProvider)?;
-                        let text = parts.first().and_then(|part| part.get("text"))
+                        let text = parts
+                            .first()
+                            .and_then(|part| part.get("text"))
                             .and_then(Value::as_str);
                         if (active.part_started && !active.part_done)
                             || parts.len() > 1
+                            || (parts.is_empty() && !active.accumulated.is_empty())
                             || (text.is_some() && text != Some(active.accumulated.as_str()))
                         {
                             return Err(Denial::InvalidProvider);
                         }
                     }
                     ItemKind::Function | ItemKind::Custom => {
-                        let field = if active.kind == ItemKind::Function { "arguments" } else { "input" };
+                        let field = if active.kind == ItemKind::Function {
+                            "arguments"
+                        } else {
+                            "input"
+                        };
                         if !active.input_done
-                            || item.get(field).and_then(Value::as_str) != Some(active.accumulated.as_str())
+                            || item.get(field).and_then(Value::as_str)
+                                != Some(active.accumulated.as_str())
                         {
                             return Err(Denial::InvalidProvider);
                         }
@@ -732,17 +795,17 @@ fn exact_fields(value: &Value, names: &[&str]) -> bool {
 
 fn reviewed_text_part(part: &Value, expected_text: &str) -> bool {
     part.as_object().is_some_and(|fields| {
-        fields.keys().all(|name| matches!(
-            name.as_str(), "type" | "text" | "annotations" | "logprobs"
-        ))
+        fields
+            .keys()
+            .all(|name| matches!(name.as_str(), "type" | "text" | "annotations" | "logprobs"))
             && part.get("type").and_then(Value::as_str) == Some("output_text")
             && part.get("text").and_then(Value::as_str) == Some(expected_text)
-            && part.get("annotations").is_none_or(|value| {
-                value.as_array().is_some_and(Vec::is_empty)
-            })
-            && part.get("logprobs").is_none_or(|value| {
-                value.as_array().is_some_and(Vec::is_empty)
-            })
+            && part
+                .get("annotations")
+                .is_none_or(|value| value.as_array().is_some_and(Vec::is_empty))
+            && part
+                .get("logprobs")
+                .is_none_or(|value| value.as_array().is_some_and(Vec::is_empty))
     })
 }
 
