@@ -533,9 +533,9 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                 if response.get("status").and_then(Value::as_str) != Some("in_progress")
                     || response.get("model").and_then(Value::as_str) != Some(MODEL)
                     || response.get("usage").is_some_and(|usage| !usage.is_null())
-                    || response.get("output").is_some_and(|value| {
-                        value.as_array().is_none_or(|items| !items.is_empty())
-                    })
+                    || response
+                        .get("output")
+                        .is_some_and(|value| value.as_array().is_none_or(|items| !items.is_empty()))
                 {
                     return Err(Denial::InvalidProvider);
                 }
@@ -554,9 +554,9 @@ pub fn terminal_stream(raw: &[u8]) -> Result<Value> {
                     || response.get("model").and_then(Value::as_str) != Some(MODEL)
                     || response.get("status").and_then(Value::as_str) != Some("in_progress")
                     || response.get("usage").is_some_and(|usage| !usage.is_null())
-                    || response.get("output").is_some_and(|value| {
-                        value.as_array().is_none_or(|items| !items.is_empty())
-                    })
+                    || response
+                        .get("output")
+                        .is_some_and(|value| value.as_array().is_none_or(|items| !items.is_empty()))
                 {
                     return Err(Denial::InvalidProvider);
                 }
