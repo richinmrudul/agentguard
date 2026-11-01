@@ -1,5 +1,5 @@
 use agentguard_stage1_metering_gateway::http::{read_request, read_upstream};
-use agentguard_stage1_metering_gateway::protocol::terminal_stream;
+use agentguard_stage1_metering_gateway::protocol::{parse_json, terminal_stream};
 use serde_json::{Value, json};
 use std::io::Cursor;
 
@@ -49,6 +49,36 @@ fn stream(values: &[Value]) -> Vec<u8> {
 fn resequence(values: &mut [Value]) {
     for (index, value) in values.iter_mut().enumerate() {
         value["sequence_number"] = json!(index);
+    }
+}
+
+#[test]
+fn json_depth_element_string_and_number_boundaries() {
+    assert!(parse_json(b"{}", 0).is_err());
+    assert!(parse_json(b"{}", 1).is_err());
+    assert!(parse_json(b"{}", 2).is_ok());
+    let array_at_limit = serde_json::to_vec(&json!({"input": vec![0; 128]})).unwrap();
+    assert!(parse_json(&array_at_limit, 2 * 1024 * 1024).is_ok());
+    let array_over_limit = serde_json::to_vec(&json!({"input": vec![0; 129]})).unwrap();
+    assert!(parse_json(&array_over_limit, 2 * 1024 * 1024).is_err());
+    let string_at_limit = serde_json::to_vec(&json!({"input": "x".repeat(64 * 1024)})).unwrap();
+    assert!(parse_json(&string_at_limit, 2 * 1024 * 1024).is_ok());
+    let string_over_limit =
+        serde_json::to_vec(&json!({"input": "x".repeat(64 * 1024 + 1)})).unwrap();
+    assert!(parse_json(&string_over_limit, 2 * 1024 * 1024).is_err());
+    let depth_at_limit = format!("{{\"x\":{}0{}}}", "[".repeat(23), "]".repeat(23));
+    assert!(parse_json(depth_at_limit.as_bytes(), 2 * 1024 * 1024).is_ok());
+    let depth_over_limit = format!("{{\"x\":{}0{}}}", "[".repeat(24), "]".repeat(24));
+    assert!(parse_json(depth_over_limit.as_bytes(), 2 * 1024 * 1024).is_err());
+    for raw in [
+        b"{\"model\":1,\"model\":2}".as_slice(),
+        b"{\"value\":18446744073709551616}",
+        b"{\"value\":-1.5}",
+        b"{\"value\":NaN}",
+        b"{\"value\":\"\xff\"}",
+        b"{\"value\":\"a\x00b\"}",
+    ] {
+        assert!(parse_json(raw, 2 * 1024 * 1024).is_err());
     }
 }
 
@@ -107,6 +137,10 @@ fn sse_documented_content_and_local_tool_lifecycles() {
     let mut invalid = full.clone();
     invalid[7]["item"]["content"] = json!([]);
     invalid[8]["response"]["output"][0]["content"] = json!([]);
+    assert!(terminal_stream(&stream(&invalid)).is_err());
+    let mut invalid = full.clone();
+    invalid[7]["item"]["content"][0]["unreviewed"] = json!(true);
+    invalid[8]["response"]["output"][0] = invalid[7]["item"].clone();
     assert!(terminal_stream(&stream(&invalid)).is_err());
 
     for (kind, name, delta_kind, done_kind, field) in [
@@ -223,6 +257,24 @@ fn sse_identity_order_replay_and_terminal_usage_fail_closed() {
     let mut case = original.clone();
     case[4]["response"]["usage"]["total_tokens"] = json!(11);
     cases.push(case);
+    let mut case = original.clone();
+    case[0]["response"]["output"] = json!([{"id":"msg_1"}]);
+    cases.push(case);
+    let mut case = original.clone();
+    case[4]["response"]["usage"]["output_tokens"] = json!(3.5);
+    cases.push(case);
+    let mut case = original.clone();
+    case[4]["response"]["usage"]["output_tokens"] = json!(-1);
+    cases.push(case);
+    let mut case = original.clone();
+    case[4]["response"]["usage"]["input_tokens_details"]["cached_tokens"] = json!(99);
+    cases.push(case);
+    let mut case = original.clone();
+    case[4]["response"]["status"] = json!("incomplete");
+    cases.push(case);
+    let mut case = original.clone();
+    case[4]["response"]["error"] = json!({"message":"contradictory"});
+    cases.push(case);
     for (index, case) in cases.iter().enumerate() {
         assert!(terminal_stream(&stream(case)).is_err(), "case {index}");
     }
@@ -244,6 +296,10 @@ fn sse_identity_order_replay_and_terminal_usage_fail_closed() {
         .is_err()
     );
     assert!(terminal_stream(b"data: not-json\n\n").is_err());
+    assert!(terminal_stream(b"data: {\"type\":\"response.created\"}\n").is_err());
+    let mut over_stream = good.clone();
+    over_stream.extend(vec![b' '; 2 * 1024 * 1024]);
+    assert!(terminal_stream(&over_stream).is_err());
 }
 
 #[test]
@@ -264,6 +320,19 @@ fn http_framing_and_routing_reject_ambiguity() {
         b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 3\r\n\r\n{}",
         b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n",
         b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 184467440737095516160000\r\n\r\n{}",
+        b"POST /v1/responses HTTP/2.0\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+        b"POST /v1/responses\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+        b"POST x:443 HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+        b"POST /v1/responses?x=1 HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+        b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\n{}",
+        b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+        b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n",
+        b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 2\r\nCookie: x\r\n\r\n{}",
+        b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 2\r\nProxy-Authorization: x\r\n\r\n{}",
+        b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 2\r\nX-Unreviewed: x\r\n\r\n{}",
+        b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 2\r\nX: \xff\r\n\r\n{}",
+        b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 2\r\nX: x\x00y\r\n\r\n{}",
+        b"POST /v1/responses HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 2\r\n Folded: x\r\n\r\n{}",
     ];
     for (index, raw) in invalid.iter().enumerate() {
         assert!(
@@ -276,6 +345,12 @@ fn http_framing_and_routing_reject_ambiguity() {
         b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nContent-Length: 2\r\n\r\n",
         b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n2;ext=x\r\n{}\r\n0\r\n\r\n",
         b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Encoding: gzip\r\nContent-Length: 2\r\n\r\n{}",
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+        b"HTTP/1.0 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 2\r\n\r\n{}",
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}",
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: gzip\r\n\r\n{}",
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\nX: y\r\n\r\n",
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 3\r\n\r\n{}",
     ];
     for (index, raw) in upstream.iter().enumerate() {
         assert!(

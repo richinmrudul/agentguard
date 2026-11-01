@@ -76,6 +76,11 @@ for this metered path. Ambiguity is rejected rather than treated as approval.
 | H05 | Premature EOF, zero/overflowing body length | Reject before generation; no reservation | Rust `http_framing_and_routing_reject_ambiguity` |
 | H06 | Redirect, compression, ambiguous chunking/trailers | Reject upstream; retain full reservation if generation sent; block replay | Rust `http_framing_and_routing_reject_ambiguity` |
 | H07 | Duplicate framing header against exact scratch gateway | Reject; close trial; no extra provider request | Hosted Docker `test_compiled_gateway_with_patched_codex_tls_and_ledger` |
+| H08 | Malformed request line, authority or query target, or unsupported HTTP version | Reject before generation; no reservation | Rust `http_framing_and_routing_reject_ambiguity` |
+| H09 | Wrong/duplicate content type, unreviewed header, cookie, proxy authorization, invalid UTF-8, NUL, or obs-fold | Reject before generation; no reservation | Rust `http_framing_and_routing_reject_ambiguity` |
+| H10 | Transfer encoding without length, malformed chunked request, or zero/overflowing length | Reject before generation; no reservation | Rust `http_framing_and_routing_reject_ambiguity` |
+| H11 | JSON duplicate key, unsupported number, invalid UTF-8/control, or array/string bound | Reject before generation; no reservation | Rust `json_depth_element_string_and_number_boundaries` |
+| H12 | Upstream wrong HTTP version/type, duplicate or contradictory framing, unsupported encoding, trailer, or premature EOF | Reject; retain full reservation after send; block replay | Rust `http_framing_and_routing_reject_ambiguity` |
 | S01 | Valid mock lifecycle | Settle only after terminal usage; sequential next request permitted | Rust `sse_exact_lifecycle_and_completed_only_rejection`, hosted Docker `test_compiled_gateway_with_patched_codex_tls_and_ledger` |
 | S02 | Completed-only, empty, heartbeat-only stream | Reject; retain reservation; block replay | Rust `sse_exact_lifecycle_and_completed_only_rejection` |
 | S03 | Response or output-item identity mismatch | Reject; retain reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
@@ -86,6 +91,9 @@ for this metered path. Ambiguity is rejected rather than treated as approval.
 | S08 | Invalid UTF-8, unsupported SSE field, oversized frame | Reject; retain reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
 | S09 | Documented in-progress, content-part, and local-tool events | Accept only matched item identities and bounded final values; otherwise retain reservation and block replay | Rust `sse_documented_content_and_local_tool_lifecycles` |
 | S10 | Completed-only stream through exact scratch gateway | Reject; keep pending full reservation, close trial, block replay | Hosted Docker `test_compiled_gateway_with_patched_codex_tls_and_ledger` (completed-only parameter) |
+| S11 | Created/in-progress output supplied before item lifecycle, tool type swap, or missing final text | Reject; retain full reservation; block replay | Rust `sse_documented_content_and_local_tool_lifecycles`, `sse_identity_order_replay_and_terminal_usage_fail_closed` |
+| S12 | Fractional, negative, overflowing, over-cached, or inconsistent terminal usage | Reject; retain full reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
+| S13 | Partial final frame or over-limit stream | Reject; retain full reservation; block replay | Rust `sse_identity_order_replay_and_terminal_usage_fail_closed` |
 
 The table records implemented cases, not an assertion that the whole
 production transport and fault matrix is complete. The remaining exact-image
