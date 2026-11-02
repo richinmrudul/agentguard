@@ -1,7 +1,7 @@
-use agentguard_stage1_metering_gateway::http::{read_request, read_upstream};
-use agentguard_stage1_metering_gateway::protocol::{parse_json, terminal_stream};
+use agentguard_stage1_metering_gateway::http::{MAX_BODY, MAX_HEADER, read_request, read_upstream};
+use agentguard_stage1_metering_gateway::protocol::{count_payload, parse_json, terminal_stream};
 use serde_json::{Value, json};
-use std::io::Cursor;
+use std::io::{self, Cursor, Read};
 
 fn frame(event: &Value) -> Vec<u8> {
     let mut result = b"data: ".to_vec();
@@ -361,4 +361,148 @@ fn http_framing_and_routing_reject_ambiguity() {
             "upstream {index}"
         );
     }
+}
+
+#[test]
+fn http_body_and_header_exact_boundaries() {
+    let prefix = b"POST /v1/responses HTTP/1.1\r\nHost: stage1-metering-gateway:8080\r\nContent-Type: application/json\r\nContent-Length: ";
+    for size in [MAX_BODY - 1, MAX_BODY, MAX_BODY + 1] {
+        let mut raw = prefix.to_vec();
+        raw.extend_from_slice(size.to_string().as_bytes());
+        raw.extend_from_slice(b"\r\n\r\n");
+        raw.extend(vec![b'x'; size]);
+        assert_eq!(
+            read_request(&mut Cursor::new(raw), MAX_BODY).is_ok(),
+            size <= MAX_BODY,
+            "body size {size}"
+        );
+    }
+    fn header_of_size(target: usize) -> Vec<u8> {
+        let names = ["User-Agent", "Originator", "Session-Id", "Thread-Id"];
+        let mut raw = b"POST /v1/responses HTTP/1.1\r\nHost: stage1-metering-gateway:8080\r\nContent-Type: application/json\r\nContent-Length: 2\r\n".to_vec();
+        let overhead = names.iter().map(|name| name.len() + 4).sum::<usize>() + 2;
+        let mut remaining = target - raw.len() - overhead;
+        for name in names {
+            let length = remaining.min(4096);
+            remaining -= length;
+            raw.extend_from_slice(name.as_bytes());
+            raw.extend_from_slice(b": ");
+            raw.extend(vec![b'x'; length]);
+            raw.extend_from_slice(b"\r\n");
+        }
+        assert_eq!(remaining, 0);
+        raw.extend_from_slice(b"\r\n{}");
+        raw
+    }
+    assert!(read_request(&mut Cursor::new(header_of_size(MAX_HEADER)), 2).is_ok());
+    assert!(read_request(&mut Cursor::new(header_of_size(MAX_HEADER + 1)), 2).is_err());
+}
+
+#[test]
+fn http_every_truncated_prefix_and_late_body_byte_fail() {
+    let request = b"POST /v1/responses HTTP/1.1\r\nHost: stage1-metering-gateway:8080\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
+    for end in 0..request.len() {
+        assert!(read_request(&mut Cursor::new(&request[..end]), 2).is_err(), "request prefix {end}");
+    }
+    let mut extra = request.to_vec();
+    extra.push(b'X');
+    assert!(read_request(&mut Cursor::new(extra), 2).is_err());
+    let upstream = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
+    for end in 0..upstream.len() {
+        assert!(read_upstream(&mut Cursor::new(&upstream[..end]), "application/json").is_err(), "upstream prefix {end}");
+    }
+    let mut extra = upstream.to_vec();
+    extra.push(b'X');
+    assert!(read_upstream(&mut Cursor::new(extra), "application/json").is_err());
+}
+
+#[test]
+fn sse_exact_frame_bound_and_each_transport_boundary_fail_closed() {
+    let good = valid_stream();
+    let first_end = good.windows(2).position(|part| part == b"\n\n").unwrap();
+    let mut at_limit = good[..first_end].to_vec();
+    at_limit.extend(vec![b' '; 64 * 1024 - first_end]);
+    at_limit.extend_from_slice(&good[first_end..]);
+    assert!(terminal_stream(&at_limit).is_ok());
+    let mut above_limit = good[..first_end].to_vec();
+    above_limit.extend(vec![b' '; 64 * 1024 + 1 - first_end]);
+    above_limit.extend_from_slice(&good[first_end..]);
+    assert!(terminal_stream(&above_limit).is_err());
+
+    struct TimeoutAfter(Cursor<Vec<u8>>);
+    impl Read for TimeoutAfter {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            match self.0.read(buffer)? {
+                0 => Err(io::Error::from(io::ErrorKind::TimedOut)),
+                count => Ok(count),
+            }
+        }
+    }
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n",
+        good.len()
+    );
+    let mut cuts = vec![0, good.len() - 1];
+    cuts.extend(good.windows(2).enumerate().filter_map(|(index, part)| {
+        (part == b"\n\n" && index + 2 < good.len()).then_some(index + 2)
+    }));
+    for cut in cuts {
+        let mut partial = header.as_bytes().to_vec();
+        partial.extend_from_slice(&good[..cut]);
+        assert!(read_upstream(&mut Cursor::new(partial.clone()), "text/event-stream").is_err(), "disconnect at {cut}");
+        assert!(read_upstream(&mut TimeoutAfter(Cursor::new(partial)), "text/event-stream").is_err(), "timeout at {cut}");
+    }
+}
+
+#[test]
+fn count_generation_identity_binding_changes_with_input_and_model() {
+    let mut generation = json!({
+        "model": "gpt-5.2-2025-12-11",
+        "prompt_cache_retention": "in_memory",
+        "input": [{"role": "user", "content": "first"}],
+        "instructions": "bounded",
+        "tools": [],
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "reasoning": {"effort": "none"},
+        "max_output_tokens": 8
+    });
+    let original = count_payload(&generation).unwrap();
+    let counted: Value = serde_json::from_slice(&original).unwrap();
+    assert_eq!(counted["input"], generation["input"]);
+    assert_eq!(counted["instructions"], generation["instructions"]);
+    assert_eq!(counted["tools"], generation["tools"]);
+    generation["input"][0]["content"] = json!("changed");
+    assert_ne!(count_payload(&generation).unwrap(), original);
+    generation["model"] = json!("gpt-5.2");
+    assert!(count_payload(&generation).is_err());
+}
+
+#[test]
+fn sse_every_response_and_item_identity_mismatch_rejected() {
+    let mut original = events(&valid_stream());
+    original.insert(
+        1,
+        json!({"type":"response.in_progress","sequence_number":1,
+            "response":{"id":"resp_1","model":"gpt-5.2-2025-12-11",
+                "status":"in_progress"}}),
+    );
+    resequence(&mut original);
+    assert!(terminal_stream(&stream(&original)).is_ok());
+    for index in [0, 1, 5] {
+        let mut changed = original.clone();
+        changed[index]["response"]["id"] = json!("resp_other");
+        assert!(terminal_stream(&stream(&changed)).is_err(), "response {index}");
+    }
+    for index in [2, 4] {
+        let mut changed = original.clone();
+        changed[index]["item"]["id"] = json!("msg_other");
+        assert!(terminal_stream(&stream(&changed)).is_err(), "item {index}");
+    }
+    let mut changed = original.clone();
+    changed[3]["item_id"] = json!("msg_other");
+    assert!(terminal_stream(&stream(&changed)).is_err());
+    let mut changed = original.clone();
+    changed[5]["response"]["output"][0]["id"] = json!("msg_other");
+    assert!(terminal_stream(&stream(&changed)).is_err());
 }

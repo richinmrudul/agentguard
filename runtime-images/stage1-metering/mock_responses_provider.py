@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import ssl
+import time
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -162,6 +163,19 @@ class MockHandler(BaseHTTPRequestHandler):
             self._send(404, "text/plain", b"not found\n")
             return
         type(self).generations += 1
+        if self.scenario == "generation-timeout":
+            time.sleep(16)
+            return
+        if self.scenario == "bad-framing":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", "2")
+            self.send_header("Content-Length", "2")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(b"{}")
+            self.close_connection = True
+            return
         if self.scenario == "redirect":
             self.send_response(302)
             self.send_header("Location", "https://unapproved.example/v1/responses")
@@ -229,6 +243,12 @@ class MockHandler(BaseHTTPRequestHandler):
             ]
             if self.scenario == "completed-only":
                 frames = [frames[-1]]
+            if self.scenario == "response-id-mismatch":
+                frames[-1]["response"]["id"] = "resp_unreviewed"
+            if self.scenario == "replayed-event":
+                frames.insert(3, frames[2].copy())
+            if self.scenario == "malformed-terminal-usage":
+                frames[-1]["response"]["usage"]["output_tokens"] = -1
             body = b"".join(b"data: " + _json(frame).rstrip(b"\n") + b"\n\n" for frame in frames)
             if self.scenario == "disconnect":
                 body = body[:-1]
@@ -260,6 +280,8 @@ def main() -> None:
     if scenario not in {
         "success", "count-error", "redirect", "error", "model-mismatch",
         "usage-mismatch", "missing-usage", "disconnect", "completed-only",
+        "generation-timeout", "bad-framing", "response-id-mismatch",
+        "replayed-event", "malformed-terminal-usage",
     }:
         raise SystemExit("unknown mock scenario")
     MockHandler.scenario = scenario

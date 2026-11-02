@@ -451,17 +451,23 @@ mod tests {
             }
         }
         assert_eq!(
-            read_upstream(&mut UnnotifiedClose(Cursor::new(valid.to_vec())), "application/json")
-                .unwrap()
-                .body,
+            read_upstream(
+                &mut UnnotifiedClose(Cursor::new(valid.to_vec())),
+                "application/json"
+            )
+            .unwrap()
+            .body,
             b"{}"
         );
-        let truncated = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{";
-        assert!(read_upstream(
-            &mut UnnotifiedClose(Cursor::new(truncated.to_vec())),
-            "application/json"
-        )
-        .is_err());
+        let truncated =
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{";
+        assert!(
+            read_upstream(
+                &mut UnnotifiedClose(Cursor::new(truncated.to_vec())),
+                "application/json"
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -18,6 +18,13 @@ byte in the parsed message, and unsupported methods or targets are rejected.
 The gateway sends one response and closes the connection; it never dispatches
 a second request from the same connection.
 
+The outbound request asks for `Connection: close`. After reading the exact
+declared `Content-Length` or final chunk, the gateway rejects any extra byte
+or read timeout. A peer that closes TLS without `close_notify` is accepted only
+after the entire authenticated HTTP body is present; an early close remains a
+truncated-response failure. This is a bounded mock-only transport rule, not
+approval of a live provider connection.
+
 Generation JSON is bounded by the same byte limit, maximum nesting 24,
 maximum 128 elements per array/object, maximum 64 KiB per string and tool
 declaration set. Duplicate JSON keys and floating-point numbers are rejected.
@@ -66,6 +73,13 @@ separate lifecycle events, but does not establish completed-only as sufficient
 for this metered path. Ambiguity is rejected rather than treated as approval.
 
 ## Case Matrix
+
+The complete 40-case disposition matrix is maintained in
+[`stage1-metering-protocol-cases-v1.json`](stage1-metering-protocol-cases-v1.json).
+Every record names its parser decision, accounting certainty, reservation,
+replay eligibility, bounded evidence class, and executable unit or exact-image
+test. The shorter table below retains the initial reviewed 25-case summary.
+Crash/restart and filesystem fault injection remain assigned to #327.
 
 | Case | Threat | Decision / accounting / replay | Test level and name |
 | --- | --- | --- | --- |
