@@ -129,8 +129,24 @@ def _wait_ready(container: str) -> None:
     raise AssertionError("compiled mock gateway did not become ready")
 
 
+def _raw_gateway_status(network: str, wire: bytes) -> str:
+    script = (
+        "import socket; s=socket.create_connection(('stage1-metering-gateway',8080),timeout=3); "
+        f"s.sendall(bytes.fromhex('{wire.hex()}')); "
+        "print(s.recv(128).decode('ascii').split('\\r\\n',1)[0])"
+    )
+    return _docker(
+        "run", "--rm", "--network", network, "--read-only",
+        "--entrypoint", "/usr/bin/python3", BASE, "-c", script,
+    ).stdout.strip()
+
+
 @pytest.mark.docker
-@pytest.mark.parametrize("scenario", ["success", "completed-only"])
+@pytest.mark.parametrize("scenario", [
+    "success", "completed-only", "bad-framing", "response-id-mismatch",
+    "malformed-terminal-usage", "usage-mismatch", "replayed-event", "disconnect",
+    "generation-timeout",
+])
 def test_compiled_gateway_with_patched_codex_tls_and_ledger(
     tmp_path: Path, scenario: str,
 ) -> None:
@@ -341,16 +357,18 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(
             raise AssertionError(f"compiled mock gateway denied patched Codex: {diagnostic}")
         if scenario == "success":
             assert "mock complete" in result.stdout + result.stderr
-            malformed = _docker(
-                "run", "--rm", "--network", agent_network, "--read-only",
-                "--entrypoint", "/usr/bin/python3", BASE, "-c",
-                "import socket; s=socket.create_connection(('stage1-metering-gateway',8080),timeout=3); "
-                "s.sendall(b'POST /v1/responses HTTP/1.1\\r\\nHost: stage1-metering-gateway:8080\\r\\n' "
-                "b'Content-Type: application/json\\r\\nContent-Length: 2\\r\\n' "
-                "b'Content-Length: 2\\r\\n\\r\\n{}'); "
-                "print(s.recv(128).decode('ascii').split('\\r\\n',1)[0])",
+            prefix = (
+                b"POST /v1/responses HTTP/1.1\r\n"
+                b"Host: stage1-metering-gateway:8080\r\n"
+                b"Content-Type: application/json\r\n"
             )
-            assert malformed.stdout.strip() == "HTTP/1.1 400 Rejected"
+            for wire in (
+                prefix + b"Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}",
+                prefix + b"Content-Length: 2\r\n\r\n{}"
+                + prefix + b"Content-Length: 2\r\n\r\n{}",
+                prefix + b"Content-Length: 2097153\r\n\r\n",
+            ):
+                assert _raw_gateway_status(agent_network, wire) == "HTTP/1.1 400 Rejected"
         else:
             assert result.returncode != 0
             assert "STAGE1_RUST_DENIAL_PROVIDER" in _docker(
