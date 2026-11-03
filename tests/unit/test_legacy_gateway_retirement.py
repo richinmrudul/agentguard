@@ -47,6 +47,13 @@ def test_published_legacy_subject_is_retired_not_rejected(tmp_path: Path) -> Non
         candidate.write_text(json.dumps(altered), encoding="utf-8")
         with pytest.raises(ValueError, match="differs"):
             validate_retirement_record(candidate)
+    duplicate = tmp_path / "duplicate.json"
+    duplicate.write_text(path.read_text(encoding="utf-8").replace(
+        '"eligible_for_new_study": false',
+        '"eligible_for_new_study": true, "eligible_for_new_study": false',
+    ), encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate keys"):
+        validate_retirement_record(duplicate)
 
 
 def test_every_legacy_gateway_tag_or_digest_is_ineligible() -> None:

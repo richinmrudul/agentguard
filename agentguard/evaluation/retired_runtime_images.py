@@ -20,8 +20,16 @@ def is_retired_gateway_reference(value: str) -> bool:
 
 
 def validate_retirement_record(path: Path) -> None:
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("retired runtime record has duplicate keys")
+            result[key] = value
+        return result
+
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError("retired runtime record is missing or malformed") from error
     expected = {
