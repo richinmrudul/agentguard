@@ -57,7 +57,7 @@ most 64 KiB, with at most 256 frames. The accepted event order is:
 
 Sequence numbers start at zero or one and must then increase by exactly one.
 Item IDs and output indices must
-match. Unsupported fields or event types, completed-only streams, terminal
+match. Unsupported event-level fields or event types, completed-only streams, terminal
 failure/incompletion, duplicate or post-terminal events, malformed frames, and
 missing or inconsistent usage fail closed. The terminal usage must reconcile
 input, cached input, output, reasoning, and total tokens with the independently
@@ -65,6 +65,10 @@ counted input before the ledger can settle. A stream error after reservation
 leaves the full worst-case charge and closes the trial; no automatic replay is
 permitted. Errors are persisted only as bounded classes, never raw frames,
 prompts, output, headers, credentials, or provider bodies.
+
+The provider's nested Response object may contain documented metadata beyond
+the accounting and identity fields validated here. This mock-only candidate
+does not claim a closed production Response schema or live transport approval.
 
 The deliberate completed-only rejection is narrower than the complete
 [OpenAI Responses streaming event reference](https://developers.openai.com/api/reference/resources/responses/streaming-events):
