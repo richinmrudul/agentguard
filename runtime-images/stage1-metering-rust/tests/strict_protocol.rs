@@ -402,14 +402,21 @@ fn http_body_and_header_exact_boundaries() {
 fn http_every_truncated_prefix_and_late_body_byte_fail() {
     let request = b"POST /v1/responses HTTP/1.1\r\nHost: stage1-metering-gateway:8080\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
     for end in 0..request.len() {
-        assert!(read_request(&mut Cursor::new(&request[..end]), 2).is_err(), "request prefix {end}");
+        assert!(
+            read_request(&mut Cursor::new(&request[..end]), 2).is_err(),
+            "request prefix {end}"
+        );
     }
     let mut extra = request.to_vec();
     extra.push(b'X');
     assert!(read_request(&mut Cursor::new(extra), 2).is_err());
-    let upstream = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
+    let upstream =
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
     for end in 0..upstream.len() {
-        assert!(read_upstream(&mut Cursor::new(&upstream[..end]), "application/json").is_err(), "upstream prefix {end}");
+        assert!(
+            read_upstream(&mut Cursor::new(&upstream[..end]), "application/json").is_err(),
+            "upstream prefix {end}"
+        );
     }
     let mut extra = upstream.to_vec();
     extra.push(b'X');
@@ -449,8 +456,14 @@ fn sse_exact_frame_bound_and_each_transport_boundary_fail_closed() {
     for cut in cuts {
         let mut partial = header.as_bytes().to_vec();
         partial.extend_from_slice(&good[..cut]);
-        assert!(read_upstream(&mut Cursor::new(partial.clone()), "text/event-stream").is_err(), "disconnect at {cut}");
-        assert!(read_upstream(&mut TimeoutAfter(Cursor::new(partial)), "text/event-stream").is_err(), "timeout at {cut}");
+        assert!(
+            read_upstream(&mut Cursor::new(partial.clone()), "text/event-stream").is_err(),
+            "disconnect at {cut}"
+        );
+        assert!(
+            read_upstream(&mut TimeoutAfter(Cursor::new(partial)), "text/event-stream").is_err(),
+            "timeout at {cut}"
+        );
     }
 }
 
@@ -492,7 +505,10 @@ fn sse_every_response_and_item_identity_mismatch_rejected() {
     for index in [0, 1, 5] {
         let mut changed = original.clone();
         changed[index]["response"]["id"] = json!("resp_other");
-        assert!(terminal_stream(&stream(&changed)).is_err(), "response {index}");
+        assert!(
+            terminal_stream(&stream(&changed)).is_err(),
+            "response {index}"
+        );
     }
     for index in [2, 4] {
         let mut changed = original.clone();
