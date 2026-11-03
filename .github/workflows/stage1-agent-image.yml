@@ -95,7 +95,7 @@ jobs:
           PY
       - name: Retain raw agent evidence on every outcome
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: stage1-retained-agent-evidence-${{ github.run_id }}
           if-no-files-found: error
