@@ -187,13 +187,14 @@ status, usage-evidence policy, and a canonical manifest digest. Missing,
 malformed, conflicting, incomplete, or unattributable usage evidence fails
 closed rather than becoming a favorable result.
 
-The PR workflow `.github/workflows/stage1-runtime-images.yml` builds and
-validates the inputs without secrets or image pushes. The isolated publication
-workflow `.github/workflows/stage1-runtime-images-publish.yml` is
-`workflow_dispatch` only, requires the reviewed source commit and approval
-phrase, and cannot run from `push`, `pull_request`, `release`, or scheduled
-events. CI validation does not contact inference APIs, dispatch publication, or
-publish images.
+The legacy gateway build and manual publication jobs in
+`.github/workflows/stage1-runtime-images.yml` and
+`.github/workflows/stage1-runtime-images-publish.yml` are permanently
+disabled. They are retained only to explain historical evidence; they cannot
+build or publish another byte-forwarding gateway. The active
+`.github/workflows/stage1-agent-image.yml` gate validates the retained agent,
+and the compiled metering gateway has a separate experimental candidate gate.
+Neither active gate has package-write permission or approves a live study.
 
 ## Public Reporting And Sanitization
 

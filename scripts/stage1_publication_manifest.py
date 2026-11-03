@@ -30,6 +30,7 @@ from agentguard.evaluation.runtime_images import (  # noqa: E402
     runtime_image_context_digest,
     validate_scanner_metadata,
 )
+from agentguard.evaluation.retired_runtime_images import is_retired_gateway_reference  # noqa: E402
 
 
 SCHEMA = "agentguard.stage1-runtime-publication"
@@ -106,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "prepare":
+            if is_retired_gateway_reference(args.gateway_image):
+                raise RuntimeImageError("retired Stage 1 gateway cannot be prepared for publication")
             manifest = build_prepare_manifest(
                 root=args.root,
                 source_commit=args.source_commit,

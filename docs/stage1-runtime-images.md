@@ -1,5 +1,63 @@
 # Stage 1 Runtime Images
 
+**Retired legacy gateway (issues #330 and #331).** The historically published
+`ghcr.io/richinmrudul/agentguard/stage1-gateway@sha256:39256ba5b6c25c741c49fd65b964cb254b642a416d67e045db20899660178ede`
+remains a valid record of its original mock/application-containment scope, but
+is permanently ineligible for a new study. It cannot enforce authoritative
+request, token, or cost limits. Every tag or digest of that byte-forwarding
+package is denied by new study entry points. The published package and its
+attestations remain untouched; this is retirement, not a rejected publication.
+The earlier failed-publication digests remain separately rejected in
+`runtime-images/rejected-publications.json`.
+
+The legacy build and manual publication jobs are now fail-closed and cannot
+run. Their definitions and the evidence below remain for historical review,
+not as deployment instructions. The retained Codex agent is built twice and
+scanned by `.github/workflows/stage1-agent-image.yml`; the compiled Rust
+metering gateway has a separate candidate security workflow. That candidate
+is experimental, unpublished, and not approved for live use. #294 remains
+blocked. The legacy exception manifest still expires 2026-11-06 and was not
+extended. Newly observed Expat and SQLite findings were not excepted;
+CVE-2026-119586 being absent from the latest scan is not proof of remediation.
+
+### Retirement security evidence
+
+The exact-head raw scan is retained in [run 41703785000](https://github.com/richinmrudul/agentguard/actions/runs/41703785000),
+artifact `13265521328` (`sha256:f2c04397aee57b261d69fc3d3e9ae9dda8635b6fac8b1d70da96ce5fb7b12fbd`).
+Trivy 0.66.0 used schema-2 DB metadata updated `2026-11-03T13:13:42Z`.
+The scanned source candidate has canonical identity
+`sha256:26ff4e4e02e965a2cdd3b37a00ff4ea14dcc245e5016888900efd328c8271ab0`
+and base `gcr.io/distroless/python3-debian13:nonroot@sha256:ab7db4566f1d345612bcd57e1d33d8beb428d111f477dac98521a98fa4ab754d`.
+Its gateway scan has 29 HIGH occurrences: 26 previously reviewed, three newly
+rejected; zero CRITICAL and zero findings with a fixed version in the scanned
+Debian release. The prior exception set was not enlarged.
+
+| Issue | Finding | Installed package and affected path | Fixability and reachability disposition |
+| --- | --- | --- | --- |
+| #331 | [CVE-2026-117610](https://security-tracker.debian.org/tracker/CVE-2026-117610) | `libexpat1` 2.9.0-1~deb13u1 (source `expat`); `libexpat.so.1` and Python XML modules; `externalEntityInitProcessor2()` | No trixie fix in the scan; unstable 2.10.0-1 is fixed. Empty-chunk external-entity parsing is not a direct gateway import, but the library is present. No unreachable claim or exception is approved. |
+| #331 | [CVE-2026-118370](https://security-tracker.debian.org/tracker/CVE-2026-118370) | Same Expat package and XML surface; `storeAtts()` | No trixie fix in the scan; unstable 2.10.0-1 is fixed. Requires extreme attribute counts, but the affected library is present. No unreachable claim or exception is approved. |
+| #330 | [CVE-2026-119373](https://security-tracker.debian.org/tracker/CVE-2026-119373) | `libsqlite3-0` 3.46.1-7+deb13u2 (source `sqlite3`); `libsqlite3.so.0`, Python `_sqlite3`/`sqlite3`; FTS5 `fts5MergeRowidLists()` | No trixie fix in the scan; unstable 3.54.1-1 is fixed. The gateway does not directly import SQLite, but the affected library is present. No unreachable claim or exception is approved. |
+
+The direct byte-forwarding gateway imports JSON, sockets, selectors, TLS,
+time, paths, and URL parsing, not SQLite or XML. That import list alone does
+not establish native-library unreachability. The rootfs contains both native
+libraries and Python modules. Removing them from an opaque distroless Python
+distribution would not be a supported package-level rebuild. Moving this
+historical component to an unstable distribution would also change its entire
+runtime and security baseline. Retirement is therefore the bounded decision;
+no finding is described as fixed or accepted.
+
+The consumer inventory is explicit: the legacy gateway was built by the
+combined PR workflow and the manual publisher, selected by the publication
+manifest CLI, and could be named in a study-egress gateway option. Its public
+GHCR package is historical, not evidence of current eligibility. The two
+legacy workflow jobs are permanently false-gated; publication preparation,
+offline authorization creation, the study runner, and direct study-egress
+execution reject its repository. The old source, manifest parsers, mock tests,
+and published artifacts remain for historical reproduction only. The active
+retained agent gate and the experimental compiled-candidate security gate
+continue to scan their own actual images; neither confers live approval.
+
 AgentGuard issue #310 Phase 1 prepares reviewed runtime-image inputs for the
 future Stage 1 live-study gateway and Codex CLI agent. Phase 1 does not approve
 or publish an image, create a live authorization, use a real credential, contact

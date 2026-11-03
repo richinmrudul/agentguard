@@ -1,0 +1,104 @@
+name: Stage 1 Retained Agent Image
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-agent:
+    name: Build twice and scan retained Codex agent
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install validation dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Build retained agent twice and prove non-root execution
+        run: |
+          set -euo pipefail
+          docker info
+          docker version
+          mkdir -p dist/stage1-retained-agent
+          for build in a b; do
+            docker build --platform linux/amd64 --build-arg SOURCE_COMMIT="$GITHUB_SHA" \
+              -t "agentguard-stage1-codex-agent:ci-$build" runtime-images/codex-agent
+            ref="agentguard-stage1-codex-agent:ci-$build"
+            test "$(docker image inspect --format '{{.Config.User}}' "$ref")" = "10001:10001"
+            docker run --rm --network none --read-only --cap-drop ALL \
+              --security-opt no-new-privileges "$ref" --version \
+              | tee "dist/stage1-retained-agent/codex-version-$build.txt"
+            grep '^codex-cli 0.159.2$' "dist/stage1-retained-agent/codex-version-$build.txt"
+            cid="$(docker create "$ref")"
+            docker export "$cid" -o "dist/stage1-retained-agent/agent-$build.rootfs.tar"
+            docker rm "$cid"
+            docker inspect "$ref" > "dist/stage1-retained-agent/agent-$build.inspect.json"
+            python scripts/runtime_image_identity.py --image-role agent \
+              --base-image 'gcr.io/distroless/static-debian12:nonroot@sha256:52dcfbabb7457ea47c82f6e13af8c8a4a1d9f7b0145142b3ecab20f2b888411d' \
+              --inspect-json "dist/stage1-retained-agent/agent-$build.inspect.json" \
+              --rootfs-tar "dist/stage1-retained-agent/agent-$build.rootfs.tar" \
+              --output "dist/stage1-retained-agent/agent-$build.identity.json"
+            docker save "$ref" -o "dist/stage1-retained-agent/agent-$build.image.tar"
+          done
+      - name: Generate raw agent SBOM and Trivy evidence
+        run: |
+          set -euo pipefail
+          mkdir -p .trivy-cache
+          for build in a b; do
+            docker run --rm -v "$PWD/dist/stage1-retained-agent:/work" \
+              anchore/syft@sha256:cefadcf11bd9cce9e3ec5248bb1538a84e33d519486c1b4523ac155c9b5f5033 \
+              "docker-archive:/work/agent-$build.image.tar" \
+              -o "syft-json=/work/agent-$build.sbom.json"
+            docker run --rm -v "$PWD/dist/stage1-retained-agent:/work" \
+              -v "$PWD/.trivy-cache:/root/.cache/" \
+              aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+              image --input "/work/agent-$build.image.tar" --format json \
+              --output "/work/agent-$build.trivy.json" \
+              --severity HIGH,CRITICAL --exit-code 0 --skip-version-check
+          done
+          docker run --rm -v "$PWD/dist/stage1-retained-agent:/work" \
+            -v "$PWD/.trivy-cache:/root/.cache/" \
+            aquasec/trivy@sha256:adbf5948d99de471725d37d2cfbd982178971d1cf081615284671d1c8ba99fb8 \
+            --version > dist/stage1-retained-agent/trivy-version.txt
+          cp .trivy-cache/trivy/db/metadata.json dist/stage1-retained-agent/trivy-db-metadata.json
+      - name: Enforce agent identity and zero HIGH or CRITICAL
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from agentguard.evaluation.runtime_images import AGENT_REVIEWED_IMAGE_DIGEST, summarize_trivy_high_critical
+          from scripts.stage1_publication_manifest import normalized_sbom_package_rows
+
+          root = Path("dist/stage1-retained-agent")
+          identities = [json.loads((root / f"agent-{build}.identity.json").read_text()) for build in "ab"]
+          assert identities[0] == identities[1], "agent A/B canonical identity or config changed"
+          assert identities[0]["identity"] == AGENT_REVIEWED_IMAGE_DIGEST, "agent canonical identity changed"
+          rows = [normalized_sbom_package_rows(json.loads((root / f"agent-{build}.sbom.json").read_text())) for build in "ab"]
+          assert rows[0] == rows[1] and len(rows[0]) == 5, "agent A/B SBOM rows changed"
+          scans = [summarize_trivy_high_critical([root / f"agent-{build}.trivy.json"], image_roles_by_path={str(root / f"agent-{build}.trivy.json"): "agent"}) for build in "ab"]
+          assert scans[0]["findings"] == scans[1]["findings"], "agent A/B finding set changed"
+          assert not scans[0]["findings"], "retained agent has an unreviewed HIGH or CRITICAL"
+          (root / "review.json").write_text(json.dumps({"identity": identities[0]["identity"], "sbom_rows": len(rows[0]), "scan": scans[0]}, sort_keys=True) + "\n")
+          PY
+      - name: Retain raw agent evidence on every outcome
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v4.6.2
+        with:
+          name: stage1-retained-agent-evidence-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            dist/stage1-retained-agent/*.json
+            dist/stage1-retained-agent/*.txt

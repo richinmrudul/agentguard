@@ -32,6 +32,7 @@ jobs:
     name: Build once and validate exact Stage 1 runtime images
     runs-on: ubuntu-latest
     if: >-
+      false &&
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
       github.event.inputs.approval_phrase == 'APPROVE_STAGE1_RUNTIME_IMAGE_PUBLICATION' &&
@@ -220,6 +221,7 @@ jobs:
     environment:
       name: stage1-runtime-images
     if: >-
+      false &&
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
       github.event.inputs.approval_phrase == 'APPROVE_STAGE1_RUNTIME_IMAGE_PUBLICATION' &&

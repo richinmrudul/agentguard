@@ -1,0 +1,13 @@
+{
+  "schema": "agentguard.retired-runtime-subjects",
+  "schema_version": 1,
+  "subjects": [
+    {
+      "repository": "ghcr.io/richinmrudul/agentguard/stage1-gateway",
+      "digest": "sha256:39256ba5b6c25c741c49fd65b964cb254b642a416d67e045db20899660178ede",
+      "status": "retired",
+      "eligible_for_new_study": false,
+      "reason": "historically published byte-forwarding gateway cannot enforce authoritative Stage 1 metering"
+    }
+  ]
+}
