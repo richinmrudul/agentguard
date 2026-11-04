@@ -156,6 +156,7 @@ def validate_policy(
     assert "workflow_dispatch:" in publication
     assert "pull_request:" not in publication
     assert "push:" not in publication
+    assert publication.count("false &&") == 2
     assert "packages: write" in publication
     if trivy_json:
         summary = evaluate_trivy_high_critical_policy(

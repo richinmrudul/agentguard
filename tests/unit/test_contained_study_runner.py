@@ -322,18 +322,18 @@ def test_live_study_authorization_create_rejects_wildcards(tmp_path: Path) -> No
         )
 
 
-@pytest.mark.parametrize("image_field,image_name", [
-    ("agent_image", "stage1-codex-agent"),
-    ("gateway_image", "stage1-gateway"),
+@pytest.mark.parametrize("image_field,image_name,message", [
+    ("agent_image", "stage1-codex-agent", "metering-capability evidence"),
+    ("gateway_image", "stage1-gateway", "retired Stage 1 gateway"),
 ])
 def test_stage1_images_cannot_receive_unmetered_live_authorization(
-    tmp_path: Path, image_field: str, image_name: str
+    tmp_path: Path, image_field: str, image_name: str, message: str
 ) -> None:
     profile = _write_profile(tmp_path)
     plan = _live_plan_file(tmp_path, profile)
     options = _create_options(tmp_path, plan)
     image = f"ghcr.io/richinmrudul/agentguard/{image_name}@sha256:" + "a" * 64
-    with pytest.raises(ValueError, match="metering-capability evidence"):
+    with pytest.raises(ValueError, match=message):
         create_live_study_authorization(replace(options, **{image_field: image}))
 
 

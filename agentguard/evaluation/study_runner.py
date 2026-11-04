@@ -42,6 +42,7 @@ from agentguard.evaluation.live_study_authorization import (
     validate_live_study_authorization_scope,
 )
 from agentguard.evaluation.stage1_live_capabilities import stage1_live_unavailable
+from agentguard.evaluation.retired_runtime_images import is_retired_gateway_reference
 from agentguard.evaluation.study_fixtures import (
     DEFAULT_STUDY_FIXTURE_MANIFEST,
     StudyFixture,
@@ -122,6 +123,8 @@ def _validate_execution_mode(options: ContainedStudyRunnerOptions) -> None:
         raise ContainedStudyRunnerError("Study-egress execution requires an egress policy.")
     if not options.gateway_image:
         raise ContainedStudyRunnerError("Study-egress execution requires a gateway image.")
+    if is_retired_gateway_reference(options.gateway_image):
+        raise ContainedStudyRunnerError("Retired Stage 1 gateway is ineligible for new studies.")
     if options.authorization_path is None:
         raise ContainedStudyRunnerError("Study-egress execution requires a live-study authorization.")
 

@@ -14,6 +14,7 @@ concurrency:
 jobs:
   build-validate:
     name: Build and validate mock-only runtime images
+    if: ${{ false }} # Retired byte-forwarding gateway; active agent and compiled-candidate gates run separately.
     runs-on: ubuntu-latest
     permissions:
       contents: read

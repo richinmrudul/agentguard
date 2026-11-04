@@ -12,6 +12,7 @@ from typing import Callable, Optional
 from urllib.parse import urlsplit
 
 from agentguard.config.docker_image import validate_docker_image_reference
+from agentguard.evaluation.retired_runtime_images import is_retired_gateway_reference
 from agentguard.instrumentation.output_limits import limit_output
 from agentguard.redaction import redact_credentials
 from agentguard.sandbox.docker_identity import (
@@ -194,6 +195,8 @@ class LiveStudyEgressError(ValueError):
 def run_live_study_egress_trial(
     request: LiveStudyEgressTrialRequest,
 ) -> LiveStudyEgressTrialResult:
+    if is_retired_gateway_reference(request.gateway_image):
+        raise LiveStudyEgressError("Retired Stage 1 gateway is ineligible for new studies.")
     validate_live_study_egress_policy(request.policy)
     _validate_execution_image(
         request.gateway_image,
