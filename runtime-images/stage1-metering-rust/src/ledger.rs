@@ -643,6 +643,7 @@ mod tests {
         ledger.count("trial-a", "count-a").unwrap();
         let amount = ledger.reserve("trial-a", "generation-a", 7, 8).unwrap();
         assert!(amount > 0);
+        assert!(ledger.reserve("trial-a", "generation-b", 7, 8).is_err());
         drop(ledger);
         let restarted = StudyLedger::open(&path, &anchor, scope()).unwrap();
         assert!(

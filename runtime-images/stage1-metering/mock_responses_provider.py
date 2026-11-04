@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import ssl
+import time
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -162,6 +163,19 @@ class MockHandler(BaseHTTPRequestHandler):
             self._send(404, "text/plain", b"not found\n")
             return
         type(self).generations += 1
+        if self.scenario == "generation-timeout":
+            time.sleep(16)
+            return
+        if self.scenario == "bad-framing":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", "2")
+            self.send_header("Content-Length", "2")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(b"{}")
+            self.close_connection = True
+            return
         if self.scenario == "redirect":
             self.send_response(302)
             self.send_header("Location", "https://unapproved.example/v1/responses")
@@ -202,18 +216,39 @@ class MockHandler(BaseHTTPRequestHandler):
                 {"type": "response.created", "sequence_number": 0, "response": {
                     "id": response["id"], "model": response["model"], "status": "in_progress",
                 }},
-                {"type": "response.output_item.added", "sequence_number": 1,
+                {"type": "response.in_progress", "sequence_number": 1, "response": {
+                    "id": response["id"], "model": response["model"], "status": "in_progress",
+                }},
+                {"type": "response.output_item.added", "sequence_number": 2,
                  "output_index": 0, "item": {
                      "id": message["id"], "type": "message", "status": "in_progress",
                      "role": "assistant", "content": [],
                  }},
-                {"type": "response.output_text.delta", "sequence_number": 2,
+                {"type": "response.content_part.added", "sequence_number": 3,
+                 "item_id": "msg_stage1_mock", "output_index": 0, "content_index": 0,
+                 "part": {"type": "output_text", "text": "", "annotations": []}},
+                {"type": "response.output_text.delta", "sequence_number": 4,
                  "item_id": "msg_stage1_mock", "output_index": 0, "content_index": 0,
                  "delta": "mock complete"},
-                {"type": "response.output_item.done", "sequence_number": 3,
+                {"type": "response.output_text.done", "sequence_number": 5,
+                 "item_id": "msg_stage1_mock", "output_index": 0, "content_index": 0,
+                 "text": "mock complete"},
+                {"type": "response.content_part.done", "sequence_number": 6,
+                 "item_id": "msg_stage1_mock", "output_index": 0, "content_index": 0,
+                 "part": {"type": "output_text", "text": "mock complete",
+                          "annotations": []}},
+                {"type": "response.output_item.done", "sequence_number": 7,
                  "output_index": 0, "item": message},
-                {"type": "response.completed", "sequence_number": 4, "response": response},
+                {"type": "response.completed", "sequence_number": 8, "response": response},
             ]
+            if self.scenario == "completed-only":
+                frames = [frames[-1]]
+            if self.scenario == "response-id-mismatch":
+                frames[-1]["response"]["id"] = "resp_unreviewed"
+            if self.scenario == "replayed-event":
+                frames.insert(3, frames[2].copy())
+            if self.scenario == "malformed-terminal-usage":
+                frames[-1]["response"]["usage"]["output_tokens"] = -1
             body = b"".join(b"data: " + _json(frame).rstrip(b"\n") + b"\n\n" for frame in frames)
             if self.scenario == "disconnect":
                 body = body[:-1]
@@ -225,8 +260,10 @@ class MockHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
+        self.close_connection = True
 
     def log_message(self, *_args: object) -> None:
         return
@@ -242,7 +279,9 @@ def main() -> None:
     scenario = os.environ.get("STAGE1_MOCK_SCENARIO", "success")
     if scenario not in {
         "success", "count-error", "redirect", "error", "model-mismatch",
-        "usage-mismatch", "missing-usage", "disconnect",
+        "usage-mismatch", "missing-usage", "disconnect", "completed-only",
+        "generation-timeout", "bad-framing", "response-id-mismatch",
+        "replayed-event", "malformed-terminal-usage",
     }:
         raise SystemExit("unknown mock scenario")
     MockHandler.scenario = scenario
