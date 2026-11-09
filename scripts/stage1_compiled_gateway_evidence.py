@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import io
 import json
@@ -58,6 +59,20 @@ def _extract_rootfs(root: Path, build: str) -> None:
         manifest = json.load(descriptor)
         if not isinstance(manifest, list) or len(manifest) != 1 or not isinstance(manifest[0], dict):
             raise RuntimeImageError("candidate archive must contain one image manifest")
+        config_name = manifest[0].get("Config")
+        config_match = LAYER_NAME.fullmatch(config_name) if isinstance(config_name, str) else None
+        if config_match is None or config_name not in names:
+            raise RuntimeImageError("candidate image config path is malformed or absent")
+        config_file = archive.extractfile(config_name)
+        if config_file is None:
+            raise RuntimeImageError("candidate image config bytes are missing")
+        config_bytes = config_file.read(MAX_IMAGE_ARCHIVE + 1)
+        if len(config_bytes) > MAX_IMAGE_ARCHIVE or hashlib.sha256(config_bytes).hexdigest() != config_match.group(1):
+            raise RuntimeImageError("candidate image config digest differs from manifest")
+        config = json.loads(config_bytes)
+        diff_ids = config.get("rootfs", {}).get("diff_ids")
+        if not isinstance(diff_ids, list) or len(diff_ids) != 1 or not isinstance(diff_ids[0], str):
+            raise RuntimeImageError("candidate image must have one rootfs diff ID")
         layers = manifest[0].get("Layers")
         if not isinstance(layers, list) or len(layers) != 1:
             raise RuntimeImageError("scratch candidate must have exactly one image layer")
@@ -71,10 +86,19 @@ def _extract_rootfs(root: Path, build: str) -> None:
         raw = layer.read(MAX_IMAGE_ARCHIVE + 1)
         if len(raw) > MAX_IMAGE_ARCHIVE or hashlib.sha256(raw).hexdigest() != match.group(1):
             raise RuntimeImageError("candidate layer digest differs from image manifest")
-        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as rootfs:
+        if raw.startswith(b"\x1f\x8b"):
+            with gzip.GzipFile(fileobj=io.BytesIO(raw)) as compressed:
+                rootfs_bytes = compressed.read(MAX_IMAGE_ARCHIVE + 1)
+        else:
+            rootfs_bytes = raw
+        if len(rootfs_bytes) > MAX_IMAGE_ARCHIVE:
+            raise RuntimeImageError("candidate rootfs exceeds size bound")
+        if "sha256:" + hashlib.sha256(rootfs_bytes).hexdigest() != diff_ids[0]:
+            raise RuntimeImageError("candidate rootfs differs from image config diff ID")
+        with tarfile.open(fileobj=io.BytesIO(rootfs_bytes), mode="r:") as rootfs:
             if len(rootfs.getmembers()) != 1:
                 raise RuntimeImageError("scratch candidate layer has unexpected files")
-        (root / f"gateway-{build}.rootfs.tar").write_bytes(raw)
+        (root / f"gateway-{build}.rootfs.tar").write_bytes(rootfs_bytes)
 
 
 def _read_json(path: Path) -> dict[str, object]:
