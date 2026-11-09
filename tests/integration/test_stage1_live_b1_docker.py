@@ -77,6 +77,10 @@ def _ready(container: str, code: str, seconds: int = 20) -> None:
         )
         if classes:
             diagnostic = classes[-1]
+        if diagnostic == "ModuleNotFoundError":
+            missing = re.search(r"No module named '([A-Za-z_][A-Za-z_0-9.]*)'", logs.stderr[-4096:])
+            if missing and len(missing.group(1)) <= 80:
+                diagnostic = f"ModuleNotFoundError:{missing.group(1)}"
     status = state.stdout.strip() if state.returncode == 0 else "missing"
     raise AssertionError(
         f"local mock service did not become ready: state={status}, diagnostic={diagnostic}"
