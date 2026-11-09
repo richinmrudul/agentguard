@@ -68,8 +68,13 @@ jobs:
       - name: Verify configuration schema and maintained examples
         run: python scripts/validate_config_schema.py
 
-      - name: Validate Stage 1 runtime image inputs
-        run: python scripts/validate_runtime_images.py
+      - name: Require expired legacy runtime policy to fail closed
+        run: |
+          if output="$(python scripts/validate_runtime_images.py 2>&1)"; then
+            echo 'Retired Stage 1 validator unexpectedly accepted expired exceptions' >&2
+            exit 1
+          fi
+          test "$output" = 'exception[0] exception expired'
 
   coverage:
     name: Coverage quality gate (Python 3.11)
