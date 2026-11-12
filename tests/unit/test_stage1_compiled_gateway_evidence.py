@@ -24,25 +24,35 @@ def _tar_member(archive: tarfile.TarFile, name: str, data: bytes) -> None:
 def _image_archive(
     root: Path, *, wrong_digest: bool = False, duplicate: bool = False,
     compressed: bool = False, wrong_diff_id: bool = False,
+    stored_override: bytes | None = None, layer_count: int = 1,
+    include_layer: bool = True, config_diff_ids: list[str] | None = None,
+    config_path: str | None = None, extra_member: str | None = None,
 ) -> bytes:
     layer_buffer = io.BytesIO()
     with tarfile.open(fileobj=layer_buffer, mode="w:") as layer:
         _tar_member(layer, "stage1-metering-gateway", b"compiled-binary")
     layer_bytes = layer_buffer.getvalue()
-    stored_layer = gzip.compress(layer_bytes, mtime=0) if compressed else layer_bytes
+    stored_layer = stored_override if stored_override is not None else (
+        gzip.compress(layer_bytes, mtime=0) if compressed else layer_bytes
+    )
     digest = hashlib.sha256(stored_layer).hexdigest()
     layer_name = f"blobs/sha256/{'0' * 64 if wrong_digest else digest}"
     diff_id = "0" * 64 if wrong_diff_id else hashlib.sha256(layer_bytes).hexdigest()
-    config = json.dumps({"rootfs": {"type": "layers", "diff_ids": [f"sha256:{diff_id}"]}}).encode()
-    config_name = f"blobs/sha256/{hashlib.sha256(config).hexdigest()}"
-    manifest = json.dumps([{"Config": config_name, "Layers": [layer_name]}]).encode()
+    config = json.dumps({"rootfs": {"type": "layers", "diff_ids": (
+        config_diff_ids if config_diff_ids is not None else [f"sha256:{diff_id}"]
+    )}}).encode()
+    config_name = config_path or f"blobs/sha256/{hashlib.sha256(config).hexdigest()}"
+    manifest = json.dumps([{"Config": config_name, "Layers": [layer_name] * layer_count}]).encode()
     image_buffer = io.BytesIO()
     with tarfile.open(fileobj=image_buffer, mode="w:") as image:
         _tar_member(image, "manifest.json", manifest)
         _tar_member(image, config_name, config)
-        _tar_member(image, layer_name, stored_layer)
+        if include_layer:
+            _tar_member(image, layer_name, stored_layer)
         if duplicate:
             _tar_member(image, layer_name, stored_layer)
+        if extra_member:
+            _tar_member(image, extra_member, b"unexpected")
     image_bytes = image_buffer.getvalue()
     (root / "gateway-a.image.tar").write_bytes(image_bytes)
     return layer_bytes
@@ -63,6 +73,38 @@ def test_rejects_invalid_or_duplicated_image_layer(
 ) -> None:
     _image_archive(tmp_path, wrong_digest=wrong_digest, duplicate=duplicate, wrong_diff_id=wrong_diff_id)
     with pytest.raises(RuntimeImageError):
+        _extract_rootfs(tmp_path, "a")
+    assert not (tmp_path / "gateway-a.rootfs.tar").exists()
+
+
+@pytest.mark.parametrize("archive_options", [
+    {"wrong_digest": True, "compressed": True},
+    {"wrong_diff_id": True, "compressed": True},
+    {"include_layer": False},
+    {"layer_count": 0},
+    {"layer_count": 2},
+    {"config_diff_ids": ["sha256:" + "1" * 64, "sha256:" + "2" * 64]},
+    {"config_diff_ids": ["SHA256:" + "1" * 64]},
+    {"config_path": "blobs/sha256/" + "0" * 64},
+    {"extra_member": "../escape"},
+    {"extra_member": "manifest.json"},
+    {"stored_override": b"not-a-tar-or-supported-compression"},
+    {"stored_override": b"\x1f\x8b\x08\x00"},
+])
+def test_rejects_malformed_or_unsafe_oci_archive(
+    tmp_path: Path, archive_options: dict[str, object],
+) -> None:
+    _image_archive(tmp_path, **archive_options)
+    with pytest.raises((RuntimeImageError, tarfile.TarError, OSError, EOFError)):
+        _extract_rootfs(tmp_path, "a")
+    assert not (tmp_path / "gateway-a.rootfs.tar").exists()
+
+
+def test_rejects_truncated_image_archive(tmp_path: Path) -> None:
+    _image_archive(tmp_path)
+    image = tmp_path / "gateway-a.image.tar"
+    image.write_bytes(image.read_bytes()[:512])
+    with pytest.raises((RuntimeImageError, tarfile.TarError, OSError)):
         _extract_rootfs(tmp_path, "a")
     assert not (tmp_path / "gateway-a.rootfs.tar").exists()
 

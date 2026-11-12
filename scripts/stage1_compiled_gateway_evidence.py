@@ -70,8 +70,11 @@ def _extract_rootfs(root: Path, build: str) -> None:
         if len(config_bytes) > MAX_IMAGE_ARCHIVE or hashlib.sha256(config_bytes).hexdigest() != config_match.group(1):
             raise RuntimeImageError("candidate image config digest differs from manifest")
         config = json.loads(config_bytes)
-        diff_ids = config.get("rootfs", {}).get("diff_ids")
-        if not isinstance(diff_ids, list) or len(diff_ids) != 1 or not isinstance(diff_ids[0], str):
+        rootfs_config = config.get("rootfs") if isinstance(config, dict) else None
+        diff_ids = rootfs_config.get("diff_ids") if isinstance(rootfs_config, dict) else None
+        if (not isinstance(diff_ids, list) or len(diff_ids) != 1
+                or not isinstance(diff_ids[0], str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", diff_ids[0])):
             raise RuntimeImageError("candidate image must have one rootfs diff ID")
         layers = manifest[0].get("Layers")
         if not isinstance(layers, list) or len(layers) != 1:
@@ -245,7 +248,7 @@ def main() -> int:
         }, sort_keys=True))
         if first["findings"]:
             raise RuntimeImageError("unreviewed HIGH/CRITICAL requires separate review")
-    except (OSError, ValueError, KeyError, TypeError, tarfile.TarError, RuntimeImageError) as error:
+    except (OSError, EOFError, ValueError, KeyError, TypeError, tarfile.TarError, RuntimeImageError) as error:
         print(f"compiled gateway evidence rejected: {error}", file=sys.stderr)
         return 1
     return 0
