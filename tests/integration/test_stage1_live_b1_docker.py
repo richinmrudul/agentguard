@@ -123,6 +123,15 @@ def test_patched_codex_uses_tls_mock_and_durable_b1_ledger(tmp_path: Path) -> No
     _docker("network", "create", "--internal", network_provider)
     _docker("volume", "create", volume)
     try:
+        package_probe = _docker(
+            "run", "--rm", "--network", "none", "--entrypoint", "/usr/bin/python3",
+            gateway_image, "-c", "import os,sys; print(int(os.path.isdir('/app/agentguard'))); "
+            "print(int('/app' in sys.path)); import agentguard",
+            check=False,
+        )
+        if package_probe.returncode:
+            flags = package_probe.stdout.strip().splitlines()[:2]
+            raise AssertionError(f"B1 mock package import failed: presence/path flags={flags}")
         _docker("run", "--rm", "--user", "0:0", "--network", "none", "--mount",
                 f"type=volume,source={volume},target=/stage1-ledger", "--entrypoint",
                 "/usr/bin/python3", gateway_image, "-c",
