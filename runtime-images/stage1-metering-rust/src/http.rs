@@ -103,6 +103,7 @@ fn read_chunked<R: Read>(reader: &mut R, prefix: Vec<u8>) -> Result<Vec<u8>> {
             if ending != *b"\r\n" || source.position != source.prefix.len() {
                 return Err(Denial::InvalidProvider);
             }
+            require_upstream_close(&mut source)?;
             break;
         }
         if size > MAX_BODY - decoded.len() {
@@ -125,6 +126,17 @@ fn read_chunked<R: Read>(reader: &mut R, prefix: Vec<u8>) -> Result<Vec<u8>> {
         return Err(Denial::InvalidProvider);
     }
     Ok(decoded)
+}
+
+fn require_upstream_close<R: Read>(reader: &mut R) -> Result<()> {
+    let mut trailing = [0_u8; 1];
+    match reader.read(&mut trailing) {
+        Ok(0) => Ok(()),
+        // The complete Content-Length/chunked body is already authenticated by TLS.
+        // Some HTTP/1.1 servers close without a TLS close_notify after Connection: close.
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => Ok(()),
+        _ => Err(Denial::InvalidProvider),
+    }
 }
 
 impl Message {
@@ -302,9 +314,7 @@ pub fn read_upstream<R: Read>(reader: &mut R, expected_type: &str) -> Result<Ups
             .find(|(name, _)| name == key)
             .map(|(_, value)| value.as_str())
     };
-    if field("content-type")
-        .is_none_or(|value| value.split(';').next().unwrap_or("").trim() != expected_type)
-    {
+    if field("content-type") != Some(expected_type) {
         return Err(Denial::InvalidProvider);
     }
     if let Some(encoding) = field("transfer-encoding") {
@@ -340,6 +350,7 @@ pub fn read_upstream<R: Read>(reader: &mut R, expected_type: &str) -> Result<Ups
         }
         body.extend_from_slice(&chunk[..count]);
     }
+    require_upstream_close(reader)?;
     Ok(UpstreamResponse {
         status,
         content_type: expected_type.into(),
@@ -429,6 +440,34 @@ mod tests {
         ] {
             assert!(read_upstream(&mut Cursor::new(invalid), "application/json").is_err());
         }
+
+        struct UnnotifiedClose(Cursor<Vec<u8>>);
+        impl Read for UnnotifiedClose {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                match self.0.read(buffer)? {
+                    0 => Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+                    count => Ok(count),
+                }
+            }
+        }
+        assert_eq!(
+            read_upstream(
+                &mut UnnotifiedClose(Cursor::new(valid.to_vec())),
+                "application/json"
+            )
+            .unwrap()
+            .body,
+            b"{}"
+        );
+        let truncated =
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{";
+        assert!(
+            read_upstream(
+                &mut UnnotifiedClose(Cursor::new(truncated.to_vec())),
+                "application/json"
+            )
+            .is_err()
+        );
     }
 
     #[test]

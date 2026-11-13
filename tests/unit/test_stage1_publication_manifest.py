@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import hashlib
+from datetime import date
 from pathlib import Path
 
 import pytest
+
+import scripts.stage1_publication_manifest as publication_manifest
 
 from agentguard.evaluation.runtime_images import (
     AGENT_BASE_IMAGE,
@@ -44,6 +47,16 @@ SECOND_REJECTED_GATEWAY = (
 SECOND_REJECTED_AGENT = (
     "sha256:337cf49d6283639ff6fdcd2839c4b7cc77e3a83e96c710567e1d1baf30f389da"
 )
+
+
+@pytest.fixture(autouse=True)
+def historical_review_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    class ReviewedDate(date):
+        @classmethod
+        def today(cls) -> date:
+            return cls(2026, 11, 5)
+
+    monkeypatch.setattr(publication_manifest, "date", ReviewedDate)
 
 
 def _write_json(path: Path, data: object) -> None:
@@ -182,6 +195,19 @@ def _manifest(root: Path) -> dict:
         gateway_image=f"{GATEWAY_REPOSITORY}:{COMMIT}",
         agent_image=f"{AGENT_REPOSITORY}:{COMMIT}",
     )
+
+
+def test_expired_exception_blocks_historical_prepare(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class ExpiredDate(date):
+        @classmethod
+        def today(cls) -> date:
+            return cls(2026, 11, 9)
+
+    monkeypatch.setattr(publication_manifest, "date", ExpiredDate)
+    with pytest.raises(RuntimeImageError, match="exception expired"):
+        _manifest(_root(tmp_path))
 
 
 def _write_scan_bindings(

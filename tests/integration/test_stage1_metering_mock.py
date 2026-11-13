@@ -97,11 +97,13 @@ def test_local_mock_http_gateway_counts_and_retains_only_sanitized_evidence(
                     for frame in response.split(b"\n\n") if frame
                 ]
                 assert [event["type"] for event in events] == [
-                    "response.created", "response.output_item.added",
-                    "response.output_text.delta", "response.output_item.done",
+                    "response.created", "response.in_progress",
+                    "response.output_item.added", "response.content_part.added",
+                    "response.output_text.delta", "response.output_text.done",
+                    "response.content_part.done", "response.output_item.done",
                     "response.completed",
                 ]
-                assert [event["sequence_number"] for event in events] == list(range(5))
+                assert [event["sequence_number"] for event in events] == list(range(9))
         assert mock_handler.count_requests == 2
         assert mock_handler.generations == 2
         assert session.generations == 2

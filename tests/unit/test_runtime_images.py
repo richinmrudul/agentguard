@@ -249,10 +249,16 @@ def test_runtime_image_policy_validator_and_manifest_cli(tmp_path: Path) -> None
         check=False,
     )
 
-    assert result.returncode == 0, result.stderr
-    data = json.loads(output.read_text(encoding="utf-8"))
-    assert data["schema"] == "agentguard.stage1-runtime-image-freeze"
-    assert data["publication"]["status"] == "not_published_phase_1"
+    expiry = date.fromisoformat("2026-11-06")
+    if date.today() > expiry:
+        assert result.returncode != 0
+        assert "exception expired" in result.stderr
+        assert not output.exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        data = json.loads(output.read_text(encoding="utf-8"))
+        assert data["schema"] == "agentguard.stage1-runtime-image-freeze"
+        assert data["publication"]["status"] == "not_published_phase_1"
 
 
 def test_codex_agent_lock_uses_exact_verified_official_integrities() -> None:

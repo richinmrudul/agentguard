@@ -129,8 +129,27 @@ def _wait_ready(container: str) -> None:
     raise AssertionError("compiled mock gateway did not become ready")
 
 
+def _raw_gateway_status(network: str, wire: bytes) -> str:
+    script = (
+        "import socket; s=socket.create_connection(('stage1-metering-gateway',8080),timeout=3); "
+        f"s.sendall(bytes.fromhex('{wire.hex()}')); "
+        "print(s.recv(128).decode('ascii').split('\\r\\n',1)[0])"
+    )
+    return _docker(
+        "run", "--rm", "--network", network, "--read-only",
+        "--entrypoint", "/usr/bin/python3", BASE, "-c", script,
+    ).stdout.strip()
+
+
 @pytest.mark.docker
-def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> None:
+@pytest.mark.parametrize("scenario", [
+    "success", "completed-only", "bad-framing", "response-id-mismatch",
+    "malformed-terminal-usage", "usage-mismatch", "replayed-event", "disconnect",
+    "generation-timeout",
+])
+def test_compiled_gateway_with_patched_codex_tls_and_ledger(
+    tmp_path: Path, scenario: str,
+) -> None:
     gateway_image = os.environ.get("AGENTGUARD_RUST_GATEWAY_IMAGE")
     agent_image = os.environ.get("AGENTGUARD_B1_MODEL_IMAGE")
     if not gateway_image or not agent_image:
@@ -245,6 +264,7 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                 "--user", f"{os.getuid()}:{os.getgid()}",
                 "--env", f"STAGE1_MOCK_MODEL={MODEL}", "--env", "STAGE1_MOCK_TLS=true",
+                "--env", f"STAGE1_MOCK_SCENARIO={scenario}",
                 "--env", f"STAGE1_MOCK_TLS_FAKE_TOKEN={FAKE_PROVIDER}",
                 "--env", "STAGE1_MOCK_CERT=/test/ca.pem", "--env", "STAGE1_MOCK_KEY=/test/key.pem",
                 "--mount", f"type=bind,source={certificate},target=/test/ca.pem,readonly",
@@ -308,7 +328,7 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
         assert FAKE_PROVIDER not in json.dumps(agent_topology)
         assert all(mount["Destination"] != "/stage1-credential.sock"
                    for mount in agent_topology["Mounts"])
-        if result.returncode:
+        if result.returncode and scenario == "success":
             gateway_logs = _docker("logs", gateway, check=False).stderr
             classes = sorted(set(re.findall(
                 r"STAGE1_RUST_(?:DENIAL_[A-Z_]+|STAGE_[A-Z_]+|GATEWAY_READY|GATEWAY_STOPPED)", gateway_logs,
@@ -335,7 +355,25 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(diagnostic, sort_keys=True) + "\n", encoding="utf-8")
             raise AssertionError(f"compiled mock gateway denied patched Codex: {diagnostic}")
-        assert "mock complete" in result.stdout + result.stderr
+        if scenario == "success":
+            assert "mock complete" in result.stdout + result.stderr
+            prefix = (
+                b"POST /v1/responses HTTP/1.1\r\n"
+                b"Host: stage1-metering-gateway:8080\r\n"
+                b"Content-Type: application/json\r\n"
+            )
+            for wire in (
+                prefix + b"Content-Length: 2\r\nContent-Length: 2\r\n\r\n{}",
+                prefix + b"Content-Length: 2\r\n\r\n{}"
+                + prefix + b"Content-Length: 2\r\n\r\n{}",
+                prefix + b"Content-Length: 2097153\r\n\r\n",
+            ):
+                assert _raw_gateway_status(agent_network, wire) == "HTTP/1.1 400 Rejected"
+        else:
+            assert result.returncode != 0
+            assert "STAGE1_RUST_DENIAL_PROVIDER" in _docker(
+                "logs", gateway, check=False,
+            ).stderr
         evidence_file = tmp_path / "evidence.json"
         gateway_evidence = evidence_dir / "evidence.json"
         evidence_read = subprocess.run(
@@ -383,7 +421,14 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
         assert 0 < int(metadata[3]) == len(evidence) < 64 * 1024
         assert int(metadata[4]) >= int(evidence_started_at) - 1
         evidence_file.write_bytes(evidence)
-        assert json.loads(evidence)["events"]
+        parsed_evidence = json.loads(evidence)
+        assert parsed_evidence["trial_closed"] is True
+        statuses = [event["status"] for event in parsed_evidence["events"]]
+        assert statuses[-1] == "rejected"
+        if scenario == "success":
+            assert statuses[:-1] and set(statuses[:-1]) == {"settled"}
+        else:
+            assert statuses == ["rejected"]
         ledger_file = tmp_path / "snapshot.json"
         assert _docker("inspect", "--format", "{{.State.Running}}", gateway).stdout.strip() == "true"
         ledger_read = _docker(
@@ -395,7 +440,11 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
         )
         ledger_file.write_text(ledger_read.stdout, encoding="utf-8")
         trial = json.loads(ledger_file.read_bytes())["trials"]["docker-mock-trial"]
-        assert trial["pending"] is None
+        if scenario == "success":
+            assert trial["pending"] is None
+        else:
+            assert trial["pending"] is not None
+        assert trial["failed"] is True
         assert trial["counts"] == trial["generations"] >= 1
         for value in (evidence.decode(), ledger_file.read_text(), result.stdout, result.stderr,
                       _docker("logs", gateway).stderr, authorization_file.read_text(),
@@ -422,7 +471,7 @@ def test_compiled_gateway_with_patched_codex_tls_and_ledger(tmp_path: Path) -> N
                 assert not _contains_canary(path, FAKE_PROVIDER.encode()), path.name
         assert FAKE_PROVIDER not in _docker("network", "inspect", agent_network).stdout
         assert FAKE_PROVIDER not in _docker("network", "inspect", provider_network).stdout
-        print("RUST_METERING_SOCKET_PROJECTION_TLS_CANARY_PASSED")
+        print(f"RUST_METERING_PROTOCOL_{scenario.upper().replace('-', '_')}_PASSED")
     finally:
         if broker_thread is not None:
             broker_thread.join(timeout=2)
