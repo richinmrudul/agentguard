@@ -6,15 +6,15 @@ LABEL org.opencontainers.image.licenses="MIT"
 ENV PYTHONPATH=/app
 ENV PYTHONDONTWRITEBYTECODE=1
 WORKDIR /
-COPY --chmod=0444 agentguard/__init__.py /app/agentguard/__init__.py
-COPY --chmod=0444 agentguard/evaluation/__init__.py /app/agentguard/evaluation/__init__.py
-COPY --chmod=0444 agentguard/evaluation/stage1_metering.py /app/agentguard/evaluation/stage1_metering.py
-COPY --chmod=0444 agentguard/evaluation/stage1_metering_gateway.py /app/agentguard/evaluation/stage1_metering_gateway.py
-COPY --chmod=0444 agentguard/evaluation/stage1_live_pricing.py /app/agentguard/evaluation/stage1_live_pricing.py
-COPY --chmod=0444 agentguard/evaluation/stage1_pricing_v2.json /app/agentguard/evaluation/stage1_pricing_v2.json
-COPY --chmod=0444 agentguard/evaluation/stage1_live_session.py /app/agentguard/evaluation/stage1_live_session.py
-COPY --chmod=0444 agentguard/evaluation/stage1_live_transport.py /app/agentguard/evaluation/stage1_live_transport.py
-COPY --chmod=0444 agentguard/evaluation/stage1_study_ledger.py /app/agentguard/evaluation/stage1_study_ledger.py
+COPY --chmod=0555 agentguard/__init__.py /app/agentguard/__init__.py
+COPY --chmod=0555 agentguard/evaluation/__init__.py /app/agentguard/evaluation/__init__.py
+COPY --chmod=0555 agentguard/evaluation/stage1_metering.py /app/agentguard/evaluation/stage1_metering.py
+COPY --chmod=0555 agentguard/evaluation/stage1_metering_gateway.py /app/agentguard/evaluation/stage1_metering_gateway.py
+COPY --chmod=0555 agentguard/evaluation/stage1_live_pricing.py /app/agentguard/evaluation/stage1_live_pricing.py
+COPY --chmod=0555 agentguard/evaluation/stage1_pricing_v2.json /app/agentguard/evaluation/stage1_pricing_v2.json
+COPY --chmod=0555 agentguard/evaluation/stage1_live_session.py /app/agentguard/evaluation/stage1_live_session.py
+COPY --chmod=0555 agentguard/evaluation/stage1_live_transport.py /app/agentguard/evaluation/stage1_live_transport.py
+COPY --chmod=0555 agentguard/evaluation/stage1_study_ledger.py /app/agentguard/evaluation/stage1_study_ledger.py
 COPY --chmod=0555 runtime-images/stage1-metering/b1_mock_gateway.py /stage1-b1-mock-gateway
 USER 65532:65532
 EXPOSE 8080
